@@ -1,1 +1,57 @@
 # PQC-Framework-02
+
+STM32-based embedded security experiment framework.
+
+The current known-good baseline is a CubeMX-generated STM32 HAL firmware project for the NUCLEO-L4R5ZI-P / STM32L4R5 board.
+
+## Current baseline status
+
+- STM32 HAL firmware project builds successfully.
+- Firmware can be flashed remotely through `pqc-gateway1`.
+- ST-LINK UART logging works.
+- The app prints a boot message and repeated `tick` messages.
+- wolfBoot, MQTT, TLS, PQC, and network-degradation automation are not implemented yet.
+
+## AI-assisted development
+
+For every AI-assisted feature request, provide `AI_BUILD_GUIDE.md` first.
+
+Workflow and prompt documentation:
+
+- `docs/001_ai_feature_request_workflow.md`
+- `docs/008_chatgpt_project_prompt.md`
+
+The AI agent should use `AI_BUILD_GUIDE.md` as the source of truth for:
+
+- current repository structure
+- known-good baseline
+- current implementation phase
+- testing expectations
+- documentation requirements
+- safety and secret-handling rules
+
+## Repository layout
+
+The STM32CubeMX-generated firmware project currently lives at the repository root.
+
+Do not move CubeMX-generated folders unless that change is deliberate and documented.
+
+Important documentation:
+
+- `AI_BUILD_GUIDE.md`
+- `docs/000_project_overview.md`
+- `docs/001_ai_feature_request_workflow.md`
+- `docs/002_host_gateway_setup.md`
+- `docs/003_stm32_board_setup.md`
+- `docs/004_baseline_hal_app.md`
+- `docs/005_remote_flash_workflow.md`
+- `docs/006_security_and_secrets.md`
+- `docs/007_framework_architecture.md`
+- `docs/008_chatgpt_project_prompt.md`
+- `docs/decisions/`
+
+## Development rule
+
+Preserve the current known-good STM32 HAL baseline unless a change explicitly targets it.
+
+Do not commit secrets, private keys, credentials, generated build outputs, or experiment results.

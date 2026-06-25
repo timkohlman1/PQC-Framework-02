@@ -135,6 +135,7 @@ docs/
   005_remote_flash_workflow.md
   006_security_and_secrets.md
   007_framework_architecture.md
+  008_chatgpt_project_prompt.md
   decisions/
     0001_keep_cubemx_project_at_repo_root.md
 ```
@@ -441,7 +442,7 @@ Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic
 
 Immediate next intended steps:
 
-1. Add the ChatGPT Project instruction prompt.
+1. Add the ChatGPT Project instruction prompt and record it in `docs/008_chatgpt_project_prompt.md`.
 2. Commit documentation if not already committed.
 3. Add `configs/`, `scripts/`, `tests/`, `results/`, and `tools/`.
 4. Add initial config files:
@@ -521,18 +522,62 @@ Prefer complete replacement snippets for small files and focused patch-style edi
 
 End implementation responses with the next verification command.
 
+## Expected Response Format for Review Requests
+
+For review-only requests, such as checking whether instructions, documentation, configuration, tests, or workflow rules are implemented correctly, respond with:
+
+1. A brief interpretation of the review.
+2. Files inspected.
+3. Compliance result.
+4. Issues found.
+5. Files that likely need changes.
+6. Proposed documentation, prompt, test, or code updates.
+7. Exact verification commands.
+8. Expected output or pass/fail criteria.
+9. Assumptions, risks, or unresolved questions.
+
+Do not claim that external ChatGPT Project settings are installed correctly unless the user provides the actual settings text, export, or screenshot.
+
+
 ## 15. Feature Request Workflow
 
 For each new feature request:
 
-1. The user provides the latest `AI_BUILD_GUIDE.md`.
-2. The AI reviews the build guide.
-3. The AI asks for only the relevant source, config, test, and documentation files.
-4. The user provides those files.
-5. The AI proposes a small, controlled change.
-6. The AI includes tests and documentation updates.
-7. The AI provides exact verification commands.
-8. The user applies the change and returns logs.
-9. The AI helps interpret logs and identify the next step.
+1. The user opens a new feature-request chat and describes the requested change.
+
+2. If the latest `AI_BUILD_GUIDE.md` has not already been provided, the AI asks the user to provide it before proposing code changes.
+
+3. The AI reviews the current `AI_BUILD_GUIDE.md` and treats it as the source of truth for:
+   - repository structure
+   - workflow rules
+   - known-good baseline
+   - tests
+   - documentation expectations
+   - safety constraints
+   - current implementation phase
+
+4. The AI asks for only the relevant source, config, test, and documentation files needed for the requested change.
+
+5. The user provides the requested files.
+
+6. The AI proposes a small, controlled implementation plan covering:
+   - code changes
+   - tests to add or update
+   - documentation updates
+   - build or verification commands
+   - expected pass/fail criteria
+   - assumptions, risks, or unresolved questions
+
+7. The user applies the changes locally.
+
+8. The user runs the requested verification commands.
+
+9. The user returns relevant logs, errors, test output, flashing output, UART output, or screenshots.
+
+10. The AI reviews the evidence and updates the next step.
+
+The next step may be to revise the change, request one additional relevant file, update tests, update documentation, run another verification command, or mark the feature request as complete if verification passes.
 
 The AI should not proceed with code generation until the current build guide and relevant files have been provided.
+
+The AI must not ask for the full repository by default.
