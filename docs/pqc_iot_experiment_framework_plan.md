@@ -16,46 +16,6 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 6 — Automate UART Capture
 
-- [ ] Add UART capture command:
-
-  ```powershell
-  python scripts/experiment.py capture-uart --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Use ST-LINK VCP path:
-
-  ```text
-  /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-  ```
-
-- [ ] Capture for a bounded duration, for example 10 seconds.
-
-- [ ] Save UART output:
-
-  ```text
-  results/<run_id>/uart.log
-  ```
-
-- [ ] Add pass/fail detection:
-  - [ ] expected boot marker present
-  - [ ] `tick` present
-
-- [ ] Update manifest result to `pass` or `fail`.
-
-- [ ] Add hardware test:
-
-  ```text
-  tests/hardware/test_baseline_uart.py
-  ```
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
-
 ## Phase 7 — Add Full Baseline Run Command
 
 - [ ] Add combined command:
