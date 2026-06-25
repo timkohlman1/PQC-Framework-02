@@ -14,10 +14,15 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
+from framework.fingerprint import (
+    FingerprintInputError,
+    calculate_default_build_fingerprint,
+)
 from framework.manifest import update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
+FINGERPRINT_INPUT_ERROR_RETURN_CODE = 4
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,9 @@ class BuildResult:
     configure: CommandExecution
     build: CommandExecution | None
     firmware_sha256: str | None
+    build_fingerprint: str | None
+    build_fingerprint_inputs: list[str]
+    build_fingerprint_algorithm: str | None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -117,6 +125,10 @@ def _write_build_log(
     elf_path: Path,
     artifact_exists: bool,
     firmware_sha256: str | None,
+    build_fingerprint: str | None,
+    build_fingerprint_inputs: list[str],
+    build_fingerprint_algorithm: str | None,
+    fingerprint_error: str | None = None,
 ) -> None:
     """Write the build log for one experiment build run."""
 
@@ -128,6 +140,10 @@ def _write_build_log(
         f"Output ELF path: {elf_path}",
         f"Output ELF exists: {str(artifact_exists).lower()}",
         f"Output ELF SHA-256: {firmware_sha256 if firmware_sha256 is not None else 'unavailable'}",
+        f"Build fingerprint algorithm: {build_fingerprint_algorithm if build_fingerprint_algorithm is not None else 'unavailable'}",
+        f"Build fingerprint: {build_fingerprint if build_fingerprint is not None else 'unavailable'}",
+        "Build fingerprint inputs:",
+        *(f"- {input_path}" for input_path in build_fingerprint_inputs),
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
         "",
@@ -164,6 +180,16 @@ def _write_build_log(
             ]
         )
 
+    if return_code == FINGERPRINT_INPUT_ERROR_RETURN_CODE:
+        lines.extend(
+            [
+                "Build fingerprint check",
+                "-----------------------",
+                fingerprint_error if fingerprint_error is not None else "Build fingerprint calculation failed.",
+                "",
+            ]
+        )
+
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -194,6 +220,71 @@ def execute_build(
     elf_path = repo_root_path / artifact_relative_path
 
     start = perf_counter()
+
+    try:
+        build_fingerprint = calculate_default_build_fingerprint(bundle, repo_root_path)
+    except FingerprintInputError as exc:
+        duration_seconds = perf_counter() - start
+        fingerprint_error = str(exc)
+        skipped_configure = CommandExecution(
+            command=construct_configure_command(configure_preset),
+            return_code=FINGERPRINT_INPUT_ERROR_RETURN_CODE,
+            stdout="",
+            stderr=fingerprint_error,
+            duration_seconds=0.0,
+        )
+        _write_build_log(
+            log_path=log_path,
+            repo_root=repo_root_path,
+            configure=skipped_configure,
+            build=None,
+            return_code=FINGERPRINT_INPUT_ERROR_RETURN_CODE,
+            duration_seconds=duration_seconds,
+            elf_path=elf_path,
+            artifact_exists=elf_path.is_file(),
+            firmware_sha256=None,
+            build_fingerprint=None,
+            build_fingerprint_inputs=[],
+            build_fingerprint_algorithm=None,
+            fingerprint_error=fingerprint_error,
+        )
+        update_manifest(
+            result_dir_path / "manifest.json",
+            {
+                "result": "build_failed",
+                "firmware": {
+                    "artifact": artifact_relative_path.as_posix(),
+                    "artifact_path": str(elf_path),
+                    "artifact_exists": elf_path.is_file(),
+                    "sha256": None,
+                },
+                "source": source,
+                "build": {
+                    "configure_preset": configure_preset,
+                    "build_preset": build_preset,
+                    "return_code": FINGERPRINT_INPUT_ERROR_RETURN_CODE,
+                    "duration_seconds": round(duration_seconds, 3),
+                    "log": "build.log",
+                    "fingerprint": None,
+                    "fingerprint_inputs": [],
+                    "fingerprint_algorithm": None,
+                    "fingerprint_error": fingerprint_error,
+                },
+            },
+        )
+        return BuildResult(
+            return_code=FINGERPRINT_INPUT_ERROR_RETURN_CODE,
+            duration_seconds=duration_seconds,
+            elf_path=elf_path,
+            log_path=log_path,
+            configure=skipped_configure,
+            build=None,
+            firmware_sha256=None,
+            build_fingerprint=None,
+            build_fingerprint_inputs=[],
+            build_fingerprint_algorithm=None,
+        )
+
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)
 
     build_execution: CommandExecution | None = None
@@ -222,6 +313,9 @@ def execute_build(
         elf_path=elf_path,
         artifact_exists=artifact_exists,
         firmware_sha256=firmware_sha256,
+        build_fingerprint=build_fingerprint.fingerprint,
+        build_fingerprint_inputs=build_fingerprint.inputs,
+        build_fingerprint_algorithm=build_fingerprint.algorithm,
     )
 
     update_manifest(
@@ -241,6 +335,9 @@ def execute_build(
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),
                 "log": "build.log",
+                "fingerprint": build_fingerprint.fingerprint,
+                "fingerprint_inputs": build_fingerprint.inputs,
+                "fingerprint_algorithm": build_fingerprint.algorithm,
             },
         },
     )
@@ -253,4 +350,7 @@ def execute_build(
         configure=configure_execution,
         build=build_execution,
         firmware_sha256=firmware_sha256,
+        build_fingerprint=build_fingerprint.fingerprint,
+        build_fingerprint_inputs=build_fingerprint.inputs,
+        build_fingerprint_algorithm=build_fingerprint.algorithm,
     )

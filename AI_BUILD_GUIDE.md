@@ -179,6 +179,7 @@ scripts/
   framework/
     artifacts.py
     build.py
+    fingerprint.py
     flash.py
     manifest.py
     source.py
@@ -191,6 +192,7 @@ tests/
   unit/
     test_artifacts.py
     test_build.py
+    test_fingerprint.py
     test_flash.py
     test_config_loading.py
     test_config_validation.py
@@ -216,7 +218,7 @@ The `status` command loads the experiment config, resolves the referenced board 
 
 The `create-run` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
 
-The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
+The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, calculates a deterministic build input fingerprint, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
 
 The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
@@ -390,6 +392,7 @@ run ID generation
 command construction
 artifact SHA-256 calculation
 build hash calculation
+build input fingerprinting
 path handling
 ```
 
@@ -400,13 +403,14 @@ tests/unit/test_config_loading.py
 tests/unit/test_config_validation.py
 tests/unit/test_manifest.py
 tests/unit/test_build.py
+tests/unit/test_fingerprint.py
 tests/unit/test_flash.py
 tests/unit/test_source.py
 ```
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
 
-Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
+Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Build fingerprint unit tests must use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
 
 Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, source provenance, and manifest updates through injected command runners.
 
@@ -650,6 +654,26 @@ source.git_status_available
 
 If Git is unavailable, not installed, or not readable in the repository, normal operation does not fail solely for that reason. The manifest records `source.git_status_available` as `false`, `source.git_commit` as `null`, and `source.git_dirty` as `null`.
 
+Build commands record deterministic build input fingerprint metadata under:
+
+```text
+build.fingerprint
+build.fingerprint_inputs
+build.fingerprint_algorithm
+```
+
+The current fingerprint algorithm is:
+
+```text
+sha256-build-inputs-v1
+```
+
+The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The initial input set is deliberately small and covers the resolved experiment, board, and host configuration files plus the known firmware build inputs: `CMakeLists.txt`, `CMakePresets.json`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, `Core/`, and `cmake/`.
+
+The fingerprint intentionally excludes `results/`, `build/`, `.venv/`, `.git/`, documentation-only files, and unrelated generated artifacts.
+
+If a required fingerprint input is missing, the build fails before CMake runs and records the error in `build.log` and `manifest.json`.
+
 Initial implemented manifest fields are:
 
 ```text
@@ -679,6 +703,9 @@ build.build_preset
 build.return_code
 build.duration_seconds
 build.log
+build.fingerprint
+build.fingerprint_inputs
+build.fingerprint_algorithm
 ```
 
 The `flash` command adds flash-related manifest fields after remote flashing completes or fails:
@@ -763,6 +790,7 @@ Current framework skeleton completed items:
 20. Add unit tests for the combined build-flash flow.
 21. Add artifact SHA-256 provenance for build and flash manifests/logs.
 22. Add Git source-control provenance for build and flash manifests.
+23. Add deterministic build input fingerprinting for build and build-flash manifests.
 
 Current CLI commands are:
 
@@ -806,9 +834,9 @@ Expected `build` behaviour:
 - creates `results/<run_id>/notes.md`
 - runs `cmake --preset Debug` by default
 - runs `cmake --build --preset Debug` by default if configure succeeds
-- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, firmware SHA-256 after a successful build, and Git source-control provenance
+- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, build input fingerprint metadata, firmware SHA-256 after a successful build, and Git source-control provenance
 - writes `results/<run_id>/build.log`
-- updates `results/<run_id>/manifest.json` with build metadata, `firmware.sha256`, and `source` metadata
+- updates `results/<run_id>/manifest.json` with build metadata, `build.fingerprint`, `build.fingerprint_inputs`, `build.fingerprint_algorithm`, `firmware.sha256`, and `source` metadata
 - does not flash anything
 - does not open UART devices
 - does not use SSH
@@ -834,6 +862,7 @@ Expected `build-flash` behaviour:
 - creates one new result directory
 - runs the same local build workflow used by `build`
 - writes `build.log` in the same result directory
+- records the build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`
 - records the built ELF hash as `firmware.sha256`
 - skips flash entirely if the build fails
 - if the build succeeds, uses the same remote flash workflow used by `flash`

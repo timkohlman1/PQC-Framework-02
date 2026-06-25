@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def load_fingerprint_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    module_path = scripts_path / "framework" / "fingerprint.py"
+    spec = importlib.util.spec_from_file_location("framework_fingerprint", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_required_inputs(repo_root: Path) -> None:
+    files = {
+        "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
+        "configs/boards/board_a.yaml": "id: board_a\n",
+        "configs/hosts/gateway.yaml": "id: gateway\n",
+        "CMakeLists.txt": "cmake minimum\n",
+        "CMakePresets.json": "{\"version\": 3}\n",
+        "STM32L4R5XX_FLASH.ld": "flash linker script\n",
+        "startup_stm32l4r5xx.s": "startup assembly\n",
+        "Core/Src/main.c": "int main(void) { return 0; }\n",
+        "Core/Inc/main.h": "#pragma once\n",
+        "cmake/gcc-arm-none-eabi.cmake": "toolchain config\n",
+    }
+
+    for relative_path, content in files.items():
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def sample_bundle() -> dict[str, dict[str, object]]:
+    return {
+        "experiment": {
+            "id": "baseline_direct_uart",
+            "board": "board_a",
+            "host": "gateway",
+        },
+        "board": {
+            "id": "board_a",
+        },
+        "host": {
+            "id": "gateway",
+        },
+    }
+
+
+def test_build_fingerprint_is_deterministic(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    first = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    second = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert first == second
+    assert first.algorithm == "sha256-build-inputs-v1"
+    assert len(first.fingerprint) == 64
+    assert first.inputs == sorted(first.inputs)
+
+
+def test_changing_fingerprinted_file_changes_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    (repo_root / "Core" / "Src" / "main.c").write_text(
+        "int main(void) { return 1; }\n",
+        encoding="utf-8",
+    )
+    after = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert before.fingerprint != after.fingerprint
+
+
+def test_changing_excluded_file_does_not_change_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    excluded_file = repo_root / "docs" / "notes.md"
+    excluded_file.parent.mkdir()
+    excluded_file.write_text("documentation-only change\n", encoding="utf-8")
+    (repo_root / "results" / "run").mkdir(parents=True)
+    (repo_root / "results" / "run" / "manifest.json").write_text("generated\n", encoding="utf-8")
+    (repo_root / "build" / "Debug").mkdir(parents=True)
+    (repo_root / "build" / "Debug" / "stm32_basic_hal1.elf").write_text("generated\n", encoding="utf-8")
+    after = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert before.fingerprint == after.fingerprint
+
+
+def test_missing_required_input_fails_clearly(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+    (repo_root / "CMakeLists.txt").unlink()
+
+    try:
+        fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    except fingerprint.FingerprintInputError as exc:
+        assert "Required build fingerprint input is missing: CMakeLists.txt" in str(exc)
+    else:
+        raise AssertionError("missing input must raise FingerprintInputError")

@@ -40,6 +40,7 @@ scripts/
   framework/
     artifacts.py
     build.py
+    fingerprint.py
     flash.py
     manifest.py
     source.py
@@ -47,6 +48,7 @@ tests/
   unit/
     test_artifacts.py
     test_build.py
+    test_fingerprint.py
     test_flash.py
     test_config_loading.py
     test_config_validation.py
@@ -148,9 +150,13 @@ Build metadata is written back into `manifest.json`. A successful local firmware
 
 After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in `manifest.json` and as `Output ELF SHA-256` in `build.log`. This gives the built firmware artifact a stable identity even though the artifact path stays the same across builds.
 
+The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The initial input set covers the resolved experiment, board, and host configuration files plus the known firmware build inputs: `CMakeLists.txt`, `CMakePresets.json`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, `Core/`, and `cmake/`.
+
+The fingerprint intentionally excludes generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts. If a required fingerprint input is missing, the build fails before CMake runs and records the fingerprint error in `build.log` and `manifest.json`.
+
 The build command also records source-control provenance in `manifest.json` under `source`. The currently recorded fields are `source.git_commit`, `source.git_dirty`, and `source.git_status_available`. This records which Git commit was present and whether the working tree was dirty when the build command ran. If Git is unavailable or the repository state cannot be read, the command does not fail solely for that reason; it records an explicit unavailable state.
 
-The unit tests cover command construction and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
+The unit tests cover command construction, deterministic fingerprinting, fingerprint change detection, excluded-file behaviour, missing fingerprint input handling, and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
 
 
 ## Integration Test Support
@@ -215,4 +221,4 @@ results/<run_id>/
   flash.log
 ```
 
-Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.
+Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Fingerprint unit tests use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.

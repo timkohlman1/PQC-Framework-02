@@ -98,6 +98,28 @@ def write_initial_manifest(result_dir: Path) -> None:
     )
 
 
+def write_build_fingerprint_inputs(repo_root: Path) -> None:
+    """Create the required fingerprint input set without invoking toolchains."""
+
+    files = {
+        "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
+        "configs/boards/board_a.yaml": "id: board_a\n",
+        "configs/hosts/gateway.yaml": "id: gateway\n",
+        "CMakeLists.txt": "cmake minimum\n",
+        "CMakePresets.json": "{\"version\": 3}\n",
+        "STM32L4R5XX_FLASH.ld": "flash linker script\n",
+        "startup_stm32l4r5xx.s": "startup assembly\n",
+        "Core/Src/main.c": "int main(void) { return 0; }\n",
+        "Core/Inc/main.h": "#pragma once\n",
+        "cmake/gcc-arm-none-eabi.cmake": "toolchain config\n",
+    }
+
+    for relative_path, content in files.items():
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
 def test_build_command_construction_uses_cmake_presets():
     build = load_build_module()
 
@@ -111,6 +133,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
     write_initial_manifest(result_dir)
 
     calls: list[list[str]] = []
@@ -161,11 +184,22 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "Final return code: 0" in build_log
     assert f"Output ELF path: {artifact_path}" in build_log
     assert f"Output ELF SHA-256: {expected_sha256}" in build_log
+    assert "Build fingerprint algorithm: sha256-build-inputs-v1" in build_log
+    assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
+    assert "- Core/Inc/main.h" in build_log
+    assert "- cmake/gcc-arm-none-eabi.cmake" in build_log
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result"] == "build_passed"
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
+    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
+    assert isinstance(manifest["build"]["fingerprint"], str)
+    assert len(manifest["build"]["fingerprint"]) == 64
+    assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
+    assert "Core/Inc/main.h" in manifest["build"]["fingerprint_inputs"]
+    assert "cmake/gcc-arm-none-eabi.cmake" in manifest["build"]["fingerprint_inputs"]
+    assert manifest["build"]["fingerprint_inputs"] == sorted(manifest["build"]["fingerprint_inputs"])
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["sha256"] == expected_sha256
@@ -181,6 +215,7 @@ def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
     repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
     write_initial_manifest(result_dir)
 
     calls: list[list[str]] = []
@@ -209,6 +244,36 @@ def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
     assert "Skipped because the configure step failed." in (result_dir / "build.log").read_text(
         encoding="utf-8"
     )
+
+
+
+def test_execute_build_fails_clearly_when_fingerprint_input_is_missing(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    def forbidden_runner(command: list[str], cwd: Path):
+        raise AssertionError("CMake must not run when fingerprint inputs are missing")
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=forbidden_runner,
+    )
+
+    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == build.FINGERPRINT_INPUT_ERROR_RETURN_CODE
+    assert result.build is None
+    assert result.build_fingerprint is None
+    assert "Required build fingerprint input is missing" in build_log
+    assert manifest["result"] == "build_failed"
+    assert manifest["build"]["return_code"] == build.FINGERPRINT_INPUT_ERROR_RETURN_CODE
+    assert "Required build fingerprint input is missing" in manifest["build"]["fingerprint_error"]
 
 
 def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeypatch, capsys):
