@@ -176,6 +176,7 @@ Current initial framework CLI and utilities:
 scripts/
   experiment.py
   framework/
+    build.py
     manifest.py
 ```
 
@@ -184,13 +185,18 @@ Supported CLI commands are:
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
 
 The `create-run` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
 
-Neither command must build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
+The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, and writes `results/<run_id>/build.log`.
+
+The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
+
+The `build` command may invoke local CMake/STM32 build tooling, but must not flash hardware, open UART devices, use SSH, or touch network resources.
 
 ## 6. Git and Generated-File Rules
 
@@ -364,9 +370,12 @@ Current unit tests cover:
 tests/unit/test_config_loading.py
 tests/unit/test_config_validation.py
 tests/unit/test_manifest.py
+tests/unit/test_build.py
 ```
 
-These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, and result-folder creation.
+These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
+
+Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners.
 
 ### Integration Tests
 
@@ -515,11 +524,20 @@ results/<run_id>/
   notes.md
 ```
 
-The initial implemented `create-run` command creates:
+The implemented `create-run` command creates:
 
 ```text
 results/<run_id>/
   manifest.json
+  notes.md
+```
+
+The implemented `build` command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  build.log
   notes.md
 ```
 
@@ -551,11 +569,23 @@ network_profile
 result
 ```
 
+The `build` command adds build-related manifest fields after the local firmware build completes:
+
+```text
+firmware.artifact
+firmware.artifact_path
+firmware.artifact_exists
+build.configure_preset
+build.build_preset
+build.return_code
+build.duration_seconds
+build.log
+```
+
 Expected future manifest fields include:
 
 ```text
 git_commit
-firmware
 build_number
 boot_crypto
 transport_crypto
@@ -572,10 +602,10 @@ Current phase:
 ```text
 STM32 HAL baseline firmware project setup is complete.
 AI build guide and documentation skeleton have been added.
-Minimal framework skeleton is being added.
+Basic framework skeleton is being extended with local build automation.
 ```
 
-Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic framework skeleton exists and has tests.
+Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic build, flash, and UART workflow steps are implemented incrementally and covered by tests.
 
 Current framework skeleton completed items:
 
@@ -591,12 +621,16 @@ Current framework skeleton completed items:
 7. Add run ID generation.
 8. Add result-folder creation under `results/<run_id>/`.
 9. Add initial manifest fields and unit tests.
+10. Add `scripts/framework/build.py`.
+11. Add `scripts/experiment.py build`.
+12. Add build command construction and build-result unit tests.
 
 Current CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Expected `status` behaviour:
@@ -621,13 +655,32 @@ Expected `create-run` behaviour:
 - does not flash anything
 - does not require hardware
 
+Expected `build` behaviour:
+
+- loads the experiment config
+- resolves board and host config files
+- validates required fields
+- generates a run ID
+- creates `results/<run_id>/manifest.json`
+- creates `results/<run_id>/notes.md`
+- runs `cmake --preset Debug` by default
+- runs `cmake --build --preset Debug` by default if configure succeeds
+- captures stdout, stderr, return codes, duration, expected output ELF path, and build log path
+- writes `results/<run_id>/build.log`
+- updates `results/<run_id>/manifest.json` with build metadata
+- does not flash anything
+- does not open UART devices
+- does not use SSH
+- does not require physical hardware beyond the local build toolchain
+
 Immediate next intended steps after this change:
 
 1. Run the unit tests.
 2. Run the `status` command.
 3. Run the `create-run` command.
-4. Inspect the generated `results/<run_id>/manifest.json`.
-5. Commit the result manifest support if verification passes.
+4. Run the `build` command.
+5. Inspect the generated `results/<run_id>/manifest.json` and `results/<run_id>/build.log`.
+6. Commit the build automation support if verification passes.
 
 ## 13. Common Manual Commands
 
@@ -647,6 +700,12 @@ Create an initial result run folder:
 
 ```powershell
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Run a local firmware build and capture a build log:
+
+```powershell
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Run framework unit tests:

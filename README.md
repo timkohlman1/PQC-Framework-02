@@ -65,6 +65,12 @@ Create a local result run folder without building, flashing, opening UART, using
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
+Build the current STM32 firmware locally without flashing, opening UART, using SSH, or touching network resources:
+
+```powershell
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
 The create-run command creates:
 
 ```text
@@ -72,6 +78,17 @@ results/<run_id>/
   manifest.json
   notes.md
 ```
+
+The build command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+  build.log
+```
+
+The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, and the expected output ELF path, then records build metadata in the run manifest.
 
 Run IDs use the format:
 

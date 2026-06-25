@@ -120,6 +120,23 @@ def write_manifest(path: Path | str, manifest: dict[str, Any]) -> None:
     )
 
 
+def read_manifest(path: Path | str) -> dict[str, Any]:
+    """Read a manifest JSON file."""
+
+    manifest_path = Path(path)
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def update_manifest(path: Path | str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Merge top-level updates into a manifest JSON file and rewrite it."""
+
+    manifest_path = Path(path)
+    manifest = read_manifest(manifest_path)
+    manifest.update(updates)
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
 def create_result_folder(
     bundle: dict[str, dict[str, Any]],
     results_root: Path | str = "results",

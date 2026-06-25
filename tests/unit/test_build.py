@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from argparse import Namespace
+from pathlib import Path
+
+
+def load_build_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    module_path = repo_root / "scripts" / "framework" / "build.py"
+    spec = importlib.util.spec_from_file_location("framework_build", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_experiment_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    module_path = repo_root / "scripts" / "experiment.py"
+    spec = importlib.util.spec_from_file_location("experiment_cli", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def sample_bundle() -> dict[str, dict[str, object]]:
+    return {
+        "experiment": {
+            "id": "baseline_direct_uart",
+            "description": "Test experiment.",
+            "board": "board_a",
+            "host": "gateway",
+            "firmware": {
+                "mode": "direct_flash",
+                "artifact": "build/Debug/stm32_basic_hal1.elf",
+            },
+            "uart": {
+                "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+                "expected_tick_message": "tick",
+            },
+        },
+        "board": {
+            "id": "board_a",
+            "name": "NUCLEO-L4R5ZI-P",
+            "mcu": "STM32L4R5",
+            "stlink": {
+                "serial": "123",
+            },
+            "uart": {
+                "baud": 115200,
+            },
+        },
+        "host": {
+            "id": "gateway",
+            "alias": "pqc-gateway1",
+            "user": "timk",
+            "flash": {
+                "helper": "flash-stm32a",
+            },
+            "uart": {
+                "device": "/dev/example",
+                "baud": 115200,
+            },
+        },
+    }
+
+
+def write_initial_manifest(result_dir: Path) -> None:
+    result_dir.mkdir(parents=True)
+    (result_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "2026-06-25_001_baseline_direct_uart",
+                "timestamp": "2026-06-25T10:30:00+00:00",
+                "experiment": "baseline_direct_uart",
+                "board": "board_a",
+                "gateway": "gateway",
+                "boot_mode": "direct_flash",
+                "transport_mode": "direct_uart",
+                "network_profile": "none",
+                "result": "pending",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_build_command_construction_uses_cmake_presets():
+    build = load_build_module()
+
+    assert build.construct_configure_command("Debug") == ["cmake", "--preset", "Debug"]
+    assert build.construct_build_command("Debug") == ["cmake", "--build", "--preset", "Debug"]
+
+
+def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path):
+        calls.append(command)
+        assert cwd == repo_root
+        if command == ["cmake", "--build", "--preset", "Debug"]:
+            artifact_path.parent.mkdir(parents=True)
+            artifact_path.write_text("fake elf", encoding="utf-8")
+        return build.CommandExecution(
+            command=command,
+            return_code=0,
+            stdout="fake stdout",
+            stderr="fake stderr",
+            duration_seconds=0.125,
+        )
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 0
+    assert result.elf_path == artifact_path
+    assert calls == [
+        ["cmake", "--preset", "Debug"],
+        ["cmake", "--build", "--preset", "Debug"],
+    ]
+
+    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
+    assert "fake stdout" in build_log
+    assert "fake stderr" in build_log
+    assert "Final return code: 0" in build_log
+    assert f"Output ELF path: {artifact_path}" in build_log
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["result"] == "build_passed"
+    assert manifest["build"]["return_code"] == 0
+    assert manifest["build"]["log"] == "build.log"
+    assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
+    assert manifest["firmware"]["artifact_exists"] is True
+
+
+def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path):
+        calls.append(command)
+        return build.CommandExecution(
+            command=command,
+            return_code=9,
+            stdout="configure stdout",
+            stderr="configure stderr",
+            duration_seconds=0.125,
+        )
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 9
+    assert result.build is None
+    assert calls == [["cmake", "--preset", "Debug"]]
+    assert "Skipped because the configure step failed." in (result_dir / "build.log").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeypatch, capsys):
+    experiment_cli = load_experiment_module()
+    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
+    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
+    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    experiment_path.parent.mkdir(parents=True)
+    board_path.parent.mkdir(parents=True)
+    host_path.parent.mkdir(parents=True)
+
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "id: baseline_direct_uart",
+                "description: Test experiment.",
+                "board: board_a",
+                "host: gateway",
+                "firmware:",
+                "  mode: direct_flash",
+                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "uart:",
+                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
+                "  expected_tick_message: tick",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    board_path.write_text(
+        "\n".join(
+            [
+                "id: board_a",
+                "name: NUCLEO-L4R5ZI-P",
+                "mcu: STM32L4R5",
+                "description: Test board.",
+                "stlink:",
+                '  serial: "123"',
+                "uart:",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    host_path.write_text(
+        "\n".join(
+            [
+                "id: gateway",
+                "alias: pqc-gateway1",
+                "user: timk",
+                "description: Test gateway.",
+                "flash:",
+                "  helper: flash-stm32a",
+                "uart:",
+                "  device: /dev/example",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBuildResult:
+        return_code = 0
+        duration_seconds = 0.25
+        elf_path = tmp_path / "build" / "Debug" / "stm32_basic_hal1.elf"
+        log_path = tmp_path / "results" / "run" / "build.log"
+
+    def fake_execute_build(**kwargs):
+        assert kwargs["repo_root"] == tmp_path
+        assert kwargs["configure_preset"] == "Debug"
+        assert kwargs["build_preset"] == "Debug"
+        return FakeBuildResult()
+
+    monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+
+    exit_code = experiment_cli.run_build_command(
+        Namespace(
+            experiment=experiment_path,
+            results_dir=tmp_path / "results",
+            configure_preset=None,
+            build_preset="Debug",
+        )
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Firmware build completed" in output
+    assert "No flash, UART access, SSH, hardware access, or network access was performed." in output

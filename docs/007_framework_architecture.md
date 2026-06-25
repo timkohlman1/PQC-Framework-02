@@ -38,9 +38,11 @@ configs/
 scripts/
   experiment.py
   framework/
+    build.py
     manifest.py
 tests/
   unit/
+    test_build.py
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
@@ -93,3 +95,45 @@ result
 ```
 
 The initial baseline values are derived from the resolved experiment, board, and host configs. Until dedicated transport and network config files are implemented, `transport_mode` defaults to `direct_uart` and `network_profile` defaults to `none`.
+
+
+## Build Automation Support
+
+The framework can now create a local result run folder and run the current CMake/STM32 firmware build without flashing hardware, opening UART devices, using SSH, or touching network resources.
+
+Command:
+
+```powershell
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+  build.log
+```
+
+The build command currently uses the CMake `Debug` configure and build presets by default:
+
+```text
+cmake --preset Debug
+cmake --build --preset Debug
+```
+
+The command captures:
+
+```text
+stdout
+stderr
+return code
+build duration
+output ELF path
+build log path
+```
+
+Build metadata is written back into `manifest.json`. A successful local firmware build sets the manifest `result` field to `build_passed`. A failed configure, failed build, or missing expected ELF artifact sets it to `build_failed`.
+
+The unit tests cover command construction and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.

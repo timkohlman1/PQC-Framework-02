@@ -5,6 +5,7 @@ The initial supported commands are:
 
     python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
 host configs, validates required fields, and prints a summary.
@@ -12,8 +13,14 @@ host configs, validates required fields, and prints a summary.
 The create-run command creates a local results/<run_id>/ folder containing
 manifest.json and notes.md.
 
-Neither command builds firmware, flashes hardware, opens UART devices, uses SSH,
-or touches network resources.
+The build command creates a local results/<run_id>/ folder, runs the configured
+CMake build presets, captures stdout, stderr, return codes, duration, the output
+ELF path, and writes results/<run_id>/build.log.
+
+The status and create-run commands do not build firmware, flash hardware, open
+UART devices, use SSH, or touch network resources. The build command builds
+firmware locally but does not flash hardware, open UART devices, use SSH, or
+touch network resources.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from framework.build import execute_build
 from framework.manifest import create_result_folder
 
 
@@ -197,6 +205,13 @@ def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
     return resolved_path.parent.parent
 
 
+def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:
+    """Resolve the repository root from configs/experiments/<name>.yaml."""
+
+    configs_root = _configs_root_from_experiment_path(Path(experiment_path))
+    return configs_root.parent
+
+
 def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Path]:
     """Resolve board and host config paths referenced by an experiment config."""
 
@@ -312,6 +327,35 @@ def run_create_run_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_build_command(args: argparse.Namespace) -> int:
+    """Run the build command."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    configure_preset = args.configure_preset or args.build_preset
+
+    build_result = execute_build(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        configure_preset=configure_preset,
+        build_preset=args.build_preset,
+    )
+
+    print("Firmware build completed" if build_result.return_code == 0 else "Firmware build failed")
+    print("------------------------" if build_result.return_code == 0 else "---------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Build log: {build_result.log_path}")
+    print(f"ELF path: {build_result.elf_path}")
+    print(f"Return code: {build_result.return_code}")
+    print(f"Build duration seconds: {build_result.duration_seconds:.3f}")
+    print("No flash, UART access, SSH, hardware access, or network access was performed.")
+
+    return build_result.return_code
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -350,6 +394,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory where result run folders are created.",
     )
     create_run_parser.set_defaults(func=run_create_run_command)
+
+    build_parser = subparsers.add_parser(
+        "build",
+        help="Build firmware for an experiment config without flashing hardware.",
+    )
+    build_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to an experiment YAML config.",
+    )
+    build_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    build_parser.add_argument(
+        "--build-preset",
+        default="Debug",
+        help="CMake build preset to invoke.",
+    )
+    build_parser.add_argument(
+        "--configure-preset",
+        default=None,
+        help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    build_parser.set_defaults(func=run_build_command)
 
     return parser
 
