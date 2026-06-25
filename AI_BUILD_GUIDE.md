@@ -6,7 +6,7 @@ This file is the compact technical context package for AI-assisted development o
 
 When starting a new feature request with an AI coding assistant, provide this file first. It explains the current project structure, known-good baseline, development rules, testing expectations, documentation requirements, and safety constraints.
 
-This file must be updated whenever the framework structure, CLI behaviour, configuration model, testing model, or experiment workflow changes.
+This file must be updated whenever the framework structure, CLI behaviour, configuration model, testing model, documentation structure, or experiment workflow changes.
 
 ## 2. Project Purpose
 
@@ -72,7 +72,7 @@ User: timk
 Current local IP: 10.1.1.18
 Purpose: remote flashing, UART capture, later MQTT broker and network impairment
 OS: Linux pqc-gateway1 6.12.90+deb13.1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.90-2 (2026-05-27) x86_64 GNU/Linux
-Host: Dell Laptop with wired NIC (connected to 10.1.1.0/24) and currently unused wireless NIC
+Host: Dell Laptop with wired NIC connected to 10.1.1.0/24 and currently unused wireless NIC
 ```
 
 ST-LINK details:
@@ -122,6 +122,23 @@ stm32_basic_hal1.ioc
 .settings/
 ```
 
+Project documentation now exists under:
+
+```text
+AI_BUILD_GUIDE.md
+docs/
+  000_project_overview.md
+  001_ai_feature_request_workflow.md
+  002_host_gateway_setup.md
+  003_stm32_board_setup.md
+  004_baseline_hal_app.md
+  005_remote_flash_workflow.md
+  006_security_and_secrets.md
+  007_framework_architecture.md
+  decisions/
+    0001_keep_cubemx_project_at_repo_root.md
+```
+
 Current rule:
 
 ```text
@@ -134,7 +151,6 @@ Future framework folders should be added alongside the CubeMX-generated project:
 
 ```text
 configs/
-docs/
 scripts/
 tests/
 results/
@@ -167,6 +183,45 @@ compile_commands.json
 mx.scratch/
 ```
 
+Recommended line-ending policy:
+
+```text
+Use LF for source, config, Markdown, CMake, Python, shell, and STM32 project text files.
+Allow CRLF only for Windows-native scripts if required.
+```
+
+Recommended `.gitattributes` policy:
+
+```gitattributes
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.s text eol=lf
+*.ld text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ioc text eol=lf
+
+*.elf binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.zip binary
+```
+
 ## 7. Secret-Handling Rules
 
 Do not commit secrets.
@@ -181,6 +236,18 @@ MQTT passwords
 .env files containing real credentials
 client key bundles
 private signing keys
+private wolfBoot signing keys
+production credentials
+```
+
+Usually safe to commit if clearly non-secret:
+
+```text
+public CA certificates
+example configuration files
+documentation
+public test certificates
+dummy credentials used only for examples
 ```
 
 Public CA certificates may be committed if they are non-secret and needed for TLS validation.
@@ -194,6 +261,8 @@ pqc-gateway1
 ```
 
 rather than hard-coding private key paths into framework code.
+
+If VPN access is required, document the VPN requirement, but do not commit VPN keys, VPN credentials, or private VPN profiles.
 
 ## 8. Development Rules for AI-Assisted Changes
 
@@ -364,22 +433,26 @@ Current phase:
 
 ```text
 STM32 HAL baseline firmware project setup is complete.
-Next phase: documentation and AI workflow setup.
+AI build guide and documentation skeleton have been added.
+Next phase: ChatGPT Project instruction prompt and minimal framework skeleton.
 ```
 
 Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic framework skeleton exists and has tests.
 
 Immediate next intended steps:
 
-1. Add this `AI_BUILD_GUIDE.md`.
-2. Add `docs/` skeleton.
-3. Add ChatGPT Project instruction prompt.
-4. Commit documentation.
-5. Add `configs/`, `scripts/`, and `tests/`.
-6. Implement `experiment.py status`.
-7. Add unit tests for config loading.
-8. Add manifest-generation utilities.
-9. Add unit tests for manifest creation.
+1. Add the ChatGPT Project instruction prompt.
+2. Commit documentation if not already committed.
+3. Add `configs/`, `scripts/`, `tests/`, `results/`, and `tools/`.
+4. Add initial config files:
+   - `configs/boards/board_a.yaml`
+   - `configs/hosts/gateway.yaml`
+   - `configs/experiments/baseline_direct_uart.yaml`
+5. Implement `scripts/experiment.py status`.
+6. Add unit tests for config loading.
+7. Add manifest-generation utilities.
+8. Add unit tests for manifest creation.
+9. Update this file after each structural or behavioural framework change.
 
 ## 13. Common Manual Commands
 

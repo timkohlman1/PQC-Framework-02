@@ -12,16 +12,16 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
   Remove-Item -Recurse -Force .\build
   ```
 
-- [ ] Confirm the project builds from the new repo location.
+- [X] Confirm the project builds from the new repo location.
 
-- [ ] Confirm the app flashes via:
+- [X] Confirm the app flashes via:
 
   ```powershell
   scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
   ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
   ```
 
-- [ ] Confirm UART prints:
+- [X] Confirm UART prints:
 
   ```text
   stm32-basic_hal1 boot v0.1.0
@@ -30,7 +30,7 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
   tick
   ```
 
-- [ ] Commit the CubeMX/HAL baseline:
+- [X] Commit the CubeMX/HAL baseline:
 
   ```powershell
   git add .gitignore .clangd .mxproject .settings .vscode CMakeLists.txt CMakePresets.json Core Drivers STM32L4R5XX_FLASH.ld cmake startup_stm32l4r5xx.s stm32_basic_hal1.ioc
