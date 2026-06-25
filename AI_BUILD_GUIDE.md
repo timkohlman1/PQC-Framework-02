@@ -183,12 +183,12 @@ Supported CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
 
-The `manifest` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
+The `create-run` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
 
 Neither command must build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
@@ -515,7 +515,7 @@ results/<run_id>/
   notes.md
 ```
 
-The initial implemented manifest command creates:
+The initial implemented `create-run` command creates:
 
 ```text
 results/<run_id>/
@@ -596,7 +596,7 @@ Current CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Expected `status` behaviour:
@@ -609,7 +609,7 @@ Expected `status` behaviour:
 - does not flash anything
 - does not require hardware
 
-Expected `manifest` behaviour:
+Expected `create-run` behaviour:
 
 - loads the experiment config
 - resolves board and host config files
@@ -625,7 +625,7 @@ Immediate next intended steps after this change:
 
 1. Run the unit tests.
 2. Run the `status` command.
-3. Run the `manifest` command.
+3. Run the `create-run` command.
 4. Inspect the generated `results/<run_id>/manifest.json`.
 5. Commit the result manifest support if verification passes.
 
@@ -643,10 +643,10 @@ Run the initial framework CLI status command:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Create an initial result manifest folder:
+Create an initial result run folder:
 
 ```powershell
-python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Run framework unit tests:

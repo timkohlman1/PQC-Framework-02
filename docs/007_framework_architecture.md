@@ -50,12 +50,12 @@ tools/
 
 ## Result Manifest Support
 
-The framework can create a local result folder for an experiment without building firmware, flashing hardware, opening UART devices, using SSH, or touching network resources.
+The framework can create a local result run folder for an experiment without building firmware, flashing hardware, opening UART devices, using SSH, or touching network resources.
 
 Command:
 
 ```powershell
-python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The command creates:

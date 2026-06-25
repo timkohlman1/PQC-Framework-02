@@ -4,12 +4,12 @@
 The initial supported commands are:
 
     python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
 host configs, validates required fields, and prints a summary.
 
-The manifest command creates a local results/<run_id>/ folder containing
+The create-run command creates a local results/<run_id>/ folder containing
 manifest.json and notes.md.
 
 Neither command builds firmware, flashes hardware, opens UART devices, uses SSH,
@@ -293,8 +293,8 @@ def run_status_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_manifest_command(args: argparse.Namespace) -> int:
-    """Run the manifest command."""
+def run_create_run_command(args: argparse.Namespace) -> int:
+    """Run the create-run command."""
 
     bundle = load_experiment_bundle(args.experiment)
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
@@ -333,23 +333,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     status_parser.set_defaults(func=run_status_command)
 
-    manifest_parser = subparsers.add_parser(
-        "manifest",
-        help="Create a local result manifest folder for an experiment config.",
+    create_run_parser = subparsers.add_parser(
+        "create-run",
+        help="Create a local result run folder for an experiment config.",
     )
-    manifest_parser.add_argument(
+    create_run_parser.add_argument(
         "--experiment",
         required=True,
         type=Path,
         help="Path to an experiment YAML config.",
     )
-    manifest_parser.add_argument(
+    create_run_parser.add_argument(
         "--results-dir",
         default=Path("results"),
         type=Path,
         help="Directory where result run folders are created.",
     )
-    manifest_parser.set_defaults(func=run_manifest_command)
+    create_run_parser.set_defaults(func=run_create_run_command)
 
     return parser
 

@@ -59,13 +59,13 @@ Check the current baseline experiment configuration without using hardware:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Create a local result manifest folder without building, flashing, opening UART, using SSH, or touching network resources:
+Create a local result run folder without building, flashing, opening UART, using SSH, or touching network resources:
 
 ```powershell
-python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The manifest command creates:
+The create-run command creates:
 
 ```text
 results/<run_id>/

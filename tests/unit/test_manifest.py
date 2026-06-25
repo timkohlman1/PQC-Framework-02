@@ -192,12 +192,12 @@ def test_create_result_folder_writes_manifest_and_notes(tmp_path):
     assert "Add manual observations" in (result_dir / "notes.md").read_text(encoding="utf-8")
 
 
-def test_manifest_command_creates_result_folder_without_hardware_actions(tmp_path, capsys):
+def test_create_run_command_creates_result_folder_without_hardware_actions(tmp_path, capsys):
     experiment_cli = load_experiment_module()
     experiment_path = write_sample_configs(tmp_path / "configs")
     results_root = tmp_path / "results"
 
-    exit_code = experiment_cli.run_manifest_command(
+    exit_code = experiment_cli.run_create_run_command(
         Namespace(experiment=experiment_path, results_dir=results_root)
     )
 
