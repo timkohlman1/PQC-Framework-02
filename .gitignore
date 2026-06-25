@@ -18,6 +18,10 @@ mx.scratch/
 # Keep STM32 project settings if generated/needed
 !.settings
 
+# Experiment outputs
+results/*
+!results/.gitkeep
+
 # Local secrets / credentials
 secrets/
 *.key
@@ -28,4 +32,3 @@ secrets/
 *.password
 *.env
 !.env.example
-

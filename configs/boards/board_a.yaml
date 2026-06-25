@@ -1,0 +1,8 @@
+id: board_a
+name: NUCLEO-L4R5ZI-P
+mcu: STM32L4R5
+description: Direct-flash STM32 HAL baseline board.
+stlink:
+  serial: "066EFF3932504E3043111818"
+uart:
+  baud: 115200

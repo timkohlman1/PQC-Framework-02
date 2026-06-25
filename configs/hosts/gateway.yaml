@@ -1,0 +1,9 @@
+id: gateway
+alias: pqc-gateway1
+user: timk
+description: Experiment gateway used for remote flashing and UART capture.
+flash:
+  helper: flash-stm32a
+uart:
+  device: /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
+  baud: 115200
