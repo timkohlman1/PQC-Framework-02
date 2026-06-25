@@ -205,6 +205,7 @@ python scripts/experiment.py status --experiment configs/experiments/baseline_di
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
@@ -218,6 +219,8 @@ The `status` and `create-run` commands must not build firmware, flash hardware, 
 The `build` command may invoke local CMake/STM32 build tooling, but must not flash hardware, open UART devices, use SSH, or touch network resources.
 
 The `flash` command uses SCP and SSH to invoke the configured gateway flash helper. It requires the configured ELF artifact, gateway access, and physical hardware, but it does not capture UART output.
+
+The `build-flash` command creates one result directory, runs the local firmware build, and only then invokes the remote flash helper if the build succeeds. This avoids flashing a stale ELF from a previous build and records both build and flash evidence under the same run ID. It requires the local build toolchain, gateway access, and physical hardware when the build succeeds, but it does not capture UART output.
 
 ## 6. Git and Generated-File Rules
 
@@ -601,6 +604,18 @@ results/<run_id>/
   notes.md
 ```
 
+The implemented `build-flash` command creates the following when both stages pass:
+
+```text
+results/<run_id>/
+  manifest.json
+  build.log
+  flash.log
+  notes.md
+```
+
+If the build stage fails, `build-flash` skips the flash stage and creates no `flash.log`.
+
 Run IDs use this format:
 
 ```text
@@ -640,6 +655,19 @@ build.build_preset
 build.return_code
 build.duration_seconds
 build.log
+```
+
+The `build-flash` command adds combined-stage manifest fields after the combined command completes:
+
+```text
+build_flash.return_code
+build_flash.build_return_code
+build_flash.flash_return_code
+build_flash.build_log
+build_flash.flash_log
+build_flash.flash_skipped
+build_flash.failure_stage
+build_flash.duration_seconds
 ```
 
 Expected future manifest fields include:
@@ -690,6 +718,8 @@ Current framework skeleton completed items:
 16. Add `scripts/experiment.py flash`.
 17. Add remote flash command-construction and result-handling unit tests.
 18. Add the opt-in gateway flash integration test.
+19. Add `scripts/experiment.py build-flash` to build and flash in one result run.
+20. Add unit tests for the combined build-flash flow.
 
 Current CLI commands are:
 
@@ -698,6 +728,7 @@ python scripts/experiment.py status --experiment configs/experiments/baseline_di
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Expected `status` behaviour:
@@ -750,6 +781,20 @@ Expected `flash` behaviour:
 - writes `flash.log`
 - records final and per-step return codes, remote artifact path, duration, and ST-LINK serial in the manifest
 - skips SSH if SCP fails
+- does not capture UART output
+
+Expected `build-flash` behaviour:
+
+- loads and validates the experiment bundle
+- creates one new result directory
+- runs the same local build workflow used by `build`
+- writes `build.log` in the same result directory
+- skips flash entirely if the build fails
+- if the build succeeds, uses the same remote flash workflow used by `flash`
+- writes `flash.log` in the same result directory when flash is attempted
+- records build metadata, flash metadata, and combined `build_flash` metadata in one manifest
+- returns the build return code when build fails
+- returns the flash return code when build succeeds and flash is attempted
 - does not capture UART output
 
 Immediate next intended steps after this change:
@@ -810,6 +855,12 @@ Flash current firmware automatically:
 
 ```powershell
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Build and flash current firmware in one result run:
+
+```powershell
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Run the opt-in gateway flash integration test:

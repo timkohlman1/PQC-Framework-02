@@ -98,6 +98,14 @@ python scripts/experiment.py flash --experiment configs/experiments/baseline_dir
 
 The flash command creates `flash.log`, copies the ELF to `/tmp` with `scp`, invokes the configured gateway flash helper with `ssh`, and records the return codes, remote artifact path, and ST-LINK serial in `manifest.json`. It does not capture UART output.
 
+Build and then flash the resulting ELF in one result run:
+
+```powershell
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The build-flash command creates one `results/<run_id>/` directory, writes both `build.log` and `flash.log` when the build succeeds, and records combined `build_flash` metadata in the same `manifest.json`. If the build fails, the flash step is skipped so a stale ELF is not flashed.
+
 Run IDs use the format:
 
 ```text

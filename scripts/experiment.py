@@ -7,6 +7,7 @@ The initial supported commands are:
     python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
 host configs, validates required fields, and prints a summary.
@@ -21,7 +22,9 @@ ELF path, and writes results/<run_id>/build.log.
 The status and create-run commands do not build firmware, flash hardware, open
 UART devices, use SSH, or touch network resources. The build command builds
 firmware locally but does not flash hardware, open UART devices, use SSH, or
-touch network resources.
+touch network resources. The build-flash command builds firmware and, only if
+the build succeeds, flashes that artifact through the configured gateway in the
+same result run folder.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from framework.build import execute_build
 from framework.flash import execute_flash
-from framework.manifest import create_result_folder
+from framework.manifest import create_result_folder, update_manifest
 
 
 class ConfigError(Exception):
@@ -385,6 +388,92 @@ def run_flash_command(args: argparse.Namespace) -> int:
     return flash_result.return_code
 
 
+def run_build_flash_command(args: argparse.Namespace) -> int:
+    """Build firmware and flash the produced artifact in one result run."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    configure_preset = args.configure_preset or args.build_preset
+
+    build_result = execute_build(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        configure_preset=configure_preset,
+        build_preset=args.build_preset,
+    )
+
+    if build_result.return_code != 0:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "result": "build_flash_failed",
+                "build_flash": {
+                    "return_code": build_result.return_code,
+                    "build_return_code": build_result.return_code,
+                    "flash_return_code": None,
+                    "build_log": "build.log",
+                    "flash_log": None,
+                    "flash_skipped": True,
+                    "failure_stage": "build",
+                    "duration_seconds": round(build_result.duration_seconds, 3),
+                },
+            },
+        )
+
+        print("Build-flash failed during build")
+        print("------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build log: {build_result.log_path}")
+        print(f"ELF path: {build_result.elf_path}")
+        print(f"Return code: {build_result.return_code}")
+        print("Flash step skipped because the build failed.")
+        print("No flash, UART access, SSH, hardware access, or network access was performed.")
+        return build_result.return_code
+
+    flash_result = execute_flash(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+    )
+
+    final_return_code = flash_result.return_code
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "result": "build_flash_passed" if final_return_code == 0 else "build_flash_failed",
+            "build_flash": {
+                "return_code": final_return_code,
+                "build_return_code": build_result.return_code,
+                "flash_return_code": flash_result.return_code,
+                "build_log": "build.log",
+                "flash_log": "flash.log",
+                "flash_skipped": False,
+                "failure_stage": "none" if final_return_code == 0 else "flash",
+                "duration_seconds": round(
+                    build_result.duration_seconds + flash_result.duration_seconds, 3
+                ),
+            },
+        },
+    )
+
+    print("Build-flash completed" if final_return_code == 0 else "Build-flash failed during flash")
+    print("---------------------" if final_return_code == 0 else "-------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Build log: {build_result.log_path}")
+    print(f"Flash log: {flash_result.log_path}")
+    print(f"ELF path: {build_result.elf_path}")
+    print(f"Remote artifact: {flash_result.remote_artifact_path}")
+    print(f"ST-LINK serial: {flash_result.stlink_serial}")
+    print(f"Return code: {final_return_code}")
+    print("No UART access was performed.")
+
+    return final_return_code
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -469,6 +558,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory where result run folders are created.",
     )
     flash_parser.set_defaults(func=run_flash_command)
+
+    build_flash_parser = subparsers.add_parser(
+        "build-flash",
+        help="Build firmware and flash the resulting ELF in one result run.",
+    )
+    build_flash_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to an experiment YAML config.",
+    )
+    build_flash_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    build_flash_parser.add_argument(
+        "--build-preset",
+        default="Debug",
+        help="CMake build preset to invoke before flashing.",
+    )
+    build_flash_parser.add_argument(
+        "--configure-preset",
+        default=None,
+        help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    build_flash_parser.set_defaults(func=run_build_flash_command)
 
     return parser
 
