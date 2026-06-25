@@ -148,7 +148,7 @@ Do not move the CubeMX-generated folders yet.
 
 The STM32 tooling is path-sensitive, and the current firmware project builds correctly in this layout.
 
-Future framework folders should be added alongside the CubeMX-generated project:
+Framework folders are being added alongside the CubeMX-generated project:
 
 ```text
 configs/
@@ -157,6 +157,35 @@ tests/
 results/
 tools/
 ```
+
+Current initial framework configuration layout:
+
+```text
+configs/
+  boards/
+    board_a.yaml
+  hosts/
+    gateway.yaml
+  experiments/
+    baseline_direct_uart.yaml
+```
+
+Current initial framework CLI:
+
+```text
+scripts/
+  experiment.py
+```
+
+The first supported CLI command is:
+
+```powershell
+python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
+
+The `status` command must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
 ## 6. Git and Generated-File Rules
 
@@ -319,6 +348,15 @@ build hash calculation
 path handling
 ```
 
+Current unit tests cover:
+
+```text
+tests/unit/test_config_loading.py
+tests/unit/test_config_validation.py
+```
+
+These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, and the status-summary no-hardware/no-network behaviour.
+
 ### Integration Tests
 
 Integration tests live under:
@@ -359,11 +397,73 @@ measure timing
 
 Hardware tests must be opt-in.
 
-## 10. Planned Configuration Model
+## 10. Configuration Model
 
-Use small YAML or JSON files, composed by experiment configs.
+Use small YAML files composed by experiment configs.
 
-Planned structure:
+Current implemented structure:
+
+```text
+configs/
+  boards/
+    board_a.yaml
+  hosts/
+    gateway.yaml
+  experiments/
+    baseline_direct_uart.yaml
+```
+
+The experiment config references board and host configs by ID:
+
+```yaml
+board: board_a
+host: gateway
+```
+
+The CLI resolves these references to:
+
+```text
+configs/boards/board_a.yaml
+configs/hosts/gateway.yaml
+```
+
+Current required experiment fields:
+
+```text
+id
+description
+board
+host
+firmware.mode
+firmware.artifact
+uart.expected_boot_message
+uart.expected_tick_message
+```
+
+Current required board fields:
+
+```text
+id
+name
+mcu
+description
+stlink.serial
+uart.baud
+```
+
+Current required host fields:
+
+```text
+id
+alias
+user
+description
+flash.helper
+uart.device
+uart.baud
+```
+
+Planned future structure:
 
 ```text
 configs/
@@ -435,25 +535,46 @@ Current phase:
 ```text
 STM32 HAL baseline firmware project setup is complete.
 AI build guide and documentation skeleton have been added.
-Next phase: ChatGPT Project instruction prompt and minimal framework skeleton.
+Minimal framework skeleton is being added.
 ```
 
 Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic framework skeleton exists and has tests.
 
-Immediate next intended steps:
+Current framework skeleton target:
 
-1. Add the ChatGPT Project instruction prompt and record it in `docs/008_chatgpt_project_prompt.md`.
-2. Commit documentation if not already committed.
-3. Add `configs/`, `scripts/`, `tests/`, `results/`, and `tools/`.
-4. Add initial config files:
+1. Add `configs/`, `scripts/`, `tests/`, `results/`, and `tools/`.
+2. Add initial config files:
    - `configs/boards/board_a.yaml`
    - `configs/hosts/gateway.yaml`
    - `configs/experiments/baseline_direct_uart.yaml`
-5. Implement `scripts/experiment.py status`.
-6. Add unit tests for config loading.
-7. Add manifest-generation utilities.
-8. Add unit tests for manifest creation.
-9. Update this file after each structural or behavioural framework change.
+3. Implement `scripts/experiment.py status`.
+4. Add unit tests for config loading and validation.
+5. Update framework documentation.
+
+The first CLI command is:
+
+```powershell
+python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Expected behaviour:
+
+- loads the experiment config
+- resolves board and host config files
+- validates required fields
+- prints a summary
+- does not build anything
+- does not flash anything
+- does not require hardware
+
+Immediate next intended steps after this change:
+
+1. Run the unit tests.
+2. Run the `status` command.
+3. Commit the initial experiment framework skeleton.
+4. Add manifest-generation utilities.
+5. Add unit tests for manifest creation.
+6. Update this file after each structural or behavioural framework change.
 
 ## 13. Common Manual Commands
 
@@ -461,6 +582,18 @@ Delete stale CMake build cache:
 
 ```powershell
 Remove-Item -Recurse -Force .\build
+```
+
+Run the initial framework CLI status command:
+
+```powershell
+python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Run framework unit tests:
+
+```powershell
+python -m pytest tests/unit
 ```
 
 Flash current firmware manually:
@@ -543,7 +676,6 @@ For review-only requests, such as checking whether instructions, documentation, 
 9. Assumptions, risks, or unresolved questions.
 
 Do not claim that external ChatGPT Project settings are installed correctly unless the user provides the actual settings text, export, or screenshot.
-
 
 ## 15. Feature Request Workflow
 

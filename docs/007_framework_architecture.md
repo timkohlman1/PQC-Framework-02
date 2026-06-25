@@ -21,30 +21,25 @@ The framework is expected to cover:
 
 ## Current Status
 
-The framework automation has not yet been implemented.
+The repository contains the known-good STM32 HAL baseline firmware project.
 
-The current repository contains the known-good STM32 HAL baseline firmware project.
+The first minimal framework skeleton now exists.
 
-## Design Rule
-
-The framework should run experiment variants.
-
-It should not be hard-coded only for wolfBoot or only for MQTT.
-
-## Future Structure
-
-Planned top-level framework folders:
+Current implemented framework pieces:
 
 ```text
 configs/
+  boards/
+    board_a.yaml
+  hosts/
+    gateway.yaml
+  experiments/
+    baseline_direct_uart.yaml
 scripts/
+  experiment.py
 tests/
+  unit/
+    test_config_loading.py
+    test_config_validation.py
 results/
 tools/
-```
-
-These should be added incrementally as framework features are implemented.
-
-## Notes
-
-This document should be updated as the framework structure becomes concrete.

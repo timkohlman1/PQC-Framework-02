@@ -32,3 +32,6 @@ secrets/
 *.password
 *.env
 !.env.example
+
+# python env
+.venv/
