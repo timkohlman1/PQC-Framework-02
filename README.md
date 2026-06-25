@@ -102,6 +102,25 @@ Example:
 2026-06-25_001_baseline_direct_uart
 ```
 
+## Tests
+
+Run framework unit tests without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware:
+
+```powershell
+python -m pytest tests/unit
+```
+
+The local build integration test is opt-in because it runs the real local STM32/CMake build command. It does not flash hardware, open UART devices, use SSH, or touch network resources.
+
+Run the integration test only on a development PC with the valid STM32/CMake/Ninja toolchain available:
+
+```powershell
+$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
+python -m pytest tests/integration -m integration
+```
+
+Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the integration test is skipped.
+
 ## Development rule
 
 Preserve the current known-good STM32 HAL baseline unless a change explicitly targets it.

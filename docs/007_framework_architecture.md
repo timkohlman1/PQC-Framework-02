@@ -46,8 +46,11 @@ tests/
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
+  integration/
+    test_local_build.py
 results/
 tools/
+pytest.ini
 ```
 
 ## Result Manifest Support
@@ -137,3 +140,28 @@ build log path
 Build metadata is written back into `manifest.json`. A successful local firmware build sets the manifest `result` field to `build_passed`. A failed configure, failed build, or missing expected ELF artifact sets it to `build_failed`.
 
 The unit tests cover command construction and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
+
+
+## Integration Test Support
+
+The framework now has an opt-in local build integration test:
+
+```text
+tests/integration/test_local_build.py
+```
+
+This test invokes the real CLI build command through a subprocess:
+
+```powershell
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --results-dir <temporary-results-dir>
+```
+
+The test is marked with the `integration` pytest marker and is skipped unless this environment variable is set:
+
+```powershell
+$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
+```
+
+The test validates the local build automation against the real STM32/CMake/Ninja toolchain. It checks the command return code, generated result directory, `manifest.json`, `build.log`, expected CMake configure/build commands, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
+
+Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, and hardware by using injected or mocked command runners.

@@ -156,6 +156,7 @@ scripts/
 tests/
 results/
 tools/
+pytest.ini
 ```
 
 Current initial framework configuration layout:
@@ -178,6 +179,20 @@ scripts/
   framework/
     build.py
     manifest.py
+```
+
+Current test layout:
+
+```text
+tests/
+  unit/
+    test_build.py
+    test_config_loading.py
+    test_config_validation.py
+    test_manifest.py
+  integration/
+    test_local_build.py
+pytest.ini
 ```
 
 Supported CLI commands are:
@@ -385,9 +400,26 @@ Integration tests live under:
 tests/integration/
 ```
 
-These may require SSH access to `pqc-gateway1`, but should not necessarily flash hardware unless explicitly marked.
+Integration tests must be separated from unit tests and must be opt-in when they invoke local toolchains or external capabilities.
 
-Examples:
+The current integration test is:
+
+```text
+tests/integration/test_local_build.py
+```
+
+This test invokes the real local CLI build command through subprocess when explicitly enabled with:
+
+```powershell
+$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
+python -m pytest tests/integration -m integration
+```
+
+The local build integration test runs the real CMake/STM32 build process, verifies the command return code, generated result directory, `manifest.json`, `build.log`, CMake configure/build command entries, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
+
+Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the integration test is skipped.
+
+Additional future integration test examples:
 
 ```text
 gateway SSH reachable
@@ -624,6 +656,8 @@ Current framework skeleton completed items:
 10. Add `scripts/framework/build.py`.
 11. Add `scripts/experiment.py build`.
 12. Add build command construction and build-result unit tests.
+13. Add opt-in local build integration test in `tests/integration/test_local_build.py`.
+14. Add `pytest.ini` with the `integration` marker.
 
 Current CLI commands are:
 
@@ -676,11 +710,10 @@ Expected `build` behaviour:
 Immediate next intended steps after this change:
 
 1. Run the unit tests.
-2. Run the `status` command.
-3. Run the `create-run` command.
-4. Run the `build` command.
-5. Inspect the generated `results/<run_id>/manifest.json` and `results/<run_id>/build.log`.
-6. Commit the build automation support if verification passes.
+2. Confirm the integration test skips by default.
+3. Run the opt-in local build integration test on a development PC with the valid STM32/CMake/Ninja toolchain.
+4. Inspect the generated temporary `manifest.json` and `build.log` from the integration test if it fails.
+5. Commit the opt-in integration test support if verification passes.
 
 ## 13. Common Manual Commands
 
@@ -712,6 +745,19 @@ Run framework unit tests:
 
 ```powershell
 python -m pytest tests/unit
+```
+
+Confirm the local build integration test is skipped by default:
+
+```powershell
+python -m pytest tests/integration -m integration
+```
+
+Run the opt-in local build integration test on a development PC with the valid STM32/CMake/Ninja toolchain:
+
+```powershell
+$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
+python -m pytest tests/integration -m integration
 ```
 
 Flash current firmware manually:
