@@ -48,13 +48,19 @@ The goal is to reduce the amount of context that must be uploaded for each AI-as
    - code changes
    - tests to add or update
    - documentation updates
-   - complete replacement content for every file that needs to be modified
-   - highlighted manual edits or diff-style notes for each modified file
+   - complete replacement content for every file that needs to be modified or created
+   - downloadable replacement artifacts using the exact target filenames for every modified or newly created file
+   - a downloadable `.zip` archive containing all replacement files at their repository-relative paths when multiple files are changed or created
+   - highlighted manual edits or diff-style notes for each modified or newly created file
    - verification commands
    - expected pass/fail criteria
    - assumptions, risks, or unresolved questions
 
-   For every file that needs to be modified, the AI agent must provide the full replacement file content so the user can download or copy the file and replace it locally.
+   For every file that needs to be modified or created, the AI agent must provide a downloadable replacement artifact using the exact target filename. This requirement applies to documentation, code, configuration, scripts, tests, and any other text file changed by the request.
+
+   For every file that needs to be modified or created, the AI agent must also provide the full replacement file content so the user can inspect, download, copy, or replace the file locally.
+
+   If more than one file needs to be modified or created, the AI agent must also provide a downloadable `.zip` archive containing all replacement files at their intended repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
 
    The AI agent must also highlight the specific changes separately. Highlighting may be a concise summary or focused diff-style notes.
 
@@ -99,7 +105,11 @@ AI agents must ask for relevant files only and must not request the full reposit
 
 AI agents must include tests and documentation updates where appropriate.
 
-AI agents must provide complete replacement content for every file that needs to be modified, in addition to highlighting the specific manual edits or diff-style changes.
+AI agents must provide downloadable replacement artifacts using the exact target filename for every file that needs to be modified or created.
+
+AI agents must provide complete replacement content for every file that needs to be modified or created, in addition to highlighting the specific manual edits or diff-style changes.
+
+When multiple files need to be modified or created, AI agents must provide a downloadable `.zip` archive containing all replacement files at their repository-relative paths for unzip-and-overwrite use.
 
 AI agents must preserve unrelated file content when preparing full replacement files.
 

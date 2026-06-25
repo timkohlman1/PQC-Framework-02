@@ -102,9 +102,11 @@ Update `AI_BUILD_GUIDE.md` whenever repository structure, CLI behaviour, configu
 
 Use decision records under `docs/decisions/` for meaningful architectural or workflow decisions.
 
-Provide text-only Markdown updates that can be copied into `.md` files.
+Provide text-only Markdown updates that can be copied into `.md` files, and provide downloadable replacement artifacts when files need to be modified or created.
 
-When a file needs to be modified, provide the complete replacement content for that file so the user can download or copy the full file and replace it locally.
+When a file needs to be modified or created, provide a downloadable replacement artifact using the exact target filename. This requirement applies to documentation, code, configuration, scripts, tests, and any other text file changed by the request.
+
+When multiple files need to be modified or created, provide a downloadable `.zip` archive containing all replacement files at their repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
 
 Always provide the complete replacement file content in addition to highlighting the specific changes or manual edits.
 
@@ -127,11 +129,13 @@ For each feature implementation request, provide:
 When providing code changes:
 
 * Clearly identify the target file path.
-* Provide the complete replacement content for every file that needs to be modified.
+* Provide a downloadable replacement artifact using the exact target filename for every file that needs to be modified or created.
+* Provide the complete replacement content for every file that needs to be modified or created.
+* If multiple files need to be modified or created, provide a downloadable `.zip` archive containing all replacement files at their repository-relative paths for unzip-and-overwrite use.
 * Also highlight the specific changes or manual edits separately, such as with a short summary or focused diff-style notes.
 * Preserve unrelated content in each replacement file.
 * Prefer complete replacement snippets for small files.
-* Prefer focused patch-style edits for larger files, but still include full replacement content for every modified file.
+* Prefer focused patch-style edits for larger files, but still include full replacement content and downloadable replacement artifacts for every modified or newly created file.
 * Keep generated code minimal and readable.
 * Use LF line endings for source, config, Markdown, Python, CMake, and STM32 project text files unless the project explicitly requires otherwise.
 

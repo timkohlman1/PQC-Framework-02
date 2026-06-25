@@ -651,13 +651,17 @@ If context is missing, ask for it before giving a patch.
 
 When providing code changes, clearly identify the target file path.
 
-For every file that needs to be modified, provide the complete replacement content for that file so the user can download or copy the full file and replace it locally.
+For every file that needs to be modified or created, provide a downloadable replacement artifact using the exact target filename. This requirement applies to documentation, code, configuration, scripts, tests, and any other text file changed by the request.
+
+For every file that needs to be modified or created, also provide the complete replacement content for that file so the user can inspect, download, copy, or replace the file locally.
+
+If more than one file needs to be modified or created, also provide a downloadable `.zip` archive containing all replacement files at their intended repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
 
 Also highlight the specific changes or manual edits separately, such as with a short summary or focused diff-style notes.
 
 Do not change unrelated content in the replacement file. The full-file replacement must contain only the changes necessary to implement the requested change.
 
-Prefer complete replacement snippets for small files and focused patch-style edits for larger files, but full replacement content is still required for every modified file.
+Prefer complete replacement snippets for small files and focused patch-style edits for larger files, but full replacement content and downloadable replacement artifacts are still required for every modified or newly created file.
 
 End implementation responses with the next verification command.
 
@@ -702,8 +706,10 @@ For each new feature request:
    - code changes
    - tests to add or update
    - documentation updates
-   - complete replacement content for every file that needs to be modified
-   - highlighted manual edits or diff-style notes for each modified file
+   - complete replacement content for every file that needs to be modified or created
+   - downloadable replacement artifacts using the exact target filenames for every modified or newly created file
+   - a downloadable `.zip` archive containing all replacement files at their repository-relative paths when multiple files are changed or created
+   - highlighted manual edits or diff-style notes for each modified or newly created file
    - build or verification commands
    - expected pass/fail criteria
    - assumptions, risks, or unresolved questions
