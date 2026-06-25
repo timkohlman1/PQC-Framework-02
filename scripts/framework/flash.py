@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
 from framework.manifest import read_manifest, update_manifest
+from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 
@@ -155,11 +156,17 @@ def execute_flash(
     repo_root: Path | str,
     result_dir: Path | str,
     runner: Runner = default_runner,
+    git_runner: GitRunner | None = None,
 ) -> FlashResult:
     """Stage and remotely flash the configured artifact, then update the manifest."""
 
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
+    source = (
+        capture_git_provenance(repo_root_path)
+        if git_runner is None
+        else capture_git_provenance(repo_root_path, git_runner)
+    )
     log_path = result_dir_path / "flash.log"
     artifact_relative_path = Path(str(bundle["experiment"]["firmware"]["artifact"]))
     artifact_path = repo_root_path / artifact_relative_path
@@ -219,6 +226,7 @@ def execute_flash(
                 "artifact_exists": artifact_path.is_file(),
                 "sha256": existing_build_sha256 if existing_build_sha256 is not None else firmware_sha256,
             },
+            "source": source,
             "flash": {
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),

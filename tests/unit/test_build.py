@@ -129,11 +129,20 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
             duration_seconds=0.125,
         )
 
+    def fake_git_runner(command: list[str], cwd: Path):
+        assert cwd == repo_root
+        if command == ["git", "rev-parse", "HEAD"]:
+            return build.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
+        if command == ["git", "status", "--short"]:
+            return build.GitCommandExecution(command, 0, "", "", 0.01)
+        raise AssertionError(f"unexpected git command: {command}")
+
     result = build.execute_build(
         bundle=sample_bundle(),
         repo_root=repo_root,
         result_dir=result_dir,
         runner=fake_runner,
+        git_runner=fake_git_runner,
     )
 
     expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
@@ -160,6 +169,11 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["sha256"] == expected_sha256
+    assert manifest["source"] == {
+        "git_commit": "abc123",
+        "git_dirty": False,
+        "git_status_available": True,
+    }
 
 
 def test_execute_build_skips_build_step_when_configure_fails(tmp_path):

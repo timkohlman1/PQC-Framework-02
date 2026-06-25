@@ -61,7 +61,15 @@ def test_execute_flash_captures_both_steps_and_updates_manifest(tmp_path):
         calls.append(command)
         return flash.CommandExecution(command, 0, "stdout text", "stderr text", 0.1)
 
-    result = flash.execute_flash(sample_bundle(), repo_root, result_dir, fake_runner)
+    def fake_git_runner(command, cwd):
+        assert cwd == repo_root
+        if command == ["git", "rev-parse", "HEAD"]:
+            return flash.GitCommandExecution(command, 0, "flash789\n", "", 0.01)
+        if command == ["git", "status", "--short"]:
+            return flash.GitCommandExecution(command, 0, " M build/Debug/stm32_basic_hal1.elf\n", "", 0.01)
+        raise AssertionError(f"unexpected git command: {command}")
+
+    result = flash.execute_flash(sample_bundle(), repo_root, result_dir, fake_runner, fake_git_runner)
     expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
 
     assert result.return_code == 0
@@ -82,6 +90,11 @@ def test_execute_flash_captures_both_steps_and_updates_manifest(tmp_path):
     assert manifest["flash"]["remote_artifact_path"] == "/tmp/stm32_basic_hal1.elf"
     assert manifest["flash"]["stlink_serial"] == "066EFF3932504E3043111818"
     assert manifest["flash"]["firmware_sha256"] == expected_sha256
+    assert manifest["source"] == {
+        "git_commit": "flash789",
+        "git_dirty": True,
+        "git_status_available": True,
+    }
 
 
 def test_execute_flash_skips_ssh_when_scp_fails(tmp_path):

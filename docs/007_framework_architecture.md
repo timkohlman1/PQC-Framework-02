@@ -42,6 +42,7 @@ scripts/
     build.py
     flash.py
     manifest.py
+    source.py
 tests/
   unit/
     test_artifacts.py
@@ -50,6 +51,7 @@ tests/
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
+    test_source.py
   integration/
     test_gateway_flash_helper.py
     test_local_build.py
@@ -146,6 +148,8 @@ Build metadata is written back into `manifest.json`. A successful local firmware
 
 After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in `manifest.json` and as `Output ELF SHA-256` in `build.log`. This gives the built firmware artifact a stable identity even though the artifact path stays the same across builds.
 
+The build command also records source-control provenance in `manifest.json` under `source`. The currently recorded fields are `source.git_commit`, `source.git_dirty`, and `source.git_status_available`. This records which Git commit was present and whether the working tree was dirty when the build command ran. If Git is unavailable or the repository state cannot be read, the command does not fail solely for that reason; it records an explicit unavailable state.
+
 The unit tests cover command construction and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
 
 
@@ -182,7 +186,7 @@ The framework can create a result run and remotely flash the existing configured
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The command calculates the local ELF SHA-256 before SCP, stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, ST-LINK serial, and `flash.firmware_sha256`. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
+The command calculates the local ELF SHA-256 before SCP, records Git source-control provenance at flash time, stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, ST-LINK serial, `source`, and `flash.firmware_sha256`. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
 
 Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` is opt-in through `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`.
 
@@ -197,7 +201,7 @@ python scripts/experiment.py build-flash --experiment configs/experiments/baseli
 
 This command creates a single result directory and runs the normal build helper first. If the build succeeds, it runs the normal remote flash helper using the configured firmware artifact path. The same manifest records the build metadata, flash metadata, and a `build_flash` summary so the build and flash evidence remain tied to the same run ID.
 
-For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. If the file is unchanged between build and flash, these values match.
+For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. If the file is unchanged between build and flash, these values match. The flash helper also refreshes `source` metadata at flash time, so a combined manifest records the Git state that existed when flashing was attempted, not only the state observed during the build step.
 
 If the build fails, the flash step is skipped. This avoids flashing a stale ELF that may already exist in the build folder from a previous experiment. In that case the result directory contains `manifest.json`, `notes.md`, and `build.log`, but no `flash.log`.
 
@@ -211,4 +215,4 @@ results/<run_id>/
   flash.log
 ```
 
-Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values.
+Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.

@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
 from framework.manifest import update_manifest
+from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 
@@ -173,6 +174,7 @@ def execute_build(
     configure_preset: str = "Debug",
     build_preset: str = "Debug",
     runner: Runner = default_runner,
+    git_runner: GitRunner | None = None,
 ) -> BuildResult:
     """Run the local CMake build process and update the result manifest.
 
@@ -182,6 +184,11 @@ def execute_build(
 
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
+    source = (
+        capture_git_provenance(repo_root_path)
+        if git_runner is None
+        else capture_git_provenance(repo_root_path, git_runner)
+    )
     log_path = result_dir_path / "build.log"
     artifact_relative_path = Path(str(bundle["experiment"]["firmware"]["artifact"]))
     elf_path = repo_root_path / artifact_relative_path
@@ -227,6 +234,7 @@ def execute_build(
                 "artifact_exists": artifact_exists,
                 "sha256": firmware_sha256,
             },
+            "source": source,
             "build": {
                 "configure_preset": configure_preset,
                 "build_preset": build_preset,

@@ -88,7 +88,7 @@ results/<run_id>/
   build.log
 ```
 
-The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, the expected output ELF path, and the firmware artifact SHA-256 after a successful build. It records build metadata and artifact provenance in the run manifest.
+The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, the expected output ELF path, the firmware artifact SHA-256 after a successful build, and local Git source-control provenance. It records build metadata, artifact provenance, and source provenance in the run manifest.
 
 Flash the existing configured ELF through the gateway:
 
@@ -96,7 +96,7 @@ Flash the existing configured ELF through the gateway:
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The flash command creates `flash.log`, calculates the local ELF SHA-256 before SCP, copies the ELF to `/tmp` with `scp`, invokes the configured gateway flash helper with `ssh`, and records the return codes, remote artifact path, ST-LINK serial, and flashed artifact SHA-256 in `manifest.json`. It does not capture UART output.
+The flash command creates `flash.log`, calculates the local ELF SHA-256 before SCP, records local Git source-control provenance at flash time, copies the ELF to `/tmp` with `scp`, invokes the configured gateway flash helper with `ssh`, and records the return codes, remote artifact path, ST-LINK serial, source provenance, and flashed artifact SHA-256 in `manifest.json`. It does not capture UART output.
 
 Build and then flash the resulting ELF in one result run:
 
@@ -104,7 +104,7 @@ Build and then flash the resulting ELF in one result run:
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The build-flash command creates one `results/<run_id>/` directory, writes both `build.log` and `flash.log` when the build succeeds, and records combined `build_flash` metadata in the same `manifest.json`. The build step records `firmware.sha256`; the flash step records `flash.firmware_sha256`, so the manifest can show whether the flashed binary matched the built binary. If the build fails, the flash step is skipped so a stale ELF is not flashed.
+The build-flash command creates one `results/<run_id>/` directory, writes both `build.log` and `flash.log` when the build succeeds, and records combined `build_flash` metadata in the same `manifest.json`. The build step records `firmware.sha256`; the flash step records `flash.firmware_sha256`, so the manifest can show whether the flashed binary matched the built binary. The flash step records Git source-control provenance again at flash time, so the manifest reflects the source state when the board was flashed. If the build fails, the flash step is skipped so a stale ELF is not flashed.
 
 Run IDs use the format:
 
@@ -120,7 +120,7 @@ Example:
 
 ## Tests
 
-Run framework unit tests without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware. The SHA-256 provenance tests use temporary files with known content:
+Run framework unit tests without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware. The SHA-256 provenance tests use temporary files with known content, and the Git provenance tests use injected command runners:
 
 ```powershell
 python -m pytest tests/unit

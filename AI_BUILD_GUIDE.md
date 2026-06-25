@@ -181,6 +181,7 @@ scripts/
     build.py
     flash.py
     manifest.py
+    source.py
 ```
 
 Current test layout:
@@ -194,6 +195,7 @@ tests/
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
+    test_source.py
   integration/
     test_gateway_flash_helper.py
     test_local_build.py
@@ -214,13 +216,13 @@ The `status` command loads the experiment config, resolves the referenced board 
 
 The `create-run` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
 
-The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
+The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
 
 The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
 The `build` command may invoke local CMake/STM32 build tooling, but must not flash hardware, open UART devices, use SSH, or touch network resources.
 
-The `flash` command calculates the configured ELF SHA-256 before SCP, then uses SCP and SSH to invoke the configured gateway flash helper. It requires the configured ELF artifact, gateway access, and physical hardware, but it does not capture UART output.
+The `flash` command records local Git source-control provenance at flash time, calculates the configured ELF SHA-256 before SCP, then uses SCP and SSH to invoke the configured gateway flash helper. It requires the configured ELF artifact, gateway access, and physical hardware, but it does not capture UART output.
 
 The `build-flash` command creates one result directory, runs the local firmware build, and only then invokes the remote flash helper if the build succeeds. This avoids flashing a stale ELF from a previous build and records both build and flash evidence under the same run ID. It requires the local build toolchain, gateway access, and physical hardware when the build succeeds, but it does not capture UART output.
 
@@ -399,13 +401,14 @@ tests/unit/test_config_validation.py
 tests/unit/test_manifest.py
 tests/unit/test_build.py
 tests/unit/test_flash.py
+tests/unit/test_source.py
 ```
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
 
-Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes.
+Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
 
-Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, and manifest updates through an injected command runner.
+Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, source provenance, and manifest updates through injected command runners.
 
 ### Integration Tests
 
@@ -598,6 +601,8 @@ results/<run_id>/
   notes.md
 ```
 
+The build manifest also includes `source` metadata for the Git state observed before the local build helper runs.
+
 The implemented `flash` command creates:
 
 ```text
@@ -606,6 +611,8 @@ results/<run_id>/
   flash.log
   notes.md
 ```
+
+The flash manifest also includes `source` metadata for the Git state observed at flash time.
 
 The implemented `build-flash` command creates the following when both stages pass:
 
@@ -633,6 +640,16 @@ Example:
 
 The manifest should become the source of truth for what was run.
 
+Build and flash commands record source-control provenance under:
+
+```text
+source.git_commit
+source.git_dirty
+source.git_status_available
+```
+
+If Git is unavailable, not installed, or not readable in the repository, normal operation does not fail solely for that reason. The manifest records `source.git_status_available` as `false`, `source.git_commit` as `null`, and `source.git_dirty` as `null`.
+
 Initial implemented manifest fields are:
 
 ```text
@@ -654,6 +671,9 @@ firmware.artifact
 firmware.artifact_path
 firmware.artifact_exists
 firmware.sha256
+source.git_commit
+source.git_dirty
+source.git_status_available
 build.configure_preset
 build.build_preset
 build.return_code
@@ -670,6 +690,9 @@ flash.log
 flash.remote_artifact_path
 flash.stlink_serial
 flash.firmware_sha256
+source.git_commit
+source.git_dirty
+source.git_status_available
 flash.scp_return_code
 flash.helper_return_code
 ```
@@ -687,10 +710,11 @@ build_flash.failure_stage
 build_flash.duration_seconds
 ```
 
+In a combined `build-flash` run, the flash step refreshes `source` metadata at flash time, so the final manifest reflects the Git state when flashing was attempted.
+
 Expected future manifest fields include:
 
 ```text
-git_commit
 build_number
 boot_crypto
 transport_crypto
@@ -738,6 +762,7 @@ Current framework skeleton completed items:
 19. Add `scripts/experiment.py build-flash` to build and flash in one result run.
 20. Add unit tests for the combined build-flash flow.
 21. Add artifact SHA-256 provenance for build and flash manifests/logs.
+22. Add Git source-control provenance for build and flash manifests.
 
 Current CLI commands are:
 
@@ -781,9 +806,9 @@ Expected `build` behaviour:
 - creates `results/<run_id>/notes.md`
 - runs `cmake --preset Debug` by default
 - runs `cmake --build --preset Debug` by default if configure succeeds
-- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, and firmware SHA-256 after a successful build
+- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, firmware SHA-256 after a successful build, and Git source-control provenance
 - writes `results/<run_id>/build.log`
-- updates `results/<run_id>/manifest.json` with build metadata and `firmware.sha256`
+- updates `results/<run_id>/manifest.json` with build metadata, `firmware.sha256`, and `source` metadata
 - does not flash anything
 - does not open UART devices
 - does not use SSH
@@ -794,11 +819,12 @@ Expected `flash` behaviour:
 - loads and validates the experiment bundle
 - creates a new result directory
 - verifies the configured ELF exists
+- records Git source-control provenance at flash time
 - calculates the configured ELF SHA-256 before SCP
 - copies it to `/tmp/<artifact-name>` on the configured gateway
 - invokes the configured flash helper over SSH
 - writes `flash.log`
-- records final and per-step return codes, remote artifact path, duration, ST-LINK serial, and `flash.firmware_sha256` in the manifest
+- records final and per-step return codes, remote artifact path, duration, ST-LINK serial, `source`, and `flash.firmware_sha256` in the manifest
 - skips SSH if SCP fails
 - does not capture UART output
 
@@ -812,6 +838,7 @@ Expected `build-flash` behaviour:
 - skips flash entirely if the build fails
 - if the build succeeds, uses the same remote flash workflow used by `flash`
 - records the pre-SCP ELF hash as `flash.firmware_sha256`
+- records Git source-control provenance again at flash time
 - writes `flash.log` in the same result directory when flash is attempted
 - records build metadata, flash metadata, and combined `build_flash` metadata in one manifest
 - returns the build return code when build fails
