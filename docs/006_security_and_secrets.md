@@ -13,7 +13,7 @@ Do not commit:
 - TLS private keys
 - MQTT passwords
 - real `.env` files
-- client key bundles
+- private client certificates or key bundles
 - private firmware signing keys
 - private wolfBoot signing keys
 - production credentials

@@ -55,7 +55,7 @@ Treat the following as secrets:
 * TLS private keys
 * MQTT passwords
 * real `.env` files
-* client key bundles
+* private client certificates or key bundles
 * firmware signing private keys
 * wolfBoot private signing keys
 * production credentials

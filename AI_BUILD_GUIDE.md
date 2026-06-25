@@ -235,7 +235,7 @@ VPN private keys
 TLS private keys
 MQTT passwords
 .env files containing real credentials
-client key bundles
+private client certificates or key bundles
 private signing keys
 private wolfBoot signing keys
 production credentials
