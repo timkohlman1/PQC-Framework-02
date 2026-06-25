@@ -39,14 +39,17 @@ scripts/
   experiment.py
   framework/
     build.py
+    flash.py
     manifest.py
 tests/
   unit/
     test_build.py
+    test_flash.py
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
   integration/
+    test_gateway_flash_helper.py
     test_local_build.py
 results/
 tools/
@@ -165,3 +168,16 @@ $env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
 The test validates the local build automation against the real STM32/CMake/Ninja toolchain. It checks the command return code, generated result directory, `manifest.json`, `build.log`, expected CMake configure/build commands, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
 
 Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, and hardware by using injected or mocked command runners.
+
+
+## Remote Flash Automation Support
+
+The framework can create a result run and remotely flash the existing configured ELF:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The command stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, and ST-LINK serial. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
+
+Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` is opt-in through `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`.

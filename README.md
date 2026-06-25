@@ -90,6 +90,14 @@ results/<run_id>/
 
 The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, and the expected output ELF path, then records build metadata in the run manifest.
 
+Flash the existing configured ELF through the gateway:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The flash command creates `flash.log`, copies the ELF to `/tmp` with `scp`, invokes the configured gateway flash helper with `ssh`, and records the return codes, remote artifact path, and ST-LINK serial in `manifest.json`. It does not capture UART output.
+
 Run IDs use the format:
 
 ```text
@@ -119,7 +127,14 @@ $env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
 python -m pytest tests/integration -m integration
 ```
 
-Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the integration test is skipped.
+Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the local build integration test is skipped.
+
+The real gateway flash integration test is separately opt-in because it uses SSH and physical hardware:
+
+```powershell
+$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
+python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
+```
 
 ## Development rule
 

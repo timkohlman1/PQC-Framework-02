@@ -6,6 +6,7 @@ The initial supported commands are:
     python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
 host configs, validates required fields, and prints a summary.
@@ -35,6 +36,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from framework.build import execute_build
+from framework.flash import execute_flash
 from framework.manifest import create_result_folder
 
 
@@ -356,6 +358,33 @@ def run_build_command(args: argparse.Namespace) -> int:
     return build_result.return_code
 
 
+
+def run_flash_command(args: argparse.Namespace) -> int:
+    """Run the remote flash command."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    flash_result = execute_flash(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+    )
+
+    print("Remote flash completed" if flash_result.return_code == 0 else "Remote flash failed")
+    print("----------------------" if flash_result.return_code == 0 else "-------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Flash log: {flash_result.log_path}")
+    print(f"Local artifact: {flash_result.artifact_path}")
+    print(f"Remote artifact: {flash_result.remote_artifact_path}")
+    print(f"ST-LINK serial: {flash_result.stlink_serial}")
+    print(f"Return code: {flash_result.return_code}")
+    print("No UART access was performed.")
+
+    return flash_result.return_code
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -422,6 +451,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="CMake configure preset to invoke. Defaults to --build-preset.",
     )
     build_parser.set_defaults(func=run_build_command)
+
+    flash_parser = subparsers.add_parser(
+        "flash",
+        help="Copy the configured ELF to the gateway and invoke its flash helper.",
+    )
+    flash_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to an experiment YAML config.",
+    )
+    flash_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    flash_parser.set_defaults(func=run_flash_command)
 
     return parser
 

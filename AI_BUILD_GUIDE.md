@@ -178,6 +178,7 @@ scripts/
   experiment.py
   framework/
     build.py
+    flash.py
     manifest.py
 ```
 
@@ -187,10 +188,12 @@ Current test layout:
 tests/
   unit/
     test_build.py
+    test_flash.py
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
   integration/
+    test_gateway_flash_helper.py
     test_local_build.py
 pytest.ini
 ```
@@ -201,6 +204,7 @@ Supported CLI commands are:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
@@ -212,6 +216,8 @@ The `build` command loads the experiment config, resolves the referenced board a
 The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
 The `build` command may invoke local CMake/STM32 build tooling, but must not flash hardware, open UART devices, use SSH, or touch network resources.
+
+The `flash` command uses SCP and SSH to invoke the configured gateway flash helper. It requires the configured ELF artifact, gateway access, and physical hardware, but it does not capture UART output.
 
 ## 6. Git and Generated-File Rules
 
@@ -386,11 +392,14 @@ tests/unit/test_config_loading.py
 tests/unit/test_config_validation.py
 tests/unit/test_manifest.py
 tests/unit/test_build.py
+tests/unit/test_flash.py
 ```
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
 
 Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners.
+
+Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, and manifest updates through an injected command runner.
 
 ### Integration Tests
 
@@ -402,10 +411,11 @@ tests/integration/
 
 Integration tests must be separated from unit tests and must be opt-in when they invoke local toolchains or external capabilities.
 
-The current integration test is:
+The current integration tests are:
 
 ```text
 tests/integration/test_local_build.py
+tests/integration/test_gateway_flash_helper.py
 ```
 
 This test invokes the real local CLI build command through subprocess when explicitly enabled with:
@@ -417,7 +427,16 @@ python -m pytest tests/integration -m integration
 
 The local build integration test runs the real CMake/STM32 build process, verifies the command return code, generated result directory, `manifest.json`, `build.log`, CMake configure/build command entries, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
 
-Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the integration test is skipped.
+Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the local build integration test is skipped.
+
+The gateway flash integration test invokes the real `flash` CLI command only when explicitly enabled with:
+
+```powershell
+$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
+python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
+```
+
+It requires the built ELF, gateway SSH access, the configured flash helper, ST-LINK, and the target board. Without `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`, it is skipped.
 
 Additional future integration test examples:
 
@@ -573,6 +592,15 @@ results/<run_id>/
   notes.md
 ```
 
+The implemented `flash` command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  flash.log
+  notes.md
+```
+
 Run IDs use this format:
 
 ```text
@@ -658,6 +686,10 @@ Current framework skeleton completed items:
 12. Add build command construction and build-result unit tests.
 13. Add opt-in local build integration test in `tests/integration/test_local_build.py`.
 14. Add `pytest.ini` with the `integration` marker.
+15. Add `scripts/framework/flash.py`.
+16. Add `scripts/experiment.py flash`.
+17. Add remote flash command-construction and result-handling unit tests.
+18. Add the opt-in gateway flash integration test.
 
 Current CLI commands are:
 
@@ -665,6 +697,7 @@ Current CLI commands are:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Expected `status` behaviour:
@@ -707,13 +740,26 @@ Expected `build` behaviour:
 - does not use SSH
 - does not require physical hardware beyond the local build toolchain
 
+Expected `flash` behaviour:
+
+- loads and validates the experiment bundle
+- creates a new result directory
+- verifies the configured ELF exists
+- copies it to `/tmp/<artifact-name>` on the configured gateway
+- invokes the configured flash helper over SSH
+- writes `flash.log`
+- records final and per-step return codes, remote artifact path, duration, and ST-LINK serial in the manifest
+- skips SSH if SCP fails
+- does not capture UART output
+
 Immediate next intended steps after this change:
 
 1. Run the unit tests.
-2. Confirm the integration test skips by default.
-3. Run the opt-in local build integration test on a development PC with the valid STM32/CMake/Ninja toolchain.
-4. Inspect the generated temporary `manifest.json` and `build.log` from the integration test if it fails.
-5. Commit the opt-in integration test support if verification passes.
+2. Confirm both integration tests skip by default.
+3. Run the opt-in local build integration test.
+4. Run the opt-in gateway flash integration test only with the gateway and board available.
+5. Review user-provided logs before claiming hardware success.
+6. Commit after verification passes.
 
 ## 13. Common Manual Commands
 
@@ -758,6 +804,19 @@ Run the opt-in local build integration test on a development PC with the valid S
 ```powershell
 $env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
 python -m pytest tests/integration -m integration
+```
+
+Flash current firmware automatically:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Run the opt-in gateway flash integration test:
+
+```powershell
+$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
+python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
 ```
 
 Flash current firmware manually:
