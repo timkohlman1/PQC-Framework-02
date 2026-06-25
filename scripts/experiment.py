@@ -386,6 +386,7 @@ def _maybe_capture_uart_after_flash(
         repo_root=repo_root,
         result_dir=result_dir,
         duration_seconds=args.uart_duration_seconds,
+        restart_command=_monitor_restart_command(bundle, None),
     )
 
     if uart_result.return_code == 0:
@@ -529,6 +530,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
             repo_root=repo_root,
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
         )
         uart_return_code = uart_result.return_code
         uart_duration_seconds = uart_result.duration_seconds

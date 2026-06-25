@@ -310,7 +310,7 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 
 ### Post-flash UART capture
 
-The flash and build-flash commands can capture UART immediately after a successful flash:
+The flash and build-flash commands can capture UART after a successful flash by starting UART capture and then triggering the configured reset helper after a short delay:
 
 ```powershell
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
@@ -334,7 +334,7 @@ stm32-basic_hal1 boot v0.1.0
 tick
 ```
 
-If either marker is missing, the run result is failed. If flashing fails, post-flash UART capture is skipped and the manifest records the skip.
+If either marker is missing, the run result is failed. If flashing fails, post-flash UART capture is skipped and the manifest records the skip. This uses a second reset after flashing so the UART reader is active before the one-shot boot marker is emitted.
 
 The UART manifest records:
 
@@ -352,6 +352,8 @@ uart.expected_tick_message
 uart.boot_marker_present
 uart.tick_present
 uart.data_captured
+uart.restart_command
+uart.restart_during_capture
 uart.skipped
 ```
 

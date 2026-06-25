@@ -191,6 +191,7 @@ def _write_uart_capture_log(
     boot_marker_present: bool,
     tick_present: bool,
     data_captured: bool,
+    restart_command: str | None,
     return_code: int,
     duration_seconds: float,
 ) -> None:
@@ -202,6 +203,8 @@ def _write_uart_capture_log(
         f"UART device: {device}",
         f"UART baud: {baud}",
         f"Requested capture duration seconds: {requested_duration_seconds}",
+        f"Restart during capture: {str(restart_command is not None).lower()}",
+        f"Restart command: {restart_command if restart_command is not None else 'not requested'}",
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
         "",
@@ -313,13 +316,17 @@ def execute_uart_capture(
     result_dir: Path | str,
     runner: Runner = default_runner,
     duration_seconds: int = DEFAULT_CAPTURE_DURATION_SECONDS,
+    restart_command: str | None = None,
 ) -> UartResult:
     """Capture post-flash UART output through the configured gateway.
 
     A GNU ``timeout`` return code of 124 is accepted as a completed bounded
     capture because the timeout is what stops the otherwise-continuous UART
     stream. The final framework return code is zero only when the capture step
-    returned either 0 or 124 and both configured markers were observed.
+    returned either 0 or 124 and both configured markers were observed. When a
+    restart command is supplied, UART capture starts first and the restart is
+    triggered from the same remote command after a short delay so one-shot boot
+    output can be captured.
     """
 
     repo_root_path = Path(repo_root)
@@ -333,15 +340,23 @@ def execute_uart_capture(
     expected_tick_message = str(bundle["experiment"]["uart"]["expected_tick_message"])
 
     start = perf_counter()
-    capture_execution = runner(
-        construct_ssh_uart_capture_command(
+    if restart_command is None:
+        capture_command = construct_ssh_uart_capture_command(
             gateway_alias,
             device,
             baud,
             duration_seconds,
-        ),
-        repo_root_path,
-    )
+        )
+    else:
+        capture_command = construct_ssh_uart_monitor_with_restart_command(
+            gateway_alias,
+            device,
+            baud,
+            duration_seconds,
+            restart_command,
+        )
+
+    capture_execution = runner(capture_command, repo_root_path)
     duration = perf_counter() - start
 
     data_captured = bool(capture_execution.stdout.strip())
@@ -371,6 +386,7 @@ def execute_uart_capture(
         boot_marker_present=boot_marker_present,
         tick_present=tick_present,
         data_captured=data_captured,
+        restart_command=restart_command,
         return_code=return_code,
         duration_seconds=duration,
     )
@@ -393,6 +409,8 @@ def execute_uart_capture(
                 "boot_marker_present": boot_marker_present,
                 "tick_present": tick_present,
                 "data_captured": data_captured,
+                "restart_command": restart_command,
+                "restart_during_capture": restart_command is not None,
                 "skipped": False,
             },
         },

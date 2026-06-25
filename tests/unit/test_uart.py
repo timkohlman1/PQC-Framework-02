@@ -182,6 +182,44 @@ def test_constructs_monitor_with_delayed_restart_command():
     assert command[2].index("sleep 0.2") < command[2].index("timeout 10s cat")
 
 
+def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+    calls = []
+
+    def fake_runner(command, cwd):
+        calls.append(command)
+        assert cwd == repo_root
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout="stm32-basic_hal1 boot v0.1.0\ntick\n",
+            stderr="reset ok",
+            duration_seconds=10.0,
+        )
+
+    result = uart.execute_uart_capture(
+        sample_bundle(),
+        repo_root,
+        result_dir,
+        runner=fake_runner,
+        duration_seconds=10,
+        restart_command="reset-stm32a",
+    )
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == 0
+    assert len(calls) == 1
+    assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
+    assert "sleep 0.2; reset-stm32a 1>&2" in calls[0][2]
+    assert "timeout 10s cat" in calls[0][2]
+    assert manifest["uart"]["restart_command"] == "reset-stm32a"
+    assert manifest["uart"]["restart_during_capture"] is True
+
+
 def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path):
     uart = load_uart_module()
     repo_root = tmp_path / "repo"

@@ -818,6 +818,8 @@ uart.expected_tick_message
 uart.boot_marker_present
 uart.tick_present
 uart.data_captured
+uart.restart_command
+uart.restart_during_capture
 uart.skipped
 ```
 
@@ -988,6 +990,7 @@ Expected post-flash UART capture behaviour:
 
 - is enabled explicitly with `--capture-uart` on `flash` or `build-flash`
 - runs only after a successful flash step
+- starts UART capture first and then triggers the configured gateway reset helper after a short delay
 - writes `uart.log` inside the existing result run directory
 - uses `--uart-duration-seconds` to control the bounded capture duration
 - records UART device, baud rate, requested duration, command return code, marker detection booleans, data-captured status, and final return code in `manifest.json`

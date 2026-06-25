@@ -134,7 +134,7 @@ Build, flash, and then capture post-flash UART boot output in one result run:
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
 ```
 
-Post-flash UART capture writes `uart.log` inside the run directory and marks the run as passed only when both the expected boot marker and expected `tick` marker are present.
+Post-flash UART capture writes `uart.log` inside the run directory. After a successful flash, it starts UART capture first, triggers the configured `reset.helper` after a short delay, and marks the run as passed only when both the expected boot marker and expected `tick` marker are present.
 
 Run IDs use the format:
 
