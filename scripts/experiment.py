@@ -8,6 +8,7 @@ The initial supported commands are:
     python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
 host configs, validates required fields, and prints a summary.
@@ -25,7 +26,9 @@ firmware locally but does not flash hardware, open UART devices, use SSH, or
 touch network resources. The flash command requires either an explicit
 --build-run provenance record or an explicit escape hatch. The build-flash
 command builds firmware and, only if the build succeeds, flashes that artifact
-through the configured gateway in the same result run folder.
+through the configured gateway in the same result run folder. The monitor
+command performs ad hoc bounded UART monitoring and writes timestamped logs
+under results/adhoc/.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from framework.build import execute_build
 from framework.flash import execute_flash
 from framework.manifest import create_result_folder, update_manifest
+from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 
 
 class ConfigError(Exception):
@@ -363,6 +367,45 @@ def run_build_command(args: argparse.Namespace) -> int:
 
 
 
+
+def _maybe_capture_uart_after_flash(
+    *,
+    args: argparse.Namespace,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+    stage_result_name: str,
+) -> int:
+    """Capture UART after a successful flash when requested by the CLI."""
+
+    if not getattr(args, "capture_uart", False):
+        return 0
+
+    uart_result = execute_uart_capture(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        duration_seconds=args.uart_duration_seconds,
+    )
+
+    if uart_result.return_code == 0:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "result": f"{stage_result_name}_uart_passed",
+            },
+        )
+    else:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "result": f"{stage_result_name}_uart_failed",
+            },
+        )
+
+    return uart_result.return_code
+
+
 def run_flash_command(args: argparse.Namespace) -> int:
     """Run the remote flash command."""
 
@@ -377,19 +420,50 @@ def run_flash_command(args: argparse.Namespace) -> int:
         allow_untracked_artifact=args.allow_untracked_artifact,
     )
 
-    print("Remote flash completed" if flash_result.return_code == 0 else "Remote flash failed")
-    print("----------------------" if flash_result.return_code == 0 else "-------------------")
+    final_return_code = flash_result.return_code
+    uart_return_code: int | None = None
+    if flash_result.return_code == 0 and args.capture_uart:
+        uart_return_code = _maybe_capture_uart_after_flash(
+            args=args,
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            stage_result_name="flash",
+        )
+        final_return_code = uart_return_code
+    elif flash_result.return_code != 0 and args.capture_uart:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "flash_failed",
+                },
+            },
+        )
+
+    print("Remote flash completed" if final_return_code == 0 else "Remote flash failed")
+    print("----------------------" if final_return_code == 0 else "-------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
     print(f"Flash log: {flash_result.log_path}")
     print(f"Local artifact: {flash_result.artifact_path}")
     print(f"Remote artifact: {flash_result.remote_artifact_path}")
     print(f"ST-LINK serial: {flash_result.stlink_serial}")
-    print(f"Return code: {flash_result.return_code}")
+    print(f"Flash return code: {flash_result.return_code}")
     print(f"Provenance status: {flash_result.provenance_status}")
-    print("No UART access was performed.")
+    if args.capture_uart:
+        if uart_return_code is None:
+            print("UART capture skipped because flash failed.")
+        else:
+            print(f"UART log: {result_dir / 'uart.log'}")
+            print(f"UART return code: {uart_return_code}")
+    else:
+        print("No UART access was performed.")
+    print(f"Return code: {final_return_code}")
 
-    return flash_result.return_code
+    return final_return_code
 
 
 def run_build_flash_command(args: argparse.Namespace) -> int:
@@ -417,9 +491,12 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
                     "return_code": build_result.return_code,
                     "build_return_code": build_result.return_code,
                     "flash_return_code": None,
+                    "uart_return_code": None,
                     "build_log": "build.log",
                     "flash_log": None,
+                    "uart_log": None,
                     "flash_skipped": True,
+                    "uart_skipped": True,
                     "failure_stage": "build",
                     "duration_seconds": round(build_result.duration_seconds, 3),
                 },
@@ -444,7 +521,39 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         source_build_run_id=manifest["run_id"],
     )
 
-    final_return_code = flash_result.return_code
+    uart_return_code: int | None = None
+    uart_duration_seconds = 0.0
+    if flash_result.return_code == 0 and args.capture_uart:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+        )
+        uart_return_code = uart_result.return_code
+        uart_duration_seconds = uart_result.duration_seconds
+    elif flash_result.return_code != 0 and args.capture_uart:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "flash_failed",
+                },
+            },
+        )
+
+    if flash_result.return_code != 0:
+        final_return_code = flash_result.return_code
+        failure_stage = "flash"
+    elif uart_return_code is not None and uart_return_code != 0:
+        final_return_code = uart_return_code
+        failure_stage = "uart"
+    else:
+        final_return_code = 0
+        failure_stage = "none"
+
     update_manifest(
         result_dir / "manifest.json",
         {
@@ -453,31 +562,90 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
                 "return_code": final_return_code,
                 "build_return_code": build_result.return_code,
                 "flash_return_code": flash_result.return_code,
+                "uart_return_code": uart_return_code,
                 "build_log": "build.log",
                 "flash_log": "flash.log",
+                "uart_log": "uart.log" if uart_return_code is not None else None,
                 "flash_skipped": False,
-                "failure_stage": "none" if final_return_code == 0 else "flash",
+                "uart_skipped": not args.capture_uart or flash_result.return_code != 0,
+                "failure_stage": failure_stage,
                 "duration_seconds": round(
-                    build_result.duration_seconds + flash_result.duration_seconds, 3
+                    build_result.duration_seconds
+                    + flash_result.duration_seconds
+                    + uart_duration_seconds,
+                    3,
                 ),
             },
         },
     )
 
-    print("Build-flash completed" if final_return_code == 0 else "Build-flash failed during flash")
+    print("Build-flash completed" if final_return_code == 0 else f"Build-flash failed during {failure_stage}")
     print("---------------------" if final_return_code == 0 else "-------------------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
     print(f"Build log: {build_result.log_path}")
     print(f"Flash log: {flash_result.log_path}")
+    if args.capture_uart and uart_return_code is not None:
+        print(f"UART log: {result_dir / 'uart.log'}")
+        print(f"UART return code: {uart_return_code}")
+    elif args.capture_uart:
+        print("UART capture skipped because flash failed.")
+    else:
+        print("No UART access was performed.")
     print(f"ELF path: {build_result.elf_path}")
     print(f"Remote artifact: {flash_result.remote_artifact_path}")
     print(f"ST-LINK serial: {flash_result.stlink_serial}")
+    print(f"Flash return code: {flash_result.return_code}")
     print(f"Return code: {final_return_code}")
     print(f"Provenance status: {flash_result.provenance_status}")
-    print("No UART access was performed.")
 
     return final_return_code
+
+
+def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | None) -> str:
+    """Resolve the gateway restart command for ad hoc UART monitoring."""
+
+    if override:
+        return override
+
+    reset_config = bundle["host"].get("reset", {})
+    if isinstance(reset_config, dict):
+        helper = reset_config.get("helper")
+        if helper:
+            return str(helper)
+
+    return DEFAULT_RESTART_COMMAND
+
+
+def run_monitor_command(args: argparse.Namespace) -> int:
+    """Run ad hoc bounded UART monitoring."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    restart_command = _monitor_restart_command(bundle, args.restart_command)
+
+    monitor_result = execute_uart_monitor(
+        bundle=bundle,
+        repo_root=repo_root,
+        results_root=args.results_dir,
+        duration_seconds=args.duration_seconds,
+        restart=args.restart,
+        restart_command=restart_command,
+    )
+
+    print("UART monitor passed" if monitor_result.return_code == 0 else "UART monitor failed")
+    print("-------------------" if monitor_result.return_code == 0 else "-------------------")
+    print(f"Ad hoc log: {monitor_result.log_path}")
+    print(f"UART device: {monitor_result.device}")
+    print(f"UART baud: {monitor_result.baud}")
+    print(f"Monitor duration seconds: {monitor_result.requested_duration_seconds}")
+    print(f"Restart requested: {monitor_result.restart_requested}")
+    print(f"Data captured: {monitor_result.data_captured}")
+    print(f"Capture return code: {monitor_result.capture.return_code}")
+    print(f"Return code: {monitor_result.return_code}")
+    print("No result manifest, build, or flash action was performed.")
+
+    return monitor_result.return_code
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -573,6 +741,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicit escape hatch: allow flashing without a matching build record.",
     )
+    flash_parser.add_argument(
+        "--capture-uart",
+        action="store_true",
+        help="After successful flash, capture UART into this run directory and evaluate expected markers.",
+    )
+    flash_parser.add_argument(
+        "--uart-duration-seconds",
+        default=DEFAULT_CAPTURE_DURATION_SECONDS,
+        type=int,
+        help="Bounded post-flash UART capture duration in seconds.",
+    )
     flash_parser.set_defaults(func=run_flash_command)
 
     build_flash_parser = subparsers.add_parser(
@@ -601,7 +780,52 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="CMake configure preset to invoke. Defaults to --build-preset.",
     )
+    build_flash_parser.add_argument(
+        "--capture-uart",
+        action="store_true",
+        help="After successful flash, capture UART into this run directory and evaluate expected markers.",
+    )
+    build_flash_parser.add_argument(
+        "--uart-duration-seconds",
+        default=DEFAULT_CAPTURE_DURATION_SECONDS,
+        type=int,
+        help="Bounded post-flash UART capture duration in seconds.",
+    )
     build_flash_parser.set_defaults(func=run_build_flash_command)
+
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="Ad hoc bounded UART monitoring through the configured gateway.",
+    )
+    monitor_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to an experiment YAML config.",
+    )
+    monitor_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where the adhoc UART log folder is created.",
+    )
+    monitor_parser.add_argument(
+        "--duration-seconds",
+        default=DEFAULT_CAPTURE_DURATION_SECONDS,
+        type=int,
+        help="Bounded UART monitor duration in seconds.",
+    )
+    monitor_parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Run the configured gateway restart helper during monitoring after UART capture starts.",
+    )
+    monitor_parser.add_argument(
+        "--restart-command",
+        default=None,
+        help="Override gateway command used by --restart. Defaults to host reset.helper when configured.",
+    )
+    monitor_parser.set_defaults(func=run_monitor_command)
 
     return parser
 

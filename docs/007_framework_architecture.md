@@ -44,12 +44,14 @@ scripts/
     flash.py
     manifest.py
     source.py
+    uart.py
 tests/
   unit/
     test_artifacts.py
     test_build.py
     test_fingerprint.py
     test_flash.py
+    test_uart.py
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
@@ -57,6 +59,8 @@ tests/
   integration/
     test_gateway_flash_helper.py
     test_local_build.py
+  hardware/
+    test_baseline_uart.py
 results/
 tools/
 pytest.ini
@@ -255,3 +259,124 @@ results/<run_id>/
 ```
 
 Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Fingerprint unit tests use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.
+
+## UART Monitor and Post-Flash Capture Support
+
+The framework separates UART handling into two workflows.
+
+### Ad hoc UART monitor
+
+The ad hoc monitor is intended for interactive diagnostics:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+```
+
+The command captures from the configured host UART device and baud rate:
+
+```text
+/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
+115200
+```
+
+It writes timestamped logs under:
+
+```text
+results/adhoc/
+  uart_monitor_YYYYMMDD_HHMMSS.log
+```
+
+The monitor command does not create a run manifest. Its pass/fail result is based on connectivity and data capture rather than boot-marker validation. A bounded capture that returns through GNU `timeout` with return code 124 is accepted as a completed monitor window. The command passes when the monitor command completes normally or by timeout and captured stdout is non-empty. It fails when SSH/UART command execution fails or when no UART data is captured.
+
+The monitor command can optionally trigger a gateway reset helper during capture:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
+```
+
+When `--restart` is used, the framework opens the UART capture command first and then runs the configured reset helper after a short delay. This ordering is intended to catch startup-only UART messages such as the boot banner.
+
+The configured gateway reset helper is:
+
+```text
+reset-stm32a
+```
+
+It can be overridden for a gateway-specific setup:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart --restart-command "reset-stm32a"
+```
+
+### Post-flash UART capture
+
+The flash and build-flash commands can capture UART immediately after a successful flash:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
+```
+
+```powershell
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+```
+
+Post-flash UART capture writes:
+
+```text
+results/<run_id>/
+  uart.log
+```
+
+Post-flash UART capture is experiment evidence. It passes only when captured stdout contains both configured baseline markers:
+
+```text
+stm32-basic_hal1 boot v0.1.0
+tick
+```
+
+If either marker is missing, the run result is failed. If flashing fails, post-flash UART capture is skipped and the manifest records the skip.
+
+The UART manifest records:
+
+```text
+uart.return_code
+uart.capture_return_code
+uart.duration_seconds
+uart.capture_duration_seconds
+uart.log
+uart.device
+uart.baud
+uart.requested_duration_seconds
+uart.expected_boot_message
+uart.expected_tick_message
+uart.boot_marker_present
+uart.tick_present
+uart.data_captured
+uart.skipped
+```
+
+For `build-flash --capture-uart`, the combined manifest summary also records:
+
+```text
+build_flash.uart_return_code
+build_flash.uart_log
+build_flash.uart_skipped
+```
+
+Unit tests cover UART command construction, ad hoc monitor pass/fail behavior, optional restart command execution, post-flash marker detection, command-failure handling, log writing, manifest updates, and CLI wiring through injected runners. Normal unit tests do not invoke SSH, UART devices, gateways, or hardware.
+
+The real baseline UART hardware test is:
+
+```text
+tests/hardware/test_baseline_uart.py
+```
+
+It is marked with the `hardware` pytest marker and is skipped unless explicitly enabled:
+
+```powershell
+$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
+
+The hardware test uses the ad hoc monitor workflow and verifies that non-empty UART data can be captured from the configured ST-LINK VCP path.
+

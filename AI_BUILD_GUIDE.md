@@ -88,6 +88,12 @@ Remote flash helper on gateway:
 flash-stm32a
 ```
 
+Remote reset helper on gateway:
+
+```text
+reset-stm32a
+```
+
 Manual flash command:
 
 ```powershell
@@ -183,6 +189,7 @@ scripts/
     flash.py
     manifest.py
     source.py
+    uart.py
 ```
 
 Current test layout:
@@ -194,6 +201,7 @@ tests/
     test_build.py
     test_fingerprint.py
     test_flash.py
+    test_uart.py
     test_config_loading.py
     test_config_validation.py
     test_manifest.py
@@ -201,6 +209,8 @@ tests/
   integration/
     test_gateway_flash_helper.py
     test_local_build.py
+  hardware/
+    test_baseline_uart.py
 pytest.ini
 ```
 
@@ -212,6 +222,9 @@ python scripts/experiment.py create-run --experiment configs/experiments/baselin
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
@@ -227,6 +240,10 @@ The `build` command may invoke local CMake/STM32 build tooling, but must not fla
 The `flash` command records local Git source-control provenance at flash time, calculates the configured ELF SHA-256 before SCP, calculates the current expected build fingerprint, and refuses to use SCP or SSH unless the artifact matches an explicit build-run manifest or the explicit untracked-artifact escape hatch is used. It requires the configured ELF artifact, gateway access, and physical hardware when provenance verification passes, but it does not capture UART output.
 
 The `build-flash` command creates one result directory, runs the local firmware build, and only then invokes the remote flash helper if the build succeeds. This avoids flashing a stale ELF from a previous build and records both build and flash evidence under the same run ID. It requires the local build toolchain, gateway access, and physical hardware when the build succeeds, but it does not capture UART output.
+
+The `monitor` command is an ad hoc diagnostic command. It captures bounded UART output through the configured gateway ST-LINK VCP path, writes a timestamped log under `results/adhoc/`, and passes when it connects and captures non-empty UART output. It requires gateway access and physical hardware, but it does not create a result manifest, build firmware, or flash firmware.
+
+The `flash --capture-uart` and `build-flash --capture-uart` workflows capture UART immediately after a successful flash, write `uart.log` inside the run directory, and evaluate the configured boot and tick markers as experiment evidence.
 
 ## 6. Git and Generated-File Rules
 
@@ -406,6 +423,7 @@ tests/unit/test_build.py
 tests/unit/test_fingerprint.py
 tests/unit/test_flash.py
 tests/unit/test_source.py
+tests/unit/test_uart.py
 ```
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
@@ -413,6 +431,8 @@ These tests validate the initial config loader, config resolution, required-fiel
 Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Build fingerprint unit tests must use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
 
 Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, source provenance, and manifest updates through injected command runners.
+
+UART unit tests must not invoke SSH, UART devices, the gateway, or hardware directly. They test remote command construction, bounded-capture handling, pass/fail marker detection, logs, manifest updates, and CLI result-folder creation through injected command runners.
 
 ### Integration Tests
 
@@ -469,6 +489,12 @@ Hardware tests live under:
 tests/hardware/
 ```
 
+The current hardware test is:
+
+```text
+tests/hardware/test_baseline_uart.py
+```
+
 These may:
 
 ```text
@@ -479,7 +505,12 @@ apply network impairment
 measure timing
 ```
 
-Hardware tests must be opt-in.
+Hardware tests must be opt-in. The baseline UART monitor hardware test is enabled only with:
+
+```powershell
+$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
 
 ## 10. Configuration Model
 
@@ -545,6 +576,12 @@ description
 flash.helper
 uart.device
 uart.baud
+```
+
+Current optional host reset field used by `monitor --restart` when present:
+
+```text
+reset.helper
 ```
 
 Planned future structure:
@@ -629,6 +666,15 @@ results/<run_id>/
 ```
 
 If the build stage fails, `build-flash` skips the flash stage and creates no `flash.log`.
+
+The implemented `monitor` command creates ad hoc logs only:
+
+```text
+results/adhoc/
+  uart_monitor_YYYYMMDD_HHMMSS.log
+```
+
+The implemented `flash --capture-uart` and `build-flash --capture-uart` workflows create `uart.log` inside the relevant run directory after a successful flash.
 
 Run IDs use this format:
 
@@ -756,6 +802,33 @@ build_flash.failure_stage
 build_flash.duration_seconds
 ```
 
+Post-flash UART capture adds UART manifest fields after capture completes:
+
+```text
+uart.return_code
+uart.capture_return_code
+uart.duration_seconds
+uart.capture_duration_seconds
+uart.log
+uart.device
+uart.baud
+uart.requested_duration_seconds
+uart.expected_boot_message
+uart.expected_tick_message
+uart.boot_marker_present
+uart.tick_present
+uart.data_captured
+uart.skipped
+```
+
+The `build-flash --capture-uart` command also records combined-stage UART summary fields:
+
+```text
+build_flash.uart_return_code
+build_flash.uart_log
+build_flash.uart_skipped
+```
+
 In a combined `build-flash` run, the flash step refreshes `source` metadata at flash time, so the final manifest reflects the Git state when flashing was attempted.
 
 Expected future manifest fields include:
@@ -811,6 +884,11 @@ Current framework skeleton completed items:
 22. Add Git source-control provenance for build and flash manifests.
 23. Add deterministic build input fingerprinting for build and build-flash manifests.
 24. Link flash runs to verified build records by requiring `flash --build-run <run_id>` or the explicit `--allow-untracked-artifact` escape hatch.
+25. Add `scripts/experiment.py monitor` for ad hoc bounded UART monitoring through the configured gateway.
+26. Add pass/fail detection for ad hoc monitor connectivity and non-empty UART data capture.
+27. Add optional post-flash UART capture to `flash --capture-uart` and `build-flash --capture-uart`.
+28. Add post-flash pass/fail detection for the expected baseline boot marker and `tick` marker.
+29. Add the opt-in baseline UART hardware test.
 
 Current CLI commands are:
 
@@ -821,6 +899,9 @@ python scripts/experiment.py build --experiment configs/experiments/baseline_dir
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Expected `status` behaviour:
@@ -883,7 +964,37 @@ Expected `flash` behaviour:
 - writes `flash.log`
 - records final and per-step return codes, remote artifact path, duration, ST-LINK serial, `source`, and `flash.firmware_sha256` in the manifest
 - skips SSH if SCP fails
-- does not capture UART output
+- captures UART output only when `--capture-uart` is explicitly supplied
+
+
+Expected `monitor` behaviour:
+
+- loads and validates the experiment bundle
+- creates `results/adhoc/` if needed
+- captures UART output through the configured gateway using SSH
+- uses the configured ST-LINK VCP path `/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02`
+- captures for a bounded duration of 10 seconds by default
+- writes a timestamped ad hoc log such as `results/adhoc/uart_monitor_YYYYMMDD_HHMMSS.log`
+- optionally triggers a gateway reset helper during the capture window when `--restart` is supplied
+- opens UART capture before reset so startup-only messages can be observed
+- uses configured `host.reset.helper` as the default restart command when available, currently `reset-stm32a`, overridable with `--restart-command`
+- passes when the capture command completes normally or through GNU `timeout` return code 124 and captured stdout is non-empty
+- fails when the optional restart command fails, the SSH/UART command fails, or no UART data is captured
+- does not create a run manifest
+- does not build firmware
+- does not flash firmware
+
+Expected post-flash UART capture behaviour:
+
+- is enabled explicitly with `--capture-uart` on `flash` or `build-flash`
+- runs only after a successful flash step
+- writes `uart.log` inside the existing result run directory
+- uses `--uart-duration-seconds` to control the bounded capture duration
+- records UART device, baud rate, requested duration, command return code, marker detection booleans, data-captured status, and final return code in `manifest.json`
+- sets the relevant run result to passed only when the expected boot marker and expected `tick` marker are both present
+- sets the relevant run result to failed when the command fails or either marker is missing
+- treats GNU `timeout` return code 124 as a completed bounded capture when evaluating UART marker pass/fail status
+- records UART as skipped if the flash step fails
 
 Expected `build-flash` behaviour:
 
@@ -902,7 +1013,7 @@ Expected `build-flash` behaviour:
 - records build metadata, flash metadata, and combined `build_flash` metadata in one manifest
 - returns the build return code when build fails
 - returns the flash return code when build succeeds and flash is attempted
-- does not capture UART output
+- captures UART output only when `--capture-uart` is explicitly supplied
 
 Immediate next intended steps after this change:
 
@@ -910,8 +1021,9 @@ Immediate next intended steps after this change:
 2. Confirm both integration tests skip by default.
 3. Run the opt-in local build integration test.
 4. Run the opt-in gateway flash integration test only with the gateway and board available.
-5. Review user-provided logs before claiming hardware success.
-6. Commit after verification passes.
+5. Run the opt-in baseline UART hardware test only with the gateway and board available.
+6. Review user-provided logs before claiming hardware success.
+7. Commit after verification passes.
 
 ## 13. Common Manual Commands
 
@@ -981,6 +1093,31 @@ Run the opt-in gateway flash integration test:
 ```powershell
 $env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
+```
+
+Ad hoc UART monitor through the framework:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+```
+
+Ad hoc UART monitor with the configured gateway reset helper during capture:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
+```
+
+Build, flash, and capture post-flash UART in one run:
+
+```powershell
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+```
+
+Run the opt-in baseline UART hardware test:
+
+```powershell
+$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware
 ```
 
 Flash current firmware manually:

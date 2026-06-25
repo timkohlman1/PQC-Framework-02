@@ -14,50 +14,6 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 5 — Automate Remote Flash
 
-- [ ] Add flash command:
-
-  ```powershell
-  python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Initially wrap the known-good manual workflow:
-
-  ```powershell
-  scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
-  ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
-  ```
-
-- [ ] Capture:
-  - [ ] scp log
-  - [ ] flash log
-  - [ ] return code
-  - [ ] flashed artifact path
-  - [ ] ST-LINK serial
-
-- [ ] Save flash log:
-
-  ```text
-  results/<run_id>/flash.log
-  ```
-
-- [ ] Add unit tests for generated `scp` and `ssh` commands.
-
-- [ ] Add opt-in integration test:
-
-  ```text
-  tests/integration/test_gateway_flash_helper.py
-  ```
-
-- [ ] Confirm normal unit tests do not require hardware.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
-
 ## Phase 6 — Automate UART Capture
 
 - [ ] Add UART capture command:

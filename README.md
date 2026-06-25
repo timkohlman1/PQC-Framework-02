@@ -114,6 +114,28 @@ python scripts/experiment.py build-flash --experiment configs/experiments/baseli
 
 The build-flash command creates one `results/<run_id>/` directory, writes both `build.log` and `flash.log` when the build succeeds, and records combined `build_flash` metadata in the same `manifest.json`. The build step records `firmware.sha256`; the flash step records `flash.firmware_sha256`, so the manifest can show whether the flashed binary matched the built binary. The flash step records Git source-control provenance again at flash time, so the manifest reflects the source state when the board was flashed. If the build fails, the flash step is skipped so a stale ELF is not flashed.
 
+Ad hoc UART monitoring through the gateway:
+
+```powershell
+python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+```
+
+The monitor command writes a timestamped log under `results/adhoc/` and passes when it connects and captures non-empty UART output. It does not create a run manifest and does not require the one-shot boot marker to be present. Add `--restart` to start UART monitoring and then trigger the configured gateway reset helper during the capture window. The configured reset helper is `reset-stm32a` and can be overridden with `--restart-command`.
+
+Flash an existing verified artifact and then capture post-flash UART boot output in the same result run:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
+```
+
+Build, flash, and then capture post-flash UART boot output in one result run:
+
+```powershell
+python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+```
+
+Post-flash UART capture writes `uart.log` inside the run directory and marks the run as passed only when both the expected boot marker and expected `tick` marker are present.
+
 Run IDs use the format:
 
 ```text
@@ -151,6 +173,15 @@ The real gateway flash integration test is separately opt-in because it uses SSH
 $env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
 ```
+
+The real baseline UART monitor hardware test is also opt-in because it uses SSH, the gateway UART device, and physical hardware:
+
+```powershell
+$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
+
+Without `PQC_RUN_BASELINE_UART_HARDWARE=1`, the UART hardware test is skipped.
 
 ## Development rule
 

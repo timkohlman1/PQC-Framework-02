@@ -357,6 +357,8 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
             results_dir=tmp_path / "results",
             configure_preset=None,
             build_preset="Debug",
+            capture_uart=False,
+            uart_duration_seconds=10,
         )
     )
 
@@ -466,6 +468,8 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
             results_dir=tmp_path / "results",
             configure_preset=None,
             build_preset="Debug",
+            capture_uart=False,
+            uart_duration_seconds=10,
         )
     )
 
@@ -580,6 +584,8 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
             results_dir=tmp_path / "results",
             configure_preset=None,
             build_preset="Debug",
+            capture_uart=False,
+            uart_duration_seconds=10,
         )
     )
 
@@ -684,6 +690,8 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
             results_dir=tmp_path / "results",
             configure_preset=None,
             build_preset="Debug",
+            capture_uart=False,
+            uart_duration_seconds=10,
         )
     )
 
@@ -699,3 +707,129 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
     assert manifest["build_flash"]["flash_return_code"] is None
     assert manifest["build_flash"]["flash_skipped"] is True
     assert manifest["build_flash"]["failure_stage"] == "build"
+
+def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, monkeypatch, capsys):
+    experiment_cli = load_experiment_module()
+    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
+    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
+    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    experiment_path.parent.mkdir(parents=True)
+    board_path.parent.mkdir(parents=True)
+    host_path.parent.mkdir(parents=True)
+
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "id: baseline_direct_uart",
+                "description: Test experiment.",
+                "board: board_a",
+                "host: gateway",
+                "firmware:",
+                "  mode: direct_flash",
+                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "uart:",
+                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
+                "  expected_tick_message: tick",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    board_path.write_text(
+        "\n".join(
+            [
+                "id: board_a",
+                "name: NUCLEO-L4R5ZI-P",
+                "mcu: STM32L4R5",
+                "description: Test board.",
+                "stlink:",
+                '  serial: "123"',
+                "uart:",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    host_path.write_text(
+        "\n".join(
+            [
+                "id: gateway",
+                "alias: pqc-gateway1",
+                "user: timk",
+                "description: Test gateway.",
+                "flash:",
+                "  helper: flash-stm32a",
+                "uart:",
+                "  device: /dev/example",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    seen_result_dirs = []
+
+    class FakeBuildResult:
+        return_code = 0
+        duration_seconds = 0.25
+        elf_path = tmp_path / "build" / "Debug" / "stm32_basic_hal1.elf"
+        log_path = tmp_path / "results" / "run" / "build.log"
+
+    class FakeFlashResult:
+        return_code = 0
+        duration_seconds = 0.5
+        artifact_path = tmp_path / "build" / "Debug" / "stm32_basic_hal1.elf"
+        remote_artifact_path = "/tmp/stm32_basic_hal1.elf"
+        stlink_serial = "123"
+        log_path = tmp_path / "results" / "run" / "flash.log"
+        provenance_status = "verified_build_match"
+
+    class FakeUartResult:
+        return_code = 0
+        duration_seconds = 1.25
+        log_path = tmp_path / "results" / "run" / "uart.log"
+
+    def fake_execute_build(**kwargs):
+        seen_result_dirs.append(kwargs["result_dir"])
+        return FakeBuildResult()
+
+    def fake_execute_flash(**kwargs):
+        seen_result_dirs.append(kwargs["result_dir"])
+        return FakeFlashResult()
+
+    def fake_execute_uart_capture(**kwargs):
+        assert kwargs["repo_root"] == tmp_path
+        assert kwargs["duration_seconds"] == 12
+        seen_result_dirs.append(kwargs["result_dir"])
+        return FakeUartResult()
+
+    monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
+    monkeypatch.setattr(experiment_cli, "execute_uart_capture", fake_execute_uart_capture)
+
+    exit_code = experiment_cli.run_build_flash_command(
+        Namespace(
+            experiment=experiment_path,
+            results_dir=tmp_path / "results",
+            configure_preset=None,
+            build_preset="Debug",
+            capture_uart=True,
+            uart_duration_seconds=12,
+        )
+    )
+
+    output = capsys.readouterr().out
+    result_dir = seen_result_dirs[0]
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert len(seen_result_dirs) == 3
+    assert seen_result_dirs[0] == seen_result_dirs[1] == seen_result_dirs[2]
+    assert "UART log:" in output
+    assert manifest["result"] == "build_flash_passed"
+    assert manifest["build_flash"]["uart_return_code"] == 0
+    assert manifest["build_flash"]["uart_log"] == "uart.log"
+    assert manifest["build_flash"]["uart_skipped"] is False
+    assert manifest["build_flash"]["failure_stage"] == "none"
