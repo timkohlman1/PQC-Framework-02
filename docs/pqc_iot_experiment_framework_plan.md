@@ -41,13 +41,13 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 1 — Establish Documentation and AI Workflow
 
-- [ ] Add root-level AI build guide:
+- [X] Add root-level AI build guide:
 
   ```text
   AI_BUILD_GUIDE.md
   ```
 
-- [ ] Add documentation skeleton:
+- [X] Add documentation skeleton:
 
   ```text
   docs/
