@@ -48,9 +48,17 @@ The goal is to reduce the amount of context that must be uploaded for each AI-as
    - code changes
    - tests to add or update
    - documentation updates
+   - complete replacement content for every file that needs to be modified
+   - highlighted manual edits or diff-style notes for each modified file
    - verification commands
    - expected pass/fail criteria
    - assumptions, risks, or unresolved questions
+
+   For every file that needs to be modified, the AI agent must provide the full replacement file content so the user can download or copy the file and replace it locally.
+
+   The AI agent must also highlight the specific changes separately. Highlighting may be a concise summary or focused diff-style notes.
+
+   Full-file replacement content must preserve unrelated content and must contain only the changes necessary to implement the requested change.
 
 7. The user applies the change locally.
 
@@ -90,6 +98,10 @@ AI agents must not implement future phases early.
 AI agents must ask for relevant files only and must not request the full repository by default.
 
 AI agents must include tests and documentation updates where appropriate.
+
+AI agents must provide complete replacement content for every file that needs to be modified, in addition to highlighting the specific manual edits or diff-style changes.
+
+AI agents must preserve unrelated file content when preparing full replacement files.
 
 AI agents must provide exact verification commands.
 

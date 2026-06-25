@@ -43,49 +43,28 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 - [X] Add root-level AI build guide:
 
-  ```text
-  AI_BUILD_GUIDE.md
-  ```
 
 - [X] Add documentation skeleton:
 
-  ```text
-  docs/
-    000_project_overview.md
-    001_ai_feature_request_workflow.md
-    002_host_gateway_setup.md
-    003_stm32_board_setup.md
-    004_baseline_hal_app.md
-    005_remote_flash_workflow.md
-    006_security_and_secrets.md
-    007_framework_architecture.md
-    decisions/
-  ```
 
-- [ ] Add ChatGPT Project instructions separately in the ChatGPT Project settings.
+- [X] Add ChatGPT Project instructions separately in the ChatGPT Project settings.
 
-- [ ] Ensure the ChatGPT Project workflow is documented:
-  - [ ] User opens a new feature-request chat.
-  - [ ] AI asks for the latest `AI_BUILD_GUIDE.md`.
-  - [ ] AI asks for relevant files only.
-  - [ ] AI proposes code changes, tests, documentation updates, and verification steps.
-  - [ ] User applies changes.
-  - [ ] User returns logs.
-  - [ ] AI updates the next step.
+- [X] Ensure the ChatGPT Project workflow is documented:
 
-- [ ] Document the secret-handling policy.
 
-- [ ] Confirm docs state that these must not be committed:
-  - [ ] SSH private keys
-  - [ ] VPN private keys
-  - [ ] TLS private keys
-  - [ ] MQTT passwords
-  - [ ] real `.env` files
-  - [ ] private client certificates or key bundles
+- [X] Document the secret-handling policy.
 
-- [ ] Add SSH setup documentation explaining how each dev PC generates its own key and adds the public key to `pqc-gateway1`.
+- [X] Confirm docs state that these must not be committed:
+  - [X] SSH private keys
+  - [X] VPN private keys
+  - [X] TLS private keys
+  - [X] MQTT passwords
+  - [X] real `.env` files
+  - [X] private client certificates or key bundles
 
-- [ ] Commit documentation baseline:
+- [X] Add SSH setup documentation explaining how each dev PC generates its own key and adds the public key to `pqc-gateway1`.
+
+- [X] Commit documentation baseline:
 
   ```powershell
   git add AI_BUILD_GUIDE.md docs

@@ -104,6 +104,12 @@ Use decision records under `docs/decisions/` for meaningful architectural or wor
 
 Provide text-only Markdown updates that can be copied into `.md` files.
 
+When a file needs to be modified, provide the complete replacement content for that file so the user can download or copy the full file and replace it locally.
+
+Always provide the complete replacement file content in addition to highlighting the specific changes or manual edits.
+
+Do not change unrelated content in the replacement file. The full-file replacement must contain only the changes necessary to implement the requested change.
+
 ## Expected Response Format for Implementation Requests
 
 For each feature implementation request, provide:
@@ -121,8 +127,11 @@ For each feature implementation request, provide:
 When providing code changes:
 
 * Clearly identify the target file path.
+* Provide the complete replacement content for every file that needs to be modified.
+* Also highlight the specific changes or manual edits separately, such as with a short summary or focused diff-style notes.
+* Preserve unrelated content in each replacement file.
 * Prefer complete replacement snippets for small files.
-* Prefer focused patch-style edits for larger files.
+* Prefer focused patch-style edits for larger files, but still include full replacement content for every modified file.
 * Keep generated code minimal and readable.
 * Use LF line endings for source, config, Markdown, Python, CMake, and STM32 project text files unless the project explicitly requires otherwise.
 

@@ -518,7 +518,13 @@ If context is missing, ask for it before giving a patch.
 
 When providing code changes, clearly identify the target file path.
 
-Prefer complete replacement snippets for small files and focused patch-style edits for larger files.
+For every file that needs to be modified, provide the complete replacement content for that file so the user can download or copy the full file and replace it locally.
+
+Also highlight the specific changes or manual edits separately, such as with a short summary or focused diff-style notes.
+
+Do not change unrelated content in the replacement file. The full-file replacement must contain only the changes necessary to implement the requested change.
+
+Prefer complete replacement snippets for small files and focused patch-style edits for larger files, but full replacement content is still required for every modified file.
 
 End implementation responses with the next verification command.
 
@@ -564,6 +570,8 @@ For each new feature request:
    - code changes
    - tests to add or update
    - documentation updates
+   - complete replacement content for every file that needs to be modified
+   - highlighted manual edits or diff-style notes for each modified file
    - build or verification commands
    - expected pass/fail criteria
    - assumptions, risks, or unresolved questions
