@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This document records how the development PC connects to the experiment gateway.
+This document records how each development PC connects to the experiment gateway.
+
+The gateway is used for remote flashing, UART log capture, and later experiment services.
 
 ## Current Gateway
 
@@ -24,11 +26,131 @@ The gateway is used for:
 
 ## SSH Access
 
-Each development PC should generate its own SSH keypair.
+Each development PC must generate its own SSH keypair for gateway access.
 
-The private key must remain local and must not be committed to Git.
+Do not share SSH private keys between development PCs.
+
+The private key must remain on the development PC where it was generated and must not be committed to Git.
 
 Only the public key should be copied to the experiment gateway.
+
+Use the local SSH alias:
+
+```text
+pqc-gateway1
+```
+
+rather than hard-coding private key paths into framework code or documentation examples.
+
+### Generate a key on each development PC
+
+On Windows PowerShell, Git Bash, Linux, or macOS:
+
+```bash
+ssh-keygen -t ed25519 -C "pqc-framework-dev-pc"
+```
+
+When prompted, save the key under the local user SSH directory.
+
+Recommended default paths are:
+
+```text
+Windows: C:\Users\<user>\.ssh\id_ed25519
+Linux/macOS: ~/.ssh/id_ed25519
+```
+
+Use a passphrase where practical.
+
+Do not place SSH keys inside this repository.
+
+### Install the public key on `pqc-gateway1`
+
+Copy only the public key to the gateway account.
+
+From Linux, macOS, or Git Bash:
+
+```bash
+ssh-copy-id timk@pqc-gateway1
+```
+
+If `ssh-copy-id` is not available, append the public key manually:
+
+```bash
+cat ~/.ssh/id_ed25519.pub | ssh timk@pqc-gateway1 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+```
+
+On Windows PowerShell:
+
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh timk@pqc-gateway1 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+### Configure the local SSH alias
+
+Each development PC should configure the alias locally in its SSH config file.
+
+Example local SSH config entry:
+
+```sshconfig
+Host pqc-gateway1
+    HostName 10.1.1.18
+    User timk
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+```
+
+On Windows, the config file is usually:
+
+```text
+C:\Users\<user>\.ssh\config
+```
+
+On Linux and macOS, the config file is usually:
+
+```text
+~/.ssh/config
+```
+
+This file is local developer-machine configuration and should not be committed to the repository if it contains machine-specific paths, hostnames, usernames, VPN hostnames, or other local access details.
+
+### Verify SSH access
+
+From the development PC:
+
+```bash
+ssh pqc-gateway1 "hostname && whoami"
+```
+
+Expected result:
+
+```text
+pqc-gateway1
+timk
+```
+
+If the command prompts for the SSH key passphrase, that is normal.
+
+If the command prompts for the gateway account password, the public key may not be installed correctly, the SSH alias may not be configured, or the wrong private key may be selected.
+
+### Security checks
+
+Before committing, check that no private keys or local SSH configuration files have been added to Git:
+
+```bash
+git status --short
+```
+
+Private key files such as these must not appear in staged or unstaged Git changes:
+
+```text
+id_ed25519
+id_rsa
+*.pem
+*.key
+.ssh/config
+```
+
+Public keys such as `*.pub` are not secret, but developer-specific public keys should normally still remain outside the repository unless there is a deliberate documented reason to include them.
 
 ## Remote Flashing
 
@@ -36,6 +158,30 @@ The gateway has STM32CubeProgrammer CLI installed and provides the helper comman
 
 ```text
 flash-stm32a
+```
+
+Manual remote flashing uses the local SSH alias:
+
+```powershell
+scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
+ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
+```
+
+## UART Capture
+
+Manual UART capture is run on the gateway.
+
+```bash
+picocom -b 115200 /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
+```
+
+Expected baseline UART output:
+
+```text
+stm32-basic_hal1 boot v0.1.0
+tick
+tick
+tick
 ```
 
 ## VPN Access
