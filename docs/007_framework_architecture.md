@@ -37,9 +37,59 @@ configs/
     baseline_direct_uart.yaml
 scripts/
   experiment.py
+  framework/
+    manifest.py
 tests/
   unit/
     test_config_loading.py
     test_config_validation.py
+    test_manifest.py
 results/
 tools/
+```
+
+## Result Manifest Support
+
+The framework can create a local result folder for an experiment without building firmware, flashing hardware, opening UART devices, using SSH, or touching network resources.
+
+Command:
+
+```powershell
+python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+```
+
+Run IDs use this format:
+
+```text
+YYYY-MM-DD_NNN_experiment_id
+```
+
+Example:
+
+```text
+2026-06-25_001_baseline_direct_uart
+```
+
+The initial manifest contains:
+
+```text
+run_id
+timestamp
+experiment
+board
+gateway
+boot_mode
+transport_mode
+network_profile
+result
+```
+
+The initial baseline values are derived from the resolved experiment, board, and host configs. Until dedicated transport and network config files are implemented, `transport_mode` defaults to `direct_uart` and `network_profile` defaults to `none`.

@@ -50,6 +50,41 @@ Important documentation:
 - `docs/008_chatgpt_project_prompt.md`
 - `docs/decisions/`
 
+
+## Framework CLI
+
+Check the current baseline experiment configuration without using hardware:
+
+```powershell
+python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Create a local result manifest folder without building, flashing, opening UART, using SSH, or touching network resources:
+
+```powershell
+python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The manifest command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+```
+
+Run IDs use the format:
+
+```text
+YYYY-MM-DD_NNN_experiment_id
+```
+
+Example:
+
+```text
+2026-06-25_001_baseline_direct_uart
+```
+
 ## Development rule
 
 Preserve the current known-good STM32 HAL baseline unless a change explicitly targets it.

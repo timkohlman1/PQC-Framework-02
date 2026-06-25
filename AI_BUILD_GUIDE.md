@@ -170,22 +170,27 @@ configs/
     baseline_direct_uart.yaml
 ```
 
-Current initial framework CLI:
+Current initial framework CLI and utilities:
 
 ```text
 scripts/
   experiment.py
+  framework/
+    manifest.py
 ```
 
-The first supported CLI command is:
+Supported CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
 
-The `status` command must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
+The `manifest` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
+
+Neither command must build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
 ## 6. Git and Generated-File Rules
 
@@ -211,6 +216,11 @@ compile_commands.json
 *.list
 *.su
 mx.scratch/
+results/*
+!results/.gitkeep
+__pycache__/
+*.py[cod]
+.pytest_cache/
 ```
 
 Recommended line-ending policy:
@@ -353,9 +363,10 @@ Current unit tests cover:
 ```text
 tests/unit/test_config_loading.py
 tests/unit/test_config_validation.py
+tests/unit/test_manifest.py
 ```
 
-These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, and the status-summary no-hardware/no-network behaviour.
+These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, and result-folder creation.
 
 ### Integration Tests
 
@@ -504,24 +515,50 @@ results/<run_id>/
   notes.md
 ```
 
+The initial implemented manifest command creates:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+```
+
+Run IDs use this format:
+
+```text
+YYYY-MM-DD_NNN_experiment_id
+```
+
+Example:
+
+```text
+2026-06-25_001_baseline_direct_uart
+```
+
 The manifest should become the source of truth for what was run.
 
-Expected manifest fields include:
+Initial implemented manifest fields are:
 
 ```text
 run_id
 timestamp
-git_commit
+experiment
 board
 gateway
-firmware
-build_number
 boot_mode
-boot_crypto
 transport_mode
-transport_crypto
 network_profile
 result
+```
+
+Expected future manifest fields include:
+
+```text
+git_commit
+firmware
+build_number
+boot_crypto
+transport_crypto
 logs
 artifacts
 ```
@@ -540,7 +577,7 @@ Minimal framework skeleton is being added.
 
 Do not implement wolfBoot, MQTT, TLS, PQC, or network impairment until the basic framework skeleton exists and has tests.
 
-Current framework skeleton target:
+Current framework skeleton completed items:
 
 1. Add `configs/`, `scripts/`, `tests/`, `results/`, and `tools/`.
 2. Add initial config files:
@@ -550,14 +587,19 @@ Current framework skeleton target:
 3. Implement `scripts/experiment.py status`.
 4. Add unit tests for config loading and validation.
 5. Update framework documentation.
+6. Add `scripts/framework/manifest.py`.
+7. Add run ID generation.
+8. Add result-folder creation under `results/<run_id>/`.
+9. Add initial manifest fields and unit tests.
 
-The first CLI command is:
+Current CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Expected behaviour:
+Expected `status` behaviour:
 
 - loads the experiment config
 - resolves board and host config files
@@ -567,14 +609,25 @@ Expected behaviour:
 - does not flash anything
 - does not require hardware
 
+Expected `manifest` behaviour:
+
+- loads the experiment config
+- resolves board and host config files
+- validates required fields
+- generates a run ID
+- creates `results/<run_id>/manifest.json`
+- creates `results/<run_id>/notes.md`
+- does not build anything
+- does not flash anything
+- does not require hardware
+
 Immediate next intended steps after this change:
 
 1. Run the unit tests.
 2. Run the `status` command.
-3. Commit the initial experiment framework skeleton.
-4. Add manifest-generation utilities.
-5. Add unit tests for manifest creation.
-6. Update this file after each structural or behavioural framework change.
+3. Run the `manifest` command.
+4. Inspect the generated `results/<run_id>/manifest.json`.
+5. Commit the result manifest support if verification passes.
 
 ## 13. Common Manual Commands
 
@@ -588,6 +641,12 @@ Run the initial framework CLI status command:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Create an initial result manifest folder:
+
+```powershell
+python scripts/experiment.py manifest --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Run framework unit tests:
