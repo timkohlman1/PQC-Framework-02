@@ -90,13 +90,21 @@ results/<run_id>/
 
 The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, the expected output ELF path, the firmware artifact SHA-256 after a successful build, and local Git source-control provenance. It records build metadata, artifact provenance, and source provenance in the run manifest.
 
-Flash the existing configured ELF through the gateway:
+Flash an existing configured ELF through the gateway only when it matches a recorded build run:
 
 ```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 ```
 
-The flash command creates `flash.log`, calculates the local ELF SHA-256 before SCP, records local Git source-control provenance at flash time, copies the ELF to `/tmp` with `scp`, invokes the configured gateway flash helper with `ssh`, and records the return codes, remote artifact path, ST-LINK serial, source provenance, and flashed artifact SHA-256 in `manifest.json`. It does not capture UART output.
+The flash command creates `flash.log`, calculates the local ELF SHA-256 before SCP, records local Git source-control provenance at flash time, calculates the current expected build fingerprint, reads the requested build-run manifest, and refuses to run SCP/SSH unless the flash-time ELF SHA-256 and current build fingerprint match the recorded build. It records `flash.source_build_run_id`, `flash.source_build_fingerprint`, `flash.source_build_firmware_sha256`, `flash.firmware_sha256`, and `flash.provenance_status` in `manifest.json`.
+
+An explicit escape hatch is available for manual recovery or investigation:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
+```
+
+When this escape hatch is used, the manifest records `flash.provenance_status` as `untracked_artifact_allowed`. It should not be used for normal experiment runs. The flash command does not capture UART output.
 
 Build and then flash the resulting ELF in one result run:
 

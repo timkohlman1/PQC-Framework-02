@@ -210,7 +210,7 @@ Supported CLI commands are:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
@@ -224,7 +224,7 @@ The `status` and `create-run` commands must not build firmware, flash hardware, 
 
 The `build` command may invoke local CMake/STM32 build tooling, but must not flash hardware, open UART devices, use SSH, or touch network resources.
 
-The `flash` command records local Git source-control provenance at flash time, calculates the configured ELF SHA-256 before SCP, then uses SCP and SSH to invoke the configured gateway flash helper. It requires the configured ELF artifact, gateway access, and physical hardware, but it does not capture UART output.
+The `flash` command records local Git source-control provenance at flash time, calculates the configured ELF SHA-256 before SCP, calculates the current expected build fingerprint, and refuses to use SCP or SSH unless the artifact matches an explicit build-run manifest or the explicit untracked-artifact escape hatch is used. It requires the configured ELF artifact, gateway access, and physical hardware when provenance verification passes, but it does not capture UART output.
 
 The `build-flash` command creates one result directory, runs the local firmware build, and only then invokes the remote flash helper if the build succeeds. This avoids flashing a stale ELF from a previous build and records both build and flash evidence under the same run ID. It requires the local build toolchain, gateway access, and physical hardware when the build succeeds, but it does not capture UART output.
 
@@ -616,7 +616,7 @@ results/<run_id>/
   notes.md
 ```
 
-The flash manifest also includes `source` metadata for the Git state observed at flash time.
+The flash manifest also includes `source` metadata for the Git state observed at flash time and flash provenance metadata linking the flashed artifact to a verified build record.
 
 The implemented `build-flash` command creates the following when both stages pass:
 
@@ -722,6 +722,25 @@ source.git_dirty
 source.git_status_available
 flash.scp_return_code
 flash.helper_return_code
+flash.source_build_run_id
+flash.source_build_fingerprint
+flash.source_build_firmware_sha256
+flash.source_build_artifact_path
+flash.current_build_fingerprint
+flash.current_build_fingerprint_algorithm
+flash.current_build_fingerprint_error
+flash.provenance_status
+flash.provenance_message
+flash.untracked_artifact_allowed
+```
+
+Supported flash provenance statuses are:
+
+```text
+verified_build_match
+untracked_artifact_allowed
+mismatch_refused
+missing_build_record
 ```
 
 The `build-flash` command adds combined-stage manifest fields after the combined command completes:
@@ -791,6 +810,7 @@ Current framework skeleton completed items:
 21. Add artifact SHA-256 provenance for build and flash manifests/logs.
 22. Add Git source-control provenance for build and flash manifests.
 23. Add deterministic build input fingerprinting for build and build-flash manifests.
+24. Link flash runs to verified build records by requiring `flash --build-run <run_id>` or the explicit `--allow-untracked-artifact` escape hatch.
 
 Current CLI commands are:
 
@@ -798,7 +818,8 @@ Current CLI commands are:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
@@ -849,8 +870,16 @@ Expected `flash` behaviour:
 - verifies the configured ELF exists
 - records Git source-control provenance at flash time
 - calculates the configured ELF SHA-256 before SCP
-- copies it to `/tmp/<artifact-name>` on the configured gateway
-- invokes the configured flash helper over SSH
+- calculates the current expected build fingerprint
+- requires `--build-run <run_id>` unless `--allow-untracked-artifact` is explicitly used
+- reads `results/<build-run>/manifest.json` when `--build-run` is provided
+- compares the flash-time ELF SHA-256 against `firmware.sha256` from the build-run manifest
+- compares the current expected build fingerprint against `build.fingerprint` from the build-run manifest
+- records `flash.source_build_run_id`, `flash.source_build_fingerprint`, `flash.source_build_firmware_sha256`, `flash.firmware_sha256`, and `flash.provenance_status` in the manifest
+- refuses to run SCP or SSH if no matching build record exists
+- records `flash.provenance_status` as `untracked_artifact_allowed` when the explicit escape hatch is used
+- copies the ELF to `/tmp/<artifact-name>` on the configured gateway only after provenance is verified or explicitly bypassed
+- invokes the configured flash helper over SSH only after SCP succeeds
 - writes `flash.log`
 - records final and per-step return codes, remote artifact path, duration, ST-LINK serial, `source`, and `flash.firmware_sha256` in the manifest
 - skips SSH if SCP fails
@@ -865,8 +894,9 @@ Expected `build-flash` behaviour:
 - records the build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`
 - records the built ELF hash as `firmware.sha256`
 - skips flash entirely if the build fails
-- if the build succeeds, uses the same remote flash workflow used by `flash`
+- if the build succeeds, uses the same remote flash workflow used by `flash` with the current run ID as the source build record
 - records the pre-SCP ELF hash as `flash.firmware_sha256`
+- records `flash.provenance_status` as `verified_build_match` for a normal successful build-to-flash provenance check
 - records Git source-control provenance again at flash time
 - writes `flash.log` in the same result directory when flash is attempted
 - records build metadata, flash metadata, and combined `build_flash` metadata in one manifest
@@ -928,10 +958,16 @@ $env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
 python -m pytest tests/integration -m integration
 ```
 
-Flash current firmware automatically:
+Flash current firmware with an explicit verified build record:
 
 ```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
+```
+
+Flash current firmware with the explicit untracked-artifact escape hatch:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 ```
 
 Build and flash current firmware in one result run:

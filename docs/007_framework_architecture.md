@@ -186,13 +186,46 @@ Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, 
 
 ## Remote Flash Automation Support
 
-The framework can create a result run and remotely flash the existing configured ELF:
+The framework can create a result run and remotely flash the existing configured ELF only when the artifact matches a recorded build run:
 
 ```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 ```
 
-The command calculates the local ELF SHA-256 before SCP, records Git source-control provenance at flash time, stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, ST-LINK serial, `source`, and `flash.firmware_sha256`. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
+The command calculates the local ELF SHA-256 before SCP, records Git source-control provenance at flash time, calculates the current expected build fingerprint, reads the requested build-run manifest, and compares both the flash-time ELF SHA-256 and current build fingerprint against the recorded build metadata. If the build record is missing, incomplete, or mismatched, the command writes `flash.log`, updates `manifest.json`, records a provenance failure status, and refuses to run SCP or SSH.
+
+The flash manifest records:
+
+```text
+flash.source_build_run_id
+flash.source_build_fingerprint
+flash.source_build_firmware_sha256
+flash.source_build_artifact_path
+flash.current_build_fingerprint
+flash.current_build_fingerprint_algorithm
+flash.current_build_fingerprint_error
+flash.firmware_sha256
+flash.provenance_status
+flash.provenance_message
+flash.untracked_artifact_allowed
+```
+
+The supported provenance statuses are:
+
+```text
+verified_build_match
+untracked_artifact_allowed
+mismatch_refused
+missing_build_record
+```
+
+An explicit escape hatch exists for manual recovery or investigation:
+
+```powershell
+python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
+```
+
+When the escape hatch is used, the command records `flash.provenance_status` as `untracked_artifact_allowed`. This is intentionally visible in the manifest and should not be used for normal experiment runs. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing or provenance verification is refused.
 
 Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` is opt-in through `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`.
 
@@ -205,9 +238,9 @@ The framework can build firmware and then remotely flash the resulting artifact 
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-This command creates a single result directory and runs the normal build helper first. If the build succeeds, it runs the normal remote flash helper using the configured firmware artifact path. The same manifest records the build metadata, flash metadata, and a `build_flash` summary so the build and flash evidence remain tied to the same run ID.
+This command creates a single result directory and runs the normal build helper first. If the build succeeds, it runs the normal remote flash helper using the same run ID as the source build record. The same manifest records the build metadata, flash metadata, provenance comparison, and a `build_flash` summary so the build and flash evidence remain tied to the same run ID.
 
-For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. If the file is unchanged between build and flash, these values match. The flash helper also refreshes `source` metadata at flash time, so a combined manifest records the Git state that existed when flashing was attempted, not only the state observed during the build step.
+For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. `flash.source_build_run_id`, `flash.source_build_fingerprint`, and `flash.source_build_firmware_sha256` identify the build record used for the flash decision. For a normal successful `build-flash` run, `flash.provenance_status` is `verified_build_match`. The flash helper also refreshes `source` metadata at flash time, so a combined manifest records the Git state that existed when flashing was attempted, not only the state observed during the build step.
 
 If the build fails, the flash step is skipped. This avoids flashing a stale ELF that may already exist in the build folder from a previous experiment. In that case the result directory contains `manifest.json`, `notes.md`, and `build.log`, but no `flash.log`.
 

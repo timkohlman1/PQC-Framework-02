@@ -22,9 +22,10 @@ ELF path, and writes results/<run_id>/build.log.
 The status and create-run commands do not build firmware, flash hardware, open
 UART devices, use SSH, or touch network resources. The build command builds
 firmware locally but does not flash hardware, open UART devices, use SSH, or
-touch network resources. The build-flash command builds firmware and, only if
-the build succeeds, flashes that artifact through the configured gateway in the
-same result run folder.
+touch network resources. The flash command requires either an explicit
+--build-run provenance record or an explicit escape hatch. The build-flash
+command builds firmware and, only if the build succeeds, flashes that artifact
+through the configured gateway in the same result run folder.
 """
 
 from __future__ import annotations
@@ -372,6 +373,8 @@ def run_flash_command(args: argparse.Namespace) -> int:
         bundle=bundle,
         repo_root=repo_root,
         result_dir=result_dir,
+        source_build_run_id=args.build_run,
+        allow_untracked_artifact=args.allow_untracked_artifact,
     )
 
     print("Remote flash completed" if flash_result.return_code == 0 else "Remote flash failed")
@@ -383,6 +386,7 @@ def run_flash_command(args: argparse.Namespace) -> int:
     print(f"Remote artifact: {flash_result.remote_artifact_path}")
     print(f"ST-LINK serial: {flash_result.stlink_serial}")
     print(f"Return code: {flash_result.return_code}")
+    print(f"Provenance status: {flash_result.provenance_status}")
     print("No UART access was performed.")
 
     return flash_result.return_code
@@ -437,6 +441,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         bundle=bundle,
         repo_root=repo_root,
         result_dir=result_dir,
+        source_build_run_id=manifest["run_id"],
     )
 
     final_return_code = flash_result.return_code
@@ -469,6 +474,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
     print(f"Remote artifact: {flash_result.remote_artifact_path}")
     print(f"ST-LINK serial: {flash_result.stlink_serial}")
     print(f"Return code: {final_return_code}")
+    print(f"Provenance status: {flash_result.provenance_status}")
     print("No UART access was performed.")
 
     return final_return_code
@@ -556,6 +562,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path("results"),
         type=Path,
         help="Directory where result run folders are created.",
+    )
+    flash_parser.add_argument(
+        "--build-run",
+        default=None,
+        help="Existing build run ID whose manifest must match the ELF being flashed.",
+    )
+    flash_parser.add_argument(
+        "--allow-untracked-artifact",
+        action="store_true",
+        help="Explicit escape hatch: allow flashing without a matching build record.",
     )
     flash_parser.set_defaults(func=run_flash_command)
 

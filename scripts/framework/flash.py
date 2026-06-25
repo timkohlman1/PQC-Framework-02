@@ -1,6 +1,6 @@
 """Remote firmware flash helpers for experiment runs.
 
-This module copies the configured ELF artifact to the experiment gateway with
+This module copies a verified ELF artifact to the experiment gateway with
 ``scp``, invokes the configured gateway flash helper with ``ssh``, and records
 all command output under ``results/<run_id>/flash.log``.
 """
@@ -16,10 +16,23 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
+from framework.fingerprint import (
+    FingerprintInputError,
+    calculate_default_build_fingerprint,
+)
 from framework.manifest import read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
+PROVENANCE_REFUSED_RETURN_CODE = 5
+BUILD_RECORD_MISSING_RETURN_CODE = 6
+BUILD_RECORD_INVALID_RETURN_CODE = 7
+FINGERPRINT_INPUT_ERROR_RETURN_CODE = 8
+
+PROVENANCE_VERIFIED_BUILD_MATCH = "verified_build_match"
+PROVENANCE_UNTRACKED_ARTIFACT_ALLOWED = "untracked_artifact_allowed"
+PROVENANCE_MISMATCH_REFUSED = "mismatch_refused"
+PROVENANCE_MISSING_BUILD_RECORD = "missing_build_record"
 
 
 @dataclass(frozen=True)
@@ -31,6 +44,22 @@ class CommandExecution:
     stdout: str
     stderr: str
     duration_seconds: float
+
+
+@dataclass(frozen=True)
+class FlashProvenance:
+    """Flash-time comparison against a recorded build manifest."""
+
+    status: str
+    return_code: int
+    source_build_run_id: str | None
+    source_build_fingerprint: str | None
+    source_build_firmware_sha256: str | None
+    source_build_artifact_path: str | None
+    current_build_fingerprint: str | None
+    current_build_fingerprint_algorithm: str | None
+    current_build_fingerprint_error: str | None
+    message: str
 
 
 @dataclass(frozen=True)
@@ -46,6 +75,7 @@ class FlashResult:
     scp: CommandExecution | None
     flash: CommandExecution | None
     firmware_sha256: str | None
+    provenance_status: str
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -114,6 +144,225 @@ def _format_execution(execution: CommandExecution, cwd: Path) -> str:
     )
 
 
+def _read_required_manifest_string(
+    manifest: dict[str, Any],
+    dotted_path: str,
+) -> tuple[str | None, str | None]:
+    current: Any = manifest
+
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None, f"Build manifest missing required field: {dotted_path}"
+        current = current[part]
+
+    if not isinstance(current, str) or current == "":
+        return None, f"Build manifest has empty or invalid required field: {dotted_path}"
+
+    return current, None
+
+
+def _calculate_current_build_fingerprint(
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+) -> tuple[str | None, str | None, str | None]:
+    try:
+        fingerprint = calculate_default_build_fingerprint(bundle, repo_root)
+    except FingerprintInputError as exc:
+        return None, None, str(exc)
+
+    return fingerprint.fingerprint, fingerprint.algorithm, None
+
+
+def _build_record_manifest_path(
+    results_root: Path,
+    build_run_id: str,
+) -> Path:
+    return results_root / build_run_id / "manifest.json"
+
+
+def _check_flash_provenance(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+    artifact_path: Path,
+    firmware_sha256: str,
+    source_build_run_id: str | None,
+    allow_untracked_artifact: bool,
+) -> FlashProvenance:
+    current_fingerprint, current_algorithm, fingerprint_error = _calculate_current_build_fingerprint(
+        bundle,
+        repo_root,
+    )
+
+    if allow_untracked_artifact:
+        return FlashProvenance(
+            status=PROVENANCE_UNTRACKED_ARTIFACT_ALLOWED,
+            return_code=0,
+            source_build_run_id=None,
+            source_build_fingerprint=None,
+            source_build_firmware_sha256=None,
+            source_build_artifact_path=None,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=fingerprint_error,
+            message="Explicit escape hatch used: flashing an artifact without a verified build record.",
+        )
+
+    if source_build_run_id is None:
+        return FlashProvenance(
+            status=PROVENANCE_MISSING_BUILD_RECORD,
+            return_code=BUILD_RECORD_MISSING_RETURN_CODE,
+            source_build_run_id=None,
+            source_build_fingerprint=None,
+            source_build_firmware_sha256=None,
+            source_build_artifact_path=None,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=fingerprint_error,
+            message="No --build-run was provided and untracked artifact flashing was not allowed.",
+        )
+
+    if fingerprint_error is not None:
+        return FlashProvenance(
+            status=PROVENANCE_MISMATCH_REFUSED,
+            return_code=FINGERPRINT_INPUT_ERROR_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=None,
+            source_build_firmware_sha256=None,
+            source_build_artifact_path=None,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=fingerprint_error,
+            message=f"Current build fingerprint could not be calculated: {fingerprint_error}",
+        )
+
+    build_manifest_path = _build_record_manifest_path(result_dir.parent, source_build_run_id)
+    if not build_manifest_path.is_file():
+        return FlashProvenance(
+            status=PROVENANCE_MISSING_BUILD_RECORD,
+            return_code=BUILD_RECORD_MISSING_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=None,
+            source_build_firmware_sha256=None,
+            source_build_artifact_path=None,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message=f"Build manifest not found: {build_manifest_path}",
+        )
+
+    build_manifest = read_manifest(build_manifest_path)
+    manifest_run_id, run_id_error = _read_required_manifest_string(build_manifest, "run_id")
+    recorded_fingerprint, fingerprint_field_error = _read_required_manifest_string(
+        build_manifest,
+        "build.fingerprint",
+    )
+    recorded_sha256, sha_field_error = _read_required_manifest_string(
+        build_manifest,
+        "firmware.sha256",
+    )
+    recorded_artifact_path, artifact_path_error = _read_required_manifest_string(
+        build_manifest,
+        "firmware.artifact_path",
+    )
+
+    required_errors = [
+        error
+        for error in [run_id_error, fingerprint_field_error, sha_field_error, artifact_path_error]
+        if error is not None
+    ]
+    if required_errors:
+        return FlashProvenance(
+            status=PROVENANCE_MISSING_BUILD_RECORD,
+            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=recorded_fingerprint,
+            source_build_firmware_sha256=recorded_sha256,
+            source_build_artifact_path=recorded_artifact_path,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message="; ".join(required_errors),
+        )
+
+    if manifest_run_id != source_build_run_id:
+        return FlashProvenance(
+            status=PROVENANCE_MISSING_BUILD_RECORD,
+            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=recorded_fingerprint,
+            source_build_firmware_sha256=recorded_sha256,
+            source_build_artifact_path=recorded_artifact_path,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message=(
+                "Build manifest run_id mismatch: "
+                f"expected {source_build_run_id}, found {manifest_run_id}"
+            ),
+        )
+
+    if recorded_sha256 != firmware_sha256:
+        return FlashProvenance(
+            status=PROVENANCE_MISMATCH_REFUSED,
+            return_code=PROVENANCE_REFUSED_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=recorded_fingerprint,
+            source_build_firmware_sha256=recorded_sha256,
+            source_build_artifact_path=recorded_artifact_path,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message=(
+                "Flash-time ELF SHA-256 does not match the recorded build ELF SHA-256."
+            ),
+        )
+
+    if recorded_fingerprint != current_fingerprint:
+        return FlashProvenance(
+            status=PROVENANCE_MISMATCH_REFUSED,
+            return_code=PROVENANCE_REFUSED_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=recorded_fingerprint,
+            source_build_firmware_sha256=recorded_sha256,
+            source_build_artifact_path=recorded_artifact_path,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message=(
+                "Current expected build fingerprint does not match the recorded build fingerprint."
+            ),
+        )
+
+    if Path(recorded_artifact_path) != artifact_path:
+        return FlashProvenance(
+            status=PROVENANCE_MISMATCH_REFUSED,
+            return_code=PROVENANCE_REFUSED_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=recorded_fingerprint,
+            source_build_firmware_sha256=recorded_sha256,
+            source_build_artifact_path=recorded_artifact_path,
+            current_build_fingerprint=current_fingerprint,
+            current_build_fingerprint_algorithm=current_algorithm,
+            current_build_fingerprint_error=None,
+            message="Configured flash artifact path does not match the recorded build artifact path.",
+        )
+
+    return FlashProvenance(
+        status=PROVENANCE_VERIFIED_BUILD_MATCH,
+        return_code=0,
+        source_build_run_id=source_build_run_id,
+        source_build_fingerprint=recorded_fingerprint,
+        source_build_firmware_sha256=recorded_sha256,
+        source_build_artifact_path=recorded_artifact_path,
+        current_build_fingerprint=current_fingerprint,
+        current_build_fingerprint_algorithm=current_algorithm,
+        current_build_fingerprint_error=None,
+        message="Flash artifact matches the recorded build firmware SHA-256 and build fingerprint.",
+    )
+
+
 def _write_flash_log(
     log_path: Path,
     repo_root: Path,
@@ -125,6 +374,7 @@ def _write_flash_log(
     return_code: int,
     duration_seconds: float,
     firmware_sha256: str | None,
+    provenance: FlashProvenance,
 ) -> None:
     lines = [
         "Remote firmware flash log",
@@ -138,13 +388,37 @@ def _write_flash_log(
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
         "",
+        "Flash provenance check",
+        "----------------------",
+        f"Provenance status: {provenance.status}",
+        f"Provenance message: {provenance.message}",
+        f"Source build run ID: {provenance.source_build_run_id if provenance.source_build_run_id is not None else 'unavailable'}",
+        f"Source build fingerprint: {provenance.source_build_fingerprint if provenance.source_build_fingerprint is not None else 'unavailable'}",
+        f"Source build firmware SHA-256: {provenance.source_build_firmware_sha256 if provenance.source_build_firmware_sha256 is not None else 'unavailable'}",
+        f"Current expected build fingerprint: {provenance.current_build_fingerprint if provenance.current_build_fingerprint is not None else 'unavailable'}",
+        f"Current expected build fingerprint algorithm: {provenance.current_build_fingerprint_algorithm if provenance.current_build_fingerprint_algorithm is not None else 'unavailable'}",
+        f"Current expected build fingerprint error: {provenance.current_build_fingerprint_error if provenance.current_build_fingerprint_error is not None else 'none'}",
+        "",
     ]
     if scp_execution is None:
-        lines += ["SCP step", "--------", "Skipped because the local artifact was not found.", ""]
+        if return_code == ARTIFACT_MISSING_RETURN_CODE:
+            reason = "Skipped because the local artifact was not found."
+        elif provenance.return_code != 0:
+            reason = "Skipped because firmware artifact provenance was not verified."
+        else:
+            reason = "Skipped before SCP."
+        lines += ["SCP step", "--------", reason, ""]
     else:
         lines += ["SCP step", "--------", _format_execution(scp_execution, repo_root)]
     if flash_execution is None:
-        reason = "Skipped because the SCP step failed." if scp_execution is not None else "Skipped because the local artifact was not found."
+        if scp_execution is not None:
+            reason = "Skipped because the SCP step failed."
+        elif return_code == ARTIFACT_MISSING_RETURN_CODE:
+            reason = "Skipped because the local artifact was not found."
+        elif provenance.return_code != 0:
+            reason = "Skipped because firmware artifact provenance was not verified."
+        else:
+            reason = "Skipped before flash helper."
         lines += ["Flash step", "----------", reason, ""]
     else:
         lines += ["Flash step", "----------", _format_execution(flash_execution, repo_root)]
@@ -157,6 +431,8 @@ def execute_flash(
     result_dir: Path | str,
     runner: Runner = default_runner,
     git_runner: GitRunner | None = None,
+    source_build_run_id: str | None = None,
+    allow_untracked_artifact: bool = False,
 ) -> FlashResult:
     """Stage and remotely flash the configured artifact, then update the manifest."""
 
@@ -182,19 +458,42 @@ def execute_flash(
     firmware_sha256 = calculate_file_sha256(artifact_path) if artifact_path.is_file() else None
 
     if not artifact_path.is_file():
+        provenance = FlashProvenance(
+            status=PROVENANCE_MISSING_BUILD_RECORD,
+            return_code=ARTIFACT_MISSING_RETURN_CODE,
+            source_build_run_id=source_build_run_id,
+            source_build_fingerprint=None,
+            source_build_firmware_sha256=None,
+            source_build_artifact_path=None,
+            current_build_fingerprint=None,
+            current_build_fingerprint_algorithm=None,
+            current_build_fingerprint_error=None,
+            message="Configured local artifact was not found.",
+        )
         return_code = ARTIFACT_MISSING_RETURN_CODE
     else:
-        scp_execution = runner(
-            construct_scp_command(artifact_path, gateway_alias, remote_artifact_path),
-            repo_root_path,
+        provenance = _check_flash_provenance(
+            bundle=bundle,
+            repo_root=repo_root_path,
+            result_dir=result_dir_path,
+            artifact_path=artifact_path,
+            firmware_sha256=firmware_sha256,
+            source_build_run_id=source_build_run_id,
+            allow_untracked_artifact=allow_untracked_artifact,
         )
-        return_code = scp_execution.return_code
+        return_code = provenance.return_code
         if return_code == 0:
-            flash_execution = runner(
-                construct_ssh_flash_command(gateway_alias, flash_helper, remote_artifact_path),
+            scp_execution = runner(
+                construct_scp_command(artifact_path, gateway_alias, remote_artifact_path),
                 repo_root_path,
             )
-            return_code = flash_execution.return_code
+            return_code = scp_execution.return_code
+            if return_code == 0:
+                flash_execution = runner(
+                    construct_ssh_flash_command(gateway_alias, flash_helper, remote_artifact_path),
+                    repo_root_path,
+                )
+                return_code = flash_execution.return_code
 
     duration_seconds = perf_counter() - start
     _write_flash_log(
@@ -208,6 +507,7 @@ def execute_flash(
         return_code,
         duration_seconds,
         firmware_sha256,
+        provenance,
     )
     manifest_path = result_dir_path / "manifest.json"
     current_manifest = read_manifest(manifest_path)
@@ -233,7 +533,17 @@ def execute_flash(
                 "log": "flash.log",
                 "remote_artifact_path": remote_artifact_path,
                 "stlink_serial": stlink_serial,
+                "source_build_run_id": provenance.source_build_run_id,
+                "source_build_fingerprint": provenance.source_build_fingerprint,
+                "source_build_firmware_sha256": provenance.source_build_firmware_sha256,
+                "source_build_artifact_path": provenance.source_build_artifact_path,
+                "current_build_fingerprint": provenance.current_build_fingerprint,
+                "current_build_fingerprint_algorithm": provenance.current_build_fingerprint_algorithm,
+                "current_build_fingerprint_error": provenance.current_build_fingerprint_error,
                 "firmware_sha256": firmware_sha256,
+                "provenance_status": provenance.status,
+                "provenance_message": provenance.message,
+                "untracked_artifact_allowed": allow_untracked_artifact,
                 "scp_return_code": None if scp_execution is None else scp_execution.return_code,
                 "helper_return_code": None if flash_execution is None else flash_execution.return_code,
             },
@@ -249,4 +559,5 @@ def execute_flash(
         scp=scp_execution,
         flash=flash_execution,
         firmware_sha256=firmware_sha256,
+        provenance_status=provenance.status,
     )

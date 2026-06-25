@@ -443,6 +443,7 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
         remote_artifact_path = "/tmp/stm32_basic_hal1.elf"
         stlink_serial = "123"
         log_path = tmp_path / "results" / "run" / "flash.log"
+        provenance_status = "verified_build_match"
 
     def fake_execute_build(**kwargs):
         assert kwargs["repo_root"] == tmp_path
@@ -560,6 +561,7 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
         remote_artifact_path = "/tmp/stm32_basic_hal1.elf"
         stlink_serial = "123"
         log_path = tmp_path / "results" / "run" / "flash.log"
+        provenance_status = "verified_build_match"
 
     def fake_execute_build(**kwargs):
         seen_result_dirs.append(kwargs["result_dir"])
