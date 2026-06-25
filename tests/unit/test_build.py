@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -135,8 +136,11 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
         runner=fake_runner,
     )
 
+    expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
+
     assert result.return_code == 0
     assert result.elf_path == artifact_path
+    assert result.firmware_sha256 == expected_sha256
     assert calls == [
         ["cmake", "--preset", "Debug"],
         ["cmake", "--build", "--preset", "Debug"],
@@ -147,6 +151,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "fake stderr" in build_log
     assert "Final return code: 0" in build_log
     assert f"Output ELF path: {artifact_path}" in build_log
+    assert f"Output ELF SHA-256: {expected_sha256}" in build_log
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result"] == "build_passed"
@@ -154,6 +159,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["build"]["log"] == "build.log"
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
+    assert manifest["firmware"]["sha256"] == expected_sha256
 
 
 def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
@@ -184,6 +190,7 @@ def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
 
     assert result.return_code == 9
     assert result.build is None
+    assert result.firmware_sha256 is None
     assert calls == [["cmake", "--preset", "Debug"]]
     assert "Skipped because the configure step failed." in (result_dir / "build.log").read_text(
         encoding="utf-8"

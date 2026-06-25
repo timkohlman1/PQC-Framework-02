@@ -15,7 +15,8 @@ from pathlib import Path, PurePosixPath
 from time import perf_counter
 from typing import Any, Callable
 
-from framework.manifest import update_manifest
+from framework.artifacts import calculate_file_sha256
+from framework.manifest import read_manifest, update_manifest
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 
@@ -43,6 +44,7 @@ class FlashResult:
     log_path: Path
     scp: CommandExecution | None
     flash: CommandExecution | None
+    firmware_sha256: str | None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -121,6 +123,7 @@ def _write_flash_log(
     flash_execution: CommandExecution | None,
     return_code: int,
     duration_seconds: float,
+    firmware_sha256: str | None,
 ) -> None:
     lines = [
         "Remote firmware flash log",
@@ -128,6 +131,7 @@ def _write_flash_log(
         f"Timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Repository root: {repo_root}",
         f"Local artifact path: {artifact_path}",
+        f"Local artifact SHA-256: {firmware_sha256 if firmware_sha256 is not None else 'unavailable'}",
         f"Remote artifact path: {remote_artifact_path}",
         f"ST-LINK serial: {stlink_serial}",
         f"Final return code: {return_code}",
@@ -168,6 +172,8 @@ def execute_flash(
     scp_execution: CommandExecution | None = None
     flash_execution: CommandExecution | None = None
 
+    firmware_sha256 = calculate_file_sha256(artifact_path) if artifact_path.is_file() else None
+
     if not artifact_path.is_file():
         return_code = ARTIFACT_MISSING_RETURN_CODE
     else:
@@ -194,15 +200,24 @@ def execute_flash(
         flash_execution,
         return_code,
         duration_seconds,
+        firmware_sha256,
     )
+    manifest_path = result_dir_path / "manifest.json"
+    current_manifest = read_manifest(manifest_path)
+    current_firmware = current_manifest.get("firmware", {})
+    existing_build_sha256 = (
+        current_firmware.get("sha256") if isinstance(current_firmware, dict) else None
+    )
+
     update_manifest(
-        result_dir_path / "manifest.json",
+        manifest_path,
         {
             "result": "flash_passed" if return_code == 0 else "flash_failed",
             "firmware": {
                 "artifact": artifact_relative_path.as_posix(),
                 "artifact_path": str(artifact_path),
                 "artifact_exists": artifact_path.is_file(),
+                "sha256": existing_build_sha256 if existing_build_sha256 is not None else firmware_sha256,
             },
             "flash": {
                 "return_code": return_code,
@@ -210,6 +225,7 @@ def execute_flash(
                 "log": "flash.log",
                 "remote_artifact_path": remote_artifact_path,
                 "stlink_serial": stlink_serial,
+                "firmware_sha256": firmware_sha256,
                 "scp_return_code": None if scp_execution is None else scp_execution.return_code,
                 "helper_return_code": None if flash_execution is None else flash_execution.return_code,
             },
@@ -224,4 +240,5 @@ def execute_flash(
         log_path=log_path,
         scp=scp_execution,
         flash=flash_execution,
+        firmware_sha256=firmware_sha256,
     )

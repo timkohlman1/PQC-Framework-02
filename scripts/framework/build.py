@@ -13,6 +13,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
+from framework.artifacts import calculate_file_sha256
 from framework.manifest import update_manifest
 
 ARTIFACT_MISSING_RETURN_CODE = 3
@@ -39,6 +40,7 @@ class BuildResult:
     log_path: Path
     configure: CommandExecution
     build: CommandExecution | None
+    firmware_sha256: str | None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -113,6 +115,7 @@ def _write_build_log(
     duration_seconds: float,
     elf_path: Path,
     artifact_exists: bool,
+    firmware_sha256: str | None,
 ) -> None:
     """Write the build log for one experiment build run."""
 
@@ -123,6 +126,7 @@ def _write_build_log(
         f"Repository root: {repo_root}",
         f"Output ELF path: {elf_path}",
         f"Output ELF exists: {str(artifact_exists).lower()}",
+        f"Output ELF SHA-256: {firmware_sha256 if firmware_sha256 is not None else 'unavailable'}",
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
         "",
@@ -197,6 +201,8 @@ def execute_build(
     if return_code == 0 and not artifact_exists:
         return_code = ARTIFACT_MISSING_RETURN_CODE
 
+    firmware_sha256 = calculate_file_sha256(elf_path) if return_code == 0 else None
+
     duration_seconds = perf_counter() - start
 
     _write_build_log(
@@ -208,6 +214,7 @@ def execute_build(
         duration_seconds=duration_seconds,
         elf_path=elf_path,
         artifact_exists=artifact_exists,
+        firmware_sha256=firmware_sha256,
     )
 
     update_manifest(
@@ -218,6 +225,7 @@ def execute_build(
                 "artifact": artifact_relative_path.as_posix(),
                 "artifact_path": str(elf_path),
                 "artifact_exists": artifact_exists,
+                "sha256": firmware_sha256,
             },
             "build": {
                 "configure_preset": configure_preset,
@@ -236,4 +244,5 @@ def execute_build(
         log_path=log_path,
         configure=configure_execution,
         build=build_execution,
+        firmware_sha256=firmware_sha256,
     )

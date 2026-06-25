@@ -38,11 +38,13 @@ configs/
 scripts/
   experiment.py
   framework/
+    artifacts.py
     build.py
     flash.py
     manifest.py
 tests/
   unit/
+    test_artifacts.py
     test_build.py
     test_flash.py
     test_config_loading.py
@@ -142,6 +144,8 @@ build log path
 
 Build metadata is written back into `manifest.json`. A successful local firmware build sets the manifest `result` field to `build_passed`. A failed configure, failed build, or missing expected ELF artifact sets it to `build_failed`.
 
+After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in `manifest.json` and as `Output ELF SHA-256` in `build.log`. This gives the built firmware artifact a stable identity even though the artifact path stays the same across builds.
+
 The unit tests cover command construction and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
 
 
@@ -178,7 +182,7 @@ The framework can create a result run and remotely flash the existing configured
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The command stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, and ST-LINK serial. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
+The command calculates the local ELF SHA-256 before SCP, stages the ELF with `scp`, invokes the configured gateway flash helper with `ssh`, writes `flash.log`, and updates `manifest.json` with the final return code, individual SCP/helper return codes, remote artifact path, duration, ST-LINK serial, and `flash.firmware_sha256`. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing.
 
 Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` is opt-in through `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`.
 
@@ -193,6 +197,8 @@ python scripts/experiment.py build-flash --experiment configs/experiments/baseli
 
 This command creates a single result directory and runs the normal build helper first. If the build succeeds, it runs the normal remote flash helper using the configured firmware artifact path. The same manifest records the build metadata, flash metadata, and a `build_flash` summary so the build and flash evidence remain tied to the same run ID.
 
+For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. If the file is unchanged between build and flash, these values match.
+
 If the build fails, the flash step is skipped. This avoids flashing a stale ELF that may already exist in the build folder from a previous experiment. In that case the result directory contains `manifest.json`, `notes.md`, and `build.log`, but no `flash.log`.
 
 A successful combined run creates:
@@ -205,4 +211,4 @@ results/<run_id>/
   flash.log
 ```
 
-Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails.
+Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values.

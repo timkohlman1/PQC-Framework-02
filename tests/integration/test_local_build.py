@@ -71,6 +71,8 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     assert manifest["result"] == "build_passed"
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
+    assert isinstance(manifest["firmware"]["sha256"], str)
+    assert len(manifest["firmware"]["sha256"]) == 64
     assert manifest["build"]["configure_preset"] == "Debug"
     assert manifest["build"]["build_preset"] == "Debug"
     assert manifest["build"]["return_code"] == 0
@@ -82,3 +84,4 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     assert "Command: cmake --build --preset Debug" in build_log
     assert "Final return code: 0" in build_log
     assert "Output ELF exists: true" in build_log
+    assert f"Output ELF SHA-256: {manifest['firmware']['sha256']}" in build_log

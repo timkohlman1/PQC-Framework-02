@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -61,7 +62,10 @@ def test_execute_flash_captures_both_steps_and_updates_manifest(tmp_path):
         return flash.CommandExecution(command, 0, "stdout text", "stderr text", 0.1)
 
     result = flash.execute_flash(sample_bundle(), repo_root, result_dir, fake_runner)
+    expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
+
     assert result.return_code == 0
+    assert result.firmware_sha256 == expected_sha256
     assert calls == [
         ["scp", str(artifact), "pqc-gateway1:/tmp/stm32_basic_hal1.elf"],
         ["ssh", "pqc-gateway1", "flash-stm32a /tmp/stm32_basic_hal1.elf"],
@@ -70,11 +74,14 @@ def test_execute_flash_captures_both_steps_and_updates_manifest(tmp_path):
     assert "SCP step" in log and "Flash step" in log
     assert "stdout text" in log and "stderr text" in log
     assert "ST-LINK serial: 066EFF3932504E3043111818" in log
+    assert f"Local artifact SHA-256: {expected_sha256}" in log
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result"] == "flash_passed"
     assert manifest["flash"]["return_code"] == 0
+    assert manifest["firmware"]["sha256"] == expected_sha256
     assert manifest["flash"]["remote_artifact_path"] == "/tmp/stm32_basic_hal1.elf"
     assert manifest["flash"]["stlink_serial"] == "066EFF3932504E3043111818"
+    assert manifest["flash"]["firmware_sha256"] == expected_sha256
 
 
 def test_execute_flash_skips_ssh_when_scp_fails(tmp_path):
@@ -110,4 +117,31 @@ def test_execute_flash_fails_without_network_when_artifact_missing(tmp_path):
 
     result = flash.execute_flash(sample_bundle(), repo_root, result_dir, forbidden_runner)
     assert result.return_code == flash.ARTIFACT_MISSING_RETURN_CODE
+    assert result.firmware_sha256 is None
     assert result.scp is None and result.flash is None
+
+
+def test_execute_flash_preserves_existing_build_sha256_and_records_flash_sha256(tmp_path):
+    flash = load_flash_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    artifact = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("flash elf", encoding="utf-8")
+    result_dir.mkdir(parents=True)
+    build_sha256 = hashlib.sha256(b"build elf").hexdigest()
+    (result_dir / "manifest.json").write_text(
+        json.dumps({"result": "build_passed", "firmware": {"sha256": build_sha256}}) + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_runner(command, cwd):
+        return flash.CommandExecution(command, 0, "", "", 0.1)
+
+    result = flash.execute_flash(sample_bundle(), repo_root, result_dir, fake_runner)
+    flash_sha256 = hashlib.sha256(b"flash elf").hexdigest()
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == 0
+    assert manifest["firmware"]["sha256"] == build_sha256
+    assert manifest["flash"]["firmware_sha256"] == flash_sha256

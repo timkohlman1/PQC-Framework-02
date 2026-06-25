@@ -56,3 +56,6 @@ def test_gateway_flash_helper_with_real_artifact(tmp_path):
     assert manifest["flash"]["scp_return_code"] == 0
     assert manifest["flash"]["helper_return_code"] == 0
     assert manifest["flash"]["stlink_serial"] == "066EFF3932504E3043111818"
+    assert isinstance(manifest["firmware"]["sha256"], str)
+    assert len(manifest["firmware"]["sha256"]) == 64
+    assert manifest["flash"]["firmware_sha256"] == manifest["firmware"]["sha256"]
