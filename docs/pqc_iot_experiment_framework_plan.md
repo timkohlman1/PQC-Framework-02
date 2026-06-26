@@ -23,40 +23,54 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 9 — Add Source-Hash Rebuild Skipping
 
-- [ ] Add source hash over relevant inputs:
-  - [ ] `Core/`
-  - [ ] `Drivers/`
-  - [ ] `CMakeLists.txt`
-  - [ ] `CMakePresets.json`
-  - [ ] `cmake/`
-  - [ ] `STM32L4R5XX_FLASH.ld`
-  - [ ] `startup_stm32l4r5xx.s`
-  - [ ] `stm32_basic_hal1.ioc`
 
-- [ ] Store last build hash.
 
-- [ ] Skip rebuild when:
-  - [ ] source hash unchanged
-  - [ ] ELF exists
-  - [ ] `--force` not supplied
 
-- [ ] Always allow forced build:
 
-  ```powershell
-  python scripts/experiment.py build --force
-  ```
+Phase 10d — Automatic Reuse of Matching Builds
 
-- [ ] Add unit tests for:
-  - [ ] hash calculation
-  - [ ] rebuild decision
+Goal: Let the framework reuse a previous matching build automatically when appropriate.
 
-- [ ] Update documentation.
+Scope:
 
-- [ ] Update `AI_BUILD_GUIDE.md`.
+Detect whether an existing build record matches the current source/build hash.
+Reuse a matching build when allowed by the command behavior.
+Create a new build when no matching build exists.
+Preserve explicit forced rebuild behavior.
+Record whether the run used a reused build or a newly created build.
+Add unit tests for automatic reuse, no matching build, forced rebuild, and stale artifact cases.
+Update documentation and AI_BUILD_GUIDE.md.
 
-- [ ] Commit.
+End state: Routine experiment runs can avoid unnecessary rebuilds while retaining full provenance.
 
----
+
+
+
+Phase 10e — Clean Up Build/Run Terminology and CLI
+
+Goal: Make the user-facing workflow consistent after build/run separation.
+
+Scope:
+
+Ensure command names, help text, manifest fields, documentation, and tests use consistent terminology:
+build record
+experiment run
+build number
+run ID
+reused build
+forced build
+Remove or deprecate ambiguous fields where safe.
+Preserve backward compatibility where needed.
+Update README, architecture docs, and AI_BUILD_GUIDE.md.
+
+End state: The framework has a clean distinction between build artifacts and experiment evidence.
+
+
+
+
+
+
+
 
 ## Phase 10 — Start Boot-Security Experiments
 
