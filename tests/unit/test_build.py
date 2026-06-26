@@ -173,6 +173,8 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert result.return_code == 0
     assert result.elf_path == artifact_path
     assert result.firmware_sha256 == expected_sha256
+    assert result.build_number == 1
+    assert result.result_artifacts["elf"]["path"] == "firmware.elf"
     assert calls == [
         ["cmake", "--preset", "Debug"],
         ["cmake", "--build", "--preset", "Debug"],
@@ -184,13 +186,17 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "Final return code: 0" in build_log
     assert f"Output ELF path: {artifact_path}" in build_log
     assert f"Output ELF SHA-256: {expected_sha256}" in build_log
+    assert "Build number: 1" in build_log
     assert "Build fingerprint algorithm: sha256-build-inputs-v1" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
     assert "- cmake/gcc-arm-none-eabi.cmake" in build_log
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert (repo_root / ".build_number").read_text(encoding="utf-8") == "1\n"
+    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
     assert manifest["result"] == "build_passed"
+    assert manifest["build_number"] == 1
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
     assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
@@ -203,6 +209,10 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["sha256"] == expected_sha256
+    assert manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
+    assert manifest["firmware"]["result_artifacts"]["elf"]["sha256"] == expected_sha256
+    assert manifest["firmware"]["result_artifacts"]["hex"]["copied"] is False
+    assert manifest["firmware"]["result_artifacts"]["bin"]["copied"] is False
     assert manifest["source"] == {
         "git_commit": "abc123",
         "git_dirty": False,
@@ -274,6 +284,35 @@ def test_execute_build_fails_clearly_when_fingerprint_input_is_missing(tmp_path)
     assert manifest["result"] == "build_failed"
     assert manifest["build"]["return_code"] == build.FINGERPRINT_INPUT_ERROR_RETURN_CODE
     assert "Required build fingerprint input is missing" in manifest["build"]["fingerprint_error"]
+
+def test_execute_build_fails_clearly_when_build_number_file_is_malformed(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    write_initial_manifest(result_dir)
+    (repo_root / ".build_number").write_text("not an integer\n", encoding="utf-8")
+
+    def forbidden_runner(command: list[str], cwd: Path):
+        raise AssertionError("CMake must not run when build number tracking fails")
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=forbidden_runner,
+    )
+
+    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == build.BUILD_NUMBER_ERROR_RETURN_CODE
+    assert result.build_number is None
+    assert "Build number file contains a non-integer value" in build_log
+    assert manifest["result"] == "build_failed"
+    assert manifest["build_number"] is None
+    assert "non-integer" in manifest["build"]["build_number_error"]
 
 
 def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeypatch, capsys):

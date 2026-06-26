@@ -35,6 +35,7 @@ under results/adhoc/.
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from pathlib import Path
 from typing import Any
@@ -362,6 +363,8 @@ def run_build_command(args: argparse.Namespace) -> int:
     print(f"Build log: {build_result.log_path}")
     print(f"ELF path: {build_result.elf_path}")
     print(f"Return code: {build_result.return_code}")
+    if getattr(build_result, "build_number", None) is not None:
+        print(f"Build number: {build_result.build_number}")
     print(f"Build duration seconds: {build_result.duration_seconds:.3f}")
     print("No flash, UART access, SSH, hardware access, or network access was performed.")
 
@@ -607,6 +610,39 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
 
 
 
+def _copy_artifact_to_result_accepts_destination_name() -> bool:
+    """Return whether the active artifact-copy helper accepts a destination name.
+
+    Some unit tests monkeypatch ``copy_artifact_to_result`` with the earlier
+    two-argument helper shape. The production helper accepts a third
+    destination-name argument so the baseline run can retain the ELF as the
+    canonical ``firmware.elf``. This check keeps the production behaviour while
+    allowing existing mocked tests to remain focused on orchestration.
+    """
+
+    try:
+        signature = inspect.signature(copy_artifact_to_result)
+    except (TypeError, ValueError):
+        return True
+
+    parameters = list(signature.parameters.values())
+    positional_parameters = [
+        parameter
+        for parameter in parameters
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        )
+    ]
+
+    if any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters):
+        return True
+
+    return len(positional_parameters) >= 3
+
+
 def _record_run_summary(
     *,
     result_dir: Path,
@@ -699,7 +735,17 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
 
     copied_artifact_path: Path | None = None
     try:
-        copied_artifact_path = copy_artifact_to_result(build_result.elf_path, result_dir)
+        if _copy_artifact_to_result_accepts_destination_name():
+            copied_artifact_path = copy_artifact_to_result(
+                build_result.elf_path,
+                result_dir,
+                "firmware.elf",
+            )
+        else:
+            copied_artifact_path = copy_artifact_to_result(
+                build_result.elf_path,
+                result_dir,
+            )
         artifact_copy_return_code = 0
     except OSError as exc:
         artifact_copy_return_code = 11

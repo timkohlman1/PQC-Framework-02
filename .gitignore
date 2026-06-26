@@ -21,6 +21,7 @@ mx.scratch/
 # Experiment outputs
 results/*
 !results/.gitkeep
+.build_number
 
 # Local secrets / credentials
 secrets/

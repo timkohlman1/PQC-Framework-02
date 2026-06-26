@@ -13,7 +13,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
-from framework.artifacts import calculate_file_sha256
+from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
+from framework.build_number import BuildNumberError, reserve_next_build_number
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_default_build_fingerprint,
@@ -23,6 +24,7 @@ from framework.source import GitCommandExecution, GitRunner, capture_git_provena
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 FINGERPRINT_INPUT_ERROR_RETURN_CODE = 4
+BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,8 @@ class BuildResult:
     build_fingerprint: str | None
     build_fingerprint_inputs: list[str]
     build_fingerprint_algorithm: str | None
+    build_number: int | None
+    result_artifacts: dict[str, dict[str, Any]]
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -129,6 +133,8 @@ def _write_build_log(
     build_fingerprint_inputs: list[str],
     build_fingerprint_algorithm: str | None,
     fingerprint_error: str | None = None,
+    build_number_error: str | None = None,
+    build_number: int | None = None,
 ) -> None:
     """Write the build log for one experiment build run."""
 
@@ -137,6 +143,7 @@ def _write_build_log(
         "==================",
         f"Timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Repository root: {repo_root}",
+        f"Build number: {build_number if build_number is not None else 'unavailable'}",
         f"Output ELF path: {elf_path}",
         f"Output ELF exists: {str(artifact_exists).lower()}",
         f"Output ELF SHA-256: {firmware_sha256 if firmware_sha256 is not None else 'unavailable'}",
@@ -190,6 +197,16 @@ def _write_build_log(
             ]
         )
 
+    if return_code == BUILD_NUMBER_ERROR_RETURN_CODE:
+        lines.extend(
+            [
+                "Build number check",
+                "------------------",
+                build_number_error if build_number_error is not None else "Build number tracking failed.",
+                "",
+            ]
+        )
+
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -222,6 +239,74 @@ def execute_build(
     start = perf_counter()
 
     try:
+        build_number = reserve_next_build_number(repo_root_path)
+    except BuildNumberError as exc:
+        duration_seconds = perf_counter() - start
+        build_number_error = str(exc)
+        skipped_configure = CommandExecution(
+            command=construct_configure_command(configure_preset),
+            return_code=BUILD_NUMBER_ERROR_RETURN_CODE,
+            stdout="",
+            stderr=build_number_error,
+            duration_seconds=0.0,
+        )
+        _write_build_log(
+            log_path=log_path,
+            repo_root=repo_root_path,
+            configure=skipped_configure,
+            build=None,
+            return_code=BUILD_NUMBER_ERROR_RETURN_CODE,
+            duration_seconds=duration_seconds,
+            elf_path=elf_path,
+            artifact_exists=elf_path.is_file(),
+            firmware_sha256=None,
+            build_fingerprint=None,
+            build_fingerprint_inputs=[],
+            build_fingerprint_algorithm=None,
+            build_number_error=build_number_error,
+            build_number=None,
+        )
+        update_manifest(
+            result_dir_path / "manifest.json",
+            {
+                "result": "build_failed",
+                "build_number": None,
+                "firmware": {
+                    "artifact": artifact_relative_path.as_posix(),
+                    "artifact_path": str(elf_path),
+                    "artifact_exists": elf_path.is_file(),
+                    "sha256": None,
+                },
+                "source": source,
+                "build": {
+                    "configure_preset": configure_preset,
+                    "build_preset": build_preset,
+                    "return_code": BUILD_NUMBER_ERROR_RETURN_CODE,
+                    "duration_seconds": round(duration_seconds, 3),
+                    "log": "build.log",
+                    "fingerprint": None,
+                    "fingerprint_inputs": [],
+                    "fingerprint_algorithm": None,
+                    "build_number_error": build_number_error,
+                },
+            },
+        )
+        return BuildResult(
+            return_code=BUILD_NUMBER_ERROR_RETURN_CODE,
+            duration_seconds=duration_seconds,
+            elf_path=elf_path,
+            log_path=log_path,
+            configure=skipped_configure,
+            build=None,
+            firmware_sha256=None,
+            build_fingerprint=None,
+            build_fingerprint_inputs=[],
+            build_fingerprint_algorithm=None,
+            build_number=None,
+            result_artifacts={},
+        )
+
+    try:
         build_fingerprint = calculate_default_build_fingerprint(bundle, repo_root_path)
     except FingerprintInputError as exc:
         duration_seconds = perf_counter() - start
@@ -247,11 +332,13 @@ def execute_build(
             build_fingerprint_inputs=[],
             build_fingerprint_algorithm=None,
             fingerprint_error=fingerprint_error,
+            build_number=build_number,
         )
         update_manifest(
             result_dir_path / "manifest.json",
             {
                 "result": "build_failed",
+                "build_number": build_number,
                 "firmware": {
                     "artifact": artifact_relative_path.as_posix(),
                     "artifact_path": str(elf_path),
@@ -283,6 +370,8 @@ def execute_build(
             build_fingerprint=None,
             build_fingerprint_inputs=[],
             build_fingerprint_algorithm=None,
+            build_number=build_number,
+            result_artifacts={},
         )
 
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)
@@ -300,6 +389,9 @@ def execute_build(
         return_code = ARTIFACT_MISSING_RETURN_CODE
 
     firmware_sha256 = calculate_file_sha256(elf_path) if return_code == 0 else None
+    result_artifacts = (
+        copy_firmware_artifacts_to_result(elf_path, result_dir_path) if return_code == 0 else {}
+    )
 
     duration_seconds = perf_counter() - start
 
@@ -316,17 +408,20 @@ def execute_build(
         build_fingerprint=build_fingerprint.fingerprint,
         build_fingerprint_inputs=build_fingerprint.inputs,
         build_fingerprint_algorithm=build_fingerprint.algorithm,
+        build_number=build_number,
     )
 
     update_manifest(
         result_dir_path / "manifest.json",
         {
             "result": "build_passed" if return_code == 0 else "build_failed",
+            "build_number": build_number,
             "firmware": {
                 "artifact": artifact_relative_path.as_posix(),
                 "artifact_path": str(elf_path),
                 "artifact_exists": artifact_exists,
                 "sha256": firmware_sha256,
+                "result_artifacts": result_artifacts,
             },
             "source": source,
             "build": {
@@ -353,4 +448,6 @@ def execute_build(
         build_fingerprint=build_fingerprint.fingerprint,
         build_fingerprint_inputs=build_fingerprint.inputs,
         build_fingerprint_algorithm=build_fingerprint.algorithm,
+        build_number=build_number,
+        result_artifacts=result_artifacts,
     )

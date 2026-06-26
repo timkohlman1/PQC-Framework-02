@@ -9,6 +9,13 @@ from __future__ import annotations
 import hashlib
 import shutil
 from pathlib import Path
+from typing import Any
+
+CANONICAL_FIRMWARE_ARTIFACTS = {
+    ".elf": "firmware.elf",
+    ".hex": "firmware.hex",
+    ".bin": "firmware.bin",
+}
 
 
 def calculate_file_sha256(path: Path | str) -> str:
@@ -28,15 +35,20 @@ def calculate_file_sha256(path: Path | str) -> str:
     return digest.hexdigest()
 
 
-def copy_artifact_to_result(artifact_path: Path | str, result_dir: Path | str) -> Path:
-    """Copy a built firmware artifact into its run result directory.
+def copy_artifact_to_result(
+    artifact_path: Path | str,
+    result_dir: Path | str,
+    destination_name: str | None = None,
+) -> Path:
+    """Copy one built firmware artifact into its run result directory.
 
-    The original filename is preserved so each successful automated baseline run
-    retains the exact ELF that was built and subsequently verified for flashing.
+    When ``destination_name`` is omitted, the original filename is preserved.
+    Callers that need stable result-folder names can pass a canonical filename
+    such as ``firmware.elf``.
     """
 
     source = Path(artifact_path)
-    destination = Path(result_dir) / source.name
+    destination = Path(result_dir) / (destination_name if destination_name is not None else source.name)
 
     if not source.is_file():
         raise FileNotFoundError(f"Firmware artifact not found: {source}")
@@ -44,3 +56,44 @@ def copy_artifact_to_result(artifact_path: Path | str, result_dir: Path | str) -
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     return destination
+
+
+def _artifact_manifest_entry(source: Path, destination: Path | None, copied: bool) -> dict[str, Any]:
+    return {
+        "source_path": str(source),
+        "path": None if destination is None else destination.name,
+        "artifact_path": None if destination is None else str(destination),
+        "sha256": calculate_file_sha256(destination) if copied and destination is not None else None,
+        "copied": copied,
+        "missing_reason": None if copied else "source artifact not generated",
+    }
+
+
+def copy_firmware_artifacts_to_result(elf_path: Path | str, result_dir: Path | str) -> dict[str, dict[str, Any]]:
+    """Copy available firmware artifacts into a result directory.
+
+    The ELF artifact is required and is copied as ``firmware.elf``. Optional
+    sibling ``.hex`` and ``.bin`` artifacts are copied as ``firmware.hex`` and
+    ``firmware.bin`` when present. Missing optional artifacts are recorded in
+    the returned manifest metadata without failing the build.
+    """
+
+    elf_source = Path(elf_path)
+    result_dir_path = Path(result_dir)
+
+    if not elf_source.is_file():
+        raise FileNotFoundError(f"Firmware ELF artifact not found: {elf_source}")
+
+    copied_artifacts: dict[str, dict[str, Any]] = {}
+
+    for suffix, destination_name in CANONICAL_FIRMWARE_ARTIFACTS.items():
+        artifact_type = suffix.lstrip(".")
+        source = elf_source.with_suffix(suffix)
+
+        if source.is_file():
+            destination = copy_artifact_to_result(source, result_dir_path, destination_name)
+            copied_artifacts[artifact_type] = _artifact_manifest_entry(source, destination, True)
+        else:
+            copied_artifacts[artifact_type] = _artifact_manifest_entry(source, None, False)
+
+    return copied_artifacts

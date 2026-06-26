@@ -516,16 +516,21 @@ def execute_flash(
         current_firmware.get("sha256") if isinstance(current_firmware, dict) else None
     )
 
+    updated_firmware = dict(current_firmware) if isinstance(current_firmware, dict) else {}
+    updated_firmware.update(
+        {
+            "artifact": artifact_relative_path.as_posix(),
+            "artifact_path": str(artifact_path),
+            "artifact_exists": artifact_path.is_file(),
+            "sha256": existing_build_sha256 if existing_build_sha256 is not None else firmware_sha256,
+        }
+    )
+
     update_manifest(
         manifest_path,
         {
             "result": "flash_passed" if return_code == 0 else "flash_failed",
-            "firmware": {
-                "artifact": artifact_relative_path.as_posix(),
-                "artifact_path": str(artifact_path),
-                "artifact_exists": artifact_path.is_file(),
-                "sha256": existing_build_sha256 if existing_build_sha256 is not None else firmware_sha256,
-            },
+            "firmware": updated_firmware,
             "source": source,
             "flash": {
                 "return_code": return_code,

@@ -27,3 +27,28 @@ def test_calculate_file_sha256_uses_file_content(tmp_path):
     artifact.write_bytes(content)
 
     assert artifacts.calculate_file_sha256(artifact) == hashlib.sha256(content).hexdigest()
+
+
+def test_copy_firmware_artifacts_uses_canonical_names_and_hashes(tmp_path):
+    artifacts = load_artifacts_module()
+    build_dir = tmp_path / "build" / "Debug"
+    result_dir = tmp_path / "results" / "run"
+    build_dir.mkdir(parents=True)
+    elf = build_dir / "stm32_basic_hal1.elf"
+    hex_file = build_dir / "stm32_basic_hal1.hex"
+    elf.write_bytes(b"elf bytes")
+    hex_file.write_bytes(b"hex bytes")
+
+    copied = artifacts.copy_firmware_artifacts_to_result(elf, result_dir)
+
+    assert (result_dir / "firmware.elf").read_bytes() == b"elf bytes"
+    assert (result_dir / "firmware.hex").read_bytes() == b"hex bytes"
+    assert not (result_dir / "firmware.bin").exists()
+    assert copied["elf"]["path"] == "firmware.elf"
+    assert copied["elf"]["copied"] is True
+    assert copied["elf"]["sha256"] == hashlib.sha256(b"elf bytes").hexdigest()
+    assert copied["hex"]["path"] == "firmware.hex"
+    assert copied["hex"]["copied"] is True
+    assert copied["bin"]["path"] is None
+    assert copied["bin"]["copied"] is False
+    assert copied["bin"]["missing_reason"] == "source artifact not generated"
