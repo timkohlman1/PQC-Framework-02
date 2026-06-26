@@ -223,6 +223,7 @@ python scripts/experiment.py build --experiment configs/experiments/baseline_dir
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 ```
@@ -244,6 +245,8 @@ The `build-flash` command creates one result directory, runs the local firmware 
 The `monitor` command is an ad hoc diagnostic command. It captures bounded UART output through the configured gateway ST-LINK VCP path, writes a timestamped log under `results/adhoc/`, and passes when it connects and captures non-empty UART output. It requires gateway access and physical hardware, but it does not create a result manifest, build firmware, or flash firmware.
 
 The `flash --capture-uart` and `build-flash --capture-uart` workflows capture UART immediately after a successful flash, write `uart.log` inside the run directory, and evaluate the configured boot and tick markers as experiment evidence.
+
+The `run` command is the known-good automated baseline. It creates one result directory, builds, copies the exact ELF into that directory, flashes only after successful build and copy stages, captures UART, evaluates the configured boot and tick markers, and writes the final manifest verdict.
 
 ## 6. Git and Generated-File Rules
 
@@ -667,6 +670,20 @@ results/<run_id>/
 
 If the build stage fails, `build-flash` skips the flash stage and creates no `flash.log`.
 
+The implemented `run` command creates the following on success:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+  build.log
+  flash.log
+  uart.log
+  stm32_basic_hal1.elf
+```
+
+The copied ELF filename is derived from the configured firmware artifact filename. Failed runs contain only the files produced before the failing stage.
+
 The implemented `monitor` command creates ad hoc logs only:
 
 ```text
@@ -891,6 +908,9 @@ Current framework skeleton completed items:
 27. Add optional post-flash UART capture to `flash --capture-uart` and `build-flash --capture-uart`.
 28. Add post-flash pass/fail detection for the expected baseline boot marker and `tick` marker.
 29. Add the opt-in baseline UART hardware test.
+30. Add `scripts/experiment.py run` as the known-good automated baseline.
+31. Retain the exact built ELF inside each successful baseline run directory.
+32. Add mocked orchestration tests for full-run success and stage failures.
 
 Current CLI commands are:
 
@@ -902,6 +922,7 @@ python scripts/experiment.py flash --experiment configs/experiments/baseline_dir
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 ```
@@ -998,6 +1019,25 @@ Expected post-flash UART capture behaviour:
 - sets the relevant run result to failed when the command fails or either marker is missing
 - treats GNU `timeout` return code 124 as a completed bounded capture when evaluating UART marker pass/fail status
 - records UART as skipped if the flash step fails
+
+Expected `run` behaviour:
+
+- loads and validates the experiment bundle
+- creates one new result directory
+- runs the same local build workflow used by `build`
+- stops immediately if the build fails
+- copies the exact built ELF into the result directory using its original filename
+- stops immediately if artifact copying fails
+- flashes using the current run ID as the verified source build record
+- stops and records UART as skipped if flashing fails
+- always captures UART after a successful flash
+- starts UART capture before invoking the configured reset helper
+- passes only when the configured boot marker and tick marker are both present
+- writes `manifest.json`, `notes.md`, `build.log`, `flash.log`, `uart.log`, and the copied ELF on success
+- records stage return codes and the failure stage under `run`
+- records the retained ELF under `firmware.result_artifact` and `firmware.result_artifact_path`
+- sets the final manifest result to `baseline_run_passed` or `baseline_run_failed`
+- returns non-zero when build, artifact copy, flash, or UART evaluation fails
 
 Expected `build-flash` behaviour:
 
@@ -1114,6 +1154,13 @@ Build, flash, and capture post-flash UART in one run:
 
 ```powershell
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Run the known-good automated baseline:
+
+```powershell
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
 Run the opt-in baseline UART hardware test:

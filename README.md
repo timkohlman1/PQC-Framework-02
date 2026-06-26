@@ -134,6 +134,26 @@ Build, flash, and then capture post-flash UART boot output in one result run:
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
 ```
 
+Run the known-good automated baseline with mandatory build, retained ELF copy, flash, UART capture, pass/fail evaluation, and manifest output:
+
+```powershell
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+A successful baseline run creates one result directory containing:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+  build.log
+  flash.log
+  uart.log
+  stm32_basic_hal1.elf
+```
+
+The `run` command stops at the first failed stage. It never flashes after a failed build, never captures UART after a failed flash, and returns non-zero when build, artifact retention, flash, or UART marker evaluation fails. The manifest records the stage return codes under `run` and records the retained ELF under `firmware.result_artifact`. This command is the known-good automated baseline.
+
 Post-flash UART capture writes `uart.log` inside the run directory. After a successful flash, it starts UART capture first, triggers the configured `reset.helper` after a short delay, and marks the run as passed only when both the expected boot marker and expected `tick` marker are present.
 
 Run IDs use the format:

@@ -260,6 +260,43 @@ results/<run_id>/
 
 Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Fingerprint unit tests use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.
 
+
+## Full Automated Baseline Run
+
+The first-class known-good automated baseline command is:
+
+```powershell
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The command creates one result directory and performs these stages in order:
+
+1. create the run directory and initial manifest
+2. build the configured firmware
+3. copy the exact built ELF into the run directory
+4. flash only when the build and artifact copy succeeded
+5. start bounded UART capture and reset the board after capture is active
+6. evaluate the configured boot and tick markers
+7. write the final manifest verdict
+
+A successful run contains:
+
+```text
+results/<run_id>/
+  manifest.json
+  notes.md
+  build.log
+  flash.log
+  uart.log
+  stm32_basic_hal1.elf
+```
+
+The final manifest uses `baseline_run_passed` or `baseline_run_failed` in `result`. The `run` object records the overall return code, individual stage return codes, copied artifact filename, failure stage, log filenames, and total duration. `firmware.result_artifact` and `firmware.result_artifact_path` identify the retained run-scoped ELF.
+
+The command stops at the first failed stage. A build failure prevents artifact copying, flashing, and UART capture. An artifact-copy failure prevents flashing and UART capture. A flash failure prevents UART capture. UART marker failure returns the UART failure code and records `uart` evidence in the same manifest.
+
+Unit tests mock the build, artifact-copy, flash, and UART boundaries. They verify successful orchestration in one result directory and failure short-circuiting at build, flash, and UART stages without invoking CMake, SCP, SSH, UART devices, or hardware.
+
 ## UART Monitor and Post-Flash Capture Support
 
 The framework separates UART handling into two workflows.

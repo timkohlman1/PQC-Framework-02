@@ -7,6 +7,7 @@ automation. It performs no hardware, network, UART, SSH, or toolchain actions.
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 
@@ -25,3 +26,21 @@ def calculate_file_sha256(path: Path | str) -> str:
             digest.update(chunk)
 
     return digest.hexdigest()
+
+
+def copy_artifact_to_result(artifact_path: Path | str, result_dir: Path | str) -> Path:
+    """Copy a built firmware artifact into its run result directory.
+
+    The original filename is preserved so each successful automated baseline run
+    retains the exact ELF that was built and subsequently verified for flashing.
+    """
+
+    source = Path(artifact_path)
+    destination = Path(result_dir) / source.name
+
+    if not source.is_file():
+        raise FileNotFoundError(f"Firmware artifact not found: {source}")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return destination

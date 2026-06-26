@@ -8,6 +8,7 @@ The initial supported commands are:
     python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board and
@@ -42,9 +43,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from framework.artifacts import copy_artifact_to_result
 from framework.build import execute_build
 from framework.flash import execute_flash
-from framework.manifest import create_result_folder, update_manifest
+from framework.manifest import create_result_folder, read_manifest, update_manifest
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 
 
@@ -604,6 +606,198 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
     return final_return_code
 
 
+
+def _record_run_summary(
+    *,
+    result_dir: Path,
+    final_return_code: int,
+    failure_stage: str,
+    build_return_code: int,
+    flash_return_code: int | None,
+    uart_return_code: int | None,
+    artifact_copy_return_code: int | None,
+    copied_artifact_path: Path | None,
+    duration_seconds: float,
+) -> None:
+    """Record the first-class automated baseline run summary."""
+
+    manifest_path = result_dir / "manifest.json"
+    manifest = read_manifest(manifest_path)
+    firmware = manifest.get("firmware", {})
+    if not isinstance(firmware, dict):
+        firmware = {}
+    firmware = dict(firmware)
+    firmware["result_artifact"] = (
+        copied_artifact_path.name if copied_artifact_path is not None else None
+    )
+    firmware["result_artifact_path"] = (
+        str(copied_artifact_path) if copied_artifact_path is not None else None
+    )
+
+    update_manifest(
+        manifest_path,
+        {
+            "result": "baseline_run_passed" if final_return_code == 0 else "baseline_run_failed",
+            "firmware": firmware,
+            "run": {
+                "return_code": final_return_code,
+                "build_return_code": build_return_code,
+                "artifact_copy_return_code": artifact_copy_return_code,
+                "flash_return_code": flash_return_code,
+                "uart_return_code": uart_return_code,
+                "build_log": "build.log",
+                "flash_log": "flash.log" if flash_return_code is not None else None,
+                "uart_log": "uart.log" if uart_return_code is not None else None,
+                "copied_artifact": (
+                    copied_artifact_path.name if copied_artifact_path is not None else None
+                ),
+                "failure_stage": failure_stage,
+                "duration_seconds": round(duration_seconds, 3),
+            },
+        },
+    )
+
+
+def run_full_baseline_command(args: argparse.Namespace) -> int:
+    """Run the known-good automated baseline from build through UART verdict."""
+
+    from time import perf_counter
+
+    bundle = load_experiment_bundle(args.experiment)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    configure_preset = args.configure_preset or args.build_preset
+    start = perf_counter()
+
+    build_result = execute_build(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        configure_preset=configure_preset,
+        build_preset=args.build_preset,
+    )
+
+    if build_result.return_code != 0:
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=build_result.return_code,
+            failure_stage="build",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=None,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+        )
+        print("Baseline run failed during build")
+        print("--------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build log: {build_result.log_path}")
+        print(f"Return code: {build_result.return_code}")
+        return build_result.return_code
+
+    copied_artifact_path: Path | None = None
+    try:
+        copied_artifact_path = copy_artifact_to_result(build_result.elf_path, result_dir)
+        artifact_copy_return_code = 0
+    except OSError as exc:
+        artifact_copy_return_code = 11
+        update_manifest(
+            result_dir / "manifest.json",
+            {"artifact_copy_error": str(exc)},
+        )
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=artifact_copy_return_code,
+            failure_stage="artifact_copy",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=artifact_copy_return_code,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+        )
+        print("Baseline run failed while copying artifact")
+        print("------------------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Error: {exc}")
+        print(f"Return code: {artifact_copy_return_code}")
+        return artifact_copy_return_code
+
+    flash_result = execute_flash(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        source_build_run_id=manifest["run_id"],
+    )
+
+    if flash_result.return_code != 0:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "flash_failed",
+                },
+            },
+        )
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=flash_result.return_code,
+            failure_stage="flash",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=artifact_copy_return_code,
+            flash_return_code=flash_result.return_code,
+            uart_return_code=None,
+            copied_artifact_path=copied_artifact_path,
+            duration_seconds=perf_counter() - start,
+        )
+        print("Baseline run failed during flash")
+        print("--------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build log: {build_result.log_path}")
+        print(f"Copied artifact: {copied_artifact_path}")
+        print(f"Flash log: {flash_result.log_path}")
+        print(f"Return code: {flash_result.return_code}")
+        return flash_result.return_code
+
+    uart_result = execute_uart_capture(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        duration_seconds=args.uart_duration_seconds,
+        restart_command=_monitor_restart_command(bundle, None),
+    )
+
+    final_return_code = uart_result.return_code
+    failure_stage = "none" if final_return_code == 0 else "uart"
+    _record_run_summary(
+        result_dir=result_dir,
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        build_return_code=build_result.return_code,
+        artifact_copy_return_code=artifact_copy_return_code,
+        flash_return_code=flash_result.return_code,
+        uart_return_code=uart_result.return_code,
+        copied_artifact_path=copied_artifact_path,
+        duration_seconds=perf_counter() - start,
+    )
+
+    print("Baseline run passed" if final_return_code == 0 else "Baseline run failed during uart")
+    print("-------------------" if final_return_code == 0 else "-------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Build log: {build_result.log_path}")
+    print(f"Copied artifact: {copied_artifact_path}")
+    print(f"Flash log: {flash_result.log_path}")
+    print(f"UART log: {uart_result.log_path}")
+    print(f"Return code: {final_return_code}")
+    return final_return_code
+
 def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | None) -> str:
     """Resolve the gateway restart command for ad hoc UART monitoring."""
 
@@ -794,6 +988,41 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Bounded post-flash UART capture duration in seconds.",
     )
     build_flash_parser.set_defaults(func=run_build_flash_command)
+
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run the known-good automated baseline: build, retain artifact, flash, capture UART, and evaluate pass/fail.",
+    )
+    run_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to an experiment YAML config.",
+    )
+    run_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    run_parser.add_argument(
+        "--build-preset",
+        default="Debug",
+        help="CMake build preset to invoke before flashing.",
+    )
+    run_parser.add_argument(
+        "--configure-preset",
+        default=None,
+        help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    run_parser.add_argument(
+        "--uart-duration-seconds",
+        default=DEFAULT_CAPTURE_DURATION_SECONDS,
+        type=int,
+        help="Bounded UART capture duration used for the baseline pass/fail verdict.",
+    )
+    run_parser.set_defaults(func=run_full_baseline_command)
 
     monitor_parser = subparsers.add_parser(
         "monitor",
