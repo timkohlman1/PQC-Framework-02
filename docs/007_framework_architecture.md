@@ -173,6 +173,16 @@ Flash evidence includes the flashed firmware hash, provenance verification statu
 
 The run record should not be treated as the owner of the build when it merely references an existing build. Conversely, a build failure should not be confused with a hardware or UART experiment failure.
 
+Phase 10c allows the `run` command to reference an existing first-class build record by build number:
+
+```powershell
+python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number 7
+```
+
+When a build number is supplied, the run command validates `results/builds/<build_number>/manifest.json` before any hardware-facing stage. The validation requires a first-class build record with the requested build number, a successful or safely skipped build result, matching experiment and board identity, a retained `firmware.elf`, matching firmware SHA-256, and a matching current source/build fingerprint. If the manifest is missing, malformed, incomplete, points to a missing artifact, records a mismatched artifact hash, or records a mismatched build fingerprint, the run is refused before flash or UART capture.
+
+A run that reuses an existing build copies the verified build-record artifact into its own run directory as `firmware.elf`, flashes that run-scoped copy, captures UART, and records the referenced build number and artifact hash under `build_reference`, `run.referenced_build_number`, and `run.referenced_build_artifact_sha256`.
+
 ### Current layout compatibility
 
 The compatibility run-result layout remains valid for this phase:
@@ -375,7 +385,7 @@ The first-class known-good automated baseline command is:
 python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The command creates one result directory and performs these stages in order:
+The command creates one result directory and performs these stages in order when no build number is supplied:
 
 1. create the run directory and initial manifest
 2. build the configured firmware
@@ -384,6 +394,8 @@ The command creates one result directory and performs these stages in order:
 5. start bounded UART capture and reset the board after capture is active
 6. evaluate the configured boot and tick markers
 7. write the final manifest verdict
+
+When `--build-number <number>` is supplied, the build stage is replaced by build-record validation and artifact retention from `results/builds/<number>/`. Unsafe references fail at the `build_reference` stage before flash or UART capture.
 
 A successful run contains:
 

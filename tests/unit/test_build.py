@@ -524,6 +524,8 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
         log_path = tmp_path / "results" / "run" / "flash.log"
         provenance_status = "verified_build_match"
 
+    fake_flash_result = FakeFlashResult()
+
     def fake_execute_build(**kwargs):
         assert kwargs["repo_root"] == tmp_path
         assert kwargs["configure_preset"] == "Debug"
@@ -534,7 +536,7 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
     def fake_execute_flash(**kwargs):
         assert kwargs["repo_root"] == tmp_path
         seen_result_dirs.append(kwargs["result_dir"])
-        return FakeFlashResult()
+        return fake_flash_result
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
     monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
@@ -644,13 +646,15 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
         log_path = tmp_path / "results" / "run" / "flash.log"
         provenance_status = "verified_build_match"
 
+    fake_flash_result = FakeFlashResult()
+
     def fake_execute_build(**kwargs):
         seen_result_dirs.append(kwargs["result_dir"])
         return FakeBuildResult()
 
     def fake_execute_flash(**kwargs):
         seen_result_dirs.append(kwargs["result_dir"])
-        return FakeFlashResult()
+        return fake_flash_result
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
     monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
@@ -868,19 +872,22 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
         duration_seconds = 1.25
         log_path = tmp_path / "results" / "run" / "uart.log"
 
+    fake_flash_result = FakeFlashResult()
+    fake_uart_result = FakeUartResult()
+
     def fake_execute_build(**kwargs):
         seen_result_dirs.append(kwargs["result_dir"])
         return FakeBuildResult()
 
     def fake_execute_flash(**kwargs):
         seen_result_dirs.append(kwargs["result_dir"])
-        return FakeFlashResult()
+        return fake_flash_result
 
     def fake_execute_uart_capture(**kwargs):
         assert kwargs["repo_root"] == tmp_path
         assert kwargs["duration_seconds"] == 12
         seen_result_dirs.append(kwargs["result_dir"])
-        return FakeUartResult()
+        return fake_uart_result
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
     monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
@@ -1179,3 +1186,162 @@ def test_execute_build_force_runs_cmake_even_when_skip_criteria_match(tmp_path):
     assert manifest["build"]["skip_reason"] == "force_requested"
     assert manifest["build"]["force"] is True
     assert "Force rebuild requested: true" in build_log
+
+
+def test_run_command_reuses_verified_build_number_without_building(tmp_path, monkeypatch, capsys):
+    experiment_cli = load_experiment_module()
+    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
+    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
+    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    experiment_path.parent.mkdir(parents=True)
+    board_path.parent.mkdir(parents=True)
+    host_path.parent.mkdir(parents=True)
+
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "id: baseline_direct_uart",
+                "description: Test experiment.",
+                "board: board_a",
+                "host: gateway",
+                "firmware:",
+                "  mode: direct_flash",
+                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "uart:",
+                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
+                "  expected_tick_message: tick",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    board_path.write_text(
+        "\n".join(
+            [
+                "id: board_a",
+                "name: NUCLEO-L4R5ZI-P",
+                "mcu: STM32L4R5",
+                "description: Test board.",
+                "stlink:",
+                '  serial: "123"',
+                "uart:",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    host_path.write_text(
+        "\n".join(
+            [
+                "id: gateway",
+                "alias: pqc-gateway1",
+                "user: timk",
+                "description: Test gateway.",
+                "flash:",
+                "  helper: flash-stm32a",
+                "uart:",
+                "  device: /dev/example",
+                "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifact_path = tmp_path / "results" / "builds" / "7" / "firmware.elf"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("reused elf", encoding="utf-8")
+    manifest_path = artifact_path.parent / "manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    firmware_sha256 = hashlib.sha256(b"reused elf").hexdigest()
+    seen_result_dirs = []
+
+    fake_verification = Namespace(
+        status="verified_build_record",
+        return_code=0,
+        message="ok",
+        build_number=7,
+        record_dir=artifact_path.parent,
+        manifest_path=manifest_path,
+        artifact_path=artifact_path,
+        firmware_sha256=firmware_sha256,
+        build_fingerprint="a" * 64,
+        build_fingerprint_algorithm="sha256-build-inputs-v1",
+        current_build_fingerprint="a" * 64,
+        current_build_fingerprint_algorithm="sha256-build-inputs-v1",
+        current_build_fingerprint_error=None,
+        manifest={},
+    )
+
+    fake_flash_result = Namespace(
+        return_code=0,
+        duration_seconds=0.5,
+        artifact_path=tmp_path / "results" / "run" / "firmware.elf",
+        remote_artifact_path="/tmp/firmware.elf",
+        stlink_serial="123",
+        log_path=tmp_path / "results" / "run" / "flash.log",
+        provenance_status="verified_build_match",
+    )
+
+    fake_uart_result = Namespace(
+        return_code=0,
+        duration_seconds=1.0,
+        log_path=tmp_path / "results" / "run" / "uart.log",
+    )
+
+    def forbidden_execute_build(**kwargs):
+        raise AssertionError("run --build-number must not invoke the build helper")
+
+    def fake_resolve_verified_build_record(**kwargs):
+        assert kwargs["results_root"] == tmp_path / "results"
+        assert kwargs["build_number"] == 7
+        assert kwargs["repo_root"] == tmp_path
+        return fake_verification
+
+    def fake_execute_flash(**kwargs):
+        seen_result_dirs.append(kwargs["result_dir"])
+        assert kwargs["source_build_number"] == 7
+        assert kwargs["source_build_manifest_path"] == manifest_path
+        assert Path(kwargs["artifact_path_override"]).name == "firmware.elf"
+        return fake_flash_result
+
+    def fake_execute_uart_capture(**kwargs):
+        seen_result_dirs.append(kwargs["result_dir"])
+        return fake_uart_result
+
+    monkeypatch.setattr(experiment_cli, "execute_build", forbidden_execute_build)
+    monkeypatch.setattr(
+        experiment_cli,
+        "resolve_verified_build_record",
+        fake_resolve_verified_build_record,
+    )
+    monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
+    monkeypatch.setattr(experiment_cli, "execute_uart_capture", fake_execute_uart_capture)
+
+    exit_code = experiment_cli.run_full_baseline_command(
+        Namespace(
+            experiment=experiment_path,
+            results_dir=tmp_path / "results",
+            configure_preset=None,
+            build_preset="Debug",
+            build_number=7,
+            force=False,
+            uart_duration_seconds=10,
+        )
+    )
+
+    output = capsys.readouterr().out
+    result_dir = seen_result_dirs[0]
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Build number: 7" in output
+    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "reused elf"
+    assert manifest["result"] == "baseline_run_passed"
+    assert manifest["build_number"] == 7
+    assert manifest["build_reference"]["build_number"] == 7
+    assert manifest["build_reference"]["artifact_sha256"] == firmware_sha256
+    assert manifest["run"]["build_return_code"] is None
+    assert manifest["run"]["referenced_build_number"] == 7
+    assert manifest["run"]["referenced_build_artifact_sha256"] == firmware_sha256

@@ -45,6 +45,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from framework.artifacts import copy_artifact_to_result
+from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
 from framework.flash import execute_flash
 from framework.manifest import create_result_folder, read_manifest, update_manifest
@@ -658,12 +659,15 @@ def _record_run_summary(
     result_dir: Path,
     final_return_code: int,
     failure_stage: str,
-    build_return_code: int,
+    build_return_code: int | None,
     flash_return_code: int | None,
     uart_return_code: int | None,
     artifact_copy_return_code: int | None,
     copied_artifact_path: Path | None,
     duration_seconds: float,
+    referenced_build_number: int | None = None,
+    referenced_build_artifact_sha256: str | None = None,
+    referenced_build_manifest: Path | None = None,
 ) -> None:
     """Record the first-class automated baseline run summary."""
 
@@ -679,19 +683,42 @@ def _record_run_summary(
     firmware["result_artifact_path"] = (
         str(copied_artifact_path) if copied_artifact_path is not None else None
     )
+    if referenced_build_artifact_sha256 is not None:
+        firmware["sha256"] = referenced_build_artifact_sha256
+
+    build_reference = None
+    if referenced_build_number is not None:
+        existing_build_reference = manifest.get("build_reference")
+        build_reference = (
+            dict(existing_build_reference)
+            if isinstance(existing_build_reference, dict)
+            else {}
+        )
+        build_reference.update(
+            {
+                "build_number": referenced_build_number,
+                "artifact_sha256": referenced_build_artifact_sha256,
+                "record_manifest": None
+                if referenced_build_manifest is None
+                else str(referenced_build_manifest),
+            }
+        )
 
     update_manifest(
         manifest_path,
         {
             "result": "baseline_run_passed" if final_return_code == 0 else "baseline_run_failed",
             "firmware": firmware,
+            "build_reference": build_reference,
             "run": {
                 "return_code": final_return_code,
                 "build_return_code": build_return_code,
+                "referenced_build_number": referenced_build_number,
+                "referenced_build_artifact_sha256": referenced_build_artifact_sha256,
                 "artifact_copy_return_code": artifact_copy_return_code,
                 "flash_return_code": flash_return_code,
                 "uart_return_code": uart_return_code,
-                "build_log": "build.log",
+                "build_log": None if referenced_build_number is not None else "build.log",
                 "flash_log": "flash.log" if flash_return_code is not None else None,
                 "uart_log": "uart.log" if uart_return_code is not None else None,
                 "copied_artifact": (
@@ -704,6 +731,247 @@ def _record_run_summary(
     )
 
 
+
+def _record_build_reference_failure(
+    *,
+    result_dir: Path,
+    verification_result: Any,
+    duration_seconds: float,
+) -> None:
+    """Record a refused existing-build reference before hardware-facing stages."""
+
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "result": "baseline_run_failed",
+            "build_reference": {
+                "build_number": verification_result.build_number,
+                "status": verification_result.status,
+                "return_code": verification_result.return_code,
+                "message": verification_result.message,
+                "record_manifest": None
+                if verification_result.manifest_path is None
+                else str(verification_result.manifest_path),
+                "artifact_path": None
+                if verification_result.artifact_path is None
+                else str(verification_result.artifact_path),
+                "artifact_sha256": verification_result.firmware_sha256,
+                "build_fingerprint": verification_result.build_fingerprint,
+                "current_build_fingerprint": verification_result.current_build_fingerprint,
+                "current_build_fingerprint_error": verification_result.current_build_fingerprint_error,
+            },
+            "run": {
+                "return_code": verification_result.return_code,
+                "build_return_code": None,
+                "referenced_build_number": verification_result.build_number,
+                "referenced_build_artifact_sha256": verification_result.firmware_sha256,
+                "artifact_copy_return_code": None,
+                "flash_return_code": None,
+                "uart_return_code": None,
+                "build_log": None,
+                "flash_log": None,
+                "uart_log": None,
+                "copied_artifact": None,
+                "failure_stage": "build_reference",
+                "duration_seconds": round(duration_seconds, 3),
+            },
+        },
+    )
+
+
+def _run_full_baseline_with_existing_build(
+    *,
+    args: argparse.Namespace,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+    manifest: dict[str, Any],
+    start: float,
+) -> int:
+    """Run flash and UART against a verified first-class build record."""
+
+    from time import perf_counter
+
+    build_number = args.build_number
+    verification = resolve_verified_build_record(
+        results_root=args.results_dir,
+        build_number=build_number,
+        bundle=bundle,
+        repo_root=repo_root,
+    )
+
+    if verification.return_code != 0:
+        _record_build_reference_failure(
+            result_dir=result_dir,
+            verification_result=verification,
+            duration_seconds=perf_counter() - start,
+        )
+        print("Baseline run refused build reference")
+        print("-----------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build number: {build_number}")
+        print(f"Reason: {verification.message}")
+        print(f"Return code: {verification.return_code}")
+        return verification.return_code
+
+    assert verification.artifact_path is not None
+    assert verification.manifest_path is not None
+
+    copied_artifact_path: Path | None = None
+    try:
+        if _copy_artifact_to_result_accepts_destination_name():
+            copied_artifact_path = copy_artifact_to_result(
+                verification.artifact_path,
+                result_dir,
+                "firmware.elf",
+            )
+        else:
+            copied_artifact_path = copy_artifact_to_result(
+                verification.artifact_path,
+                result_dir,
+            )
+        artifact_copy_return_code = 0
+    except OSError as exc:
+        artifact_copy_return_code = 11
+        update_manifest(
+            result_dir / "manifest.json",
+            {"artifact_copy_error": str(exc)},
+        )
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=artifact_copy_return_code,
+            failure_stage="artifact_copy",
+            build_return_code=None,
+            artifact_copy_return_code=artifact_copy_return_code,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+            referenced_build_number=build_number,
+            referenced_build_artifact_sha256=verification.firmware_sha256,
+            referenced_build_manifest=verification.manifest_path,
+        )
+        print("Baseline run failed while copying referenced build artifact")
+        print("----------------------------------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build number: {build_number}")
+        print(f"Error: {exc}")
+        print(f"Return code: {artifact_copy_return_code}")
+        return artifact_copy_return_code
+
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "build_number": build_number,
+            "build_reference": {
+                "build_number": build_number,
+                "status": verification.status,
+                "return_code": verification.return_code,
+                "message": verification.message,
+                "record_path": None if verification.record_dir is None else str(verification.record_dir),
+                "record_manifest": str(verification.manifest_path),
+                "artifact_path": str(verification.artifact_path),
+                "artifact_sha256": verification.firmware_sha256,
+                "build_fingerprint": verification.build_fingerprint,
+                "build_fingerprint_algorithm": verification.build_fingerprint_algorithm,
+                "current_build_fingerprint": verification.current_build_fingerprint,
+                "current_build_fingerprint_algorithm": verification.current_build_fingerprint_algorithm,
+            },
+            "firmware": {
+                "artifact": bundle["experiment"]["firmware"]["artifact"],
+                "artifact_path": str(verification.artifact_path),
+                "artifact_exists": True,
+                "sha256": verification.firmware_sha256,
+                "result_artifact": copied_artifact_path.name,
+                "result_artifact_path": str(copied_artifact_path),
+            },
+        },
+    )
+
+    flash_result = execute_flash(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        source_build_run_id=None,
+        source_build_number=build_number,
+        source_build_manifest_path=verification.manifest_path,
+        artifact_path_override=copied_artifact_path,
+    )
+
+    if flash_result.return_code != 0:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "flash_failed",
+                },
+            },
+        )
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=flash_result.return_code,
+            failure_stage="flash",
+            build_return_code=None,
+            artifact_copy_return_code=artifact_copy_return_code,
+            flash_return_code=flash_result.return_code,
+            uart_return_code=None,
+            copied_artifact_path=copied_artifact_path,
+            duration_seconds=perf_counter() - start,
+            referenced_build_number=build_number,
+            referenced_build_artifact_sha256=verification.firmware_sha256,
+            referenced_build_manifest=verification.manifest_path,
+        )
+        print("Baseline run failed during flash")
+        print("--------------------------------")
+        print(f"Run ID: {manifest['run_id']}")
+        print(f"Result directory: {result_dir}")
+        print(f"Build number: {build_number}")
+        print(f"Copied artifact: {copied_artifact_path}")
+        print(f"Flash log: {flash_result.log_path}")
+        print(f"Return code: {flash_result.return_code}")
+        return flash_result.return_code
+
+    uart_result = execute_uart_capture(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        duration_seconds=args.uart_duration_seconds,
+        restart_command=_monitor_restart_command(bundle, None),
+    )
+
+    final_return_code = uart_result.return_code
+    failure_stage = "none" if final_return_code == 0 else "uart"
+    _record_run_summary(
+        result_dir=result_dir,
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        build_return_code=None,
+        artifact_copy_return_code=artifact_copy_return_code,
+        flash_return_code=flash_result.return_code,
+        uart_return_code=uart_result.return_code,
+        copied_artifact_path=copied_artifact_path,
+        duration_seconds=perf_counter() - start,
+        referenced_build_number=build_number,
+        referenced_build_artifact_sha256=verification.firmware_sha256,
+        referenced_build_manifest=verification.manifest_path,
+    )
+
+    print("Baseline run passed" if final_return_code == 0 else "Baseline run failed during uart")
+    print("-------------------" if final_return_code == 0 else "-------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Build number: {build_number}")
+    print(f"Copied artifact: {copied_artifact_path}")
+    print(f"Flash log: {flash_result.log_path}")
+    print(f"UART log: {uart_result.log_path}")
+    print(f"Return code: {final_return_code}")
+    return final_return_code
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the known-good automated baseline from build through UART verdict."""
 
@@ -714,6 +982,16 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     repo_root = repo_root_from_experiment_path(args.experiment)
     configure_preset = args.configure_preset or args.build_preset
     start = perf_counter()
+
+    if getattr(args, "build_number", None) is not None:
+        return _run_full_baseline_with_existing_build(
+            args=args,
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            manifest=manifest,
+            start=start,
+        )
 
     build_result = execute_build(
         bundle=bundle,
@@ -1072,6 +1350,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path("results"),
         type=Path,
         help="Directory where result run folders are created.",
+    )
+    run_parser.add_argument(
+        "--build-number",
+        default=None,
+        type=int,
+        help="Use an existing first-class build record from results/builds/<build-number> instead of creating a new build.",
     )
     run_parser.add_argument(
         "--build-preset",
