@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-RUN_GATEWAY_FLASH_ENV = "PQC_RUN_GATEWAY_FLASH_INTEGRATION"
 EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 
@@ -48,17 +46,23 @@ def _build_record_dir(results_dir: Path, build_number: int) -> Path:
 
 
 @pytest.mark.integration
-def test_gateway_flash_helper_with_verified_build_record(tmp_path):
+def test_gateway_flash_helper_with_verified_build_record(tmp_path, pqc_require_capabilities):
     """Run a real build, then flash that verified build through the gateway.
 
-    This test is hardware-dependent and must remain opt-in. It intentionally
-    creates the build record inside the same temporary results directory used by
-    the flash command, so the flash provenance gate can verify the build-run
-    manifest before SCP or SSH are attempted.
+    This test is hardware-dependent and auto-skips unless the local build
+    toolchain, SSH gateway, and configured flash helper are available. It
+    intentionally creates the build record inside the same temporary results
+    directory used by the flash command, so the flash provenance gate can verify
+    the build-run manifest before SCP or SSH are attempted. Use
+    --pqc-require-gateway to turn missing capability skips into failures.
     """
 
-    if os.environ.get(RUN_GATEWAY_FLASH_ENV) != "1":
-        pytest.skip(f"Set {RUN_GATEWAY_FLASH_ENV}=1 to run the gateway flash integration test.")
+    pqc_require_capabilities(
+        "local_toolchain",
+        "gateway",
+        "flash_helper",
+        strict_mode="gateway",
+    )
 
     repo_root = _repo_root()
     results_dir = tmp_path / "results"

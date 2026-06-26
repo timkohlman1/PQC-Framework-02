@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-
-RUN_LOCAL_BUILD_ENV = "PQC_RUN_LOCAL_BUILD_INTEGRATION"
 
 
 def _repo_root() -> Path:
@@ -31,16 +27,19 @@ def _build_record_dir(results_dir: Path, build_number: int) -> Path:
 
 
 @pytest.mark.integration
-def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
-    """Run the real local STM32/CMake build command when explicitly enabled.
+def test_real_local_build_command_completes_without_flash_or_uart(
+    tmp_path,
+    pqc_require_capabilities,
+):
+    """Run the real local STM32/CMake build command when the toolchain is available.
 
     This test intentionally invokes the repository CLI through subprocess rather
-    than mocking the build helper. It is skipped by default because it requires
-    the local STM32/CMake/Ninja toolchain that unit tests must not require.
+    than mocking the build helper. It auto-skips when the local STM32/CMake/Ninja
+    capability probes fail. Use --pqc-require-local-build to turn that skip into
+    a failure.
     """
 
-    if os.environ.get(RUN_LOCAL_BUILD_ENV) != "1":
-        pytest.skip(f"Set {RUN_LOCAL_BUILD_ENV}=1 to run the local build integration test.")
+    pqc_require_capabilities("local_toolchain", strict_mode="local_build")
 
     repo_root = _repo_root()
     results_dir = tmp_path / "results"

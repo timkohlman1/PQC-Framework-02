@@ -276,27 +276,35 @@ The unit tests cover command construction, deterministic fingerprinting, fingerp
 
 ## Integration Test Support
 
-The framework now has an opt-in local build integration test:
+The framework has pytest capability probes in:
 
 ```text
-tests/integration/test_local_build.py
+tests/conftest.py
 ```
 
-This test invokes the real CLI build command through a subprocess:
+The full suite can be run from the repository root:
+
+```powershell
+python -m pytest
+```
+
+Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, and hardware by using injected or mocked command runners.
+
+Integration and hardware tests remain marked separately, but they now auto-skip when their required capabilities are unavailable instead of using environment-variable gates. The local build integration test checks the `local_toolchain` capability before invoking the real CLI build command through a subprocess:
 
 ```powershell
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --results-dir <temporary-results-dir>
 ```
 
-The test is marked with the `integration` pytest marker and is skipped unless this environment variable is set:
+The local toolchain probe checks `cmake --version`, `ninja --version`, and `cmake --list-presets` from the repository root. If those checks pass, the test validates the local build automation against the real STM32/CMake/Ninja toolchain. It checks the command return code, generated result directory, `manifest.json`, `build.log`, expected CMake configure/build commands, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
+
+Strict mode is available when missing capabilities should fail rather than skip:
 
 ```powershell
-$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
+python -m pytest --pqc-require-local-build
+python -m pytest --pqc-require-gateway
+python -m pytest --pqc-require-hardware
 ```
-
-The test validates the local build automation against the real STM32/CMake/Ninja toolchain. It checks the command return code, generated result directory, `manifest.json`, `build.log`, expected CMake configure/build commands, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
-
-Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, and hardware by using injected or mocked command runners.
 
 
 ## Remote Flash Automation Support
@@ -344,7 +352,7 @@ python scripts/experiment.py flash --experiment configs/experiments/baseline_dir
 
 When the escape hatch is used, the command records `flash.provenance_status` as `untracked_artifact_allowed`. This is intentionally visible in the manifest and should not be used for normal experiment runs. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing or provenance verification is refused.
 
-Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` is opt-in through `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`.
+Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` auto-skips unless the local build capability, SSH gateway, and configured gateway flash helper are available. Use `--pqc-require-gateway` to fail instead of skip when those capabilities are expected.
 
 
 ## Combined Build and Flash Support
@@ -530,11 +538,16 @@ The real baseline UART hardware test is:
 tests/hardware/test_baseline_uart.py
 ```
 
-It is marked with the `hardware` pytest marker and is skipped unless explicitly enabled:
+It is marked with the `hardware` pytest marker and auto-skips unless the SSH gateway and configured ST-LINK VCP UART device are available:
 
 ```powershell
-$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
+
+Use strict hardware mode when the gateway and board are expected to be present:
+
+```powershell
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 ```
 
 The hardware test uses the ad hoc monitor workflow and verifies that non-empty UART data can be captured from the configured ST-LINK VCP path.

@@ -198,6 +198,7 @@ Current test layout:
 
 ```text
 tests/
+  conftest.py
   unit/
     test_artifacts.py
     test_build.py
@@ -455,7 +456,7 @@ Integration tests live under:
 tests/integration/
 ```
 
-Integration tests must be separated from unit tests and must be opt-in when they invoke local toolchains or external capabilities.
+Integration tests must be separated from unit tests and must skip cleanly when required local toolchains or external capabilities are unavailable.
 
 The current integration tests are:
 
@@ -464,25 +465,22 @@ tests/integration/test_local_build.py
 tests/integration/test_gateway_flash_helper.py
 ```
 
-This test invokes the real local CLI build command through subprocess when explicitly enabled with:
+Capability checks are implemented in:
 
-```powershell
-$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
-python -m pytest tests/integration -m integration
+```text
+tests/conftest.py
 ```
 
-The local build integration test runs the real CMake/STM32 build process, verifies the command return code, generated result directory, `manifest.json`, `build.log`, CMake configure/build command entries, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
+The local build integration test runs the real CMake/STM32 build process through the CLI only when the `local_toolchain` capability is available. That capability checks `cmake --version`, `ninja --version`, and `cmake --list-presets` from the repository root. The test verifies the command return code, generated result directory, `manifest.json`, `build.log`, CMake configure/build command entries, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
 
-Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the local build integration test is skipped.
+The gateway flash integration test invokes the real build and then the real `flash` CLI command only when the `local_toolchain`, `gateway`, and `flash_helper` capabilities are available. It requires the built ELF, gateway SSH access, the configured flash helper, ST-LINK, and the target board.
 
-The gateway flash integration test invokes the real `flash` CLI command only when explicitly enabled with:
+Missing integration-test capabilities produce pytest skips by default. Strict mode turns missing expected capabilities into failures:
 
 ```powershell
-$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
-python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
+python -m pytest tests/integration -m integration --pqc-require-local-build
+python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
 ```
-
-It requires the built ELF, gateway SSH access, the configured flash helper, ST-LINK, and the target board. Without `PQC_RUN_GATEWAY_FLASH_INTEGRATION=1`, it is skipped.
 
 Additional future integration test examples:
 
@@ -518,11 +516,16 @@ apply network impairment
 measure timing
 ```
 
-Hardware tests must be opt-in. The baseline UART monitor hardware test is enabled only with:
+Hardware tests must remain marked separately and must skip cleanly when required hardware capabilities are unavailable. The baseline UART monitor hardware test runs only when the `gateway` and `uart_device` capability probes pass:
 
 ```powershell
-$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
+
+Strict hardware mode turns missing expected hardware capabilities into failures:
+
+```powershell
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 ```
 
 ## 10. Configuration Model
@@ -1228,10 +1231,10 @@ Expected `build-flash` behaviour:
 Immediate next intended steps after this change:
 
 1. Run the unit tests.
-2. Confirm both integration tests skip by default.
-3. Run the opt-in local build integration test.
-4. Run the opt-in gateway flash integration test only with the gateway and board available.
-5. Run the opt-in baseline UART hardware test only with the gateway and board available.
+2. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
+3. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
+4. Run the strict gateway flash integration check only when the gateway and board are expected to be available.
+5. Run the strict baseline UART hardware check only when the gateway and board are expected to be available.
 6. Review user-provided logs before claiming hardware success.
 7. Commit after verification passes.
 
@@ -1273,17 +1276,22 @@ Run framework unit tests:
 python -m pytest tests/unit
 ```
 
-Confirm the local build integration test is skipped by default:
+Run all tests that can run on the current machine. Integration and hardware tests auto-skip when required capabilities are unavailable:
+
+```powershell
+python -m pytest
+```
+
+Run the integration tests with automatic capability checks:
 
 ```powershell
 python -m pytest tests/integration -m integration
 ```
 
-Run the opt-in local build integration test on a development PC with the valid STM32/CMake/Ninja toolchain:
+Require the local build capability to be present, failing rather than skipping if it is missing:
 
 ```powershell
-$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
-python -m pytest tests/integration -m integration
+python -m pytest tests/integration -m integration --pqc-require-local-build
 ```
 
 Flash current firmware with an explicit verified build record:
@@ -1304,11 +1312,16 @@ Build and flash current firmware in one result run:
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Run the opt-in gateway flash integration test:
+Run the gateway flash integration test with automatic capability checks:
 
 ```powershell
-$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
+```
+
+Require gateway flash capability to be present, failing rather than skipping if it is missing:
+
+```powershell
+python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
 ```
 
 Ad hoc UART monitor through the framework:
@@ -1342,11 +1355,16 @@ Run the baseline experiment using an existing first-class build record:
 python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number 7
 ```
 
-Run the opt-in baseline UART hardware test:
+Run the baseline UART hardware test with automatic capability checks:
 
 ```powershell
-$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
+```
+
+Require hardware/UART capability to be present, failing rather than skipping if it is missing:
+
+```powershell
+python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 ```
 
 Flash current firmware manually:

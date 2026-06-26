@@ -231,38 +231,53 @@ The separation is intended to make repeated PQC experiments easier to audit. A s
 
 ## Tests
 
-Run framework unit tests without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware. The SHA-256 provenance tests use temporary files with known content, and the Git provenance tests use injected command runners:
+Run the full test suite from the repository root:
+
+```powershell
+python -m pytest
+```
+
+Unit tests still do not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware. Integration and hardware tests remain marked separately, but they now use pytest capability probes instead of environment-variable gates. When a required capability is unavailable, the relevant test is skipped with a clear reason.
+
+Current automatic capability probes include:
+
+```text
+local_toolchain
+  cmake --version
+  ninja --version
+  cmake --list-presets
+
+gateway
+  ssh -o BatchMode=yes -o ConnectTimeout=5 pqc-gateway1 true
+
+flash_helper
+  ssh pqc-gateway1 "command -v flash-stm32a"
+
+uart_device
+  ssh pqc-gateway1 "test -e /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02"
+```
+
+Use strict mode when a missing capability should fail the test run instead of skip:
+
+```powershell
+python -m pytest --pqc-require-local-build
+python -m pytest --pqc-require-gateway
+python -m pytest --pqc-require-hardware
+```
+
+Useful focused runs:
 
 ```powershell
 python -m pytest tests/unit
-```
-
-The local build integration test is opt-in because it runs the real local STM32/CMake build command. It does not flash hardware, open UART devices, use SSH, or touch network resources.
-
-Run the integration test only on a development PC with the valid STM32/CMake/Ninja toolchain available:
-
-```powershell
-$env:PQC_RUN_LOCAL_BUILD_INTEGRATION = "1"
 python -m pytest tests/integration -m integration
+python -m pytest tests/hardware -m hardware
 ```
 
-Without `PQC_RUN_LOCAL_BUILD_INTEGRATION=1`, the local build integration test is skipped.
+The local build integration test runs automatically only when the local STM32/CMake/Ninja build capability is detected. It does not flash hardware, open UART devices, use SSH, or touch network resources.
 
-The real gateway flash integration test is separately opt-in because it uses SSH and physical hardware:
+The gateway flash integration test runs automatically only when the local build capability, SSH gateway, and configured gateway flash helper are detected. It performs a real build and then flashes the verified build through the gateway.
 
-```powershell
-$env:PQC_RUN_GATEWAY_FLASH_INTEGRATION = "1"
-python -m pytest tests/integration/test_gateway_flash_helper.py -m integration
-```
-
-The real baseline UART monitor hardware test is also opt-in because it uses SSH, the gateway UART device, and physical hardware:
-
-```powershell
-$env:PQC_RUN_BASELINE_UART_HARDWARE = "1"
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware
-```
-
-Without `PQC_RUN_BASELINE_UART_HARDWARE=1`, the UART hardware test is skipped.
+The baseline UART hardware test runs automatically only when the SSH gateway and configured ST-LINK VCP UART device are detected. It captures real UART output through the configured gateway device.
 
 ## Development rule
 

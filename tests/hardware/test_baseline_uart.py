@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-RUN_BASELINE_UART_ENV = "PQC_RUN_BASELINE_UART_HARDWARE"
 EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
 EXPECTED_UART_DEVICE = "/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02"
 
@@ -33,16 +31,17 @@ def _single_adhoc_log(results_dir: Path) -> Path:
 
 
 @pytest.mark.hardware
-def test_baseline_uart_monitor(tmp_path):
+def test_baseline_uart_monitor(tmp_path, pqc_require_capabilities):
     """Monitor real UART output from the currently running baseline firmware.
 
-    This hardware-dependent test is opt-in. It verifies that the gateway can
-    connect to the configured ST-LINK VCP path and capture non-empty UART data.
-    It does not require the one-shot boot marker to be present.
+    This hardware-dependent test auto-skips unless the SSH gateway and
+    configured ST-LINK VCP UART device are available. It verifies that the
+    gateway can connect to the configured ST-LINK VCP path and capture non-empty
+    UART data. It does not require the one-shot boot marker to be present. Use
+    --pqc-require-hardware to turn missing capability skips into failures.
     """
 
-    if os.environ.get(RUN_BASELINE_UART_ENV) != "1":
-        pytest.skip(f"Set {RUN_BASELINE_UART_ENV}=1 to run the baseline UART hardware test.")
+    pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
 
     repo_root = _repo_root()
     results_dir = tmp_path / "results"
