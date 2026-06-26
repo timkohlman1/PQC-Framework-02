@@ -15,12 +15,14 @@ from typing import Iterable, NamedTuple
 BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-v1"
 
 DEFAULT_FIRMWARE_FINGERPRINT_INPUTS = [
+    "Core",
+    "Drivers",
     "CMakeLists.txt",
     "CMakePresets.json",
+    "cmake",
     "STM32L4R5XX_FLASH.ld",
     "startup_stm32l4r5xx.s",
-    "Core",
-    "cmake",
+    "stm32_basic_hal1.ioc",
 ]
 
 

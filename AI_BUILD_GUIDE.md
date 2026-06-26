@@ -740,7 +740,7 @@ The current fingerprint algorithm is:
 sha256-build-inputs-v1
 ```
 
-The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The initial input set is deliberately small and covers the resolved experiment, board, and host configuration files plus the known firmware build inputs: `CMakeLists.txt`, `CMakePresets.json`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, `Core/`, and `cmake/`.
+The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 9a input set covers the resolved experiment, board, and host configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
 
 The fingerprint intentionally excludes `results/`, `build/`, `.venv/`, `.git/`, documentation-only files, and unrelated generated artifacts.
 
@@ -935,17 +935,17 @@ Current framework skeleton completed items:
 22. Add Git source-control provenance for build and flash manifests.
 23. Add deterministic build input fingerprinting for build and build-flash manifests.
 24. Link flash runs to verified build records by requiring `flash --build-run <run_id>` or the explicit `--allow-untracked-artifact` escape hatch.
-25. Add `scripts/experiment.py monitor` for ad hoc bounded UART monitoring through the configured gateway.
-26. Add pass/fail detection for ad hoc monitor connectivity and non-empty UART data capture.
-27. Add optional post-flash UART capture to `flash --capture-uart` and `build-flash --capture-uart`.
-28. Add post-flash pass/fail detection for the expected baseline boot marker and `tick` marker.
-29. Add the opt-in baseline UART hardware test.
-30. Add `scripts/experiment.py run` as the known-good automated baseline.
-31. Retain the exact built ELF inside each successful baseline run directory.
-32. Add mocked orchestration tests for full-run success and stage failures.
-33. Track build numbers using local `.build_number` state.
-34. Copy successful build artifacts into result directories using canonical artifact filenames.
-
+25. Complete Phase 9a source hash coverage for the full required firmware/build input set without adding rebuild skipping.
+26. Add `scripts/experiment.py monitor` for ad hoc bounded UART monitoring through the configured gateway.
+27. Add pass/fail detection for ad hoc monitor connectivity and non-empty UART data capture.
+28. Add optional post-flash UART capture to `flash --capture-uart` and `build-flash --capture-uart`.
+29. Add post-flash pass/fail detection for the expected baseline boot marker and `tick` marker.
+30. Add the opt-in baseline UART hardware test.
+31. Add `scripts/experiment.py run` as the known-good automated baseline.
+32. Retain the exact built ELF inside each successful baseline run directory.
+33. Add mocked orchestration tests for full-run success and stage failures.
+34. Track build numbers using local `.build_number` state.
+35. Copy successful build artifacts into result directories using canonical artifact filenames.
 Current CLI commands are:
 
 ```powershell

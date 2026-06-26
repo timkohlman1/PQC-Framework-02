@@ -28,8 +28,11 @@ def write_required_inputs(repo_root: Path) -> None:
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
         "startup_stm32l4r5xx.s": "startup assembly\n",
+        "stm32_basic_hal1.ioc": "CubeMX project source\n",
         "Core/Src/main.c": "int main(void) { return 0; }\n",
         "Core/Inc/main.h": "#pragma once\n",
+        "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c": "HAL driver source\n",
+        "Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4r5xx.h": "CMSIS device header\n",
         "cmake/gcc-arm-none-eabi.cmake": "toolchain config\n",
     }
 
@@ -70,6 +73,26 @@ def test_build_fingerprint_is_deterministic(tmp_path):
     assert first.inputs == sorted(first.inputs)
 
 
+def test_default_build_fingerprint_covers_phase_9_required_inputs(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    result = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert "Core/Inc/main.h" in result.inputs
+    assert "Core/Src/main.c" in result.inputs
+    assert "Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4r5xx.h" in result.inputs
+    assert "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in result.inputs
+    assert "CMakeLists.txt" in result.inputs
+    assert "CMakePresets.json" in result.inputs
+    assert "cmake/gcc-arm-none-eabi.cmake" in result.inputs
+    assert "STM32L4R5XX_FLASH.ld" in result.inputs
+    assert "startup_stm32l4r5xx.s" in result.inputs
+    assert "stm32_basic_hal1.ioc" in result.inputs
+
+
 def test_changing_fingerprinted_file_changes_fingerprint(tmp_path):
     fingerprint = load_fingerprint_module()
     repo_root = tmp_path / "repo"
@@ -105,6 +128,38 @@ def test_changing_excluded_file_does_not_change_fingerprint(tmp_path):
     assert before.fingerprint == after.fingerprint
 
 
+def test_changing_driver_file_changes_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    (
+        repo_root
+        / "Drivers"
+        / "STM32L4xx_HAL_Driver"
+        / "Src"
+        / "stm32l4xx_hal.c"
+    ).write_text("changed HAL driver source\n", encoding="utf-8")
+    after = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert before.fingerprint != after.fingerprint
+
+
+def test_changing_ioc_file_changes_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    (repo_root / "stm32_basic_hal1.ioc").write_text("changed CubeMX project source\n", encoding="utf-8")
+    after = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+
+    assert before.fingerprint != after.fingerprint
+
+
 def test_missing_required_input_fails_clearly(tmp_path):
     fingerprint = load_fingerprint_module()
     repo_root = tmp_path / "repo"
@@ -118,3 +173,23 @@ def test_missing_required_input_fails_clearly(tmp_path):
         assert "Required build fingerprint input is missing: CMakeLists.txt" in str(exc)
     else:
         raise AssertionError("missing input must raise FingerprintInputError")
+
+
+def test_missing_required_directory_fails_clearly(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+    for path in sorted((repo_root / "Drivers").rglob("*"), reverse=True):
+        if path.is_file():
+            path.unlink()
+        else:
+            path.rmdir()
+    (repo_root / "Drivers").rmdir()
+
+    try:
+        fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    except fingerprint.FingerprintInputError as exc:
+        assert "Required build fingerprint input is missing: Drivers" in str(exc)
+    else:
+        raise AssertionError("missing directory input must raise FingerprintInputError")

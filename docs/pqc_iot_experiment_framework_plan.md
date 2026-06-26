@@ -18,77 +18,8 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 7 — Add Full Baseline Run Command
 
-- [ ] Add combined command:
-
-  ```powershell
-  python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Combined command should:
-  - [ ] create result directory
-  - [ ] build
-  - [ ] copy artifact
-  - [ ] flash
-  - [ ] capture UART
-  - [ ] evaluate pass/fail
-  - [ ] write manifest
-
-- [ ] Treat this as the known-good automated baseline.
-
-- [ ] Add tests for orchestration logic using mocked command runners.
-
-- [ ] Run manually and confirm output.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
 
 ## Phase 8 — Add Build Numbers and Artifact Tracking
-
-- [ ] Add build number tracking.
-
-- [ ] Start with simple file-based tracking if adequate:
-
-  ```text
-  .build_number
-  ```
-
-- [ ] Consider later upgrade to:
-
-  ```text
-  results/build_index.json
-  ```
-
-- [ ] Record in manifest:
-  - [ ] `build_number`
-  - [ ] `firmware_elf`
-  - [ ] `firmware_sha256`
-  - [ ] `git_commit`
-
-- [ ] Copy important artifacts into the result folder:
-  - [ ] `firmware.elf`
-  - [ ] `firmware.hex`
-  - [ ] `firmware.bin`
-  - [ ] `build.log`
-  - [ ] `flash.log`
-  - [ ] `uart.log`
-  - [ ] `manifest.json`
-
-- [ ] Add unit tests for:
-  - [ ] build number incrementing
-  - [ ] artifact hashing
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
 
 ## Phase 9 — Add Source-Hash Rebuild Skipping
 

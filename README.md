@@ -93,6 +93,8 @@ results/<run_id>/
 
 The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, the expected output ELF path, the firmware artifact SHA-256 after a successful build, and local Git source-control provenance. It increments the local `.build_number` counter when a build-producing workflow starts, records `build_number` in the manifest, copies the built ELF into the result directory as `firmware.elf`, and copies `firmware.hex` or `firmware.bin` when matching build outputs exist. Missing HEX/BIN files are recorded as absent optional artifacts rather than treated as build failures. It records build metadata, artifact provenance, and source provenance in the run manifest.
 
+The build command also records a deterministic build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The Phase 9a input set covers the resolved experiment, board, and host configuration files plus `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`. Generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts remain excluded.
+
 Flash an existing configured ELF through the gateway only when it matches a recorded build run:
 
 ```powershell

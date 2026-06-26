@@ -109,8 +109,11 @@ def write_build_fingerprint_inputs(repo_root: Path) -> None:
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
         "startup_stm32l4r5xx.s": "startup assembly\n",
+        "stm32_basic_hal1.ioc": "CubeMX project source\n",
         "Core/Src/main.c": "int main(void) { return 0; }\n",
         "Core/Inc/main.h": "#pragma once\n",
+        "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c": "HAL driver source\n",
+        "Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4r5xx.h": "CMSIS device header\n",
         "cmake/gcc-arm-none-eabi.cmake": "toolchain config\n",
     }
 
@@ -190,7 +193,9 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "Build fingerprint algorithm: sha256-build-inputs-v1" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
+    assert "- Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in build_log
     assert "- cmake/gcc-arm-none-eabi.cmake" in build_log
+    assert "- stm32_basic_hal1.ioc" in build_log
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert (repo_root / ".build_number").read_text(encoding="utf-8") == "1\n"
@@ -204,7 +209,9 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert len(manifest["build"]["fingerprint"]) == 64
     assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
     assert "Core/Inc/main.h" in manifest["build"]["fingerprint_inputs"]
+    assert "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in manifest["build"]["fingerprint_inputs"]
     assert "cmake/gcc-arm-none-eabi.cmake" in manifest["build"]["fingerprint_inputs"]
+    assert "stm32_basic_hal1.ioc" in manifest["build"]["fingerprint_inputs"]
     assert manifest["build"]["fingerprint_inputs"] == sorted(manifest["build"]["fingerprint_inputs"])
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True

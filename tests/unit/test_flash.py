@@ -57,8 +57,11 @@ def write_build_fingerprint_inputs(repo_root: Path) -> None:
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
         "startup_stm32l4r5xx.s": "startup assembly\n",
+        "stm32_basic_hal1.ioc": "CubeMX project source\n",
         "Core/Src/main.c": "int main(void) { return 0; }\n",
         "Core/Inc/main.h": "#pragma once\n",
+        "Drivers/CMSIS/device.h": "CMSIS driver input\n",
+        "Drivers/STM32L4xx_HAL_Driver/hal.c": "HAL driver input\n",
         "cmake/gcc-arm-none-eabi.cmake": "toolchain config\n",
     }
 
