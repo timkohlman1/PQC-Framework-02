@@ -185,6 +185,7 @@ scripts/
   framework/
     artifacts.py
     build.py
+    build_state.py
     fingerprint.py
     flash.py
     manifest.py
@@ -199,6 +200,7 @@ tests/
   unit/
     test_artifacts.py
     test_build.py
+    test_build_state.py
     test_fingerprint.py
     test_flash.py
     test_uart.py
@@ -275,6 +277,7 @@ mx.scratch/
 results/*
 !results/.gitkeep
 .build_number
+.last_successful_build.json
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -414,6 +417,7 @@ command construction
 artifact SHA-256 calculation
 build hash calculation
 build input fingerprinting
+last successful build-hash state handling
 path handling
 ```
 
@@ -424,6 +428,7 @@ tests/unit/test_config_loading.py
 tests/unit/test_config_validation.py
 tests/unit/test_manifest.py
 tests/unit/test_build.py
+tests/unit/test_build_state.py
 tests/unit/test_fingerprint.py
 tests/unit/test_flash.py
 tests/unit/test_source.py
@@ -432,7 +437,7 @@ tests/unit/test_uart.py
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
 
-Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Build-number unit tests must use temporary `.build_number` files and must not invoke build tools, Git, SSH, UART, or hardware. Build fingerprint unit tests must use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
+Build unit tests must not invoke CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware directly. They must test command construction and result handling through injected or mocked command runners. Artifact SHA-256 unit tests must use temporary files with known content and expected hashes. Build-number unit tests must use temporary `.build_number` files and must not invoke build tools, Git, SSH, UART, or hardware. Last-successful-build state unit tests must use temporary `.last_successful_build.json` files and cover reading, writing, missing state, and invalid state without invoking build tools, Git, SSH, UART, or hardware. Build fingerprint unit tests must use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-control provenance unit tests must use injected or mocked Git command runners and must not invoke Git directly.
 
 Flash unit tests must not invoke SCP, SSH, the gateway helper, or hardware directly. They test generated commands, failure handling, logs, source provenance, and manifest updates through injected command runners.
 
@@ -734,6 +739,14 @@ build.fingerprint_inputs
 build.fingerprint_algorithm
 ```
 
+After a successful build, build-producing workflows also update generated repository-local last-successful-build state:
+
+```text
+.last_successful_build.json
+```
+
+This file records the latest successful build fingerprint, fingerprint algorithm and inputs, build number, run ID, configured firmware artifact path, firmware SHA-256, and copied result-artifact metadata. It is generated local state and is not intended for Git. Phase 9b records this state only; build, build-flash, and run still always rebuild. Flash provenance continues to use explicit build-run manifests rather than this local state.
+
 The current fingerprint algorithm is:
 
 ```text
@@ -946,6 +959,7 @@ Current framework skeleton completed items:
 33. Add mocked orchestration tests for full-run success and stage failures.
 34. Track build numbers using local `.build_number` state.
 35. Copy successful build artifacts into result directories using canonical artifact filenames.
+36. Add generated `.last_successful_build.json` state for the latest successful build hash and artifact identity without enabling rebuild skipping.
 Current CLI commands are:
 
 ```powershell
@@ -993,11 +1007,13 @@ Expected `build` behaviour:
 - creates `results/<run_id>/notes.md`
 - runs `cmake --preset Debug` by default
 - runs `cmake --build --preset Debug` by default if configure succeeds
-- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, build number, build input fingerprint metadata, firmware SHA-256 after a successful build, copied result-artifact metadata, and Git source-control provenance
+- captures stdout, stderr, return codes, duration, expected output ELF path, build log path, build number, build input fingerprint metadata, firmware SHA-256 after a successful build, copied result-artifact metadata, last-successful-build local state, and Git source-control provenance
 - writes `results/<run_id>/build.log`
 - copies the built ELF into the result directory as `firmware.elf` after a successful build
 - copies `firmware.hex` and `firmware.bin` when matching build outputs exist, and records them as absent optional artifacts when they do not
 - updates `results/<run_id>/manifest.json` with `build_number`, build metadata, `build.fingerprint`, `build.fingerprint_inputs`, `build.fingerprint_algorithm`, `firmware.sha256`, `firmware.result_artifacts`, and `source` metadata
+- updates `.last_successful_build.json` only after a successful build with a valid artifact
+- still always runs the local build; rebuild skipping is not implemented in Phase 9b
 - does not flash anything
 - does not open UART devices
 - does not use SSH

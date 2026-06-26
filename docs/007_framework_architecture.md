@@ -40,6 +40,7 @@ scripts/
   framework/
     artifacts.py
     build.py
+    build_state.py
     fingerprint.py
     flash.py
     manifest.py
@@ -49,6 +50,7 @@ tests/
   unit/
     test_artifacts.py
     test_build.py
+    test_build_state.py
     test_fingerprint.py
     test_flash.py
     test_uart.py
@@ -163,6 +165,8 @@ The build command also records a deterministic build input fingerprint in `manif
 
 The fingerprint intentionally excludes generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts. If a required fingerprint input is missing, the build fails before CMake runs and records the fingerprint error in `build.log` and `manifest.json`.
 
+After a successful build, the framework updates the generated repository-root `.last_successful_build.json` state file. This local state records the latest successful build fingerprint, fingerprint algorithm and inputs, build number, run ID, configured firmware artifact path, firmware SHA-256, and copied result-artifact metadata. It is local generated state and is not intended for Git. Phase 9b records the state only; it does not implement rebuild skipping, and build-producing commands still always rebuild.
+
 The build command also records source-control provenance in `manifest.json` under `source`. The currently recorded fields are `source.git_commit`, `source.git_dirty`, and `source.git_status_available`. This records which Git commit was present and whether the working tree was dirty when the build command ran. If Git is unavailable or the repository state cannot be read, the command does not fail solely for that reason; it records an explicit unavailable state.
 
 The unit tests cover command construction, deterministic fingerprinting, fingerprint change detection, excluded-file behaviour, missing fingerprint input handling, and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
@@ -202,6 +206,8 @@ python scripts/experiment.py flash --experiment configs/experiments/baseline_dir
 ```
 
 The command calculates the local ELF SHA-256 before SCP, records Git source-control provenance at flash time, calculates the current expected build fingerprint, reads the requested build-run manifest, and compares both the flash-time ELF SHA-256 and current build fingerprint against the recorded build metadata. If the build record is missing, incomplete, or mismatched, the command writes `flash.log`, updates `manifest.json`, records a provenance failure status, and refuses to run SCP or SSH.
+
+Flash provenance intentionally continues to use the explicit build-run manifest supplied with `--build-run`, or the current run manifest during `build-flash` and `run`. It does not trust `.last_successful_build.json`; that file is only future rebuild-skip state.
 
 The flash manifest records:
 

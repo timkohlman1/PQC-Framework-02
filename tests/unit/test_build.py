@@ -199,6 +199,17 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert (repo_root / ".build_number").read_text(encoding="utf-8") == "1\n"
+    build_state = json.loads((repo_root / ".last_successful_build.json").read_text(encoding="utf-8"))
+    assert build_state["schema_version"] == 1
+    assert build_state["run_id"] == "2026-06-25_001_baseline_direct_uart"
+    assert build_state["build_number"] == 1
+    assert build_state["build"]["fingerprint"] == manifest["build"]["fingerprint"]
+    assert build_state["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
+    assert build_state["build"]["fingerprint_inputs"] == manifest["build"]["fingerprint_inputs"]
+    assert build_state["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
+    assert build_state["firmware"]["artifact_path"] == str(artifact_path)
+    assert build_state["firmware"]["sha256"] == expected_sha256
+    assert build_state["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
     assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
     assert manifest["result"] == "build_passed"
     assert manifest["build_number"] == 1
@@ -261,6 +272,7 @@ def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
     assert "Skipped because the configure step failed." in (result_dir / "build.log").read_text(
         encoding="utf-8"
     )
+    assert not (repo_root / ".last_successful_build.json").exists()
 
 
 

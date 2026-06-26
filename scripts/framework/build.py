@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
 from framework.build_number import BuildNumberError, reserve_next_build_number
+from framework.build_state import record_last_successful_build_state
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_default_build_fingerprint,
@@ -411,7 +412,7 @@ def execute_build(
         build_number=build_number,
     )
 
-    update_manifest(
+    updated_manifest = update_manifest(
         result_dir_path / "manifest.json",
         {
             "result": "build_passed" if return_code == 0 else "build_failed",
@@ -436,6 +437,20 @@ def execute_build(
             },
         },
     )
+
+    if return_code == 0 and firmware_sha256 is not None:
+        record_last_successful_build_state(
+            repo_root=repo_root_path,
+            run_id=str(updated_manifest.get("run_id")) if updated_manifest.get("run_id") is not None else result_dir_path.name,
+            build_number=build_number,
+            build_fingerprint=build_fingerprint.fingerprint,
+            build_fingerprint_algorithm=build_fingerprint.algorithm,
+            build_fingerprint_inputs=build_fingerprint.inputs,
+            firmware_artifact=artifact_relative_path.as_posix(),
+            firmware_artifact_path=str(elf_path),
+            firmware_sha256=firmware_sha256,
+            result_artifacts=result_artifacts,
+        )
 
     return BuildResult(
         return_code=return_code,

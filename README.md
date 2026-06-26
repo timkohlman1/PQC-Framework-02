@@ -95,6 +95,8 @@ The build command runs the CMake configure and build presets, captures stdout, s
 
 The build command also records a deterministic build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The Phase 9a input set covers the resolved experiment, board, and host configuration files plus `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`. Generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts remain excluded.
 
+After a successful build, the framework also updates the generated repository-local `.last_successful_build.json` state file. This state records the latest successful build fingerprint, fingerprint algorithm and inputs, build number, run ID, configured artifact path, firmware SHA-256, and copied result-artifact metadata. It is generated local state for future rebuild-skip decisions and is not intended for Git. Phase 9b records this state only; build, build-flash, and run still always rebuild. Flash provenance continues to use explicit build-run manifests rather than this local state.
+
 Flash an existing configured ELF through the gateway only when it matches a recorded build run:
 
 ```powershell
@@ -214,4 +216,4 @@ Without `PQC_RUN_BASELINE_UART_HARDWARE=1`, the UART hardware test is skipped.
 
 Preserve the current known-good STM32 HAL baseline unless a change explicitly targets it.
 
-Do not commit secrets, private keys, credentials, generated build outputs, experiment results, or the local `.build_number` file.
+Do not commit secrets, private keys, credentials, generated build outputs, experiment results, or the local `.build_number` file or `.last_successful_build.json` file.
