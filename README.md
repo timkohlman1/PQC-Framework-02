@@ -183,6 +183,31 @@ Example:
 2026-06-25_001_baseline_direct_uart
 ```
 
+## Build and experiment run record model
+
+The framework now documents build results and experiment run results as separate conceptual records. This is a model and documentation boundary first; the current CLI commands may still write build and run evidence into the existing `results/<run_id>/` layout until a later migration changes the on-disk structure.
+
+A build record identifies firmware that was produced or safely reused. It should contain:
+
+- build number
+- source/build fingerprint and fingerprint algorithm
+- firmware SHA-256
+- build log reference
+- copied firmware artifacts such as `firmware.elf`, and optional `firmware.hex` / `firmware.bin`
+- build metadata such as configure/build presets, return code, duration, skip decision, and force status
+- source-control provenance, including Git commit, dirty state, and whether Git status was available
+
+An experiment run record identifies what experiment was executed against hardware or other test infrastructure. It should contain:
+
+- experiment config identity
+- referenced build number or build record
+- flash evidence
+- UART evidence
+- pass/fail verdict
+- notes
+
+The separation is intended to make repeated PQC experiments easier to audit. A single validated build can be referenced by later runs, and a failed run can be diagnosed without treating the firmware build itself as failed.
+
 ## Tests
 
 Run framework unit tests without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware. The SHA-256 provenance tests use temporary files with known content, and the Git provenance tests use injected command runners:

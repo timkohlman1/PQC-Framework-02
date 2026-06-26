@@ -723,6 +723,39 @@ Example:
 
 The manifest should become the source of truth for what was run.
 
+Phase 10a defines build records and experiment run records as separate first-class concepts at the model and documentation level. This does not require immediate migration of the implemented commands or result directory layout. Current commands may still use the existing `results/<run_id>/` layout while the manifest documents which evidence belongs to the build record and which evidence belongs to the experiment run record.
+
+A build record describes the firmware build identity. It should contain:
+
+```text
+build_number
+source/build fingerprint
+fingerprint algorithm
+fingerprint input list
+firmware SHA-256
+build.log reference
+copied firmware artifacts
+build metadata
+source-control provenance
+```
+
+The build metadata includes configure/build presets, return code, duration, rebuild-skip decision, skip reason/detail, forced-build status, and artifact-copy metadata. Source-control provenance includes Git commit, dirty state, and whether Git status was available.
+
+An experiment run record describes one experiment execution. It should contain:
+
+```text
+experiment config identity
+referenced build number or build record
+flash evidence
+UART evidence
+pass/fail verdict
+notes
+```
+
+Flash evidence includes the flashed firmware hash, provenance status, gateway helper return codes, remote artifact path, ST-LINK serial, flash log reference, and flash-time source-control provenance where applicable. UART evidence includes the UART log reference, device, baud rate, capture return code, marker-detection booleans, data-captured status, reset command, and capture duration.
+
+The intended long-term direction is that build records may eventually live in dedicated build result directories and experiment run records may reference them by build number or build-record identity. Until that migration is implemented, a single `results/<run_id>/manifest.json` may contain both build-record evidence and experiment-run-record evidence.
+
 Build and flash commands record source-control provenance under:
 
 ```text
@@ -977,6 +1010,7 @@ Current framework skeleton completed items:
 35. Copy successful build artifacts into result directories using canonical artifact filenames.
 36. Add generated `.last_successful_build.json` state for the latest successful build hash and artifact identity without enabling rebuild skipping.
 37. Add safe rebuild skipping for build-producing workflows without restructuring result directories.
+38. Define first-class build records and experiment run records at the model and documentation level without migrating the current result layout.
 Current CLI commands are:
 
 ```powershell
