@@ -222,6 +222,7 @@ Supported CLI commands are:
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --force
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
@@ -418,6 +419,7 @@ artifact SHA-256 calculation
 build hash calculation
 build input fingerprinting
 last successful build-hash state handling
+rebuild-skip decision handling
 path handling
 ```
 
@@ -737,6 +739,13 @@ Build commands record deterministic build input fingerprint metadata under:
 build.fingerprint
 build.fingerprint_inputs
 build.fingerprint_algorithm
+build.skipped
+build.skip_reason
+build.skip_detail
+build.force
+build.source_state_run_id
+build.source_state_build_number
+build.source_state_fingerprint
 ```
 
 After a successful build, build-producing workflows also update generated repository-local last-successful-build state:
@@ -745,7 +754,7 @@ After a successful build, build-producing workflows also update generated reposi
 .last_successful_build.json
 ```
 
-This file records the latest successful build fingerprint, fingerprint algorithm and inputs, build number, run ID, configured firmware artifact path, firmware SHA-256, and copied result-artifact metadata. It is generated local state and is not intended for Git. Phase 9b records this state only; build, build-flash, and run still always rebuild. Flash provenance continues to use explicit build-run manifests rather than this local state.
+This file records the latest successful build fingerprint, fingerprint algorithm and inputs, successful return code, build number, run ID, configured firmware artifact path, firmware SHA-256, and copied result-artifact metadata. It is generated local state and is not intended for Git. Phase 9c uses this state for rebuild-skip decisions. CMake configure/build is skipped only when the current build fingerprint and algorithm match the local last-successful-build state, the expected ELF exists, the prior state records success, and `--force` is not supplied. Missing state, invalid state, changed hash, missing ELF, failed prior-build state, or `--force` cause the normal CMake configure/build path to run. Flash provenance continues to use explicit build-run manifests rather than this local state.
 
 The current fingerprint algorithm is:
 
@@ -815,6 +824,13 @@ build.log
 build.fingerprint
 build.fingerprint_inputs
 build.fingerprint_algorithm
+build.skipped
+build.skip_reason
+build.skip_detail
+build.force
+build.source_state_run_id
+build.source_state_build_number
+build.source_state_fingerprint
 ```
 
 The `flash` command adds flash-related manifest fields after remote flashing completes or fails:
@@ -960,12 +976,14 @@ Current framework skeleton completed items:
 34. Track build numbers using local `.build_number` state.
 35. Copy successful build artifacts into result directories using canonical artifact filenames.
 36. Add generated `.last_successful_build.json` state for the latest successful build hash and artifact identity without enabling rebuild skipping.
+37. Add safe rebuild skipping for build-producing workflows without restructuring result directories.
 Current CLI commands are:
 
 ```powershell
 python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --force
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
@@ -1012,8 +1030,10 @@ Expected `build` behaviour:
 - copies the built ELF into the result directory as `firmware.elf` after a successful build
 - copies `firmware.hex` and `firmware.bin` when matching build outputs exist, and records them as absent optional artifacts when they do not
 - updates `results/<run_id>/manifest.json` with `build_number`, build metadata, `build.fingerprint`, `build.fingerprint_inputs`, `build.fingerprint_algorithm`, `firmware.sha256`, `firmware.result_artifacts`, and `source` metadata
-- updates `.last_successful_build.json` only after a successful build with a valid artifact
-- still always runs the local build; rebuild skipping is not implemented in Phase 9b
+- updates `.last_successful_build.json` only after a successful non-skipped build with a valid artifact
+- skips CMake configure/build only when the current source/build hash equals the local last-successful-build hash, the expected ELF exists, the previous state records success, and `--force` is not supplied
+- preserves normal CMake configure/build behaviour when the hash changed, the ELF is missing, local state is missing or invalid, previous state records failure, or `--force` is supplied
+- records the rebuild decision in both `build.log` and `manifest.json`
 - does not flash anything
 - does not open UART devices
 - does not use SSH
@@ -1145,6 +1165,12 @@ Run a local firmware build and capture a build log:
 
 ```powershell
 python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Force CMake configure/build even when rebuild skipping would be allowed:
+
+```powershell
+python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --force
 ```
 
 Run framework unit tests:

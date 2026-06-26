@@ -60,7 +60,9 @@ def test_write_and_read_last_successful_build_state(tmp_path):
 
     assert path == tmp_path / ".last_successful_build.json"
     assert read_back == state
-    assert json.loads(path.read_text(encoding="utf-8"))["build"]["fingerprint"] == "a" * 64
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["build"]["fingerprint"] == "a" * 64
+    assert written["build"]["return_code"] == 0
 
 
 def test_invalid_json_last_successful_build_state_fails_clearly(tmp_path):

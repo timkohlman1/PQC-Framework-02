@@ -354,15 +354,22 @@ def run_build_command(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         configure_preset=configure_preset,
         build_preset=args.build_preset,
+        force=getattr(args, "force", False),
     )
 
-    print("Firmware build completed" if build_result.return_code == 0 else "Firmware build failed")
-    print("------------------------" if build_result.return_code == 0 else "---------------------")
+    if getattr(build_result, "build_skipped", False):
+        print("Firmware build skipped")
+    else:
+        print("Firmware build completed" if build_result.return_code == 0 else "Firmware build failed")
+    print("----------------------" if getattr(build_result, "build_skipped", False) else ("------------------------" if build_result.return_code == 0 else "---------------------"))
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
     print(f"Build log: {build_result.log_path}")
     print(f"ELF path: {build_result.elf_path}")
     print(f"Return code: {build_result.return_code}")
+    print(f"Build skipped: {getattr(build_result, 'build_skipped', False)}")
+    if getattr(build_result, "build_skip_reason", None):
+        print(f"Build skip reason: {build_result.build_skip_reason}")
     if getattr(build_result, "build_number", None) is not None:
         print(f"Build number: {build_result.build_number}")
     print(f"Build duration seconds: {build_result.duration_seconds:.3f}")
@@ -486,6 +493,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         configure_preset=configure_preset,
         build_preset=args.build_preset,
+        force=getattr(args, "force", False),
     )
 
     if build_result.return_code != 0:
@@ -711,6 +719,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         configure_preset=configure_preset,
         build_preset=args.build_preset,
+        force=getattr(args, "force", False),
     )
 
     if build_result.return_code != 0:
@@ -955,6 +964,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="CMake configure preset to invoke. Defaults to --build-preset.",
     )
+    build_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run CMake configure/build even when the local build hash state allows a safe rebuild skip.",
+    )
     build_parser.set_defaults(func=run_build_command)
 
     flash_parser = subparsers.add_parser(
@@ -1023,6 +1037,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="CMake configure preset to invoke. Defaults to --build-preset.",
     )
     build_flash_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run CMake configure/build even when the local build hash state allows a safe rebuild skip.",
+    )
+    build_flash_parser.add_argument(
         "--capture-uart",
         action="store_true",
         help="After successful flash, capture UART into this run directory and evaluate expected markers.",
@@ -1061,6 +1080,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--configure-preset",
         default=None,
         help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run CMake configure/build even when the local build hash state allows a safe rebuild skip.",
     )
     run_parser.add_argument(
         "--uart-duration-seconds",

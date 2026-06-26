@@ -1,9 +1,8 @@
 """Local last-successful-build state helpers.
 
 This module reads and writes generated repository-local state that records the
-latest successful build fingerprint and artifact identity. The state is intended
-for future rebuild-skip decisions, but Phase 9b only records the state; it does
-not skip builds.
+latest successful build fingerprint and artifact identity. The state is used by
+the build workflow to decide whether a CMake rebuild can be safely skipped.
 """
 
 from __future__ import annotations
@@ -74,6 +73,12 @@ def validate_last_successful_build_state(state: dict[str, Any]) -> dict[str, Any
     _require_string(build, "fingerprint_algorithm")
     _require_string_list(build, "fingerprint_inputs")
 
+    return_code = build.get("return_code")
+    if return_code is not None and not isinstance(return_code, int):
+        raise BuildHashStateError(
+            "Local build-hash state field must be an integer or null: build.return_code"
+        )
+
     _require_string(firmware, "artifact")
     _require_string(firmware, "artifact_path")
     _require_string(firmware, "sha256")
@@ -135,6 +140,7 @@ def build_last_successful_build_state(
             "fingerprint": build_fingerprint,
             "fingerprint_algorithm": build_fingerprint_algorithm,
             "fingerprint_inputs": list(build_fingerprint_inputs),
+            "return_code": 0,
         },
         "firmware": {
             "artifact": firmware_artifact,

@@ -891,3 +891,263 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
     assert manifest["build_flash"]["uart_log"] == "uart.log"
     assert manifest["build_flash"]["uart_skipped"] is False
     assert manifest["build_flash"]["failure_stage"] == "none"
+
+
+def _record_matching_last_successful_state(build, repo_root: Path, artifact_path: Path, build_number: int = 7) -> str:
+    fingerprint = build.calculate_default_build_fingerprint(sample_bundle(), repo_root)
+    firmware_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest() if artifact_path.exists() else "c" * 64
+    build.record_last_successful_build_state(
+        repo_root=repo_root,
+        run_id="2026-06-25_000_baseline_direct_uart",
+        build_number=build_number,
+        build_fingerprint=fingerprint.fingerprint,
+        build_fingerprint_algorithm=fingerprint.algorithm,
+        build_fingerprint_inputs=fingerprint.inputs,
+        firmware_artifact="build/Debug/stm32_basic_hal1.elf",
+        firmware_artifact_path=str(artifact_path),
+        firmware_sha256=firmware_sha256,
+        result_artifacts={
+            "elf": {
+                "source_path": str(artifact_path),
+                "path": "firmware.elf",
+                "artifact_path": str(repo_root / "results" / "old" / "firmware.elf"),
+                "sha256": firmware_sha256,
+                "copied": True,
+                "missing_reason": None,
+            }
+        },
+    )
+    return fingerprint.fingerprint
+
+
+def _successful_runner_that_writes_artifact(build, artifact_path: Path, calls: list[list[str]]):
+    def fake_runner(command: list[str], cwd: Path):
+        calls.append(command)
+        if command == ["cmake", "--build", "--preset", "Debug"]:
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text("fresh elf", encoding="utf-8")
+        return build.CommandExecution(
+            command=command,
+            return_code=0,
+            stdout="ran command",
+            stderr="",
+            duration_seconds=0.1,
+        )
+
+    return fake_runner
+
+
+def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("cached elf", encoding="utf-8")
+    write_initial_manifest(result_dir)
+    expected_fingerprint = _record_matching_last_successful_state(build, repo_root, artifact_path)
+
+    def forbidden_runner(command: list[str], cwd: Path):
+        raise AssertionError("CMake must not run when rebuild skip criteria are satisfied")
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=forbidden_runner,
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
+
+    assert result.return_code == 0
+    assert result.build_skipped is True
+    assert result.build_skip_reason == "cached_build_valid"
+    assert result.build is None
+    assert result.build_number == 7
+    assert not (repo_root / ".build_number").exists()
+    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "cached elf"
+    assert manifest["result"] == "build_skipped"
+    assert manifest["build_number"] == 7
+    assert manifest["build"]["skipped"] is True
+    assert manifest["build"]["skip_reason"] == "cached_build_valid"
+    assert manifest["build"]["source_state_run_id"] == "2026-06-25_000_baseline_direct_uart"
+    assert manifest["build"]["fingerprint"] == expected_fingerprint
+    assert manifest["firmware"]["artifact_exists"] is True
+    assert manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
+    assert "Build skipped: true" in build_log
+    assert "Decision: skipped" in build_log
+
+
+def test_execute_build_runs_cmake_when_last_successful_state_is_missing(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    write_initial_manifest(result_dir)
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["result"] == "build_passed"
+    assert manifest["build"]["skipped"] is False
+    assert manifest["build"]["skip_reason"] == "missing_state"
+
+
+def test_execute_build_runs_cmake_when_expected_elf_is_missing(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    write_initial_manifest(result_dir)
+    _record_matching_last_successful_state(build, repo_root, artifact_path)
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["build"]["skip_reason"] == "missing_elf"
+
+
+def test_execute_build_runs_cmake_when_hash_changed(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("old elf", encoding="utf-8")
+    write_initial_manifest(result_dir)
+    _record_matching_last_successful_state(build, repo_root, artifact_path, build_number=3)
+    state_path = repo_root / ".last_successful_build.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["build"]["fingerprint"] = "d" * 64
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["build"]["skip_reason"] == "changed_hash"
+
+
+def test_execute_build_runs_cmake_when_last_successful_state_is_invalid(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("old elf", encoding="utf-8")
+    write_initial_manifest(result_dir)
+    (repo_root / ".last_successful_build.json").write_text("not json\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["build"]["skip_reason"] == "invalid_state"
+    assert "not valid JSON" in manifest["build"]["skip_detail"]
+
+
+def test_execute_build_runs_cmake_when_previous_build_state_records_failure(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("old elf", encoding="utf-8")
+    write_initial_manifest(result_dir)
+    _record_matching_last_successful_state(build, repo_root, artifact_path)
+    state_path = repo_root / ".last_successful_build.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["build"]["return_code"] = 1
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["build"]["skip_reason"] == "previous_build_failed"
+
+
+def test_execute_build_force_runs_cmake_even_when_skip_criteria_match(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("old elf", encoding="utf-8")
+    write_initial_manifest(result_dir)
+    _record_matching_last_successful_state(build, repo_root, artifact_path)
+    calls: list[list[str]] = []
+
+    result = build.execute_build(
+        bundle=sample_bundle(),
+        repo_root=repo_root,
+        result_dir=result_dir,
+        force=True,
+        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
+    assert result.return_code == 0
+    assert result.build_skipped is False
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert manifest["build"]["skip_reason"] == "force_requested"
+    assert manifest["build"]["force"] is True
+    assert "Force rebuild requested: true" in build_log
