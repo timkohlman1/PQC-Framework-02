@@ -27,10 +27,24 @@ def _run_cli(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
     )
 
 
+def _run_result_dirs(results_dir: Path) -> list[Path]:
+    """Return experiment run result directories, excluding build-record storage."""
+
+    return sorted(
+        path
+        for path in results_dir.iterdir()
+        if path.is_dir() and path.name != "builds"
+    )
+
+
 def _single_result_dir(results_dir: Path) -> Path:
-    result_dirs = sorted(path for path in results_dir.iterdir() if path.is_dir())
+    result_dirs = _run_result_dirs(results_dir)
     assert len(result_dirs) == 1
     return result_dirs[0]
+
+
+def _build_record_dir(results_dir: Path, build_number: int) -> Path:
+    return results_dir / "builds" / str(build_number)
 
 
 @pytest.mark.integration
@@ -69,6 +83,9 @@ def test_gateway_flash_helper_with_verified_build_record(tmp_path):
         (build_result_dir / "manifest.json").read_text(encoding="utf-8")
     )
     build_run_id = str(build_manifest["run_id"])
+    build_number = build_manifest["build_number"]
+    build_record_dir = _build_record_dir(results_dir, build_number)
+    build_record_manifest_path = build_record_dir / "manifest.json"
 
     assert (build_result_dir / "build.log").is_file()
     assert build_manifest["result"] == "build_passed"
@@ -76,6 +93,29 @@ def test_gateway_flash_helper_with_verified_build_record(tmp_path):
     assert len(build_manifest["firmware"]["sha256"]) == 64
     assert isinstance(build_manifest["build"]["fingerprint"], str)
     assert len(build_manifest["build"]["fingerprint"]) == 64
+    assert build_manifest["build"]["record_path"] == str(build_record_dir)
+    assert build_manifest["build"]["record_manifest"] == str(build_record_manifest_path)
+
+    assert build_record_dir.is_dir()
+    assert build_record_manifest_path.is_file()
+    assert (build_record_dir / "build.log").is_file()
+    assert (build_record_dir / "firmware.elf").is_file()
+
+    build_record_manifest = json.loads(
+        build_record_manifest_path.read_text(encoding="utf-8")
+    )
+    assert build_record_manifest["record_type"] == "build"
+    assert build_record_manifest["build_number"] == build_number
+    assert build_record_manifest["result"] == "build_passed"
+    assert (
+        build_record_manifest["firmware"]["sha256"]
+        == build_manifest["firmware"]["sha256"]
+    )
+    assert (
+        build_record_manifest["build"]["fingerprint"]
+        == build_manifest["build"]["fingerprint"]
+    )
+    assert build_record_manifest["compatibility"]["source_run_id"] == build_run_id
 
     flash_completed = _run_cli(
         repo_root,
@@ -93,7 +133,7 @@ def test_gateway_flash_helper_with_verified_build_record(tmp_path):
         f"flash stdout:\n{flash_completed.stdout}\nflash stderr:\n{flash_completed.stderr}"
     )
 
-    result_dirs = sorted(path for path in results_dir.iterdir() if path.is_dir())
+    result_dirs = _run_result_dirs(results_dir)
     assert len(result_dirs) == 2
     flash_result_dir = next(path for path in result_dirs if path != build_result_dir)
     flash_manifest = json.loads(

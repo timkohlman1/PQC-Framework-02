@@ -16,6 +16,20 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _run_result_dirs(results_dir: Path) -> list[Path]:
+    """Return experiment run result directories, excluding build-record storage."""
+
+    return sorted(
+        path
+        for path in results_dir.iterdir()
+        if path.is_dir() and path.name != "builds"
+    )
+
+
+def _build_record_dir(results_dir: Path, build_number: int) -> Path:
+    return results_dir / "builds" / str(build_number)
+
+
 @pytest.mark.integration
 def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     """Run the real local STM32/CMake build command when explicitly enabled.
@@ -57,7 +71,7 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     assert "Firmware build completed" in completed.stdout
     assert "No flash, UART access, SSH, hardware access, or network access was performed." in completed.stdout
 
-    result_dirs = [path for path in results_dir.iterdir() if path.is_dir()]
+    result_dirs = _run_result_dirs(results_dir)
     assert len(result_dirs) == 1
 
     result_dir = result_dirs[0]
@@ -70,6 +84,8 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert manifest["result"] == "build_passed"
+    assert isinstance(manifest["build_number"], int)
+    assert manifest["build_number"] >= 1
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert isinstance(manifest["firmware"]["sha256"], str)
@@ -78,6 +94,10 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     assert manifest["build"]["build_preset"] == "Debug"
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
+    assert manifest["build"]["record_path"] == str(_build_record_dir(results_dir, manifest["build_number"]))
+    assert manifest["build"]["record_manifest"] == str(
+        _build_record_dir(results_dir, manifest["build_number"]) / "manifest.json"
+    )
 
     build_log = build_log_path.read_text(encoding="utf-8")
 
@@ -86,3 +106,45 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
     assert "Final return code: 0" in build_log
     assert "Output ELF exists: true" in build_log
     assert f"Output ELF SHA-256: {manifest['firmware']['sha256']}" in build_log
+
+    build_record_dir = _build_record_dir(results_dir, manifest["build_number"])
+    build_record_manifest_path = build_record_dir / "manifest.json"
+    build_record_log_path = build_record_dir / "build.log"
+    build_record_elf_path = build_record_dir / "firmware.elf"
+
+    assert build_record_dir.is_dir()
+    assert build_record_manifest_path.is_file()
+    assert build_record_log_path.is_file()
+    assert build_record_elf_path.is_file()
+
+    build_record_manifest = json.loads(
+        build_record_manifest_path.read_text(encoding="utf-8")
+    )
+
+    assert build_record_manifest["record_type"] == "build"
+    assert build_record_manifest["build_number"] == manifest["build_number"]
+    assert build_record_manifest["result"] == "build_passed"
+    assert build_record_manifest["experiment"] == manifest["experiment"]
+    assert build_record_manifest["board"] == manifest["board"]
+    assert build_record_manifest["gateway"] == manifest["gateway"]
+    assert build_record_manifest["build"]["return_code"] == 0
+    assert build_record_manifest["build"]["log"] == "build.log"
+    assert (
+        build_record_manifest["build"]["fingerprint"]
+        == manifest["build"]["fingerprint"]
+    )
+    assert (
+        build_record_manifest["build"]["fingerprint_algorithm"]
+        == manifest["build"]["fingerprint_algorithm"]
+    )
+    assert (
+        build_record_manifest["firmware"]["sha256"]
+        == manifest["firmware"]["sha256"]
+    )
+    assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
+    assert (
+        build_record_manifest["firmware"]["result_artifacts"]["elf"]["sha256"]
+        == manifest["firmware"]["sha256"]
+    )
+    assert build_record_manifest["compatibility"]["source_run_id"] == manifest["run_id"]
+    assert build_record_manifest["compatibility"]["source_run_manifest"] == str(manifest_path)

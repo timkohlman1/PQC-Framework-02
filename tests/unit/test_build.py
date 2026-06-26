@@ -178,6 +178,8 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert result.firmware_sha256 == expected_sha256
     assert result.build_number == 1
     assert result.result_artifacts["elf"]["path"] == "firmware.elf"
+    assert result.build_record_dir == result_dir.parent / "builds" / "1"
+    assert result.build_record_manifest_path == result_dir.parent / "builds" / "1" / "manifest.json"
     assert calls == [
         ["cmake", "--preset", "Debug"],
         ["cmake", "--build", "--preset", "Debug"],
@@ -211,10 +213,27 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert build_state["firmware"]["sha256"] == expected_sha256
     assert build_state["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
     assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
+    build_record_dir = result_dir.parent / "builds" / "1"
+    build_record_manifest = json.loads((build_record_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert (build_record_dir / "build.log").is_file()
+    assert (build_record_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
+    assert build_record_manifest["record_type"] == "build"
+    assert build_record_manifest["schema_version"] == 1
+    assert build_record_manifest["build_number"] == 1
+    assert build_record_manifest["result"] == "build_passed"
+    assert build_record_manifest["experiment"] == "baseline_direct_uart"
+    assert build_record_manifest["firmware"]["sha256"] == expected_sha256
+    assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
+    assert build_record_manifest["build"]["fingerprint"] == manifest["build"]["fingerprint"]
+    assert build_record_manifest["build"]["log"] == "build.log"
+    assert build_record_manifest["compatibility"]["source_run_id"] == "2026-06-25_001_baseline_direct_uart"
+    assert build_record_manifest["compatibility"]["source_run_dir"] == str(result_dir)
     assert manifest["result"] == "build_passed"
     assert manifest["build_number"] == 1
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
+    assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "1")
+    assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "1" / "manifest.json")
     assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
     assert isinstance(manifest["build"]["fingerprint"], str)
     assert len(manifest["build"]["fingerprint"]) == 64
@@ -967,13 +986,22 @@ def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
     assert result.build_skip_reason == "cached_build_valid"
     assert result.build is None
     assert result.build_number == 7
+    assert result.build_record_dir == result_dir.parent / "builds" / "7"
+    assert result.build_record_manifest_path == result_dir.parent / "builds" / "7" / "manifest.json"
     assert not (repo_root / ".build_number").exists()
     assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "cached elf"
+    assert (result_dir.parent / "builds" / "7" / "firmware.elf").read_text(encoding="utf-8") == "cached elf"
     assert manifest["result"] == "build_skipped"
     assert manifest["build_number"] == 7
     assert manifest["build"]["skipped"] is True
     assert manifest["build"]["skip_reason"] == "cached_build_valid"
     assert manifest["build"]["source_state_run_id"] == "2026-06-25_000_baseline_direct_uart"
+    assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "7")
+    assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "7" / "manifest.json")
+    skipped_build_record_manifest = json.loads((result_dir.parent / "builds" / "7" / "manifest.json").read_text(encoding="utf-8"))
+    assert skipped_build_record_manifest["result"] == "build_skipped"
+    assert skipped_build_record_manifest["build"]["skipped"] is True
+    assert skipped_build_record_manifest["build"]["source_state_run_id"] == "2026-06-25_000_baseline_direct_uart"
     assert manifest["build"]["fingerprint"] == expected_fingerprint
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"

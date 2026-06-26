@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
 from framework.build_number import BuildNumberError, reserve_next_build_number
+from framework.build_records import write_build_record
 from framework.build_state import (
     BuildHashStateError,
     read_last_successful_build_state,
@@ -24,7 +25,7 @@ from framework.fingerprint import (
     FingerprintInputError,
     calculate_default_build_fingerprint,
 )
-from framework.manifest import update_manifest
+from framework.manifest import read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
@@ -60,6 +61,8 @@ class BuildResult:
     build_fingerprint_algorithm: str | None
     build_number: int | None
     result_artifacts: dict[str, dict[str, Any]]
+    build_record_dir: Path | None = None
+    build_record_manifest_path: Path | None = None
     build_skipped: bool = False
     build_skip_reason: str | None = None
 
@@ -314,6 +317,27 @@ def _rebuild_decision(
 
     return True, BUILD_SKIP_REASON_CACHED, "Current fingerprint matched local state and expected ELF exists."
 
+
+
+def _build_record_manifest_update(record_dir: Path | None) -> dict[str, Any]:
+    """Return run-manifest fields that reference a first-class build record."""
+
+    return {
+        "record_path": None if record_dir is None else str(record_dir),
+        "record_manifest": None if record_dir is None else str(record_dir / "manifest.json"),
+    }
+
+
+def _current_run_id(result_dir: Path) -> str | None:
+    """Read the compatibility run ID for build-record back references."""
+
+    try:
+        run_id = read_manifest(result_dir / "manifest.json").get("run_id")
+    except (FileNotFoundError, OSError, ValueError):
+        return result_dir.name
+
+    return run_id if isinstance(run_id, str) else result_dir.name
+
 def execute_build(
     bundle: dict[str, dict[str, Any]],
     repo_root: Path | str,
@@ -416,6 +440,8 @@ def execute_build(
             build_fingerprint_algorithm=None,
             build_number=None,
             result_artifacts={},
+            build_record_dir=None,
+            build_record_manifest_path=None,
             build_skipped=False,
             build_skip_reason="fingerprint_error",
         )
@@ -463,6 +489,40 @@ def execute_build(
             build_skip_detail=skip_detail,
             force_rebuild=force,
         )
+        build_record_path = None
+        build_record_manifest_path = None
+        if isinstance(state_build_number, int):
+            build_record_build = {
+                "configure_preset": configure_preset,
+                "build_preset": build_preset,
+                "return_code": 0,
+                "duration_seconds": round(duration_seconds, 3),
+                "log": "build.log",
+                "fingerprint": build_fingerprint.fingerprint,
+                "fingerprint_inputs": build_fingerprint.inputs,
+                "fingerprint_algorithm": build_fingerprint.algorithm,
+                "skipped": True,
+                "skip_reason": skip_reason,
+                "skip_detail": skip_detail,
+                "force": force,
+                "source_state_run_id": state_run_id if isinstance(state_run_id, str) else None,
+                "source_state_build_number": state_build_number,
+                "source_state_fingerprint": state_build.get("fingerprint") if isinstance(state_build, dict) else None,
+            }
+            build_record_path, _ = write_build_record(
+                bundle=bundle,
+                result_dir=result_dir_path,
+                build_number=state_build_number,
+                firmware_elf_path=elf_path,
+                firmware_artifact=artifact_relative_path.as_posix(),
+                firmware_artifact_path=str(elf_path),
+                firmware_sha256=firmware_sha256,
+                source=source,
+                build=build_record_build,
+                source_run_id=_current_run_id(result_dir_path),
+                build_log_path=log_path,
+            )
+            build_record_manifest_path = build_record_path / "manifest.json"
         update_manifest(
             result_dir_path / "manifest.json",
             {
@@ -492,6 +552,7 @@ def execute_build(
                     "source_state_run_id": state_run_id if isinstance(state_run_id, str) else None,
                     "source_state_build_number": state_build_number if isinstance(state_build_number, int) else None,
                     "source_state_fingerprint": state_build.get("fingerprint") if isinstance(state_build, dict) else None,
+                    **_build_record_manifest_update(build_record_path),
                 },
             },
         )
@@ -508,6 +569,8 @@ def execute_build(
             build_fingerprint_algorithm=build_fingerprint.algorithm,
             build_number=state_build_number if isinstance(state_build_number, int) else None,
             result_artifacts=result_artifacts,
+            build_record_dir=build_record_path,
+            build_record_manifest_path=build_record_manifest_path,
             build_skipped=True,
             build_skip_reason=skip_reason,
         )
@@ -585,6 +648,8 @@ def execute_build(
             build_fingerprint_algorithm=build_fingerprint.algorithm,
             build_number=None,
             result_artifacts={},
+            build_record_dir=None,
+            build_record_manifest_path=None,
             build_skipped=False,
             build_skip_reason=skip_reason,
         )
@@ -630,6 +695,38 @@ def execute_build(
         force_rebuild=force,
     )
 
+    build_record_path = None
+    build_record_manifest_path = None
+    if return_code == 0:
+        build_record_build = {
+            "configure_preset": configure_preset,
+            "build_preset": build_preset,
+            "return_code": return_code,
+            "duration_seconds": round(duration_seconds, 3),
+            "log": "build.log",
+            "fingerprint": build_fingerprint.fingerprint,
+            "fingerprint_inputs": build_fingerprint.inputs,
+            "fingerprint_algorithm": build_fingerprint.algorithm,
+            "skipped": False,
+            "skip_reason": skip_reason,
+            "skip_detail": skip_detail,
+            "force": force,
+        }
+        build_record_path, _ = write_build_record(
+            bundle=bundle,
+            result_dir=result_dir_path,
+            build_number=build_number,
+            firmware_elf_path=elf_path,
+            firmware_artifact=artifact_relative_path.as_posix(),
+            firmware_artifact_path=str(elf_path),
+            firmware_sha256=firmware_sha256,
+            source=source,
+            build=build_record_build,
+            source_run_id=_current_run_id(result_dir_path),
+            build_log_path=log_path,
+        )
+        build_record_manifest_path = build_record_path / "manifest.json"
+
     updated_manifest = update_manifest(
         result_dir_path / "manifest.json",
         {
@@ -656,6 +753,7 @@ def execute_build(
                 "skip_reason": skip_reason,
                 "skip_detail": skip_detail,
                 "force": force,
+                **_build_record_manifest_update(build_record_path),
             },
         },
     )
@@ -687,6 +785,8 @@ def execute_build(
         build_fingerprint_algorithm=build_fingerprint.algorithm,
         build_number=build_number,
         result_artifacts=result_artifacts,
+        build_record_dir=build_record_path,
+        build_record_manifest_path=build_record_manifest_path,
         build_skipped=False,
         build_skip_reason=skip_reason,
     )

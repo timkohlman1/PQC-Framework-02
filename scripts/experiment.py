@@ -372,6 +372,8 @@ def run_build_command(args: argparse.Namespace) -> int:
         print(f"Build skip reason: {build_result.build_skip_reason}")
     if getattr(build_result, "build_number", None) is not None:
         print(f"Build number: {build_result.build_number}")
+    if getattr(build_result, "build_record_dir", None) is not None:
+        print(f"Build record: {build_result.build_record_dir}")
     print(f"Build duration seconds: {build_result.duration_seconds:.3f}")
     print("No flash, UART access, SSH, hardware access, or network access was performed.")
 
