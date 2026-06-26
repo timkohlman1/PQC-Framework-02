@@ -40,6 +40,7 @@ def test_real_local_build_command_completes_without_flash_or_uart(tmp_path):
             "configs/experiments/baseline_direct_uart.yaml",
             "--results-dir",
             str(results_dir),
+            "--force",
         ],
         cwd=repo_root,
         text=True,

@@ -57,6 +57,7 @@ def test_gateway_flash_helper_with_verified_build_record(tmp_path):
             EXPERIMENT_CONFIG,
             "--results-dir",
             str(results_dir),
+            "--force",
         ],
     )
     assert build_completed.returncode == 0, (
