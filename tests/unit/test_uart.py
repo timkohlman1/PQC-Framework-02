@@ -39,6 +39,7 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "description": "Test experiment.",
             "board": "board_a",
             "host": "gateway",
+            "boot": "direct_flash",
             "firmware": {
                 "mode": "direct_flash",
                 "artifact": "build/Debug/stm32_basic_hal1.elf",
@@ -54,6 +55,12 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "mcu": "STM32L4R5",
             "stlink": {"serial": "066EFF3932504E3043111818"},
             "uart": {"baud": 115200},
+        },
+        "boot": {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Direct flash baseline boot profile.",
+            "runnable": True,
         },
         "host": {
             "id": "gateway",
@@ -80,10 +87,12 @@ def write_initial_manifest(result_dir: Path) -> None:
 def write_sample_configs(configs_root: Path) -> Path:
     boards_dir = configs_root / "boards"
     hosts_dir = configs_root / "hosts"
+    boot_dir = configs_root / "boot"
     experiments_dir = configs_root / "experiments"
 
     boards_dir.mkdir(parents=True)
     hosts_dir.mkdir(parents=True)
+    boot_dir.mkdir(parents=True)
     experiments_dir.mkdir(parents=True)
 
     (boards_dir / "board_a.yaml").write_text(
@@ -123,6 +132,19 @@ def write_sample_configs(configs_root: Path) -> Path:
         encoding="utf-8",
     )
 
+    (boot_dir / "direct_flash.yaml").write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct flash baseline boot profile.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     experiment_path = experiments_dir / "baseline_direct_uart.yaml"
     experiment_path.write_text(
         "\n".join(
@@ -131,6 +153,7 @@ def write_sample_configs(configs_root: Path) -> Path:
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",

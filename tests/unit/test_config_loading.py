@@ -41,16 +41,18 @@ def test_load_config_reads_nested_mapping(tmp_path):
     assert config["message"] == "hello"
 
 
-def test_load_experiment_bundle_resolves_board_and_host_configs(tmp_path):
+def test_load_experiment_bundle_resolves_board_host_and_boot_configs(tmp_path):
     experiment_cli = load_experiment_module()
 
     configs_root = tmp_path / "configs"
     boards_dir = configs_root / "boards"
     hosts_dir = configs_root / "hosts"
+    boot_dir = configs_root / "boot"
     experiments_dir = configs_root / "experiments"
 
     boards_dir.mkdir(parents=True)
     hosts_dir.mkdir(parents=True)
+    boot_dir.mkdir(parents=True)
     experiments_dir.mkdir(parents=True)
 
     (boards_dir / "board_a.yaml").write_text(
@@ -64,6 +66,19 @@ def test_load_experiment_bundle_resolves_board_and_host_configs(tmp_path):
                 '  serial: "123"',
                 "uart:",
                 "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    (boot_dir / "direct_flash.yaml").write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
                 "",
             ]
         ),
@@ -96,6 +111,7 @@ def test_load_experiment_bundle_resolves_board_and_host_configs(tmp_path):
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -113,6 +129,8 @@ def test_load_experiment_bundle_resolves_board_and_host_configs(tmp_path):
     assert bundle["experiment"]["id"] == "baseline_direct_uart"
     assert bundle["board"]["id"] == "board_a"
     assert bundle["host"]["id"] == "gateway"
+    assert bundle["boot"]["id"] == "direct_flash"
+    assert bundle["boot"]["mode"] == "direct_flash"
 
 
 def test_status_summary_states_no_hardware_actions(tmp_path):
@@ -139,6 +157,12 @@ def test_status_summary_states_no_hardware_actions(tmp_path):
                 "serial": "123",
             },
         },
+        "boot": {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Direct-flash test boot config.",
+            "runnable": True,
+        },
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
@@ -157,5 +181,7 @@ def test_status_summary_states_no_hardware_actions(tmp_path):
 
     assert "Experiment status" in summary
     assert "baseline_direct_uart" in summary
+    assert "Boot config: direct_flash" in summary
+    assert "Boot mode: direct_flash" in summary
     assert "No build, flash, UART access, SSH, hardware access, or network access was performed." in summary
     

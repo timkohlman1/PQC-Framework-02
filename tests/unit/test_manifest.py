@@ -36,6 +36,7 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "description": "Test experiment.",
             "board": "board_a",
             "host": "gateway",
+            "boot": "direct_flash",
             "firmware": {
                 "mode": "direct_flash",
                 "artifact": "build/Debug/stm32_basic_hal1.elf",
@@ -56,6 +57,12 @@ def sample_bundle() -> dict[str, dict[str, object]]:
                 "baud": 115200,
             },
         },
+        "boot": {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Direct-flash test boot config.",
+            "runnable": True,
+        },
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
@@ -74,10 +81,12 @@ def sample_bundle() -> dict[str, dict[str, object]]:
 def write_sample_configs(configs_root: Path) -> Path:
     boards_dir = configs_root / "boards"
     hosts_dir = configs_root / "hosts"
+    boot_dir = configs_root / "boot"
     experiments_dir = configs_root / "experiments"
 
     boards_dir.mkdir(parents=True)
     hosts_dir.mkdir(parents=True)
+    boot_dir.mkdir(parents=True)
     experiments_dir.mkdir(parents=True)
 
     (boards_dir / "board_a.yaml").write_text(
@@ -91,6 +100,19 @@ def write_sample_configs(configs_root: Path) -> Path:
                 '  serial: "123"',
                 "uart:",
                 "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    (boot_dir / "direct_flash.yaml").write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
                 "",
             ]
         ),
@@ -123,6 +145,7 @@ def write_sample_configs(configs_root: Path) -> Path:
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",

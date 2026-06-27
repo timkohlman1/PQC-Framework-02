@@ -92,6 +92,7 @@ def build_manifest(
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
+    boot = bundle.get("boot", {})
 
     firmware = experiment.get("firmware", {})
     transport = experiment.get("transport", {})
@@ -103,7 +104,7 @@ def build_manifest(
         "experiment": experiment["id"],
         "board": board["id"],
         "gateway": host["id"],
-        "boot_mode": firmware.get("mode", "unknown"),
+        "boot_mode": boot.get("mode", firmware.get("mode", "unknown")),
         "transport_mode": transport.get("mode", DEFAULT_TRANSPORT_MODE),
         "network_profile": network.get("profile", DEFAULT_NETWORK_PROFILE),
         "result": result,

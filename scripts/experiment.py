@@ -11,8 +11,7 @@ The initial supported commands are:
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 
-The status command loads an experiment config, resolves the referenced board and
-host configs, validates required fields, and prints a summary.
+The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
 The create-run command creates a local results/<run_id>/ folder containing
 manifest.json and notes.md.
@@ -162,6 +161,7 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
         "description",
         "board",
         "host",
+        "boot",
         "firmware.mode",
         "firmware.artifact",
         "uart.expected_boot_message",
@@ -205,6 +205,24 @@ def validate_host_config(config: dict[str, Any]) -> None:
         require_field(config, field, "host config")
 
 
+
+def validate_boot_config(config: dict[str, Any]) -> None:
+    """Validate required fields for a boot config schema."""
+
+    required_fields = [
+        "id",
+        "mode",
+        "description",
+        "runnable",
+    ]
+
+    for field in required_fields:
+        require_field(config, field, "boot config")
+
+    if require_field(config, "runnable", "boot config") is not True:
+        raise ConfigError("boot config must be runnable for execution: runnable")
+
+
 def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
     """Resolve the configs root from configs/experiments/<name>.yaml."""
 
@@ -226,8 +244,8 @@ def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:
     return configs_root.parent
 
 
-def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Path]:
-    """Resolve board and host config paths referenced by an experiment config."""
+def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Path, Path]:
+    """Resolve board, host, and boot config paths referenced by an experiment config."""
 
     experiment_config_path = Path(experiment_path)
     experiment_config = load_config(experiment_config_path)
@@ -236,11 +254,13 @@ def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Pat
     configs_root = _configs_root_from_experiment_path(experiment_config_path)
     board_id = require_field(experiment_config, "board", "experiment config")
     host_id = require_field(experiment_config, "host", "experiment config")
+    boot_id = require_field(experiment_config, "boot", "experiment config")
 
     board_path = configs_root / "boards" / f"{board_id}.yaml"
     host_path = configs_root / "hosts" / f"{host_id}.yaml"
+    boot_path = configs_root / "boot" / f"{boot_id}.yaml"
 
-    return board_path, host_path
+    return board_path, host_path, boot_path
 
 
 def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, Any]]:
@@ -251,13 +271,15 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     experiment_config = load_config(experiment_config_path)
     validate_experiment_config(experiment_config)
 
-    board_path, host_path = resolve_related_config_paths(experiment_config_path)
+    board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
 
     board_config = load_config(board_path)
     host_config = load_config(host_path)
+    boot_config = load_config(boot_path)
 
     validate_board_config(board_config)
     validate_host_config(host_config)
+    validate_boot_config(boot_config)
 
     expected_board_id = require_field(experiment_config, "board", "experiment config")
     actual_board_id = require_field(board_config, "id", "board config")
@@ -277,10 +299,29 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
             f"but {host_path} contains '{actual_host_id}'"
         )
 
+    expected_boot_id = require_field(experiment_config, "boot", "experiment config")
+    actual_boot_id = require_field(boot_config, "id", "boot config")
+
+    if actual_boot_id != expected_boot_id:
+        raise ConfigError(
+            f"boot config id mismatch: experiment references '{expected_boot_id}' "
+            f"but {boot_path} contains '{actual_boot_id}'"
+        )
+
+    boot_mode = require_field(boot_config, "mode", "boot config")
+    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
+
+    if firmware_mode != boot_mode:
+        raise ConfigError(
+            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
+            f"but boot config mode is '{boot_mode}'"
+        )
+
     return {
         "experiment": experiment_config,
         "board": board_config,
         "host": host_config,
+        "boot": boot_config,
     }
 
 
@@ -290,6 +331,7 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
+    boot = bundle["boot"]
 
     return "\n".join(
         [
@@ -301,6 +343,8 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
             f"ST-LINK serial: {board['stlink']['serial']}",
             f"Host: {host['id']} ({host['alias']}, user {host['user']})",
             f"Flash helper: {host['flash']['helper']}",
+            f"Boot config: {boot['id']}",
+            f"Boot mode: {boot['mode']}",
             f"Firmware mode: {experiment['firmware']['mode']}",
             f"Firmware artifact: {experiment['firmware']['artifact']}",
             f"UART device: {host['uart']['device']}",

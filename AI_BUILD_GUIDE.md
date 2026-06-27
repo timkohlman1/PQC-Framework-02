@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. It does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit boot config `configs/boot/direct_flash.yaml`. It does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation.
 
 ## 4. Hardware and Host Context
 
@@ -173,6 +173,8 @@ configs/
     board_a.yaml
   hosts/
     gateway.yaml
+  boot/
+    direct_flash.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -234,11 +236,11 @@ python scripts/experiment.py flash --experiment configs/experiments/baseline_dir
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The `status` command loads the experiment config, resolves the referenced board and host configs, validates required fields, and prints a summary.
+The `status` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
-The `create-run` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, and creates a local result folder.
+The `create-run` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, generates a run ID, and creates a local result folder.
 
-The `build` command loads the experiment config, resolves the referenced board and host configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, calculates a deterministic build input fingerprint, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
+The `build` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, calculates a deterministic build input fingerprint, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
 
 The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
@@ -540,15 +542,18 @@ configs/
     board_a.yaml
   hosts/
     gateway.yaml
+  boot/
+    direct_flash.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
 
-The experiment config references board and host configs by ID:
+The experiment config references board, host, and boot configs by ID:
 
 ```yaml
 board: board_a
 host: gateway
+boot: direct_flash
 ```
 
 The CLI resolves these references to:
@@ -556,6 +561,7 @@ The CLI resolves these references to:
 ```text
 configs/boards/board_a.yaml
 configs/hosts/gateway.yaml
+configs/boot/direct_flash.yaml
 ```
 
 Current required experiment fields:
@@ -565,6 +571,7 @@ id
 description
 board
 host
+boot
 firmware.mode
 firmware.artifact
 uart.expected_boot_message
@@ -594,6 +601,15 @@ uart.device
 uart.baud
 ```
 
+Current required boot fields:
+
+```text
+id
+mode
+description
+runnable
+```
+
 Current optional host reset field used by `monitor --restart` when present:
 
 ```text
@@ -611,6 +627,7 @@ configs/
   builds/
     stm32_hal_baseline.yaml
   boot/
+    direct_flash.yaml
     direct_flash.yaml
     wolfboot_ecdsa_p256.yaml
   transport/
@@ -830,7 +847,7 @@ The current fingerprint algorithm is:
 sha256-build-inputs-v1
 ```
 
-The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 9a input set covers the resolved experiment, board, and host configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
+The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 9a input set covers the resolved experiment, board, host, and boot configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
 
 The fingerprint intentionally excludes `results/`, `build/`, `.venv/`, `.git/`, documentation-only files, and unrelated generated artifacts.
 
@@ -1066,6 +1083,7 @@ Current framework skeleton completed items:
 38. Define first-class build records and experiment run records at the model and documentation level without migrating the current result layout.
 39. Create first-class build result directories under `results/builds/<build_number>/` while preserving compatibility run-result directories.
 40. Allow `run --build-number <number>` to reuse an existing first-class build record after validating the record, retained artifact, artifact hash, and current source/build fingerprint.
+41. Add Phase 10a direct-flash boot config resolution through `configs/boot/direct_flash.yaml` without changing runtime behaviour or adding wolfBoot.
 Current CLI commands are:
 
 ```powershell
@@ -1498,3 +1516,27 @@ The next step may be to revise the change, request one additional relevant file,
 The AI should not proceed with code generation until the current build guide and relevant files have been provided.
 
 The AI must not ask for the full repository by default.
+
+
+## Phase 10a Direct-Flash Boot Config Model
+
+Implemented scope:
+
+- `configs/boot/direct_flash.yaml` is the only runnable boot config.
+- `configs/experiments/baseline_direct_uart.yaml` references it with `boot: direct_flash`.
+- Config loading resolves experiment, board, host, and boot configs.
+- Validation rejects missing boot references, boot ID mismatches, non-runnable boot configs, and mismatches between `firmware.mode` and the resolved boot mode.
+- Manifest generation records the resolved boot config mode as `boot_mode: direct_flash`.
+- Build fingerprint input coverage includes the resolved boot config.
+- Existing direct-flash commands remain the intended regression path: `status`, `create-run`, `build`, `flash`, `build-flash`, and `run`.
+
+Not implemented in Phase 10a:
+
+- wolfBoot build support
+- wolfBoot flash layout
+- linker relocation
+- image signing
+- wolfBoot flashing
+- wolfBoot UART evidence
+
+Hardware success must still only be claimed from user-provided logs.

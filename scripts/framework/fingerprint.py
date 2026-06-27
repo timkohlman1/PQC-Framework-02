@@ -98,22 +98,31 @@ def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> li
     """Return the current conservative build fingerprint input set.
 
     The configuration paths are resolved from the currently implemented config
-    model: configs/experiments/<experiment>.yaml references board and host IDs,
-    which resolve to configs/boards/<board>.yaml and configs/hosts/<host>.yaml.
+    model: configs/experiments/<experiment>.yaml references board, host, and boot IDs,
+    which resolve to configs/boards/<board>.yaml, configs/hosts/<host>.yaml, and configs/boot/<boot>.yaml.
     """
 
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
+    boot = bundle.get("boot", {})
 
     experiment_id = str(experiment["id"])
     board_id = str(board["id"])
     host_id = str(host["id"])
+    boot_id = str(boot.get("id", experiment.get("boot", "")))
 
-    return [
+    inputs = [
         f"configs/experiments/{experiment_id}.yaml",
         f"configs/boards/{board_id}.yaml",
         f"configs/hosts/{host_id}.yaml",
+    ]
+
+    if boot_id:
+        inputs.append(f"configs/boot/{boot_id}.yaml")
+
+    return [
+        *inputs,
         *DEFAULT_FIRMWARE_FINGERPRINT_INPUTS,
     ]
 

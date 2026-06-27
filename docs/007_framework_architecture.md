@@ -33,6 +33,8 @@ configs/
     board_a.yaml
   hosts/
     gateway.yaml
+  boot/
+    direct_flash.yaml
   experiments/
     baseline_direct_uart.yaml
 scripts/
@@ -113,7 +115,7 @@ network_profile
 result
 ```
 
-The initial baseline values are derived from the resolved experiment, board, and host configs. Until dedicated transport and network config files are implemented, `transport_mode` defaults to `direct_uart` and `network_profile` defaults to `none`.
+The initial baseline values are derived from the resolved experiment, board, host, and boot configs. Until dedicated transport and network config files are implemented, `transport_mode` defaults to `direct_uart` and `network_profile` defaults to `none`. The boot mode is resolved from `configs/boot/direct_flash.yaml`, not inferred only from `firmware.mode`.
 
 ## Build and Experiment Run Record Model
 
@@ -261,7 +263,7 @@ When a build-producing workflow starts, the framework increments the local repos
 
 After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in the compatibility run manifest, in the build-record manifest, and as `Output ELF SHA-256` in `build.log`. It copies the ELF into the compatibility result directory and the build-record directory as `firmware.elf`, and records copied artifact metadata under `firmware.result_artifacts`. If sibling `.hex` or `.bin` outputs exist, they are copied as `firmware.hex` and `firmware.bin`; if they do not exist, the manifests record them as absent optional artifacts. This gives the built firmware artifact a stable identity even though the build output path stays the same across builds.
 
-The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 9a input set covers the resolved experiment, board, and host configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
+The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 10a input set covers the resolved experiment, board, host, and boot configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
 
 The fingerprint intentionally excludes generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts. If a required fingerprint input is missing, the build fails before CMake runs and records the fingerprint error in `build.log` and `manifest.json`.
 
@@ -552,3 +554,28 @@ python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-
 
 The hardware test uses the ad hoc monitor workflow and verifies that non-empty UART data can be captured from the configured ST-LINK VCP path.
 
+
+
+## Boot Configuration Support
+
+Phase 10a adds boot mode as a first-class configuration concept without changing runtime behaviour. The baseline experiment now contains:
+
+```yaml
+boot: direct_flash
+```
+
+The CLI resolves this to:
+
+```text
+configs/boot/direct_flash.yaml
+```
+
+The direct-flash boot config is runnable and records `mode: direct_flash`. The experiment still keeps `firmware.mode: direct_flash` during this transition so existing build, flash, UART, and manifest code paths remain compatible. Config validation rejects missing boot references, boot ID mismatches, non-runnable boot configs, and mismatches between `firmware.mode` and the resolved boot config mode.
+
+The manifest records the resolved boot config mode as:
+
+```text
+boot_mode: direct_flash
+```
+
+No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, or wolfBoot runtime claim is implemented in Phase 10a.

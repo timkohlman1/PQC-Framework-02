@@ -40,6 +40,7 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "description": "Test experiment.",
             "board": "board_a",
             "host": "gateway",
+            "boot": "direct_flash",
             "firmware": {
                 "mode": "direct_flash",
                 "artifact": "build/Debug/stm32_basic_hal1.elf",
@@ -59,6 +60,12 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "uart": {
                 "baud": 115200,
             },
+        },
+        "boot": {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Direct-flash test boot config.",
+            "runnable": True,
         },
         "host": {
             "id": "gateway",
@@ -105,6 +112,7 @@ def write_build_fingerprint_inputs(repo_root: Path) -> None:
         "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
         "configs/boards/board_a.yaml": "id: board_a\n",
         "configs/hosts/gateway.yaml": "id: gateway\n",
+        "configs/boot/direct_flash.yaml": "id: direct_flash\nmode: direct_flash\nrunnable: true\n",
         "CMakeLists.txt": "cmake minimum\n",
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
@@ -194,6 +202,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "Build number: 1" in build_log
     assert "Build fingerprint algorithm: sha256-build-inputs-v1" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
+    assert "- configs/boot/direct_flash.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
     assert "- Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in build_log
     assert "- cmake/gcc-arm-none-eabi.cmake" in build_log
@@ -238,6 +247,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert isinstance(manifest["build"]["fingerprint"], str)
     assert len(manifest["build"]["fingerprint"]) == 64
     assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
+    assert "configs/boot/direct_flash.yaml" in manifest["build"]["fingerprint_inputs"]
     assert "Core/Inc/main.h" in manifest["build"]["fingerprint_inputs"]
     assert "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in manifest["build"]["fingerprint_inputs"]
     assert "cmake/gcc-arm-none-eabi.cmake" in manifest["build"]["fingerprint_inputs"]
@@ -358,9 +368,11 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -369,6 +381,7 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -396,6 +409,19 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [
@@ -451,9 +477,11 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -462,6 +490,7 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -489,6 +518,19 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [
@@ -573,9 +615,11 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -584,6 +628,7 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -611,6 +656,19 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [
@@ -691,9 +749,11 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -702,6 +762,7 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -729,6 +790,19 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [
@@ -794,9 +868,11 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -805,6 +881,7 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -832,6 +909,19 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [
@@ -1193,9 +1283,11 @@ def test_run_command_reuses_verified_build_number_without_building(tmp_path, mon
     experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
     board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
     host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
+    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
     experiment_path.parent.mkdir(parents=True)
     board_path.parent.mkdir(parents=True)
     host_path.parent.mkdir(parents=True)
+    boot_path.parent.mkdir(parents=True)
 
     experiment_path.write_text(
         "\n".join(
@@ -1204,6 +1296,7 @@ def test_run_command_reuses_verified_build_number_without_building(tmp_path, mon
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
@@ -1231,6 +1324,19 @@ def test_run_command_reuses_verified_build_number_without_building(tmp_path, mon
         ),
         encoding="utf-8",
     )
+    boot_path.write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     host_path.write_text(
         "\n".join(
             [

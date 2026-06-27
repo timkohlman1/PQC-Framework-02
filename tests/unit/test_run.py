@@ -23,6 +23,7 @@ def load_experiment_module():
 def write_sample_configs(configs_root: Path) -> Path:
     (configs_root / "boards").mkdir(parents=True)
     (configs_root / "hosts").mkdir(parents=True)
+    (configs_root / "boot").mkdir(parents=True)
     (configs_root / "experiments").mkdir(parents=True)
 
     (configs_root / "boards" / "board_a.yaml").write_text(
@@ -41,6 +42,19 @@ def write_sample_configs(configs_root: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    (configs_root / "boot" / "direct_flash.yaml").write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     (configs_root / "hosts" / "gateway.yaml").write_text(
         "\n".join(
             [
@@ -68,6 +82,7 @@ def write_sample_configs(configs_root: Path) -> Path:
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",
