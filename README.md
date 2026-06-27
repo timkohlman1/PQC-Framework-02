@@ -31,6 +31,14 @@ The AI agent should use `AI_BUILD_GUIDE.md` as the source of truth for:
 - documentation requirements
 - safety and secret-handling rules
 
+When an AI-assisted change provides a downloadable ZIP archive, download it normally and run the supplied extraction command from the repository workspace root, such as the VS Code terminal opened at this project. The expected command form is:
+
+```powershell
+Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+```
+
+This extracts the downloaded archive directly from `C:\Users\timko\Downloads\` into the current workspace root, so the ZIP does not need to be copied into the repository first.
+
 ## Repository layout
 
 The STM32CubeMX-generated firmware project currently lives at the repository root.

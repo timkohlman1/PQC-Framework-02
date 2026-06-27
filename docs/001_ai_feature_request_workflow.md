@@ -51,6 +51,7 @@ The goal is to reduce the amount of context that must be uploaded for each AI-as
    - complete replacement content for every file that needs to be modified or created
    - downloadable replacement artifacts using the exact target filenames for every modified or newly created file
    - a downloadable `.zip` archive containing all replacement files at their repository-relative paths when multiple files are changed or created
+   - the exact PowerShell extraction command for that archive, using `C:\Users\timko\Downloads\<archive-name>.zip` as the source path and `.` as the destination so it can be run from the repository workspace root
    - highlighted manual edits or diff-style notes for each modified or newly created file
    - verification commands
    - expected pass/fail criteria
@@ -61,6 +62,14 @@ The goal is to reduce the amount of context that must be uploaded for each AI-as
    For every file that needs to be modified or created, the AI agent must also provide the full replacement file content so the user can inspect, download, copy, or replace the file locally.
 
    If more than one file needs to be modified or created, the AI agent must also provide a downloadable `.zip` archive containing all replacement files at their intended repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
+
+   Whenever a downloadable `.zip` archive is provided, the AI agent must also provide the exact PowerShell extraction command immediately after the archive link. The command must assume the user has downloaded the archive to `C:\Users\timko\Downloads\` and will run the command from the repository workspace root, such as a VS Code terminal opened at the project root. Use this form, replacing only the archive filename:
+
+   ```powershell
+   Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+   ```
+
+   The AI agent must not require the user to copy or move the downloaded archive into the repository root before extracting it.
 
    The AI agent must also highlight the specific changes separately. Highlighting may be a concise summary or focused diff-style notes.
 
@@ -110,6 +119,8 @@ AI agents must provide downloadable replacement artifacts using the exact target
 AI agents must provide complete replacement content for every file that needs to be modified or created, in addition to highlighting the specific manual edits or diff-style changes.
 
 When multiple files need to be modified or created, AI agents must provide a downloadable `.zip` archive containing all replacement files at their repository-relative paths for unzip-and-overwrite use.
+
+Whenever a downloadable `.zip` archive is provided, AI agents must also provide the exact PowerShell extraction command for the user's local workflow. The command must use `C:\Users\timko\Downloads\<archive-name>.zip` as the archive path and `.` as the destination, and it must be suitable to run from the repository workspace root.
 
 AI agents must preserve unrelated file content when preparing full replacement files.
 

@@ -1446,6 +1446,14 @@ For every file that needs to be modified or created, also provide the complete r
 
 If more than one file needs to be modified or created, also provide a downloadable `.zip` archive containing all replacement files at their intended repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
 
+Whenever a downloadable `.zip` archive is provided, also provide the exact PowerShell extraction command immediately after the archive link. The command must assume the user has downloaded the archive to `C:\Users\timko\Downloads\` and will run the command from the repository workspace root, such as a VS Code terminal opened at the project root. Use this form, replacing only the archive filename:
+
+```powershell
+Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+```
+
+Do not require the user to copy or move the downloaded archive into the repository root before extracting it.
+
 Also highlight the specific changes or manual edits separately, such as with a short summary or focused diff-style notes.
 
 Do not change unrelated content in the replacement file. The full-file replacement must contain only the changes necessary to implement the requested change.
@@ -1498,6 +1506,7 @@ For each new feature request:
    - complete replacement content for every file that needs to be modified or created
    - downloadable replacement artifacts using the exact target filenames for every modified or newly created file
    - a downloadable `.zip` archive containing all replacement files at their repository-relative paths when multiple files are changed or created
+   - the exact PowerShell extraction command for that archive, using `C:\Users\timko\Downloads\<archive-name>.zip` as the source path and `.` as the destination so it can be run from the repository workspace root
    - highlighted manual edits or diff-style notes for each modified or newly created file
    - build or verification commands
    - expected pass/fail criteria
