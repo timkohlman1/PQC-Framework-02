@@ -2,8 +2,8 @@ id: wolfboot_ecdsa_p256
 mode: wolfboot_ecdsa_p256
 description: Planned wolfBoot ECDSA-P256 secure-boot profile. Generic direct-flash execution remains blocked; Phase 10h provides an explicit two-artifact flash workflow.
 runnable: false
-status: phase_10h_flash_workflow_defined_not_boot_path_validated
-implementation_state: wolfboot_and_signed_application_flash_workflow_defined_not_boot_path_validated
+status: phase_10i_positive_boot_evidence_and_phase_10j_negative_test_defined
+implementation_state: positive_secure_boot_uart_marker_and_corrupted_application_negative_test_defined
 intended_signature_algorithm: ecdsa_p256
 application_slot_concept: planned_signed_application_primary_slot
 flash_layout_status: defined_phase_10d_used_by_phase_10h_flash_workflow
@@ -72,6 +72,9 @@ secure_boot_flash_profile:
   signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
   signed_application_offset: 0x08020000
   output_evidence: results
-  runtime_boot_path_validated: false
+  runtime_boot_path_validated: requires_user_hardware_log_evidence
+  expected_secure_boot_uart_marker: stm32-basic_hal1 secure-boot app v0.1.0
+  positive_boot_evidence_status: defined_phase_10i
+  negative_corrupted_application_test_status: defined_phase_10j
 
-notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10h now defines an explicit two-artifact flash workflow that can flash wolfBoot plus the signed application and capture UART evidence, but it still does not prove wolfBoot-mediated boot-path identity until Phase 10i adds a distinct UART marker.
+notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10i now defines a distinct secure-boot application UART marker for positive boot evidence, and Phase 10j defines a corrupted-application negative test. Hardware success must still only be claimed from user-provided flash and UART logs.

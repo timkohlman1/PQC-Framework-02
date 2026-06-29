@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. Phase 10g adds a local-only application signing workflow. Phase 10h adds an explicit two-artifact wolfBoot flash workflow and post-flash UART capture using `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This records wolfBoot and signed-application flash evidence, but it does not prove wolfBoot-mediated boot-path identity until Phase 10i adds a distinct UART marker.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. Phase 10g adds a local-only application signing workflow. Phase 10h adds an explicit two-artifact wolfBoot flash workflow and post-flash UART capture using `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This records wolfBoot and signed-application flash evidence. Phase 10i adds the distinct secure-boot application UART marker required for positive boot evidence, and Phase 10j adds the corrupted-application negative-test workflow.
 
 ## 4. Hardware and Host Context
 
@@ -245,6 +245,7 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 ```
 
 The `status` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -540,7 +541,7 @@ Hardware tests must remain marked separately and must skip cleanly when required
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
 ```
 
-The Phase 10h secure-boot workflow hardware test runs only when the `local_toolchain`, `gateway`, `flash_helper`, and `uart_device` capability probes pass and the local `tools/wolfboot/wolfboot.elf` artifact already exists. It builds the relocated application, signs it, flashes wolfBoot plus the signed application, captures UART, and verifies the normal boot/tick markers. It does not prove wolfBoot-mediated boot-path identity; Phase 10i adds the distinct marker required for that evidence.
+The secure-boot workflow hardware tests run only when the `local_toolchain`, `gateway`, `flash_helper`, and `uart_device` capability probes pass and the local `tools/wolfboot/wolfboot.elf` artifact already exists. The positive test builds the relocated application, signs it, flashes wolfBoot plus the signed application, captures UART, and verifies the secure-boot marker, normal boot marker, and tick marker. The negative test flashes wolfBoot plus a result-local corrupted signed application, verifies that the application markers are absent, and then flashes the valid signed application again to restore the board to the positive secure-boot state.
 
 ```powershell
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
@@ -1136,7 +1137,9 @@ Current framework skeleton completed items:
 46. Add Phase 10f configurable wolfBoot build profile support with `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`, `scripts/framework/wolfboot_build.py`, and `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`. This captures wolfBoot build evidence only and does not sign images, flash hardware, capture UART, or claim secure-boot runtime success.
 47. Add Phase 10f.1 project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot`, the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`, generated local copy `tools/wolfboot/.config`, `STM32CUBE=../..`, Phase 10d partition values, target-only Cortex-M4/thumb/HAL/CMSIS compile settings, and STM32L4R5 MCU macro selection that undefines upstream `STM32L4A6xx` before defining `STM32L4R5xx`, decimal `IMAGE_HEADER_SIZE=256`, and a temporary MinGW host-keytools stdio compatibility patch and temporary STM32L4 HAL config PWR/PWREx include patch. The command can retain `wolfboot.elf` and record SHA-256 when the submodule and required toolchain are available.
 49. Add Phase 10g local-only ECDSA-P256 application signing workflow with `configs/signing/wolfboot_ecdsa_p256_app.yaml`, `scripts/framework/signing.py`, and `python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml`. This can generate or use a local private signing key under `secrets/wolfboot/`, converts the relocated ELF to a BIN when needed, signs the relocated application BIN, records signing evidence under `results/signing/`, and does not copy private keys into results, flash hardware, capture UART, or claim secure-boot runtime success.
-50. Add Phase 10h explicit wolfBoot secure-boot flash workflow with `configs/experiments/wolfboot_ecdsa_p256_uart.yaml`, `scripts/framework/secure_boot_flash.py`, and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This flashes the configured `wolfboot.elf` and signed application image in sequence, records both artifact hashes, offsets, remote paths, return codes, and logs, captures UART by default after successful flashing, and records that boot-path identity is not proven until Phase 10i adds a distinct wolfBoot UART marker.
+50. Add Phase 10h explicit wolfBoot secure-boot flash workflow with `configs/experiments/wolfboot_ecdsa_p256_uart.yaml`, `scripts/framework/secure_boot_flash.py`, and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This flashes the configured `wolfboot.elf` and signed application image in sequence, records both artifact hashes, offsets, remote paths, return codes, and logs, and captures UART by default after successful flashing.
+51. Add Phase 10i positive wolfBoot boot evidence by compiling a distinct relocated secure-boot application UART marker, requiring it in the wolfBoot UART experiment, and recording `secure_boot_run.boot_path_distinguished`, `secure_boot_run.secure_boot_marker_present`, and signature metadata in the manifest.
+52. Add Phase 10j corrupted-application negative-test support with `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application`. This creates a result-local corrupted copy of the signed application image, flashes that copy, captures UART, and passes only when the normal boot, tick, and secure-boot markers are absent. It does not modify the original signed image or private signing key. The hardware workflow test also covers this negative path and restores the valid signed image afterward.
 Current CLI commands are:
 
 ```powershell
@@ -1352,13 +1355,15 @@ Implemented scope:
 - The command captures UART by default after successful two-artifact flashing and records UART marker evaluation in `uart.log` and `manifest.json`.
 - The command includes `--skip-uart` only as a diagnostic escape hatch. When used, no boot confirmation is made.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` remains `runnable: false` for generic direct-flash workflows. The Phase 10h command loads it explicitly for the secure-boot flash workflow so the known-good direct-flash path cannot accidentally treat wolfBoot as a generic validated runtime path.
-- The command records `secure_boot_run.boot_confirmed_from_uart_log` from UART marker evaluation, but also records `secure_boot_run.boot_path_distinguished: false` because Phase 10i is responsible for adding a distinct wolfBoot-mediated boot marker.
+- The command records `secure_boot_run.boot_confirmed_from_uart_log` from UART marker evaluation. Phase 10i updates this evidence so a positive run requires the distinct secure-boot application marker and records `secure_boot_run.boot_path_distinguished: true` only when that marker is present.
 
-Not implemented in Phase 10h:
+Implemented after Phase 10h:
 
-- a distinct UART marker proving wolfBoot-mediated boot-path identity
-- positive secure-boot evidence consolidation for Phase 10i
-- corrupted-image negative boot tests
+- Phase 10i adds the distinct secure-boot application UART marker and positive boot-evidence manifest fields.
+- Phase 10j adds the corrupted-application negative-test workflow.
+
+Still not implemented:
+
 - boot timing instrumentation
 - production signing-key handling
 
@@ -1376,6 +1381,45 @@ python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware -
 ```
 
 Expected result: when `tools/wolfboot/wolfboot.elf`, `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin`, the gateway, flash helper, ST-LINK, and board are intentionally available, the command creates a normal result run directory containing `manifest.json`, `secure_boot_flash.log`, `uart.log`, and `notes.md`. Hardware success must still only be claimed from user-provided logs. A successful Phase 10h run does not by itself prove wolfBoot-mediated boot-path identity.
+
+
+## Phase 10i wolfBoot Positive Boot Evidence
+
+Implemented scope:
+
+- The relocated application build defines `SECURE_BOOT_APPLICATION` when `STM32_APP_VECTOR_OFFSET` is not `0x00000000`.
+- The secure-boot application prints the additional UART marker `stm32-basic_hal1 secure-boot app v0.1.0` before the normal `stm32-basic_hal1 boot v0.1.0` marker.
+- `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` records `uart.expected_secure_boot_message` so positive secure-boot evidence requires the secure-boot marker, normal boot marker, and `tick` marker.
+- UART capture records `uart.expected_secure_boot_message` and `uart.secure_boot_marker_present` in `manifest.json` and `uart.log`.
+- The secure-boot command records `boot_crypto`, `boot_signature`, `secure_boot_run.boot_path_distinguished`, `secure_boot_run.secure_boot_marker_present`, and `secure_boot_run.positive_boot_evidence_passed`.
+- A positive run result is recorded as `secure_boot_positive_boot_evidence_passed` only when flash succeeds and all required UART markers are present.
+
+Manual Phase 10i command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+```
+
+Expected result: when the wolfBoot artifact, signed relocated application, gateway, flash helper, ST-LINK, and board are intentionally available, the run manifest records positive secure-boot evidence only if the UART log contains the secure-boot marker, normal boot marker, and tick marker. Hardware success must still only be claimed from user-provided logs.
+
+## Phase 10j Negative Boot Test for Corrupted Application
+
+Implemented scope:
+
+- `flash-secure-boot` supports `--negative-corrupt-application`.
+- The workflow copies the signed application image into the result directory, flips the first byte of that result-local copy, and flashes the corrupted copy instead of the original signed image.
+- The original signed application under `build/` and the private signing key under `secrets/wolfboot/` are not modified or copied into result artifacts.
+- The manifest records the original signed-image path and SHA-256, corrupted image path and SHA-256, corruption method, and `source_image_modified: false`.
+- The negative test captures UART and passes only when capture completes and the normal boot marker, tick marker, and secure-boot marker are absent.
+- `tests/hardware/test_secure_boot_flash_workflow.py` includes the negative hardware workflow and restores the valid signed application after the corrupted-image test.
+
+Manual Phase 10j command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+```
+
+Expected result: the corrupted application does not produce the normal application boot marker, tick marker, or secure-boot marker, and the manifest records `secure_boot_negative_test.verdict: passed`. When using the hardware test, the board is restored by a final positive secure-boot flash. Hardware success must still only be claimed from user-provided logs.
 
 ## 13. Common Manual Commands
 
@@ -1510,7 +1554,7 @@ Run the baseline UART hardware test with automatic capability checks:
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
 ```
 
-Run the Phase 10h secure-boot build/sign/flash/UART hardware workflow test with automatic capability checks:
+Run the Phase 10i/10j secure-boot positive and negative hardware workflow tests with automatic capability checks:
 
 ```powershell
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
@@ -1932,7 +1976,7 @@ Implemented scope:
 - Added `configs/signing/wolfboot_ecdsa_p256_app.yaml` as the signing-only profile for the relocated HAL application image.
 - Added `scripts/framework/signing.py` to construct and run configured local key-generation and image-signing commands through an injectable runner.
 - Added `python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml`.
-- The command expects the relocated application ELF at `build/RelocatedDebug/stm32_basic_hal1.elf` and signs `build/RelocatedDebug/stm32_basic_hal1.bin`. If the BIN is absent, it invokes the configured `arm-none-eabi-objcopy -O binary` conversion command before signing.
+- The command expects the relocated application ELF at `build/RelocatedDebug/stm32_basic_hal1.elf` and signs `build/RelocatedDebug/stm32_basic_hal1.bin`. When the configured ELF exists and binary conversion is enabled, it regenerates the BIN with the configured `arm-none-eabi-objcopy -O binary` command before signing so stale pre-marker BIN files are not re-signed.
 - The default private key location is `secrets/wolfboot/ecdsa_p256_private_key.der`.
 - The command may generate the local ECDSA-P256 private key when absent by invoking the configured wolfBoot key-generation command from the configured `tools/wolfboot` working directory because wolfBoot keygen writes `src/keystore.c` relative to the wolfBoot source tree.
 - Private key material remains local and is not copied into `results/`, replacement artifacts, or documentation.

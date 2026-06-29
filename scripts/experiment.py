@@ -12,6 +12,7 @@ The initial supported commands are:
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
@@ -769,6 +770,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         source_build_run_id=manifest["run_id"],
     )
 
+    uart_result = None
     uart_return_code: int | None = None
     uart_duration_seconds = 0.0
     if flash_result.return_code == 0 and args.capture_uart:
@@ -1479,9 +1481,21 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
     return result.return_code
 
 def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
-    """Run the Phase 10h wolfBoot + signed-application flash workflow."""
+    """Run the wolfBoot secure-boot flash, evidence, and negative-test workflow."""
+
+    if args.negative_corrupt_application and args.skip_uart:
+        print(
+            "Error: --negative-corrupt-application requires UART capture evidence; do not combine it with --skip-uart.",
+            file=sys.stderr,
+        )
+        return 44
 
     bundle = load_secure_boot_experiment_bundle(args.experiment)
+    if args.negative_corrupt_application:
+        bundle["experiment"].setdefault("secure_boot_flash", {})[
+            "negative_test_corrupt_application"
+        ] = True
+
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
 
@@ -1507,6 +1521,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 43
 
+    uart_result = None
     uart_return_code: int | None = None
     uart_duration_seconds = 0.0
     if flash_result.return_code == 0 and not args.skip_uart:
@@ -1542,9 +1557,38 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             },
         )
 
+    secure_boot_marker_present = (
+        None if uart_result is None else uart_result.secure_boot_marker_present
+    )
+    boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
+    tick_present = None if uart_result is None else uart_result.tick_present
+    capture_completed = (
+        False
+        if uart_result is None
+        else uart_result.capture.return_code in {0, 124}
+    )
+    negative_test_requested = bool(args.negative_corrupt_application)
+    negative_test_passed = (
+        negative_test_requested
+        and flash_result.return_code == 0
+        and capture_completed
+        and boot_marker_present is False
+        and tick_present is False
+        and secure_boot_marker_present is False
+    )
+    positive_boot_evidence_passed = (
+        not negative_test_requested
+        and flash_result.return_code == 0
+        and uart_return_code == 0
+        and secure_boot_marker_present is True
+    )
+
     if flash_result.return_code != 0:
         final_return_code = flash_result.return_code
         failure_stage = flash_result.failure_stage
+    elif negative_test_requested:
+        final_return_code = 0 if negative_test_passed else (uart_return_code or 9)
+        failure_stage = "none" if negative_test_passed else "negative_uart_evidence"
     elif uart_return_code is not None and uart_return_code != 0:
         final_return_code = uart_return_code
         failure_stage = "uart"
@@ -1552,16 +1596,23 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         final_return_code = 0
         failure_stage = "none"
 
+    if negative_test_requested:
+        result_status = (
+            "secure_boot_negative_test_passed"
+            if final_return_code == 0
+            else "secure_boot_negative_test_failed"
+        )
+    elif positive_boot_evidence_passed:
+        result_status = "secure_boot_positive_boot_evidence_passed"
+    elif final_return_code == 0 and uart_return_code is None:
+        result_status = "secure_boot_flash_passed"
+    else:
+        result_status = "secure_boot_flash_failed"
+
     update_manifest(
         result_dir / "manifest.json",
         {
-            "result": (
-                "secure_boot_flash_uart_passed"
-                if final_return_code == 0 and uart_return_code is not None
-                else "secure_boot_flash_passed"
-                if final_return_code == 0
-                else "secure_boot_flash_failed"
-            ),
+            "result": result_status,
             "secure_boot_run": {
                 "return_code": final_return_code,
                 "flash_return_code": flash_result.return_code,
@@ -1574,8 +1625,30 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                     flash_result.duration_seconds + uart_duration_seconds,
                     3,
                 ),
-                "boot_confirmed_from_uart_log": uart_return_code == 0,
-                "boot_path_distinguished": False,
+                "boot_confirmed_from_uart_log": positive_boot_evidence_passed,
+                "boot_path_distinguished": secure_boot_marker_present is True,
+                "expected_secure_boot_marker": bundle["experiment"].get("uart", {}).get(
+                    "expected_secure_boot_message"
+                ),
+                "secure_boot_marker_present": secure_boot_marker_present,
+                "boot_marker_present": boot_marker_present,
+                "tick_present": tick_present,
+                "positive_boot_evidence_passed": positive_boot_evidence_passed,
+            },
+            "secure_boot_negative_test": {
+                "enabled": negative_test_requested,
+                "verdict": (
+                    "passed"
+                    if negative_test_passed
+                    else "failed"
+                    if negative_test_requested
+                    else "not_run"
+                ),
+                "normal_boot_marker_absent": boot_marker_present is False,
+                "tick_marker_absent": tick_present is False,
+                "secure_boot_marker_absent": secure_boot_marker_present is False,
+                "capture_completed": capture_completed,
+                "source_image_modified": False,
             },
         },
     )
@@ -1604,8 +1677,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     else:
         print(f"UART log: {result_dir / 'uart.log'}")
         print(f"UART return code: {uart_return_code}")
-        print("Boot confirmation must be based only on the recorded UART log markers.")
-    print("This command does not prove wolfBoot-mediated boot-path identity; Phase 10i will add a distinct wolfBoot UART marker.")
+        print("Boot confirmation is based on the recorded UART marker evaluation.")
+        if args.negative_corrupt_application:
+            print("Negative test passes only when the normal application and secure-boot markers are absent after flashing the corrupted result-local image.")
+        else:
+            print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, and tick marker.")
     print(f"Return code: {final_return_code}")
 
     return final_return_code
@@ -1875,6 +1951,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--skip-uart",
         action="store_true",
         help="Diagnostic escape hatch: flash both artifacts without post-flash UART capture.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--negative-corrupt-application",
+        action="store_true",
+        help="Create and flash a result-local corrupted copy of the signed application image, then require UART evidence that normal application markers are absent.",
     )
     secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
 

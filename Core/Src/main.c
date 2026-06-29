@@ -91,7 +91,14 @@ int main(void)
   MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
+#ifdef SECURE_BOOT_APPLICATION
+  const char secure_boot_msg[] = "\r\nstm32-basic_hal1 secure-boot app v0.1.0\r\n";
+  HAL_UART_Transmit(&hlpuart1, (uint8_t *)secure_boot_msg, sizeof(secure_boot_msg) - 1, HAL_MAX_DELAY);
+
+  const char boot_msg[] = "stm32-basic_hal1 boot v0.1.0\r\n";
+#else
   const char boot_msg[] = "\r\nstm32-basic_hal1 boot v0.1.0\r\n";
+#endif
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
 
   /* USER CODE END 2 */

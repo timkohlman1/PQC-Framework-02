@@ -622,34 +622,34 @@ def execute_application_signing(
     return_code = 0
     failure_reason: str | None = None
 
-    if not input_image_path.is_file() and binary_conversion_enabled:
-        if input_elf_path is None or not input_elf_path.is_file():
-            return_code = MISSING_INPUT_IMAGE_RETURN_CODE
+    if binary_conversion_enabled and input_elf_path is not None and input_elf_path.is_file():
+        input_image_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            binary_conversion_execution = runner(binary_conversion_command or [], binary_conversion_working_dir, binary_conversion_stdin)
+            return_code = binary_conversion_execution.return_code
+        except FileNotFoundError as exc:
+            missing_executable = binary_conversion_command[0] if binary_conversion_command else "configured binary-conversion tool"
+            return_code = BINARY_CONVERSION_TOOL_MISSING_RETURN_CODE
             failure_reason = (
-                "Configured relocated application BIN is absent and the configured ELF input for "
-                f"binary conversion does not exist: {input_elf_path}"
+                "application signing binary-conversion command could not be started because "
+                f"the executable was not found: {missing_executable}"
             )
-        else:
-            input_image_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                binary_conversion_execution = runner(binary_conversion_command or [], binary_conversion_working_dir, binary_conversion_stdin)
-                return_code = binary_conversion_execution.return_code
-            except FileNotFoundError as exc:
-                missing_executable = binary_conversion_command[0] if binary_conversion_command else "configured binary-conversion tool"
-                return_code = BINARY_CONVERSION_TOOL_MISSING_RETURN_CODE
-                failure_reason = (
-                    "application signing binary-conversion command could not be started because "
-                    f"the executable was not found: {missing_executable}"
-                )
-                binary_conversion_execution = SigningCommandExecution(
-                    command=binary_conversion_command or [],
-                    return_code=return_code,
-                    stdout="",
-                    stderr=f"{failure_reason}\n{exc}",
-                    duration_seconds=perf_counter() - start,
-                )
-            if return_code != 0 and failure_reason is None:
-                failure_reason = f"application signing binary-conversion command failed with return code {return_code}."
+            binary_conversion_execution = SigningCommandExecution(
+                command=binary_conversion_command or [],
+                return_code=return_code,
+                stdout="",
+                stderr=f"{failure_reason}\n{exc}",
+                duration_seconds=perf_counter() - start,
+            )
+        if return_code != 0 and failure_reason is None:
+            failure_reason = f"application signing binary-conversion command failed with return code {return_code}."
+
+    if return_code == 0 and not input_image_path.is_file() and binary_conversion_enabled:
+        return_code = MISSING_INPUT_IMAGE_RETURN_CODE
+        failure_reason = (
+            "Configured relocated application BIN is absent and the configured ELF input for "
+            f"binary conversion does not exist: {input_elf_path}"
+        )
 
     if return_code == 0 and not input_image_path.is_file():
         return_code = MISSING_INPUT_IMAGE_RETURN_CODE

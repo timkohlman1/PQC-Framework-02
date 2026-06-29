@@ -82,6 +82,12 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
 )
 
+if(NOT STM32_APP_VECTOR_OFFSET STREQUAL "0x00000000")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        SECURE_BOOT_APPLICATION
+    )
+endif()
+
 # The selected STM32 linker script is consumed by cmake/gcc-arm-none-eabi.cmake.
 # Keep linker-script selection in one place so the direct-flash and relocated
 # presets do not pass duplicate -T options to the linker.

@@ -10,11 +10,19 @@ firmware:
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick
+  expected_secure_boot_message: stm32-basic_hal1 secure-boot app v0.1.0
 secure_boot_flash:
+  evidence_phase: phase_10i_positive_boot_and_phase_10j_negative_corruption
+  signature_algorithm: ecdsa_p256
+  signature_size_bytes: 64
+  image_version: 1
   wolfboot_artifact: tools/wolfboot/wolfboot.elf
   wolfboot_offset: 0x08000000
   wolfboot_pass_offset_to_helper: false
   signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
   signed_application_offset: 0x08020000
   signed_application_pass_offset_to_helper: true
-  notes: Phase 10h flashes both required artifacts and captures UART markers, but does not prove wolfBoot-mediated boot-path identity until Phase 10i adds a distinct marker.
+  negative_test_corrupt_application: false
+  corruption_method: flip_first_byte
+  corrupted_application_artifact: corrupted_application_signed.bin
+  notes: Phase 10i requires the secure-boot application UART marker in addition to the normal boot and tick markers. Phase 10j can be run with --negative-corrupt-application to flash a result-local corrupted copy of the signed image without modifying the original signed image or private signing key.

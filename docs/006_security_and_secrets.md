@@ -101,4 +101,16 @@ The Phase 10h workflow flashes two generated artifacts: the locally built `tools
 
 Private wolfBoot signing keys remain under `secrets/wolfboot/` and must not be committed or copied into result artifacts. The flash workflow reads only generated public artifacts and does not copy private key material.
 
-A successful flash command is not, by itself, proof of wolfBoot-mediated boot. Boot confirmation must come from the recorded UART log, and Phase 10i is still required to add a distinct wolfBoot boot marker.
+A successful flash command is not, by itself, proof of wolfBoot-mediated boot. Boot confirmation must come from the recorded UART log. Phase 10i records the distinct secure-boot application marker `stm32-basic_hal1 secure-boot app v0.1.0` and requires it for positive boot evidence.
+
+## Phase 10j — Corrupted-Application Negative Test
+
+The negative-test workflow uses a result-local corrupted copy of the signed application image. It does not modify the original signed image under `build/`, does not modify or copy the private key under `secrets/wolfboot/`, and does not generate new signing material.
+
+The command is:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+```
+
+The manifest records the original signed-image SHA-256, corrupted-image SHA-256, corruption method, corrupted result-local path, and `source_image_modified: false`. Do not commit corrupted images, result directories, private keys, or generated signing outputs.

@@ -226,6 +226,48 @@ def test_execute_application_signing_uses_existing_private_key_without_keygen(tm
     assert calls[0][0].endswith("sign")
 
 
+def test_execute_application_signing_regenerates_bin_when_configured_elf_exists(tmp_path):
+    signing = load_signing_module()
+    repo_root = tmp_path / "repo"
+    input_elf = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.elf"
+    input_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
+    signed_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    private_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    input_elf.parent.mkdir(parents=True)
+    private_key.parent.mkdir(parents=True)
+    input_elf.write_bytes(b"new relocated app elf")
+    input_image.write_bytes(b"stale relocated app image")
+    private_key.write_bytes(b"existing local private key")
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path, stdin_text: str | None = None):
+        calls.append(command)
+        if command[0] == "arm-none-eabi-objcopy":
+            assert cwd == repo_root
+            input_image.write_bytes(b"fresh relocated app image")
+            return signing.SigningCommandExecution(command, 0, "binary converted", "", 0.05)
+        if command[0].endswith("sign"):
+            assert cwd == repo_root / "tools" / "wolfboot"
+            signed_image.write_bytes(b"signed fresh image bytes")
+            return signing.SigningCommandExecution(command, 0, "image signed", "", 0.2)
+        raise AssertionError(f"unexpected command: {command}")
+
+    result = signing.execute_application_signing(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 0
+    assert result.binary_conversion_execution is not None
+    assert result.input_image_sha256 == hashlib.sha256(b"fresh relocated app image").hexdigest()
+    assert input_image.read_bytes() == b"fresh relocated app image"
+    assert len(calls) == 2
+    assert calls[0][0] == "arm-none-eabi-objcopy"
+    assert calls[1][0].endswith("sign")
+
+
 def test_execute_application_signing_records_missing_input_without_generating_key(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"

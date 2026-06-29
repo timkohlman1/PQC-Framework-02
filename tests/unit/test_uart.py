@@ -288,6 +288,67 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert "stm32-basic_hal1 boot v0.1.0" in log
 
 
+
+
+def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+    bundle = sample_bundle()
+    bundle["experiment"]["uart"]["expected_secure_boot_message"] = "stm32-basic_hal1 secure-boot app v0.1.0"
+
+    def missing_secure_marker_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout="stm32-basic_hal1 boot v0.1.0\ntick\n",
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    missing_result = uart.execute_uart_capture(
+        bundle,
+        repo_root,
+        result_dir,
+        runner=missing_secure_marker_runner,
+    )
+    missing_manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert missing_result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
+    assert missing_result.boot_marker_present is True
+    assert missing_result.tick_present is True
+    assert missing_result.secure_boot_marker_present is False
+    assert missing_manifest["uart"]["secure_boot_marker_present"] is False
+
+    def secure_marker_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout=(
+                "stm32-basic_hal1 secure-boot app v0.1.0\n"
+                "stm32-basic_hal1 boot v0.1.0\n"
+                "tick\n"
+            ),
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    passed_result = uart.execute_uart_capture(
+        bundle,
+        repo_root,
+        result_dir,
+        runner=secure_marker_runner,
+    )
+    passed_manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert passed_result.return_code == 0
+    assert passed_result.secure_boot_marker_present is True
+    assert passed_manifest["uart"]["secure_boot_marker_present"] is True
+    assert "Secure-boot marker present: true" in (result_dir / "uart.log").read_text(encoding="utf-8")
+
+
 def test_execute_uart_capture_fails_when_expected_marker_is_missing(tmp_path):
     uart = load_uart_module()
     repo_root = tmp_path / "repo"

@@ -10,6 +10,7 @@ UART, gateway access, or STM32 hardware.
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -70,6 +71,12 @@ class SecureBootFlashResult:
     signed_application: SecureBootFlashArtifactResult
     failure_stage: str
     failure_reason: str | None
+    negative_test_enabled: bool
+    corruption_method: str | None
+    original_signed_application_path: Path | None
+    original_signed_application_sha256: str | None
+    corrupted_signed_application_path: Path | None
+    corrupted_signed_application_sha256: str | None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -203,6 +210,46 @@ def _remote_artifact_path(result_dir: Path, label: str, artifact_path: Path) -> 
     return str(PurePosixPath("/tmp") / safe_name)
 
 
+def _corrupt_signed_application_copy(
+    *,
+    source_path: Path,
+    result_dir: Path,
+    output_name: str,
+    method: str,
+) -> Path:
+    """Create a result-local corrupted application image without modifying source."""
+
+    if method != "flip_first_byte":
+        raise SecureBootFlashProfileError(
+            f"unsupported secure-boot negative-test corruption method: {method}"
+        )
+
+    corrupted_path = result_dir / output_name
+    corrupted_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_path, corrupted_path)
+
+    image = bytearray(corrupted_path.read_bytes())
+    if not image:
+        raise SecureBootFlashProfileError(
+            f"cannot corrupt empty signed application image: {source_path}"
+        )
+
+    image[0] ^= 0x01
+    corrupted_path.write_bytes(bytes(image))
+    return corrupted_path
+
+
+def _signature_metadata(experiment: dict[str, Any]) -> dict[str, Any]:
+    secure_boot_config = experiment.get("secure_boot_flash", {})
+    if not isinstance(secure_boot_config, dict):
+        secure_boot_config = {}
+    return {
+        "algorithm": str(secure_boot_config.get("signature_algorithm", experiment.get("boot_crypto", "ecdsa_p256"))),
+        "signature_size_bytes": secure_boot_config.get("signature_size_bytes"),
+        "image_version": secure_boot_config.get("image_version"),
+    }
+
+
 def _artifact_result_to_manifest(result: SecureBootFlashArtifactResult) -> dict[str, Any]:
     return {
         "artifact_path": str(result.artifact_path),
@@ -233,6 +280,11 @@ def _write_secure_boot_flash_log(
         f"Final return code: {result.return_code}",
         f"Failure stage: {result.failure_stage}",
         f"Failure reason: {result.failure_reason if result.failure_reason is not None else 'none'}",
+        f"Negative corrupted-application test: {str(result.negative_test_enabled).lower()}",
+        f"Corruption method: {result.corruption_method if result.corruption_method is not None else 'not requested'}",
+        f"Original signed application SHA-256: {result.original_signed_application_sha256 if result.original_signed_application_sha256 is not None else 'unavailable'}",
+        f"Corrupted signed application path: {result.corrupted_signed_application_path if result.corrupted_signed_application_path is not None else 'not created'}",
+        f"Corrupted signed application SHA-256: {result.corrupted_signed_application_sha256 if result.corrupted_signed_application_sha256 is not None else 'unavailable'}",
         f"Total duration seconds: {result.duration_seconds:.3f}",
         "",
     ]
@@ -268,6 +320,23 @@ def _prepare_artifact_result(
     pass_offset_to_helper: bool,
 ) -> SecureBootFlashArtifactResult:
     artifact_path = repo_root / relative_path
+    return _prepare_artifact_result_from_path(
+        name=name,
+        result_dir=result_dir,
+        artifact_path=artifact_path,
+        offset=offset,
+        pass_offset_to_helper=pass_offset_to_helper,
+    )
+
+
+def _prepare_artifact_result_from_path(
+    *,
+    name: str,
+    result_dir: Path,
+    artifact_path: Path,
+    offset: str,
+    pass_offset_to_helper: bool,
+) -> SecureBootFlashArtifactResult:
     artifact_exists = artifact_path.is_file()
     return SecureBootFlashArtifactResult(
         name=name,
@@ -336,18 +405,66 @@ def execute_secure_boot_flash(
             False,
         ),
     )
-    signed_application = _prepare_artifact_result(
-        name="signed_application",
-        repo_root=repo_root_path,
-        result_dir=result_dir_path,
-        relative_path=str(secure_boot_config["signed_application_artifact"]),
-        offset=str(secure_boot_config["signed_application_offset"]),
-        pass_offset_to_helper=_optional_bool(
-            experiment,
-            "secure_boot_flash.signed_application_pass_offset_to_helper",
-            True,
-        ),
+    negative_test_enabled = _optional_bool(
+        experiment,
+        "secure_boot_flash.negative_test_corrupt_application",
+        False,
     )
+    corruption_method = (
+        str(secure_boot_config.get("corruption_method", "flip_first_byte"))
+        if negative_test_enabled
+        else None
+    )
+    original_signed_application_path = repo_root_path / str(
+        secure_boot_config["signed_application_artifact"]
+    )
+    original_signed_application_sha256 = (
+        calculate_file_sha256(original_signed_application_path)
+        if original_signed_application_path.is_file()
+        else None
+    )
+    corrupted_signed_application_path: Path | None = None
+    corrupted_signed_application_sha256: str | None = None
+
+    if negative_test_enabled and original_signed_application_path.is_file():
+        corrupted_signed_application_path = _corrupt_signed_application_copy(
+            source_path=original_signed_application_path,
+            result_dir=result_dir_path,
+            output_name=str(
+                secure_boot_config.get(
+                    "corrupted_application_artifact",
+                    "corrupted_application_signed.bin",
+                )
+            ),
+            method=str(corruption_method),
+        )
+        corrupted_signed_application_sha256 = calculate_file_sha256(
+            corrupted_signed_application_path
+        )
+        signed_application = _prepare_artifact_result_from_path(
+            name="signed_application",
+            result_dir=result_dir_path,
+            artifact_path=corrupted_signed_application_path,
+            offset=str(secure_boot_config["signed_application_offset"]),
+            pass_offset_to_helper=_optional_bool(
+                experiment,
+                "secure_boot_flash.signed_application_pass_offset_to_helper",
+                True,
+            ),
+        )
+    else:
+        signed_application = _prepare_artifact_result(
+            name="signed_application",
+            repo_root=repo_root_path,
+            result_dir=result_dir_path,
+            relative_path=str(secure_boot_config["signed_application_artifact"]),
+            offset=str(secure_boot_config["signed_application_offset"]),
+            pass_offset_to_helper=_optional_bool(
+                experiment,
+                "secure_boot_flash.signed_application_pass_offset_to_helper",
+                True,
+            ),
+        )
 
     start = perf_counter()
     return_code = 0
@@ -422,6 +539,12 @@ def execute_secure_boot_flash(
         signed_application=signed_application,
         failure_stage=failure_stage,
         failure_reason=failure_reason,
+        negative_test_enabled=negative_test_enabled,
+        corruption_method=corruption_method,
+        original_signed_application_path=original_signed_application_path,
+        original_signed_application_sha256=original_signed_application_sha256,
+        corrupted_signed_application_path=corrupted_signed_application_path,
+        corrupted_signed_application_sha256=corrupted_signed_application_sha256,
     )
 
     _write_secure_boot_flash_log(log_path=log_path, repo_root=repo_root_path, result=result)
@@ -447,6 +570,7 @@ def execute_secure_boot_flash(
             "source": source,
             "firmware": current_firmware,
             "boot_crypto": str(experiment.get("boot_crypto", "ecdsa_p256")),
+            "boot_signature": _signature_metadata(experiment),
             "secure_boot_flash": {
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),
@@ -456,8 +580,21 @@ def execute_secure_boot_flash(
                 "gateway_alias": gateway_alias,
                 "flash_helper": flash_helper,
                 "stlink_serial": stlink_serial,
+                "negative_test_enabled": negative_test_enabled,
+                "corruption_method": corruption_method,
                 "wolfboot": _artifact_result_to_manifest(wolfboot),
                 "signed_application": _artifact_result_to_manifest(signed_application),
+                "negative_test": {
+                    "enabled": negative_test_enabled,
+                    "method": corruption_method,
+                    "original_signed_application_path": str(original_signed_application_path),
+                    "original_signed_application_sha256": original_signed_application_sha256,
+                    "corrupted_signed_application_path": None
+                    if corrupted_signed_application_path is None
+                    else str(corrupted_signed_application_path),
+                    "corrupted_signed_application_sha256": corrupted_signed_application_sha256,
+                    "source_image_modified": False,
+                },
             },
         },
     )

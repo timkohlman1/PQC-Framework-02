@@ -55,8 +55,10 @@ class UartResult:
     requested_duration_seconds: int
     expected_boot_message: str
     expected_tick_message: str
+    expected_secure_boot_message: str | None
     boot_marker_present: bool
     tick_present: bool
+    secure_boot_marker_present: bool | None
     data_captured: bool
 
 
@@ -188,8 +190,10 @@ def _write_uart_capture_log(
     requested_duration_seconds: int,
     expected_boot_message: str,
     expected_tick_message: str,
+    expected_secure_boot_message: str | None,
     boot_marker_present: bool,
     tick_present: bool,
+    secure_boot_marker_present: bool | None,
     data_captured: bool,
     restart_command: str | None,
     return_code: int,
@@ -212,8 +216,10 @@ def _write_uart_capture_log(
         "-------------------",
         f"Expected boot marker: {expected_boot_message}",
         f"Expected tick marker: {expected_tick_message}",
+        f"Expected secure-boot marker: {expected_secure_boot_message if expected_secure_boot_message is not None else 'not configured'}",
         f"Boot marker present: {str(boot_marker_present).lower()}",
         f"Tick marker present: {str(tick_present).lower()}",
+        f"Secure-boot marker present: {str(secure_boot_marker_present).lower() if secure_boot_marker_present is not None else 'not configured'}",
         f"Data captured: {str(data_captured).lower()}",
         "",
         "Capture command",
@@ -338,6 +344,14 @@ def execute_uart_capture(
     baud = int(bundle["host"]["uart"]["baud"])
     expected_boot_message = str(bundle["experiment"]["uart"]["expected_boot_message"])
     expected_tick_message = str(bundle["experiment"]["uart"]["expected_tick_message"])
+    expected_secure_boot_message_value = bundle["experiment"].get("uart", {}).get(
+        "expected_secure_boot_message"
+    )
+    expected_secure_boot_message = (
+        None
+        if expected_secure_boot_message_value in (None, "")
+        else str(expected_secure_boot_message_value)
+    )
 
     start = perf_counter()
     if restart_command is None:
@@ -362,9 +376,17 @@ def execute_uart_capture(
     data_captured = bool(capture_execution.stdout.strip())
     boot_marker_present = expected_boot_message in capture_execution.stdout
     tick_present = expected_tick_message in capture_execution.stdout
+    secure_boot_marker_present = (
+        None
+        if expected_secure_boot_message is None
+        else expected_secure_boot_message in capture_execution.stdout
+    )
+    secure_boot_marker_requirement_met = (
+        expected_secure_boot_message is None or secure_boot_marker_present is True
+    )
     capture_completed = _capture_completed(capture_execution.return_code)
 
-    if capture_completed and boot_marker_present and tick_present:
+    if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
         return_code = 0
         result_status = "pass"
     elif capture_completed:
@@ -383,8 +405,10 @@ def execute_uart_capture(
         requested_duration_seconds=duration_seconds,
         expected_boot_message=expected_boot_message,
         expected_tick_message=expected_tick_message,
+        expected_secure_boot_message=expected_secure_boot_message,
         boot_marker_present=boot_marker_present,
         tick_present=tick_present,
+        secure_boot_marker_present=secure_boot_marker_present,
         data_captured=data_captured,
         restart_command=restart_command,
         return_code=return_code,
@@ -406,8 +430,10 @@ def execute_uart_capture(
                 "requested_duration_seconds": duration_seconds,
                 "expected_boot_message": expected_boot_message,
                 "expected_tick_message": expected_tick_message,
+                "expected_secure_boot_message": expected_secure_boot_message,
                 "boot_marker_present": boot_marker_present,
                 "tick_present": tick_present,
+                "secure_boot_marker_present": secure_boot_marker_present,
                 "data_captured": data_captured,
                 "restart_command": restart_command,
                 "restart_during_capture": restart_command is not None,
@@ -426,8 +452,10 @@ def execute_uart_capture(
         requested_duration_seconds=duration_seconds,
         expected_boot_message=expected_boot_message,
         expected_tick_message=expected_tick_message,
+        expected_secure_boot_message=expected_secure_boot_message,
         boot_marker_present=boot_marker_present,
         tick_present=tick_present,
+        secure_boot_marker_present=secure_boot_marker_present,
         data_captured=data_captured,
     )
 

@@ -758,4 +758,37 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 
 The workflow flashes `tools/wolfboot/wolfboot.elf` at the configured wolfBoot bootloader offset, then flashes `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` at the configured signed-application slot offset. It records both artifact hashes, offsets, SCP/helper return codes, remote staging paths, and `secure_boot_flash.log` in the result directory.
 
-After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`. The workflow does not claim wolfBoot-mediated boot-path identity; Phase 10i remains responsible for adding a distinct UART marker for that evidence.
+After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`.
+
+## Phase 10i — wolfBoot Positive Boot Evidence
+
+Phase 10i adds an application-level UART marker for the relocated secure-boot application build:
+
+```text
+stm32-basic_hal1 secure-boot app v0.1.0
+```
+
+The marker is compiled into non-zero-vector-offset application builds through `SECURE_BOOT_APPLICATION`. The direct-flash `Debug` baseline continues to emit only the normal direct-flash marker. The wolfBoot experiment config records the expected secure-boot marker under `uart.expected_secure_boot_message`, and the UART capture helper records `uart.secure_boot_marker_present` in the manifest. Positive secure-boot evidence passes only when the secure-boot marker, normal boot marker, and tick marker are all present.
+
+The secure-boot run manifest records:
+
+```text
+boot_crypto
+boot_signature.algorithm
+boot_signature.signature_size_bytes
+boot_signature.image_version
+secure_boot_run.boot_confirmed_from_uart_log
+secure_boot_run.boot_path_distinguished
+secure_boot_run.secure_boot_marker_present
+secure_boot_run.positive_boot_evidence_passed
+```
+
+## Phase 10j — Negative Boot Test for Corrupted Application
+
+Phase 10j adds a controlled negative-test mode to the existing secure-boot flash command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+```
+
+The command copies the signed application image into the result directory, corrupts the result-local copy by flipping the first byte, and flashes that corrupted copy instead of the original signed image. It records the original and corrupted image SHA-256 values and `source_image_modified: false` in the manifest. The negative test passes only when the UART capture completes and the secure-boot marker, normal boot marker, and tick marker are absent.
