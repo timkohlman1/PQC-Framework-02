@@ -217,3 +217,66 @@ def test_planned_wolfboot_boot_config_is_loadable_for_inspection(tmp_path):
     assert config["application_slot_concept"] == "planned_signed_application_slot"
     assert config["flash_layout_status"] == "not_confirmed"
 
+
+
+def test_planned_wolfboot_flash_layout_metadata_is_loadable_for_inspection(tmp_path):
+    experiment_cli = load_experiment_module()
+
+    config_path = tmp_path / "wolfboot_ecdsa_p256.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "id: wolfboot_ecdsa_p256",
+                "mode: wolfboot_ecdsa_p256",
+                "description: Planned wolfBoot ECDSA-P256 placeholder.",
+                "runnable: false",
+                "status: planned",
+                "implementation_state: secure_boot_flash_layout_defined_placeholder_only",
+                "intended_signature_algorithm: ecdsa_p256",
+                "application_slot_concept: planned_signed_application_primary_slot",
+                "flash_layout_status: defined_phase_10d_planned_not_implemented",
+                "secure_boot_layout:",
+                "  status: planned_not_runnable",
+                "  decision_record: docs/decisions/0003_secure_boot_flash_layout.md",
+                "  internal_flash_base: 0x08000000",
+                "  internal_flash_size: 0x00200000",
+                "  internal_flash_end: 0x081FFFFF",
+                "  wolfboot_base: 0x08000000",
+                "  wolfboot_size: 0x00020000",
+                "  primary_slot_base: 0x08020000",
+                "  primary_slot_size: 0x000E0000",
+                "  primary_slot_entry: 0x08020100",
+                "  image_header_size: 0x00000100",
+                "  update_slot_base: 0x08100000",
+                "  update_slot_size: 0x000E0000",
+                "  swap_metadata_base: 0x081E0000",
+                "  swap_metadata_size: 0x00020000",
+                "  sector_size_assumption: 0x00001000",
+                "  wolfboot_partition_boot_address: 0x08020000",
+                "  wolfboot_partition_size: 0x000E0000",
+                "  wolfboot_partition_update_address: 0x08100000",
+                "  wolfboot_partition_swap_address: 0x081E0000",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = experiment_cli.load_config(config_path)
+    experiment_cli.validate_boot_config_for_inspection(config)
+
+    layout = config["secure_boot_layout"]
+    assert config["runnable"] is False
+    assert config["flash_layout_status"] == "defined_phase_10d_planned_not_implemented"
+    assert layout["decision_record"] == "docs/decisions/0003_secure_boot_flash_layout.md"
+    assert layout["internal_flash_base"] == "0x08000000"
+    assert layout["internal_flash_size"] == "0x00200000"
+    assert layout["wolfboot_base"] == "0x08000000"
+    assert layout["wolfboot_size"] == "0x00020000"
+    assert layout["primary_slot_base"] == "0x08020000"
+    assert layout["primary_slot_entry"] == "0x08020100"
+    assert layout["update_slot_base"] == "0x08100000"
+    assert layout["swap_metadata_base"] == "0x081E0000"
+    assert layout["wolfboot_partition_boot_address"] == "0x08020000"
+    assert layout["wolfboot_partition_update_address"] == "0x08100000"
+    assert layout["wolfboot_partition_swap_address"] == "0x081E0000"

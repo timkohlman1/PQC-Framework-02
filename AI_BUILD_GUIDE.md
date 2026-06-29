@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile, but no linker relocation, wolfBoot build, signing workflow, flashing workflow, or secure-boot UART evidence is implemented.
 
 ## 4. Hardware and Host Context
 
@@ -620,6 +620,7 @@ implementation_state
 intended_signature_algorithm
 application_slot_concept
 flash_layout_status
+secure_boot_layout
 notes
 ```
 
@@ -1101,6 +1102,7 @@ Current framework skeleton completed items:
 41. Add Phase 10a direct-flash boot config resolution through `configs/boot/direct_flash.yaml` without changing runtime behaviour or adding wolfBoot.
 42. Add Phase 10b planned wolfBoot boot config placeholder at `configs/boot/wolfboot_ecdsa_p256.yaml`; it is loadable for inspection but marked `runnable: false` and rejected by execution-oriented workflows.
 43. Add Phase 10c wolfBoot STM32L4 target support assessment in `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md`; upstream STM32L4 support is the closest starting point, but STM32L4R5 requires a project-local target configuration or adaptation before wolfBoot is built or treated as runnable.
+44. Add Phase 10d secure-boot flash layout decision in `docs/decisions/0003_secure_boot_flash_layout.md`; `configs/boot/wolfboot_ecdsa_p256.yaml` now records the planned STM32L4R5 layout metadata while remaining non-runnable.
 Current CLI commands are:
 
 ```powershell
@@ -1265,7 +1267,7 @@ Expected `build-flash` behaviour:
 
 Immediate next intended steps after this change:
 
-1. Review the Phase 10c decision record and confirm the project-local STM32L4R5 target adaptation direction is acceptable.
+1. Review the Phase 10d secure-boot flash layout decision and confirm the `0x08020000` primary signed-application slot direction is acceptable.
 2. Run the unit tests.
 3. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
 4. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
@@ -1571,8 +1573,8 @@ Not implemented in Phase 10a:
 Implemented scope:
 
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists as a planned, inactive boot profile.
-- The planned profile records `mode: wolfboot_ecdsa_p256`, `runnable: false`, `status: planned`, intended ECDSA-P256 signature metadata, a planned signed-application slot concept, and `flash_layout_status: not_confirmed`.
-- The planned profile avoids claiming a final flash layout.
+- The planned profile records `mode: wolfboot_ecdsa_p256`, `runnable: false`, `status: planned`, intended ECDSA-P256 signature metadata, a planned signed-application slot concept, and, after Phase 10d, `flash_layout_status: defined_phase_10d_planned_not_implemented`.
+- The planned profile originally avoided claiming a final flash layout; Phase 10d now records a planned layout while still avoiding any runtime implementation claim.
 - The direct-flash baseline remains unchanged and continues to reference `direct_flash`.
 - Boot config validation distinguishes inspection from execution: planned configs can be schema-validated for inspection, but execution-oriented experiment bundle loading rejects non-runnable boot configs.
 - Unit tests cover planned wolfBoot config inspection and execution rejection.
@@ -1612,6 +1614,41 @@ Not implemented in Phase 10c:
 
 Next intended Phase 10 step:
 
-- Phase 10d should define the STM32L4R5 secure-boot flash layout explicitly before any application relocation or wolfBoot build is attempted.
+- Phase 10e should relocate the HAL application build to the selected signed-image entry address `0x08020100` while preserving the direct-flash baseline.
 
 Hardware success must still only be claimed from user-provided logs.
+
+## Phase 10d Define Secure-Boot Flash Layout
+
+Implemented scope:
+
+- `docs/decisions/0003_secure_boot_flash_layout.md` records the Phase 10d flash layout decision.
+- The selected initial planned layout uses the STM32L4R5 2 MB internal flash range from `0x08000000` through `0x081FFFFF`.
+- The planned wolfBoot region is `0x08000000..0x0801FFFF` with size `0x00020000` / 128 KB.
+- The planned signed application primary slot is `0x08020000..0x080FFFFF` with size `0x000E0000` / 896 KB.
+- The planned relocated application entry address is `0x08020100`, accounting for the intended `0x100` wolfBoot image header.
+- The planned signed application update slot is `0x08100000..0x081DFFFF` with size `0x000E0000` / 896 KB.
+- The planned swap / metadata reserve is `0x081E0000..0x081FFFFF` with size `0x00020000` / 128 KB.
+- The planned wolfBoot target values are recorded as `WOLFBOOT_SECTOR_SIZE 0x1000`, `WOLFBOOT_PARTITION_BOOT_ADDRESS 0x08020000`, `WOLFBOOT_PARTITION_SIZE 0x000E0000`, `WOLFBOOT_PARTITION_UPDATE_ADDRESS 0x08100000`, and `WOLFBOOT_PARTITION_SWAP_ADDRESS 0x081E0000`.
+- `configs/boot/wolfboot_ecdsa_p256.yaml` records the layout under `secure_boot_layout` and remains `runnable: false`.
+- Unit tests cover loading and inspection validation for the planned layout metadata and confirm the planned profile remains rejected for execution.
+- The direct-flash baseline remains the only runnable boot mode.
+
+Not implemented in Phase 10d:
+
+- linker relocation
+- vector-table changes
+- wolfBoot source vendoring or submodule setup
+- wolfBoot build profile
+- signing-key generation
+- image signing
+- wolfBoot flashing
+- signed application flashing
+- wolfBoot UART evidence
+- secure-boot runtime success claims
+
+Risks and unresolved items:
+
+- The layout cannot be confirmed as bootable until wolfBoot is built for the project-local STM32L4R5 target and user-provided hardware logs show the expected UART evidence.
+- The exact STM32L4R5 erase geometry, bank mode, and option-byte state still need confirmation before relying on swap/update behaviour.
+- The 128 KB wolfBoot reserve and 128 KB swap / metadata reserve may need adjustment after measuring the selected wolfBoot build and verifying update/trailer requirements.

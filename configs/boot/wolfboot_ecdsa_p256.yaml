@@ -3,10 +3,31 @@ mode: wolfboot_ecdsa_p256
 description: Planned wolfBoot ECDSA-P256 secure-boot profile placeholder. Not implemented or runnable.
 runnable: false
 status: planned
-implementation_state: target_support_assessed_placeholder_only
+implementation_state: secure_boot_flash_layout_defined_placeholder_only
 intended_signature_algorithm: ecdsa_p256
-application_slot_concept: planned_signed_application_slot
-flash_layout_status: pending_phase_10d_decision
+application_slot_concept: planned_signed_application_primary_slot
+flash_layout_status: defined_phase_10d_planned_not_implemented
+secure_boot_layout:
+  status: planned_not_runnable
+  decision_record: docs/decisions/0003_secure_boot_flash_layout.md
+  internal_flash_base: 0x08000000
+  internal_flash_size: 0x00200000
+  internal_flash_end: 0x081FFFFF
+  wolfboot_base: 0x08000000
+  wolfboot_size: 0x00020000
+  primary_slot_base: 0x08020000
+  primary_slot_size: 0x000E0000
+  primary_slot_entry: 0x08020100
+  image_header_size: 0x00000100
+  update_slot_base: 0x08100000
+  update_slot_size: 0x000E0000
+  swap_metadata_base: 0x081E0000
+  swap_metadata_size: 0x00020000
+  sector_size_assumption: 0x00001000
+  wolfboot_partition_boot_address: 0x08020000
+  wolfboot_partition_size: 0x000E0000
+  wolfboot_partition_update_address: 0x08100000
+  wolfboot_partition_swap_address: 0x081E0000
 target_support_assessment:
   status: assessed_phase_10c
   decision_record: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
@@ -14,4 +35,4 @@ target_support_assessment:
   project_target_strategy: project_local_stm32l4r5_target_configuration_or_adaptation
   runnable: false
   notes: Existing upstream STM32L4 wolfBoot support is the closest starting point, but STM32L4R5 / NUCLEO-L4R5ZI-P requires a project-local flash layout and target configuration before wolfBoot build, signing, flashing, or UART evidence can be claimed.
-notes: Placeholder only. No wolfBoot source, linker relocation, signing workflow, flash layout, flashing workflow, or UART evidence is implemented.
+notes: Placeholder only. No wolfBoot source, linker relocation, signing workflow, flashing workflow, or UART evidence is implemented.

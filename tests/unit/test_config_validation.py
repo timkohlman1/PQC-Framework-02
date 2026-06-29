@@ -304,3 +304,64 @@ def test_load_experiment_bundle_rejects_planned_wolfboot_boot_profile_for_execut
     with pytest.raises(experiment_cli.ConfigError, match="planned and not runnable"):
         experiment_cli.load_experiment_bundle(experiment_path)
 
+
+
+def test_validate_boot_config_for_inspection_accepts_planned_flash_layout_metadata():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_ecdsa_p256",
+        "mode": "wolfboot_ecdsa_p256",
+        "description": "Planned wolfBoot test boot config.",
+        "runnable": False,
+        "status": "planned",
+        "implementation_state": "secure_boot_flash_layout_defined_placeholder_only",
+        "intended_signature_algorithm": "ecdsa_p256",
+        "application_slot_concept": "planned_signed_application_primary_slot",
+        "flash_layout_status": "defined_phase_10d_planned_not_implemented",
+        "secure_boot_layout": {
+            "status": "planned_not_runnable",
+            "decision_record": "docs/decisions/0003_secure_boot_flash_layout.md",
+            "internal_flash_base": "0x08000000",
+            "internal_flash_size": "0x00200000",
+            "internal_flash_end": "0x081FFFFF",
+            "wolfboot_base": "0x08000000",
+            "wolfboot_size": "0x00020000",
+            "primary_slot_base": "0x08020000",
+            "primary_slot_size": "0x000E0000",
+            "primary_slot_entry": "0x08020100",
+            "image_header_size": "0x00000100",
+            "update_slot_base": "0x08100000",
+            "update_slot_size": "0x000E0000",
+            "swap_metadata_base": "0x081E0000",
+            "swap_metadata_size": "0x00020000",
+            "sector_size_assumption": "0x00001000",
+            "wolfboot_partition_boot_address": "0x08020000",
+            "wolfboot_partition_size": "0x000E0000",
+            "wolfboot_partition_update_address": "0x08100000",
+            "wolfboot_partition_swap_address": "0x081E0000",
+        },
+    }
+
+    experiment_cli.validate_boot_config_for_inspection(config)
+
+
+
+def test_validate_boot_config_still_rejects_planned_flash_layout_for_execution():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_ecdsa_p256",
+        "mode": "wolfboot_ecdsa_p256",
+        "description": "Planned wolfBoot test boot config.",
+        "runnable": False,
+        "status": "planned",
+        "flash_layout_status": "defined_phase_10d_planned_not_implemented",
+        "secure_boot_layout": {
+            "primary_slot_base": "0x08020000",
+            "primary_slot_entry": "0x08020100",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="planned and not runnable"):
+        experiment_cli.validate_boot_config(config)

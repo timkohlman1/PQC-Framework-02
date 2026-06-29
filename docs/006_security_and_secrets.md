@@ -58,3 +58,11 @@ Document VPN requirements, but keep credentials local.
 Phase 10c documents target-support suitability only. It does not generate signing keys, does not add test keys, and does not add a signing workflow.
 
 When later wolfBoot signing phases are implemented, private wolfBoot signing keys must remain outside the repository. Only public verification material, dummy/example keys clearly marked as non-secret, or documentation may be committed.
+
+## Phase 10d Flash Layout and Secrets
+
+Phase 10d defines a planned secure-boot flash layout only.
+
+It does not generate signing keys, does not add test keys, does not add private certificates, does not sign firmware images, and does not add a signing workflow.
+
+The planned layout metadata and documentation are safe to commit because they contain only addresses, sizes, status fields, and decision references. Private wolfBoot signing keys must still remain outside the repository in later signing phases.

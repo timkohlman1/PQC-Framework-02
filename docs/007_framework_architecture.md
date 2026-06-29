@@ -297,6 +297,39 @@ Compatibility concerns recorded by the decision include flash size, flash page/s
 
 No linker relocation, wolfBoot build profile, signing workflow, flashing workflow, UART evidence, or secure-boot runtime claim is implemented by Phase 10c.
 
+## Secure-Boot Flash Layout
+
+Phase 10d adds a documented planned STM32L4R5 secure-boot flash layout without changing runtime behaviour:
+
+```text
+docs/decisions/0003_secure_boot_flash_layout.md
+```
+
+The planned layout uses the STM32L4R5 internal flash range as a 2 MB map:
+
+```text
+0x08000000..0x0801FFFF  wolfBoot region                 128 KB
+0x08020000..0x080FFFFF  signed application primary slot  896 KB
+0x08100000..0x081DFFFF  signed application update slot   896 KB
+0x081E0000..0x081FFFFF  swap / metadata reserve          128 KB
+```
+
+The planned wolfBoot target values are:
+
+```text
+WOLFBOOT_SECTOR_SIZE                 0x1000
+WOLFBOOT_PARTITION_BOOT_ADDRESS      0x08020000
+WOLFBOOT_PARTITION_SIZE              0x000E0000
+WOLFBOOT_PARTITION_UPDATE_ADDRESS    0x08100000
+WOLFBOOT_PARTITION_SWAP_ADDRESS      0x081E0000
+```
+
+The selected primary signed application slot starts at `0x08020000`. The later relocated HAL application entry address is planned as `0x08020100` because the first `0x100` bytes of the slot are reserved for the wolfBoot image header in the intended ECC-signed image format.
+
+The planned wolfBoot boot config records this metadata under `secure_boot_layout`, but remains non-runnable. Execution-oriented workflows still reject it before build, flash, UART, SSH, or hardware-facing actions.
+
+No linker script relocation, vector-table update, wolfBoot source, wolfBoot build, signing workflow, wolfBoot flashing, or secure-boot UART evidence is implemented by Phase 10d.
+
 ## Integration Test Support
 
 The framework has pytest capability probes in:
@@ -599,8 +632,8 @@ The manifest records the resolved boot config mode as:
 boot_mode: direct_flash
 ```
 
-Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile placeholder. It is intentionally marked `runnable: false` and `status: planned`. The placeholder records the intended boot mode name, intended ECDSA-P256 signature algorithm, a planned signed-application slot concept, and `flash_layout_status: not_confirmed`.
+Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile placeholder. It is intentionally marked `runnable: false` and `status: planned`. The placeholder records the intended boot mode name, intended ECDSA-P256 signature algorithm, a planned signed-application slot concept, and, after Phase 10d, `flash_layout_status: defined_phase_10d_planned_not_implemented`.
 
 The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
 
-No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b or Phase 10c. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot.
+Phase 10d defines the planned secure-boot flash layout for this profile. No wolfBoot source, signing workflow, linker relocation, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b, Phase 10c, or Phase 10d. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot. Phase 10d adds only the documented memory map and planned config metadata.
