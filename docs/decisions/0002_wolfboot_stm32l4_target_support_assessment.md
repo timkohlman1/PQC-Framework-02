@@ -83,3 +83,32 @@ The project will not claim that the upstream STM32L4 target is directly runnable
 - The STM32L4R5 flash bank mode and option-byte state may affect erase/write assumptions.
 - The bootloader size must be measured once the selected wolfBoot crypto and debug options are built.
 - The final relocated application entry address must account for wolfBoot's image header.
+
+## Phase 10f.1 Follow-Up
+
+Phase 10f.1 implements the previously planned project-local STM32L4R5 wolfBoot build adaptation. The selected dependency strategy is a Git submodule at `tools/wolfboot`. The project-local config template is tracked at `configs/wolfboot/stm32l4r5_ecdsa_p256.config` and is copied to `tools/wolfboot/.config` by the framework before invoking the wolfBoot build command.
+
+This resolves the documented HAL/CMSIS integration direction for build attempts by pointing wolfBoot `STM32CUBE` at the repository root and adding STM32L4R5 HAL/CMSIS include paths. It does not validate signing, flashing, UART boot evidence, or runtime secure-boot success.
+
+### Phase 10f.1 Troubleshooting Findings
+
+Real `build-wolfboot` diagnostics exposed these adaptation requirements:
+
+1. Upstream `TARGET=stm32l4` was the correct starting point, but it defaulted to `STM32L4A6xx`. The project-local config now undefines `STM32L4A6xx` and defines `STM32L4R5xx` so `stm32l4xx.h` selects the STM32L4R5 CMSIS header available in the local CubeMX driver tree.
+2. `IMAGE_HEADER_SIZE=0x100` was rejected by wolfBoot shell integer tests in the observed Windows/MSYS environment. The config now uses decimal `IMAGE_HEADER_SIZE=256` with no layout change.
+3. MinGW host keytools rejected C99 `%j` format checks while warnings were treated as errors. The framework applies a temporary host-keytools Makefile patch adding `-D__USE_MINGW_ANSI_STDIO=1`, then restores the original file.
+4. Plain `make` produced incorrect `/tools/keytools/keygen` paths in the observed Windows/MSYS environment. The profile passes `WOLFBOOT_ROOT=.`.
+5. Plain `make` can link `wolfboot.elf` and then continue into upstream `test-app/image.bin`; that test application is outside Phase 10f.1 scope. The profile invokes the specific `wolfboot.elf` target.
+6. STM32L4 flash-extension HAL compilation required PWR/PWREx declarations and objects. The project-local config adds PWR/PWREx objects, and the framework applies a temporary STM32L4 HAL config patch inside the wolfBoot submodule during build.
+7. Cortex-M4/thumb compiler flags apply only to target ARM objects. They must not be applied globally to host keytools.
+
+Observed local verification for Phase 10f.1 was:
+
+```text
+python -m pytest: 101 passed, 1 skipped
+build-wolfboot return code: 0
+wolfboot.elf artifact exists: True
+wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b1edc83
+```
+
+The decision remains: use upstream STM32L4 support as the starting point with project-local STM32L4R5 adaptation. A successful `wolfboot.elf` build is build evidence only. It does not prove signing, flashing, UART boot, swap/update behaviour, or secure-boot runtime success.

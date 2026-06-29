@@ -227,7 +227,19 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "wolfBoot build profile")
 
     if require_field(config, "signature_algorithm", "wolfBoot build profile") != "ecdsa_p256":
-        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256 for Phase 10f")
+        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256 for Phase 10f.1")
+
+    build_config = config.get("build")
+    if not isinstance(build_config, dict):
+        raise ConfigError("wolfBoot build profile build field must be a mapping")
+
+    has_config_template = bool(build_config.get("config_template"))
+    has_generated_config = bool(build_config.get("generated_config"))
+    if has_config_template != has_generated_config:
+        raise ConfigError(
+            "wolfBoot build profile must set both build.config_template and "
+            "build.generated_config, or neither"
+        )
 
 
 def repo_root_from_build_profile_path(profile_path: Path | str) -> Path:

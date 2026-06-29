@@ -18,16 +18,16 @@ def _repo_root() -> Path:
 def test_real_wolfboot_build_profile_records_evidence_when_tooling_is_available(tmp_path):
     """Run the real wolfBoot build profile only when explicitly enabled.
 
-    Phase 10f adds framework evidence capture, but the upstream stm32l4 wolfBoot
-    target still requires a project-local STM32L4R5 adaptation before a real
-    wolfboot.elf build is expected to pass. This integration test is therefore
-    opt-in even when tools/wolfboot and make are present.
+    Phase 10f.1 adds the project-local STM32L4R5 wolfBoot build
+    adaptation, but this test still requires a populated local wolfBoot
+    submodule and the cross-build tools. It remains opt-in so normal test
+    runs do not invoke real wolfBoot tooling.
     """
 
     if os.environ.get("PQC_RUN_WOLFBOOT_BUILD_INTEGRATION") != "1":
         pytest.skip(
-            "real wolfBoot build integration is opt-in until the project-local "
-            "STM32L4R5 wolfBoot target adaptation is implemented; set "
+            "real wolfBoot build integration is opt-in because it requires the "
+            "local wolfBoot submodule and cross-build tooling; set "
             "PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1 to run it intentionally"
         )
 

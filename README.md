@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source is not included in the repository context by default. Phase 10f adds a configurable framework build profile for wolfBoot ECDSA-P256 builds, but image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds wolfBoot build evidence capture only; it does not sign, flash, or validate wolfBoot at runtime. Local testing with cloned upstream wolfBoot source showed that `build-wolfboot` records controlled evidence, but the default upstream `TARGET=stm32l4` command does not yet build for this project because STM32L4R5 HAL/CMSIS target adaptation is still required.
+- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable.
 
 ## AI-assisted development
 
@@ -312,6 +312,9 @@ The profile is invoked through the framework with:
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
+The Phase 10f.1 profile uses the local Git submodule at `tools/wolfboot` and the tracked project-local config template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The command copies that template to `tools/wolfboot/.config`, invokes `make` inside the submodule, and records evidence under `results/wolfboot-builds/`. The generated `.config`, wolfBoot build outputs, and possible local signing-key by-products remain ignored. The project-local template also undefines upstream wolfBoot's default `STM32L4A6xx` target macro before defining `STM32L4R5xx`, because the project CubeMX CMSIS tree is for STM32L4R5 and does not provide `stm32l4a6xx.h`. The template uses decimal `IMAGE_HEADER_SIZE=256` because wolfBoot shell tests compare that value as an integer. On Windows/MSYS builds, the framework can temporarily patch wolfBoot's host keytools Makefile during the build command so MinGW accepts C99 `%j` printf format checking without leaving the submodule dirty.
+
+
 The command creates a wolfBoot build evidence directory under:
 
 ```text
@@ -321,13 +324,13 @@ results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/
   wolfboot.elf  # only when the configured build produces the expected artifact
 ```
 
-The manifest and log record the configured source directory, output directory, command, return code, duration, expected artifact path, retained artifact path, and artifact SHA-256 when present. Unit tests use mocked command runners; they do not invoke wolfBoot tooling.
+The manifest and log record the configured source directory, output directory, command, return code, duration, expected artifact path, retained artifact path, artifact SHA-256 when present, config-copy status, and temporary MinGW keytools patch status. Unit tests use mocked command runners; they do not invoke wolfBoot tooling.
 
 The default profile expects local wolfBoot source at `tools/wolfboot`. If that directory is absent, `build-wolfboot` fails before invoking build tooling and records a clear missing-source result. If the configured executable such as `make` is unavailable, it records a controlled missing-tool result. The default profile expects the produced ELF at `tools/wolfboot/wolfboot.elf`; generated wolfBoot ELF/BIN/HEX/MAP/object outputs under `tools/wolfboot` remain ignored by Git.
 
-With upstream wolfBoot source present, the current default `TARGET=stm32l4` command is expected to fail until the project-local STM32L4R5 target adaptation is implemented. Observed local testing reached `hal/stm32l4.c` and failed on missing `stm32l4xx_hal.h` because the upstream build does not yet include this project's CubeMX HAL/CMSIS paths. Manual experiments showed that target ARM objects also need Cortex-M4/thumb flags, but those flags must not be applied globally to host keytools.
+With upstream wolfBoot source present, the Phase 10f.1 profile now supplies the project CubeMX HAL/CMSIS include paths, target-only Cortex-M4/thumb flags, decimal image-header size, and STM32L4R5 MCU macro selection through the tracked `.config` template. On Windows/MSYS, it also applies temporary host-keytools Makefile compatibility patch for `__USE_MINGW_ANSI_STDIO` and a temporary wolfBoot STM32L4 HAL config patch that exposes PWR/PWREx declarations during the build command. A failed build should now be treated as diagnostic evidence from the real local wolfBoot source/toolchain and reviewed from `wolfboot_build.log` and `manifest.json`.
 
-This phase does not vendor wolfBoot source, complete the STM32L4R5 wolfBoot target adaptation, generate signing keys, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
+This phase does not generate signing keys as durable project assets, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
 
 ## Tests
 
@@ -413,3 +416,25 @@ configs/boot/wolfboot_ecdsa_p256.yaml
 ```
 
 This profile records the intended boot mode name, ECDSA-P256 signature algorithm, and the Phase 10d planned secure-boot flash layout. It is marked `runnable: false`, `status: planned`, and `flash_layout_status: defined_phase_10d_planned_not_implemented`. The config can be loaded for inspection, but execution-oriented experiment workflows reject it. It must not be used as evidence that wolfBoot source, signing, flashing, or UART boot validation is implemented. Phase 10e records the build-only relocated HAL application profile, but the profile remains non-runnable.
+
+With upstream wolfBoot source present, the Phase 10f.1 profile may still expose source-version-specific upstream build issues. Observed Windows/MSYS fixes now include an explicit `WOLFBOOT_ROOT=. wolfboot.elf` make argument so wolfBoot keytools resolve as `./tools/keytools/...` instead of `/tools/keytools/...` when `PWD` is not usable by make.
+
+
+Phase 10f.1 follow-up note: local wolfBoot testing after the `WOLFBOOT_ROOT=. wolfboot.elf` fix reached the STM32L4 HAL flash extension object and then failed because the upstream wolfBoot STM32L4 HAL configuration did not expose STM32L4R5 PWR/PWREx declarations. A force-include attempt exposed HAL type-order errors, and enabling `HAL_PWR_MODULE_ENABLED` only through target CFLAGS did not expose PWR/PWREx headers through upstream wolfBoot's minimal HAL config. The build profile now temporarily patches wolfBoot's local `hal/stm32l4xx_hal_conf.h` to define `HAL_PWR_MODULE_ENABLED` and include `stm32l4xx_hal_pwr.h` plus `stm32l4xx_hal_pwr_ex.h` during the build, then restores the upstream file afterward. The project-local config still adds the CubeMX `stm32l4xx_hal_pwr.o` and `stm32l4xx_hal_pwr_ex.o` objects.
+
+
+Phase 10f.1 additional local build observation: after adding PWR/PWREx target objects, the build still failed in `stm32l4xx_hal_flash_ex.c` because upstream wolfBoot's minimal STM32L4 HAL config did not include the PWR/PWREx headers. The build profile now applies a temporary STM32L4 HAL config patch inside the wolfBoot submodule during `build-wolfboot`, then restores the original file so the submodule is not intentionally left dirty.
+
+## Phase 10f.1 wolfBoot build troubleshooting note
+
+Phase 10f.1 now has a project-local STM32L4R5 wolfBoot build adaptation for the `build-wolfboot` command. The build profile invokes:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+The profile copies `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` and invokes `make WOLFBOOT_ROOT=. wolfboot.elf`. The target-specific invocation is intentional: plain `make` can successfully link `wolfboot.elf` and then continue into upstream `test-app/image.bin`, which is outside Phase 10f.1 and can fail independently.
+
+The project-local adaptation also preserves the STM32L4R5-specific fixes discovered during local builds: STM32L4R5 MCU macro selection, decimal `IMAGE_HEADER_SIZE=256`, target-only Cortex-M4/thumb flags, temporary Windows/MinGW host-keytools compatibility patching, and temporary STM32L4 PWR/PWREx HAL config patching. These temporary patches are restored after the build so the wolfBoot submodule is not intentionally left dirty.
+
+This remains build-only evidence. Producing and hashing `wolfboot.elf` does not generate durable signing keys, sign an application image, flash hardware, capture UART, or prove secure-boot runtime behaviour.

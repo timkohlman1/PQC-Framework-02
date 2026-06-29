@@ -1,6 +1,7 @@
 id: wolfboot_stm32l4_ecdsa_p256
 description: Build profile for wolfBoot targeting the planned STM32L4R5 ECDSA-P256 secure-boot configuration.
-status: configured_phase_10f_build_only_not_boot_validated
+status: configured_phase_10f1_project_local_target_adaptation_build_only_not_boot_validated
+dependency_strategy: git_submodule
 source_dir: tools/wolfboot
 output_dir: tools/wolfboot
 artifact: tools/wolfboot/wolfboot.elf
@@ -11,5 +12,9 @@ layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
 target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
 build:
   command: make
-  args: TARGET=stm32l4 SIGN=ECC256
-notes: This profile is build-only. It does not generate signing keys, sign application images, flash hardware, capture UART, or prove secure-boot runtime behaviour. The configured source_dir must be populated locally before the build can run.
+  args: "WOLFBOOT_ROOT=. wolfboot.elf"
+  config_template: configs/wolfboot/stm32l4r5_ecdsa_p256.config
+  generated_config: tools/wolfboot/.config
+  mingw_keytools_ansi_stdio_patch: true
+  stm32l4_hal_conf_pwr_patch: true
+notes: This profile is build-only. The framework copies the tracked project-local wolfBoot config template to tools/wolfboot/.config, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when requested, then invokes make inside the local wolfBoot submodule with WOLFBOOT_ROOT=. wolfboot.elf so wolfBoot host-tool paths remain relative to the submodule root on Windows/MSYS and the Phase 10f.1 build stops after the bootloader ELF target instead of also attempting wolfBoot test-application image generation. It does not generate durable signing keys, sign application images, flash hardware, capture UART, or prove secure-boot runtime behaviour.

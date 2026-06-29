@@ -3,7 +3,7 @@ mode: wolfboot_ecdsa_p256
 description: Planned wolfBoot ECDSA-P256 secure-boot profile placeholder. Not implemented or runnable.
 runnable: false
 status: planned
-implementation_state: wolfboot_build_profile_defined_build_only_not_boot_validated
+implementation_state: wolfboot_project_local_target_adaptation_defined_build_only_not_boot_validated
 intended_signature_algorithm: ecdsa_p256
 application_slot_concept: planned_signed_application_primary_slot
 flash_layout_status: defined_phase_10d_planned_not_implemented
@@ -44,9 +44,12 @@ target_support_assessment:
   runnable: false
   notes: Existing upstream STM32L4 wolfBoot support is the closest starting point, but STM32L4R5 / NUCLEO-L4R5ZI-P requires a project-local flash layout and target configuration before wolfBoot build, signing, flashing, or UART evidence can be claimed.
 wolfboot_build_profile:
-  status: defined_phase_10f_build_only_not_boot_validated
+  status: defined_phase_10f1_project_local_target_adaptation_build_only_not_boot_validated
   profile: configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+  dependency_strategy: git_submodule
+  config_template: configs/wolfboot/stm32l4r5_ecdsa_p256.config
+  generated_config: tools/wolfboot/.config
   command: python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
   output_evidence: results/wolfboot-builds
   runtime_boot_validated: false
-notes: Placeholder only. The HAL relocated build profile and wolfBoot build-profile evidence capture exist for local build verification, but no wolfBoot source vendoring, signing workflow, flashing workflow, or UART boot evidence is implemented.
+notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. No application signing workflow, wolfBoot flashing workflow, signed-application flashing workflow, or UART boot evidence is implemented.

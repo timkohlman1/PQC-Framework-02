@@ -66,3 +66,9 @@ Phase 10d defines a planned secure-boot flash layout only.
 It does not generate signing keys, does not add test keys, does not add private certificates, does not sign firmware images, and does not add a signing workflow.
 
 The planned layout metadata and documentation are safe to commit because they contain only addresses, sizes, status fields, and decision references. Private wolfBoot signing keys must still remain outside the repository in later signing phases.
+
+## Phase 10f.1 wolfBoot Build Adaptation
+
+The repository may track the project-local wolfBoot build configuration template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config` because it contains target addresses, build flags, and include paths only. It must not contain private signing keys, private certificates, passwords, or production credentials.
+
+The generated copy at `tools/wolfboot/.config`, wolfBoot build outputs, and any local signing-key by-products under `tools/wolfboot` remain local generated state and must not be committed. Phase 10f.1 does not introduce an application image-signing workflow and does not create durable project signing keys.

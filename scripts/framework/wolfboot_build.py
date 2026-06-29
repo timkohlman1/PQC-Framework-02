@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +26,10 @@ PROFILE_ERROR_RETURN_CODE = 22
 WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE = 23
 DEFAULT_WOLFBOOT_RESULTS_SUBDIR = "wolfboot-builds"
 DEFAULT_WOLFBOOT_LOG_NAME = "wolfboot_build.log"
+MINGW_KEYTOOLS_STDIO_DEFINE = "-D__USE_MINGW_ANSI_STDIO=1"
+KEYTOOLS_MAKEFILE_RELATIVE_PATH = Path("tools/keytools/Makefile")
+STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
+STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,15 @@ class WolfBootBuildResult:
     output_dir: Path
     artifact_path: Path
     artifact_exists: bool
+    config_template_path: Path | None
+    generated_config_path: Path | None
+    config_applied: bool
+    keytools_mingw_stdio_patch_enabled: bool
+    keytools_mingw_stdio_patch_applied: bool
+    keytools_makefile_path: Path | None
+    stm32l4_hal_conf_pwr_patch_enabled: bool
+    stm32l4_hal_conf_pwr_patch_applied: bool
+    stm32l4_hal_conf_path: Path | None
     artifact_sha256: str | None
     retained_artifact_path: Path | None
     execution: WolfBootCommandExecution | None
@@ -134,6 +148,191 @@ def construct_wolfboot_build_command(profile: dict[str, Any]) -> list[str]:
     return command + args
 
 
+def _optional_profile_path(profile: dict[str, Any], dotted_path: str) -> str | None:
+    current: Any = profile
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    if current is None or current == "":
+        return None
+    return str(current)
+
+
+def _optional_profile_bool(profile: dict[str, Any], dotted_path: str) -> bool:
+    current: Any = profile
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return current is True or str(current).strip().lower() in {"true", "yes", "1", "on"}
+
+
+def _temporarily_patch_keytools_makefile(
+    *,
+    profile: dict[str, Any],
+    source_dir: Path,
+) -> tuple[Path | None, bool, str | None]:
+    """Apply a temporary MinGW stdio compatibility define to host keytools.
+
+    wolfBoot's host signing/key-generation tools are built by a nested
+    ``tools/keytools`` makefile. On the project's Windows/MSYS toolchain, MinGW
+    can reject C99 ``%j`` printf format checking unless
+    ``__USE_MINGW_ANSI_STDIO`` is defined for those host objects. This patch is
+    applied only while the configured wolfBoot build command runs and is then
+    restored, so the wolfBoot submodule working tree is not left dirty.
+    """
+
+    if not _optional_profile_bool(profile, "build.mingw_keytools_ansi_stdio_patch"):
+        return None, False, None
+
+    makefile_path = source_dir / KEYTOOLS_MAKEFILE_RELATIVE_PATH
+    if not makefile_path.is_file():
+        raise WolfBootBuildProfileError(
+            f"wolfBoot keytools Makefile not found for MinGW stdio patch: {makefile_path}"
+        )
+
+    original_text = makefile_path.read_text(encoding="utf-8")
+    if MINGW_KEYTOOLS_STDIO_DEFINE in original_text:
+        return makefile_path, True, None
+
+    cflags_pattern = re.compile(r"^(CFLAGS\s*=\s*-Wall\s+-Wextra\s+-Werror)\s*$", re.MULTILINE)
+    replacement = rf"\1\nCFLAGS += {MINGW_KEYTOOLS_STDIO_DEFINE}"
+    patched_text, substitutions = cflags_pattern.subn(replacement, original_text, count=1)
+
+    if substitutions != 1:
+        raise WolfBootBuildProfileError(
+            "Could not locate the expected keytools CFLAGS line for MinGW stdio patch"
+        )
+
+    makefile_path.write_text(patched_text, encoding="utf-8")
+    return makefile_path, True, original_text
+
+
+
+def _temporarily_patch_stm32l4_hal_conf(
+    *,
+    profile: dict[str, Any],
+    source_dir: Path,
+) -> tuple[Path | None, bool, str | None]:
+    """Temporarily enable PWR/PWREx includes in wolfBoot's STM32L4 HAL config.
+
+    Upstream wolfBoot's STM32L4 HAL config enables flash and RCC modules but not
+    PWR. The STM32L4 flash extension source uses PWREx symbols on STM32L4R5, so
+    the project-local target adaptation temporarily adds the PWR module define
+    and matching PWR/PWREx includes while the build command runs. The original
+    file is restored afterward so the wolfBoot submodule is not intentionally
+    left dirty.
+    """
+
+    if not _optional_profile_bool(profile, "build.stm32l4_hal_conf_pwr_patch"):
+        return None, False, None
+
+    hal_conf_path = source_dir / STM32L4_HAL_CONF_RELATIVE_PATH
+    if not hal_conf_path.is_file():
+        raise WolfBootBuildProfileError(
+            f"wolfBoot STM32L4 HAL config not found for PWR patch: {hal_conf_path}"
+        )
+
+    original_text = hal_conf_path.read_text(encoding="utf-8")
+    has_define = STM32L4_HAL_CONF_PWR_MODULE_DEFINE in original_text
+    has_pwr_include = '#include "stm32l4xx_hal_pwr.h"' in original_text
+    has_pwr_ex_include = '#include "stm32l4xx_hal_pwr_ex.h"' in original_text
+    if has_define and has_pwr_include and has_pwr_ex_include:
+        return hal_conf_path, True, None
+
+    patched_text = original_text
+
+    if not has_define:
+        if "#define HAL_RCC_MODULE_ENABLED" not in patched_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate HAL_RCC_MODULE_ENABLED in wolfBoot STM32L4 HAL config"
+            )
+        patched_text = patched_text.replace(
+            "#define HAL_RCC_MODULE_ENABLED",
+            "#define HAL_RCC_MODULE_ENABLED\n#define HAL_PWR_MODULE_ENABLED",
+            1,
+        )
+
+    if not has_pwr_include or not has_pwr_ex_include:
+        rcc_include_block = (
+            "#if defined(HAL_RCC_MODULE_ENABLED)\n"
+            '#include "stm32l4xx_hal_rcc.h"\n'
+            "#endif"
+        )
+        pwr_include_block = (
+            "#if defined(HAL_PWR_MODULE_ENABLED)\n"
+            '#include "stm32l4xx_hal_pwr.h"\n'
+            '#include "stm32l4xx_hal_pwr_ex.h"\n'
+            "#endif"
+        )
+        if rcc_include_block in patched_text:
+            patched_text = patched_text.replace(
+                rcc_include_block,
+                f"{rcc_include_block}\n{pwr_include_block}",
+                1,
+            )
+        elif "#define assert_param(expr)" in patched_text:
+            patched_text = patched_text.replace(
+                "#define assert_param(expr)",
+                f"{pwr_include_block}\n#define assert_param(expr)",
+                1,
+            )
+        else:
+            raise WolfBootBuildProfileError(
+                "Could not locate a safe insertion point for wolfBoot STM32L4 PWR includes"
+            )
+
+    hal_conf_path.write_text(patched_text, encoding="utf-8")
+    return hal_conf_path, True, original_text
+
+
+def _copy_project_local_config(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+) -> tuple[Path | None, Path | None, bool]:
+    """Copy a repository-local wolfBoot config template into the local source tree.
+
+    The generated file is intentionally placed inside the local wolfBoot working
+    tree because upstream wolfBoot reads its normal build settings from
+    ``.config``. The template remains tracked in this repository; the generated
+    copy and all wolfBoot build outputs remain local developer state.
+    """
+
+    config_template = _optional_profile_path(profile, "build.config_template")
+    generated_config = _optional_profile_path(profile, "build.generated_config")
+
+    if config_template is None and generated_config is None:
+        return None, None, False
+
+    if config_template is None or generated_config is None:
+        raise WolfBootBuildProfileError(
+            "wolfBoot build profile must set both build.config_template and "
+            "build.generated_config, or neither"
+        )
+
+    template_path = repo_root / config_template
+    generated_path = repo_root / generated_config
+
+    try:
+        generated_path.relative_to(source_dir)
+    except ValueError as exc:
+        raise WolfBootBuildProfileError(
+            "wolfBoot build.generated_config must be inside the configured source_dir"
+        ) from exc
+
+    if not template_path.is_file():
+        raise WolfBootBuildProfileError(
+            f"wolfBoot build config template not found: {template_path}"
+        )
+
+    generated_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(template_path, generated_path)
+    return template_path, generated_path, True
+
+
 def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExecution:
     """Run a wolfBoot build command and capture stdout, stderr, and timing."""
 
@@ -194,6 +393,15 @@ def _write_log(
     artifact_path: Path,
     artifact_exists: bool,
     artifact_sha256: str | None,
+    config_template_path: Path | None,
+    generated_config_path: Path | None,
+    config_applied: bool,
+    keytools_mingw_stdio_patch_enabled: bool,
+    keytools_mingw_stdio_patch_applied: bool,
+    keytools_makefile_path: Path | None,
+    stm32l4_hal_conf_pwr_patch_enabled: bool,
+    stm32l4_hal_conf_pwr_patch_applied: bool,
+    stm32l4_hal_conf_path: Path | None,
     return_code: int,
     duration_seconds: float,
     execution: WolfBootCommandExecution | None,
@@ -214,6 +422,15 @@ def _write_log(
         f"Artifact path: {artifact_path}",
         f"Artifact exists: {str(artifact_exists).lower()}",
         f"Artifact SHA-256: {artifact_sha256 if artifact_sha256 is not None else 'unavailable'}",
+        f"Config template path: {config_template_path if config_template_path is not None else 'unavailable'}",
+        f"Generated config path: {generated_config_path if generated_config_path is not None else 'unavailable'}",
+        f"Project-local config applied: {str(config_applied).lower()}",
+        f"Keytools MinGW stdio patch enabled: {str(keytools_mingw_stdio_patch_enabled).lower()}",
+        f"Keytools MinGW stdio patch applied: {str(keytools_mingw_stdio_patch_applied).lower()}",
+        f"Keytools Makefile path: {keytools_makefile_path if keytools_makefile_path is not None else 'unavailable'}",
+        f"STM32L4 HAL config PWR patch enabled: {str(stm32l4_hal_conf_pwr_patch_enabled).lower()}",
+        f"STM32L4 HAL config PWR patch applied: {str(stm32l4_hal_conf_pwr_patch_applied).lower()}",
+        f"STM32L4 HAL config path: {stm32l4_hal_conf_path if stm32l4_hal_conf_path is not None else 'unavailable'}",
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
     ]
@@ -289,6 +506,15 @@ def execute_wolfboot_build(
             artifact_path=repo_root_path,
             artifact_exists=False,
             artifact_sha256=None,
+            config_template_path=None,
+            generated_config_path=None,
+            config_applied=False,
+            keytools_mingw_stdio_patch_enabled=False,
+            keytools_mingw_stdio_patch_applied=False,
+            keytools_makefile_path=None,
+            stm32l4_hal_conf_pwr_patch_enabled=False,
+            stm32l4_hal_conf_pwr_patch_applied=False,
+            stm32l4_hal_conf_path=None,
             return_code=PROFILE_ERROR_RETURN_CODE,
             duration_seconds=duration_seconds,
             execution=None,
@@ -308,6 +534,15 @@ def execute_wolfboot_build(
             artifact_path=repo_root_path,
             artifact_exists=False,
             artifact_sha256=None,
+            config_template_path=None,
+            generated_config_path=None,
+            config_applied=False,
+            keytools_mingw_stdio_patch_enabled=False,
+            keytools_mingw_stdio_patch_applied=False,
+            keytools_makefile_path=None,
+            stm32l4_hal_conf_pwr_patch_enabled=False,
+            stm32l4_hal_conf_pwr_patch_applied=False,
+            stm32l4_hal_conf_path=None,
             retained_artifact_path=None,
             execution=None,
             failure_reason=failure_reason,
@@ -316,6 +551,17 @@ def execute_wolfboot_build(
     source_dir = repo_root_path / str(profile["source_dir"])
     output_dir = repo_root_path / str(profile["output_dir"])
     artifact_path = repo_root_path / str(profile["artifact"])
+    config_template_path: Path | None = None
+    generated_config_path: Path | None = None
+    config_applied = False
+    keytools_mingw_stdio_patch_enabled = _optional_profile_bool(profile, "build.mingw_keytools_ansi_stdio_patch")
+    keytools_mingw_stdio_patch_applied = False
+    keytools_makefile_path: Path | None = None
+    keytools_makefile_original_text: str | None = None
+    stm32l4_hal_conf_pwr_patch_enabled = _optional_profile_bool(profile, "build.stm32l4_hal_conf_pwr_patch")
+    stm32l4_hal_conf_pwr_patch_applied = False
+    stm32l4_hal_conf_path: Path | None = None
+    stm32l4_hal_conf_original_text: str | None = None
     working_directory = source_dir
     result_dir = create_wolfboot_build_result_dir(profile_id, results_root, timestamp)
     log_path = result_dir / DEFAULT_WOLFBOOT_LOG_NAME
@@ -331,22 +577,70 @@ def execute_wolfboot_build(
     else:
         output_dir.mkdir(parents=True, exist_ok=True)
         try:
-            execution = runner(command, working_directory)
-            return_code = execution.return_code
-        except FileNotFoundError as exc:
-            missing_executable = command[0] if command else "configured build tool"
-            return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
-            failure_reason = (
-                "wolfBoot build command could not be started because the executable was not found: "
-                f"{missing_executable}"
+            config_template_path, generated_config_path, config_applied = _copy_project_local_config(
+                profile=profile,
+                repo_root=repo_root_path,
+                source_dir=source_dir,
             )
-            execution = WolfBootCommandExecution(
-                command=command,
-                return_code=return_code,
-                stdout="",
-                stderr=f"{failure_reason}\n{exc}",
-                duration_seconds=perf_counter() - start,
-            )
+        except WolfBootBuildProfileError as exc:
+            return_code = PROFILE_ERROR_RETURN_CODE
+            failure_reason = str(exc)
+        else:
+            try:
+                (
+                    keytools_makefile_path,
+                    keytools_mingw_stdio_patch_applied,
+                    keytools_makefile_original_text,
+                ) = _temporarily_patch_keytools_makefile(
+                    profile=profile,
+                    source_dir=source_dir,
+                )
+            except WolfBootBuildProfileError as exc:
+                return_code = PROFILE_ERROR_RETURN_CODE
+                failure_reason = str(exc)
+            else:
+                try:
+                    try:
+                        (
+                            stm32l4_hal_conf_path,
+                            stm32l4_hal_conf_pwr_patch_applied,
+                            stm32l4_hal_conf_original_text,
+                        ) = _temporarily_patch_stm32l4_hal_conf(
+                            profile=profile,
+                            source_dir=source_dir,
+                        )
+                    except WolfBootBuildProfileError as exc:
+                        return_code = PROFILE_ERROR_RETURN_CODE
+                        failure_reason = str(exc)
+                    else:
+                        try:
+                            execution = runner(command, working_directory)
+                            return_code = execution.return_code
+                        except FileNotFoundError as exc:
+                            missing_executable = command[0] if command else "configured build tool"
+                            return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
+                            failure_reason = (
+                                "wolfBoot build command could not be started because the executable was not found: "
+                                f"{missing_executable}"
+                            )
+                            execution = WolfBootCommandExecution(
+                                command=command,
+                                return_code=return_code,
+                                stdout="",
+                                stderr=f"{failure_reason}\n{exc}",
+                                duration_seconds=perf_counter() - start,
+                            )
+                finally:
+                    if stm32l4_hal_conf_original_text is not None and stm32l4_hal_conf_path is not None:
+                        stm32l4_hal_conf_path.write_text(
+                            stm32l4_hal_conf_original_text,
+                            encoding="utf-8",
+                        )
+                    if keytools_makefile_original_text is not None and keytools_makefile_path is not None:
+                        keytools_makefile_path.write_text(
+                            keytools_makefile_original_text,
+                            encoding="utf-8",
+                        )
 
         if return_code == 0:
             if artifact_path.is_file():
@@ -378,6 +672,15 @@ def execute_wolfboot_build(
         artifact_path=artifact_path,
         artifact_exists=artifact_exists,
         artifact_sha256=artifact_sha256,
+        config_template_path=config_template_path,
+        generated_config_path=generated_config_path,
+        config_applied=config_applied,
+        keytools_mingw_stdio_patch_enabled=keytools_mingw_stdio_patch_enabled,
+        keytools_mingw_stdio_patch_applied=keytools_mingw_stdio_patch_applied,
+        keytools_makefile_path=keytools_makefile_path,
+        stm32l4_hal_conf_pwr_patch_enabled=stm32l4_hal_conf_pwr_patch_enabled,
+        stm32l4_hal_conf_pwr_patch_applied=stm32l4_hal_conf_pwr_patch_applied,
+        stm32l4_hal_conf_path=stm32l4_hal_conf_path,
         return_code=return_code,
         duration_seconds=duration_seconds,
         execution=execution,
@@ -403,6 +706,15 @@ def execute_wolfboot_build(
             "duration_seconds": round(duration_seconds, 3),
             "log": DEFAULT_WOLFBOOT_LOG_NAME,
             "failure_reason": failure_reason,
+            "config_template": None if config_template_path is None else str(config_template_path),
+            "generated_config": None if generated_config_path is None else str(generated_config_path),
+            "config_applied": config_applied,
+            "keytools_mingw_stdio_patch_enabled": keytools_mingw_stdio_patch_enabled,
+            "keytools_mingw_stdio_patch_applied": keytools_mingw_stdio_patch_applied,
+            "keytools_makefile": None if keytools_makefile_path is None else str(keytools_makefile_path),
+            "stm32l4_hal_conf_pwr_patch_enabled": stm32l4_hal_conf_pwr_patch_enabled,
+            "stm32l4_hal_conf_pwr_patch_applied": stm32l4_hal_conf_pwr_patch_applied,
+            "stm32l4_hal_conf_path": None if stm32l4_hal_conf_path is None else str(stm32l4_hal_conf_path),
         },
         "artifact": {
             "path": str(artifact_path),
@@ -426,6 +738,15 @@ def execute_wolfboot_build(
         artifact_path=artifact_path,
         artifact_exists=artifact_exists,
         artifact_sha256=artifact_sha256,
+        config_template_path=config_template_path,
+        generated_config_path=generated_config_path,
+        config_applied=config_applied,
+        keytools_mingw_stdio_patch_enabled=keytools_mingw_stdio_patch_enabled,
+        keytools_mingw_stdio_patch_applied=keytools_mingw_stdio_patch_applied,
+        keytools_makefile_path=keytools_makefile_path,
+        stm32l4_hal_conf_pwr_patch_enabled=stm32l4_hal_conf_pwr_patch_enabled,
+        stm32l4_hal_conf_pwr_patch_applied=stm32l4_hal_conf_pwr_patch_applied,
+        stm32l4_hal_conf_path=stm32l4_hal_conf_path,
         retained_artifact_path=retained_artifact_path,
         execution=execution,
         failure_reason=failure_reason,

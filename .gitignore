@@ -56,3 +56,8 @@ tools/wolfboot/**/*.bin
 tools/wolfboot/**/*.hex
 tools/wolfboot/wolfboot.elf
 tools/wolfboot/wolfboot.bin
+tools/wolfboot/.config
+tools/wolfboot/*.der
+tools/wolfboot/*.pem
+tools/wolfboot/*private*
+tools/wolfboot/*signing_key*

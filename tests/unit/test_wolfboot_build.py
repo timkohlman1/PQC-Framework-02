@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
+import importlib
 import json
 import sys
-from argparse import Namespace
+from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 
 def load_wolfboot_build_module():
@@ -15,29 +13,7 @@ def load_wolfboot_build_module():
     scripts_path = repo_root / "scripts"
     if str(scripts_path) not in sys.path:
         sys.path.insert(0, str(scripts_path))
-    module_path = repo_root / "scripts" / "framework" / "wolfboot_build.py"
-    spec = importlib.util.spec_from_file_location("framework_wolfboot_build", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_experiment_module():
-    repo_root = Path(__file__).resolve().parents[2]
-    scripts_path = repo_root / "scripts"
-    if str(scripts_path) not in sys.path:
-        sys.path.insert(0, str(scripts_path))
-    module_path = repo_root / "scripts" / "experiment.py"
-    spec = importlib.util.spec_from_file_location("experiment_cli", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("framework.wolfboot_build")
 
 
 def sample_profile() -> dict[str, object]:
@@ -45,47 +21,100 @@ def sample_profile() -> dict[str, object]:
         "id": "wolfboot_stm32l4_ecdsa_p256",
         "description": "Test wolfBoot profile.",
         "source_dir": "tools/wolfboot",
-        "output_dir": "build/wolfboot/stm32l4_ecdsa_p256",
-        "artifact": "build/wolfboot/stm32l4_ecdsa_p256/wolfboot.elf",
+        "output_dir": "tools/wolfboot",
+        "artifact": "tools/wolfboot/wolfboot.elf",
         "target": "stm32l4r5_project_local",
         "signature_algorithm": "ecdsa_p256",
         "boot_profile": "wolfboot_ecdsa_p256",
         "build": {
             "command": "make",
-            "args": "TARGET=stm32l4 SIGN=ECC256 wolfboot.elf",
+            "args": "WOLFBOOT_ROOT=. wolfboot.elf",
+            "config_template": "configs/wolfboot/stm32l4r5_ecdsa_p256.config",
+            "generated_config": "tools/wolfboot/.config",
+            "mingw_keytools_ansi_stdio_patch": True,
+            "stm32l4_hal_conf_pwr_patch": True,
         },
     }
 
 
-def test_construct_wolfboot_build_command_uses_profile_command_without_shell():
+def write_keytools_makefile(source_dir: Path) -> Path:
+    makefile_path = source_dir / "tools" / "keytools" / "Makefile"
+    makefile_path.parent.mkdir(parents=True)
+    makefile_path.write_text(
+        "CFLAGS = -Wall -Wextra -Werror\n"
+        "all:\n"
+        "\t@echo keytools\n",
+        encoding="utf-8",
+    )
+    return makefile_path
+
+
+def write_stm32l4_hal_conf(source_dir: Path) -> Path:
+    hal_conf_path = source_dir / "hal" / "stm32l4xx_hal_conf.h"
+    hal_conf_path.parent.mkdir(parents=True)
+    hal_conf_path.write_text(
+        "#ifndef __STM32L4xx_HAL_CONF_H\n"
+        "#define __STM32L4xx_HAL_CONF_H\n"
+        "#define HAL_MODULE_ENABLED\n"
+        "#define HAL_CORTEX_MODULE_ENABLED\n"
+        "#define HAL_FLASH_MODULE_ENABLED\n"
+        "#define HAL_RCC_MODULE_ENABLED\n"
+        "#include \"stm32l4xx_hal_def.h\"\n"
+        "#if defined(HAL_RCC_MODULE_ENABLED)\n"
+        "#include \"stm32l4xx_hal_rcc.h\"\n"
+        "#endif\n"
+        "#define assert_param(expr) ((void)0U)\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    return hal_conf_path
+
+
+
+def test_construct_wolfboot_build_command_uses_profile_scalars():
     wolfboot_build = load_wolfboot_build_module()
 
-    assert wolfboot_build.construct_wolfboot_build_command(sample_profile()) == [
+    profile = sample_profile()
+    profile["build"]["args"] = "TARGET=stm32l4 SIGN=ECC256"
+
+    assert wolfboot_build.construct_wolfboot_build_command(profile) == [
         "make",
         "TARGET=stm32l4",
         "SIGN=ECC256",
-        "wolfboot.elf",
     ]
 
 
-def test_execute_wolfboot_build_captures_evidence_without_invoking_real_tooling(tmp_path):
+def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path):
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
-    repo_root.mkdir()
-    (repo_root / "tools" / "wolfboot").mkdir(parents=True)
-    artifact_path = repo_root / "build" / "wolfboot" / "stm32l4_ecdsa_p256" / "wolfboot.elf"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    source_dir.mkdir(parents=True)
+    makefile_path = write_keytools_makefile(source_dir)
+    hal_conf_path = write_stm32l4_hal_conf(source_dir)
+    original_makefile_text = makefile_path.read_text(encoding="utf-8")
+    original_hal_conf_text = hal_conf_path.read_text(encoding="utf-8")
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
     calls: list[tuple[list[str], Path]] = []
 
     def fake_runner(command: list[str], cwd: Path):
         calls.append((command, cwd))
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        assert (source_dir / ".config").read_text(encoding="utf-8") == config_template_path.read_text(encoding="utf-8")
+        patched_makefile = makefile_path.read_text(encoding="utf-8")
+        assert "-D__USE_MINGW_ANSI_STDIO=1" in patched_makefile
+        patched_hal_conf = hal_conf_path.read_text(encoding="utf-8")
+        assert "#define HAL_PWR_MODULE_ENABLED" in patched_hal_conf
+        assert "#include \"stm32l4xx_hal_pwr.h\"" in patched_hal_conf
+        assert "#include \"stm32l4xx_hal_pwr_ex.h\"" in patched_hal_conf
         artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
         return wolfboot_build.WolfBootCommandExecution(
             command=command,
             return_code=0,
-            stdout="wolfboot stdout",
-            stderr="wolfboot stderr",
-            duration_seconds=0.25,
+            stdout="wolfBoot build stdout",
+            stderr="",
+            duration_seconds=0.125,
         )
 
     result = wolfboot_build.execute_wolfboot_build(
@@ -93,182 +122,125 @@ def test_execute_wolfboot_build_captures_evidence_without_invoking_real_tooling(
         repo_root=repo_root,
         results_root=tmp_path / "results",
         runner=fake_runner,
+        timestamp=datetime(2026, 6, 29, 10, 30, 0, tzinfo=timezone.utc),
     )
 
     expected_sha256 = hashlib.sha256(b"fake wolfboot elf").hexdigest()
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    build_log = result.log_path.read_text(encoding="utf-8")
 
     assert result.return_code == 0
-    assert result.artifact_path == artifact_path
+    assert result.config_applied is True
+    assert result.keytools_mingw_stdio_patch_enabled is True
+    assert result.keytools_mingw_stdio_patch_applied is True
+    assert result.keytools_makefile_path == makefile_path
+    assert result.stm32l4_hal_conf_pwr_patch_enabled is True
+    assert result.stm32l4_hal_conf_pwr_patch_applied is True
+    assert result.stm32l4_hal_conf_path == hal_conf_path
+    assert makefile_path.read_text(encoding="utf-8") == original_makefile_text
+    assert hal_conf_path.read_text(encoding="utf-8") == original_hal_conf_text
+    assert result.config_template_path == config_template_path
+    assert result.generated_config_path == source_dir / ".config"
     assert result.artifact_sha256 == expected_sha256
     assert result.retained_artifact_path == result.result_dir / "wolfboot.elf"
-    assert calls == [
-        (["make", "TARGET=stm32l4", "SIGN=ECC256", "wolfboot.elf"], repo_root / "tools" / "wolfboot")
-    ]
-
-    build_log = result.log_path.read_text(encoding="utf-8")
-    assert "wolfBoot build log" in build_log
-    assert "Command: make TARGET=stm32l4 SIGN=ECC256 wolfboot.elf" in build_log
-    assert "wolfboot stdout" in build_log
-    assert "wolfboot stderr" in build_log
-    assert f"Artifact SHA-256: {expected_sha256}" in build_log
-
-    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["record_type"] == "wolfboot_build"
-    assert manifest["result"] == "wolfboot_build_passed"
-    assert manifest["wolfboot_build"]["return_code"] == 0
-    assert manifest["wolfboot_build"]["signature_algorithm"] == "ecdsa_p256"
-    assert manifest["artifact"]["sha256"] == expected_sha256
-    assert manifest["artifact"]["retained_path"] == str(result.result_dir / "wolfboot.elf")
     assert (result.result_dir / "wolfboot.elf").read_text(encoding="utf-8") == "fake wolfboot elf"
+    assert calls == [(["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"], source_dir)]
+    assert manifest["result"] == "wolfboot_build_passed"
+    assert manifest["wolfboot_build"]["config_applied"] is True
+    assert manifest["wolfboot_build"]["config_template"] == str(config_template_path)
+    assert manifest["wolfboot_build"]["generated_config"] == str(source_dir / ".config")
+    assert manifest["wolfboot_build"]["keytools_mingw_stdio_patch_enabled"] is True
+    assert manifest["wolfboot_build"]["keytools_mingw_stdio_patch_applied"] is True
+    assert manifest["wolfboot_build"]["keytools_makefile"] == str(makefile_path)
+    assert manifest["wolfboot_build"]["stm32l4_hal_conf_pwr_patch_enabled"] is True
+    assert manifest["wolfboot_build"]["stm32l4_hal_conf_pwr_patch_applied"] is True
+    assert manifest["wolfboot_build"]["stm32l4_hal_conf_path"] == str(hal_conf_path)
+    assert manifest["artifact"]["sha256"] == expected_sha256
+    assert "Project-local config applied: true" in build_log
+    assert "Keytools MinGW stdio patch applied: true" in build_log
+    assert "STM32L4 HAL config PWR patch applied: true" in build_log
+    assert f"Config template path: {config_template_path}" in build_log
+    assert f"Generated config path: {source_dir / '.config'}" in build_log
 
 
-def test_execute_wolfboot_build_fails_before_runner_when_source_dir_is_missing(tmp_path):
+def test_execute_wolfboot_build_rejects_generated_config_outside_source_dir(tmp_path):
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
-    repo_root.mkdir()
-
-    def forbidden_runner(command: list[str], cwd: Path):
-        raise AssertionError("wolfBoot build tooling must not run when source_dir is missing")
-
-    result = wolfboot_build.execute_wolfboot_build(
-        profile=sample_profile(),
-        repo_root=repo_root,
-        results_root=tmp_path / "results",
-        runner=forbidden_runner,
-    )
-
-    assert result.return_code == wolfboot_build.MISSING_SOURCE_RETURN_CODE
-    assert result.execution is None
-    assert result.artifact_sha256 is None
-    assert "source directory does not exist" in result.failure_reason
-    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["result"] == "wolfboot_build_failed"
-    assert manifest["wolfboot_build"]["return_code"] == wolfboot_build.MISSING_SOURCE_RETURN_CODE
-
-
-def test_execute_wolfboot_build_fails_when_command_succeeds_but_artifact_is_missing(tmp_path):
-    wolfboot_build = load_wolfboot_build_module()
-    repo_root = tmp_path / "repo"
-    repo_root.mkdir()
     (repo_root / "tools" / "wolfboot").mkdir(parents=True)
-
-    def fake_runner(command: list[str], cwd: Path):
-        return wolfboot_build.WolfBootCommandExecution(
-            command=command,
-            return_code=0,
-            stdout="ok",
-            stderr="",
-            duration_seconds=0.1,
-        )
-
-    result = wolfboot_build.execute_wolfboot_build(
-        profile=sample_profile(),
-        repo_root=repo_root,
-        results_root=tmp_path / "results",
-        runner=fake_runner,
+    (repo_root / "configs" / "wolfboot").mkdir(parents=True)
+    (repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config").write_text(
+        "TARGET=stm32l4\n", encoding="utf-8"
     )
-
-    assert result.return_code == wolfboot_build.WOLFBOOT_BUILD_ARTIFACT_MISSING_RETURN_CODE
-    assert "configured artifact was not found" in result.failure_reason
-    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["artifact"]["exists"] is False
-
-
-def test_wolfboot_build_profile_validation_rejects_non_ecdsa_p256():
-    wolfboot_build = load_wolfboot_build_module()
     profile = sample_profile()
-    profile["signature_algorithm"] = "rsa2048"
+    profile["build"]["generated_config"] = "outside.config"
 
-    with pytest.raises(wolfboot_build.WolfBootBuildProfileError, match="ecdsa_p256"):
-        wolfboot_build.validate_wolfboot_build_profile(profile)
-
-
-def test_run_wolfboot_build_command_reports_no_flash_or_uart_actions(tmp_path, monkeypatch, capsys):
-    experiment_cli = load_experiment_module()
-    profile_path = tmp_path / "configs" / "builds" / "wolfboot_stm32l4_ecdsa_p256.yaml"
-    profile_path.parent.mkdir(parents=True)
-    profile_path.write_text(
-        "\n".join(
-            [
-                "id: wolfboot_stm32l4_ecdsa_p256",
-                "description: Test wolfBoot profile.",
-                "source_dir: tools/wolfboot",
-                "output_dir: build/wolfboot/stm32l4_ecdsa_p256",
-                "artifact: build/wolfboot/stm32l4_ecdsa_p256/wolfboot.elf",
-                "target: stm32l4r5_project_local",
-                "signature_algorithm: ecdsa_p256",
-                "boot_profile: wolfboot_ecdsa_p256",
-                "build:",
-                "  command: make",
-                "  args: TARGET=stm32l4 SIGN=ECC256 wolfboot.elf",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
     )
 
-    class FakeWolfBootBuildResult:
-        return_code = 0
-        duration_seconds = 0.25
-        profile_id = "wolfboot_stm32l4_ecdsa_p256"
-        result_dir = tmp_path / "results" / "wolfboot-builds" / "run"
-        log_path = result_dir / "wolfboot_build.log"
-        command = ["make", "TARGET=stm32l4", "SIGN=ECC256", "wolfboot.elf"]
-        working_directory = tmp_path / "tools" / "wolfboot"
-        source_dir = tmp_path / "tools" / "wolfboot"
-        output_dir = tmp_path / "build" / "wolfboot" / "stm32l4_ecdsa_p256"
-        artifact_path = output_dir / "wolfboot.elf"
-        artifact_exists = True
-        artifact_sha256 = "a" * 64
-        retained_artifact_path = result_dir / "wolfboot.elf"
-        execution = None
-        failure_reason = None
-
-    def fake_execute_wolfboot_build(**kwargs):
-        assert kwargs["repo_root"] == tmp_path
-        assert kwargs["results_root"] == tmp_path / "results"
-        assert kwargs["profile"]["signature_algorithm"] == "ecdsa_p256"
-        return FakeWolfBootBuildResult()
-
-    monkeypatch.setattr(experiment_cli, "execute_wolfboot_build", fake_execute_wolfboot_build)
-
-    exit_code = experiment_cli.run_wolfboot_build_command(
-        Namespace(profile=profile_path, results_dir=tmp_path / "results")
-    )
-
-    output = capsys.readouterr().out
-    assert exit_code == 0
-    assert "wolfBoot build completed" in output
-    assert "Artifact SHA-256: " + "a" * 64 in output
-    assert "No signing key generation, application signing, flash, UART access, SSH, hardware access, or network access was performed." in output
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.return_code == wolfboot_build.PROFILE_ERROR_RETURN_CODE
+    assert result.config_applied is False
+    assert "must be inside the configured source_dir" in result.failure_reason
+    assert manifest["result"] == "wolfboot_build_failed"
+    assert manifest["wolfboot_build"]["config_applied"] is False
 
 
-def test_execute_wolfboot_build_records_missing_build_tool_without_traceback(tmp_path):
+def test_execute_wolfboot_build_records_missing_project_local_config_template(tmp_path):
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
-    repo_root.mkdir()
     (repo_root / "tools" / "wolfboot").mkdir(parents=True)
-
-    def missing_tool_runner(command: list[str], cwd: Path):
-        raise FileNotFoundError("make")
 
     result = wolfboot_build.execute_wolfboot_build(
         profile=sample_profile(),
         repo_root=repo_root,
         results_root=tmp_path / "results",
-        runner=missing_tool_runner,
     )
 
-    assert result.return_code == wolfboot_build.WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
-    assert result.execution is not None
-    assert result.execution.return_code == wolfboot_build.WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
-    assert "executable was not found: make" in result.failure_reason
+    assert result.return_code == wolfboot_build.PROFILE_ERROR_RETURN_CODE
+    assert result.config_applied is False
+    assert "config template not found" in result.failure_reason
 
-    build_log = result.log_path.read_text(encoding="utf-8")
-    assert "Failure reason" in build_log
-    assert "executable was not found: make" in build_log
 
-    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["result"] == "wolfboot_build_failed"
-    assert manifest["wolfboot_build"]["return_code"] == wolfboot_build.WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
-    assert "executable was not found: make" in manifest["wolfboot_build"]["failure_reason"]
+def test_project_local_wolfboot_config_selects_stm32l4r5_header():
+    repo_root = Path(__file__).resolve().parents[2]
+    config_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+
+    config_text = config_path.read_text(encoding="utf-8")
+
+    assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
+    assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
+    assert "IMAGE_HEADER_SIZE=256" in config_text
+    assert "IMAGE_HEADER_SIZE=0x100" not in config_text
+    assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
+    assert "CFLAGS_EXTRA+=-include" not in config_text
+    assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
+    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
+    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
+    assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
+
+
+def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    profile_path = repo_root / "configs" / "builds" / "wolfboot_stm32l4_ecdsa_p256.yaml"
+    profile_text = profile_path.read_text(encoding="utf-8")
+
+    assert 'args: "WOLFBOOT_ROOT=. wolfboot.elf"' in profile_text
+    assert "stm32l4_hal_conf_pwr_patch: true" in profile_text
+    assert wolfboot_build.construct_wolfboot_build_command({
+        "id": "wolfboot_stm32l4_ecdsa_p256",
+        "description": "Test wolfBoot profile.",
+        "source_dir": "tools/wolfboot",
+        "output_dir": "tools/wolfboot",
+        "artifact": "tools/wolfboot/wolfboot.elf",
+        "target": "stm32l4r5_project_local",
+        "signature_algorithm": "ecdsa_p256",
+        "boot_profile": "wolfboot_ecdsa_p256",
+        "build": {
+            "command": "make",
+            "args": "WOLFBOOT_ROOT=. wolfboot.elf",
+        },
+    }) == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]

@@ -118,3 +118,24 @@ This decision does not:
 - The 128 KB swap / metadata reserve is an initial conservative allocation. It may be reduced or reshaped after wolfBoot update and trailer requirements are verified for the selected target configuration.
 - The initial layout assumes internal-flash update storage. A later network or OTA phase may choose a different update-image storage model.
 - The exact UART marker that distinguishes wolfBoot-mediated boot from direct-flash boot remains a later-phase decision.
+
+## Phase 10f.1 Build Adaptation Use
+
+Phase 10f.1 carries the Phase 10d planned layout values into the project-local wolfBoot build configuration template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The build adaptation does not revise the selected bootloader, primary slot, update slot, swap/metadata, or image-header layout assumptions.
+
+The planned image header remains 256 bytes. The project-local wolfBoot build config records it as `IMAGE_HEADER_SIZE=256` rather than `0x100` because wolfBoot shell tests compare that value as a decimal integer during the build. This does not change the relocated application entry at `0x08020100`.
+
+Phase 10f.1 also invokes wolfBoot with `WOLFBOOT_ROOT=. wolfboot.elf` so key generation and keystore-source generation occur relative to the local wolfBoot submodule and the build stops after the retained bootloader ELF is produced. This avoids plain `make` continuing into upstream `test-app/image.bin`, which is outside this phase.
+
+The STM32L4R5 build adaptation adds target-build settings only: STM32L4R5 MCU macro selection, STM32L4R5 HAL/CMSIS include paths, target-only Cortex-M4/thumb flags, PWR/PWREx target objects, and temporary compatibility patches for host keytools and wolfBoot's local STM32L4 HAL config. These build-adaptation details do not change the Phase 10d flash layout.
+
+Observed local verification for Phase 10f.1 was:
+
+```text
+python -m pytest: 101 passed, 1 skipped
+build-wolfboot return code: 0
+wolfboot.elf artifact exists: True
+wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b1edc83
+```
+
+A successful `wolfboot.elf` build is not evidence that this layout flashes, signs, swaps, updates, or boots correctly. Those checks remain later phases and require user-provided signing, flashing, hardware, and UART evidence.
