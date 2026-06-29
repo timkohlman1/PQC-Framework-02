@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source is not included in the repository context by default. Phase 10f adds a configurable framework build profile for wolfBoot ECDSA-P256 builds, but image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds wolfBoot build evidence capture only; it does not sign, flash, or validate wolfBoot at runtime.
+- wolfBoot source is not included in the repository context by default. Phase 10f adds a configurable framework build profile for wolfBoot ECDSA-P256 builds, but image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds wolfBoot build evidence capture only; it does not sign, flash, or validate wolfBoot at runtime. Local testing with cloned upstream wolfBoot source showed that `build-wolfboot` records controlled evidence, but the default upstream `TARGET=stm32l4` command does not yet build for this project because STM32L4R5 HAL/CMSIS target adaptation is still required.
 
 ## AI-assisted development
 
@@ -323,9 +323,11 @@ results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/
 
 The manifest and log record the configured source directory, output directory, command, return code, duration, expected artifact path, retained artifact path, and artifact SHA-256 when present. Unit tests use mocked command runners; they do not invoke wolfBoot tooling.
 
-The default profile expects local wolfBoot source at `tools/wolfboot`. If that directory is absent, `build-wolfboot` fails before invoking build tooling and records a clear missing-source result. The default profile expects the produced ELF at `tools/wolfboot/wolfboot.elf`; generated wolfBoot ELF/BIN/HEX/MAP/object outputs under `tools/wolfboot` remain ignored by Git.
+The default profile expects local wolfBoot source at `tools/wolfboot`. If that directory is absent, `build-wolfboot` fails before invoking build tooling and records a clear missing-source result. If the configured executable such as `make` is unavailable, it records a controlled missing-tool result. The default profile expects the produced ELF at `tools/wolfboot/wolfboot.elf`; generated wolfBoot ELF/BIN/HEX/MAP/object outputs under `tools/wolfboot` remain ignored by Git.
 
-This phase does not vendor wolfBoot source, generate signing keys, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
+With upstream wolfBoot source present, the current default `TARGET=stm32l4` command is expected to fail until the project-local STM32L4R5 target adaptation is implemented. Observed local testing reached `hal/stm32l4.c` and failed on missing `stm32l4xx_hal.h` because the upstream build does not yet include this project's CubeMX HAL/CMSIS paths. Manual experiments showed that target ARM objects also need Cortex-M4/thumb flags, but those flags must not be applied globally to host keytools.
+
+This phase does not vendor wolfBoot source, complete the STM32L4R5 wolfBoot target adaptation, generate signing keys, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
 
 ## Tests
 
