@@ -1,0 +1,15 @@
+id: wolfboot_stm32l4_ecdsa_p256
+description: Build profile for wolfBoot targeting the planned STM32L4R5 ECDSA-P256 secure-boot configuration.
+status: configured_phase_10f_build_only_not_boot_validated
+source_dir: tools/wolfboot
+output_dir: tools/wolfboot
+artifact: tools/wolfboot/wolfboot.elf
+target: stm32l4r5_project_local
+signature_algorithm: ecdsa_p256
+boot_profile: wolfboot_ecdsa_p256
+layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
+target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+build:
+  command: make
+  args: TARGET=stm32l4 SIGN=ECC256
+notes: This profile is build-only. It does not generate signing keys, sign application images, flash hardware, capture UART, or prove secure-boot runtime behaviour. The configured source_dir must be populated locally before the build can run.

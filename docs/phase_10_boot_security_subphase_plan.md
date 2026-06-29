@@ -165,29 +165,73 @@ Build the existing HAL application so it can run from the chosen signed-applicat
 
 ---
 
-## Phase 10f — Add wolfBoot Build Profile
+## Phase 10f — Add wolfBoot Build Profile - COMPLETED 29/6
 
 ### Goal
 
-Add framework support for building wolfBoot for the selected STM32L4 target and ECDSA-P256 configuration.
+Add framework support for invoking a wolfBoot build profile and capturing wolfBoot build evidence without enabling signing, flashing, UART capture, or secure-boot runtime claims.
 
 ### Requirements / Outcomes
 
 - Add wolfBoot build configuration/profile support.
-- Build wolfBoot with ECDSA-P256 settings.
-- Capture wolfBoot build logs, return codes, artifact paths, and hashes.
+- Add a framework command that can invoke the configured wolfBoot build profile.
+- Capture wolfBoot build logs, return codes, artifact paths, artifact existence, and hashes when an artifact is produced.
+- Record controlled failures when wolfBoot source, build tooling, or target integration is missing.
 - Keep wolfBoot build outputs out of Git.
 - Keep direct-flash build behaviour unchanged.
 - Add unit tests using mocked command runners.
 - Ensure unit tests do not invoke wolfBoot build tooling.
-- Add opt-in integration test coverage only if the required tooling is available.
+- Add opt-in integration test coverage only if the required tooling and wolfBoot source are available.
 - Update documentation and `AI_BUILD_GUIDE.md`.
+
+### Observed Result / Follow-Up Need
+
+- The Phase 10f framework command and evidence-capture path are implemented.
+- Full pytest regression passed with the wolfBoot integration test skipped when local wolfBoot prerequisites were unavailable.
+- After cloning wolfBoot locally and initialising submodules, the framework command invoked the upstream `TARGET=stm32l4` build and captured controlled failure evidence.
+- The observed blocker is that upstream `TARGET=stm32l4` does not directly find or use the project CubeMX STM32L4R5 HAL/CMSIS layout.
+- Manual diagnostics showed the build needs project-local HAL/CMSIS include paths and Cortex-M4/thumb target flags, but those flags must not be applied to host keytools.
+- This creates a required follow-up phase for a project-local STM32L4R5 wolfBoot target/build adaptation before signing or flashing phases proceed.
 
 ### Pass Criteria
 
 - wolfBoot build can be invoked through the framework when configured.
-- Build evidence is captured.
+- Build evidence is captured for success and failure cases.
+- Missing source, missing tooling, and failed build commands are recorded without Python tracebacks.
 - Unit tests remain hardware-free.
+- No signing, flashing, UART evidence, or secure-boot runtime success is claimed.
+
+---
+
+## Phase 10f.1 — Project-Local wolfBoot STM32L4R5 Target Adaptation
+
+### Goal
+
+Adapt the upstream wolfBoot STM32L4 support so the framework can build wolfBoot for the project-local NUCLEO-L4R5ZI-P / STM32L4R5 layout.
+
+### Requirements / Outcomes
+
+- Decide whether wolfBoot is referenced as a local clone, Git submodule, or vendored source.
+- Keep generated wolfBoot outputs and private keys out of Git.
+- Add or document a project-local STM32L4R5 wolfBoot target/build adaptation.
+- Ensure STM32L4R5 HAL/CMSIS include paths are available to target ARM objects.
+- Ensure Cortex-M4/thumb compiler flags apply to target ARM objects but not host keytools.
+- Preserve ECDSA-P256 build configuration.
+- Preserve the Phase 10d flash layout assumptions unless a documented issue requires revision.
+- Capture build logs, return codes, artifact paths, and hashes through the existing `build-wolfboot` framework command.
+- Add mocked unit tests for command/config handling.
+- Add opt-in integration coverage only when wolfBoot source and required tools are available.
+- Do not generate or commit private signing keys as durable project assets.
+- Do not sign application images yet.
+- Do not flash wolfBoot yet.
+- Do not claim runtime boot success.
+
+### Pass Criteria
+
+- `build-wolfboot` produces a retained `wolfboot.elf` and records its SHA-256 when the local wolfBoot source and required toolchain are available.
+- Unit tests remain hardware-free.
+- Direct-flash baseline remains available.
+- No signing, flashing, UART evidence, or secure-boot success is claimed.
 
 ---
 
@@ -376,7 +420,15 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 
 ## wolfBoot-Specific Commands
 
-Exact wolfBoot commands should be defined only after the relevant configs and CLI behaviour exist.
+The Phase 10f framework build-profile command is:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+Until Phase 10f.1 is complete, this command may produce a controlled failed wolfBoot build record when upstream `TARGET=stm32l4` cannot yet use the project-local STM32L4R5 HAL/CMSIS target adaptation.
+
+Exact signing, flash, UART, and secure-boot runtime commands should be defined only after the relevant configs and CLI behaviour exist.
 
 ---
 
@@ -402,13 +454,15 @@ Exact wolfBoot commands should be defined only after the relevant configs and CL
 ## Risks
 
 - The tentative `0x08020000` application offset may be wrong or incomplete until wolfBoot target requirements, STM32L4 flash geometry, slot/trailer requirements, and image format constraints are confirmed.
-- wolfBoot target support for STM32L4R5 may require adaptation.
+- wolfBoot target support for STM32L4R5 requires project-local adaptation; Phase 10f diagnostics showed upstream `TARGET=stm32l4` does not directly build against the current CubeMX HAL/CMSIS project layout.
 - Signing-key handling must be kept isolated and explicit to avoid accidental private-key commits.
 
 ## Unresolved Questions
 
-- Which wolfBoot version or commit will be used?
+- Which wolfBoot version or commit will be used long-term?
 - Will wolfBoot be vendored, included as a submodule, or referenced externally?
+- Should the local clone at `tools/wolfboot` remain developer-local only until the dependency strategy is decided?
+- What exact project-local STM32L4R5 wolfBoot target/build adaptation will keep target ARM flags separate from host keytools flags?
 - Does the final flash layout require one slot, two slots, a swap area, or a metadata/trailer area?
 - What exact UART marker should distinguish wolfBoot-mediated boot from direct-flash boot?
 - What measurement source should be used for `verification_time_ms`?

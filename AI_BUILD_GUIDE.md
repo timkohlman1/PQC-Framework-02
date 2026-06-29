@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address, but no wolfBoot build, signing workflow, flashing workflow, or secure-boot UART evidence is implemented.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture, but no wolfBoot source vendoring, signing workflow, flashing workflow, or secure-boot UART evidence is implemented.
 
 ## 4. Hardware and Host Context
 
@@ -176,6 +176,8 @@ configs/
   boot/
     direct_flash.yaml
     wolfboot_ecdsa_p256.yaml
+  builds/
+    wolfboot_stm32l4_ecdsa_p256.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -235,6 +237,7 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number 7
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -242,6 +245,8 @@ The `status` command loads the experiment config, resolves the referenced board,
 The `create-run` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, generates a run ID, and creates a local result folder.
 
 The `build` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, generates a run ID, creates a local result folder, records local Git source-control provenance, calculates a deterministic build input fingerprint, runs the local CMake configure and build presets, captures stdout, stderr, return code, build duration, expected output ELF path, calculates the expected ELF SHA-256 after a successful build and artifact-exists check, and writes `results/<run_id>/build.log`.
+
+The `build-wolfboot` command loads a wolfBoot build profile from `configs/builds/`, validates required fields, creates a wolfBoot build evidence directory under `results/wolfboot-builds/`, invokes the configured local build command only when the configured wolfBoot source directory exists, captures stdout, stderr, return code, duration, command, expected artifact path, retained artifact path, and artifact SHA-256 when present, and writes `manifest.json` plus `wolfboot_build.log`. It does not generate signing keys, sign application images, flash hardware, open UART devices, use SSH, or require physical hardware. If `tools/wolfboot` or the configured source directory is absent, it fails clearly before invoking build tooling.
 
 The `status` and `create-run` commands must not build firmware, flash hardware, open UART devices, use SSH, or require physical hardware.
 
@@ -546,6 +551,8 @@ configs/
   boot/
     direct_flash.yaml
     wolfboot_ecdsa_p256.yaml
+  builds/
+    wolfboot_stm32l4_ecdsa_p256.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -642,6 +649,7 @@ configs/
     gateway.yaml
   builds/
     stm32_hal_baseline.yaml
+    wolfboot_stm32l4_ecdsa_p256.yaml
   boot/
     direct_flash.yaml
     direct_flash.yaml
@@ -1104,6 +1112,7 @@ Current framework skeleton completed items:
 43. Add Phase 10c wolfBoot STM32L4 target support assessment in `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md`; upstream STM32L4 support is the closest starting point, but STM32L4R5 requires a project-local target configuration or adaptation before wolfBoot is built or treated as runnable.
 44. Add Phase 10d secure-boot flash layout decision in `docs/decisions/0003_secure_boot_flash_layout.md`; `configs/boot/wolfboot_ecdsa_p256.yaml` now records the planned STM32L4R5 layout metadata while remaining non-runnable.
 45. Add Phase 10e relocated HAL application build profile using `RelocatedDebug`, `STM32L4R5XX_FLASH_RELOCATED.ld`, and vector offset `0x00020100` while preserving the direct-flash `Debug` baseline.
+46. Add Phase 10f configurable wolfBoot build profile support with `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`, `scripts/framework/wolfboot_build.py`, and `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`. This captures wolfBoot build evidence only and does not vendor wolfBoot source, sign images, flash hardware, capture UART, or claim secure-boot runtime success.
 Current CLI commands are:
 
 ```powershell
@@ -1119,6 +1128,7 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number 7
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
 Expected `status` behaviour:
@@ -1266,9 +1276,33 @@ Expected `build-flash` behaviour:
 - returns the flash return code when build succeeds and flash is attempted
 - captures UART output only when `--capture-uart` is explicitly supplied
 
+
+Expected `build-wolfboot` behaviour:
+
+- loads and validates a wolfBoot build profile from `configs/builds/`
+- validates required profile fields including `source_dir`, `output_dir`, `artifact`, `target`, `signature_algorithm`, `boot_profile`, and `build.command`
+- currently requires `signature_algorithm: ecdsa_p256`
+- creates `results/wolfboot-builds/<timestamp>_<profile_id>/`
+- writes `manifest.json` and `wolfboot_build.log`
+- constructs the configured command from scalar `build.command` and optional scalar `build.args` without using a shell
+- fails before invoking build tooling when the configured source directory is absent
+- invokes the configured local wolfBoot build command only when the source directory exists
+- captures stdout, stderr, return code, duration, working directory, expected artifact path, artifact existence, artifact SHA-256 when present, and retained artifact path when copied
+- copies the produced artifact into the wolfBoot build evidence directory as `wolfboot.elf` when the command succeeds and the configured artifact exists
+- returns non-zero when profile validation fails, the source directory is missing, the command fails, or the command succeeds but the configured artifact is absent
+- does not generate signing keys
+- does not sign application images
+- does not flash hardware
+- does not open UART devices
+- does not use SSH
+- does not require physical hardware
+- does not mark `configs/boot/wolfboot_ecdsa_p256.yaml` as runnable
+
 Immediate next intended steps after this change:
 
-1. Run the Phase 10e relocated local build verification command when the local STM32/CMake/Ninja toolchain is available.
+1. Run the Phase 10f wolfBoot build-profile unit tests.
+2. Run `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml` only when the configured local wolfBoot source/tooling is intentionally available.
+3. Run the Phase 10e relocated local build verification command when the local STM32/CMake/Ninja toolchain is available.
 2. Run the unit tests.
 3. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
 4. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
@@ -1387,6 +1421,14 @@ Run the known-good automated baseline:
 ```powershell
 python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
+
+Build wolfBoot through the Phase 10f build profile when local wolfBoot source and tooling are intentionally available:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+Expected result: the command creates `results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/manifest.json` and `wolfboot_build.log`. If `tools/wolfboot` is absent, the command fails before invoking build tooling and records a clear missing-source result.
 
 Run the baseline experiment using an existing first-class build record:
 
@@ -1702,3 +1744,45 @@ Risks and unresolved items:
 - The layout cannot be confirmed as bootable until wolfBoot is built for the project-local STM32L4R5 target and user-provided hardware logs show the expected UART evidence.
 - The exact STM32L4R5 erase geometry, bank mode, and option-byte state still need confirmation before relying on swap/update behaviour.
 - The 128 KB wolfBoot reserve and 128 KB swap / metadata reserve may need adjustment after measuring the selected wolfBoot build and verifying update/trailer requirements.
+
+
+## Phase 10f Add wolfBoot Build Profile
+
+Implemented scope:
+
+- Added `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml` as the build-only wolfBoot ECDSA-P256 profile.
+- Added `scripts/framework/wolfboot_build.py` to construct and run the configured local wolfBoot build command through an injectable runner.
+- Added `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`.
+- The command records build evidence under `results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/`.
+- Build evidence includes `manifest.json`, `wolfboot_build.log`, command, working directory, return code, duration, source directory, output directory, expected artifact path, artifact existence, retained artifact path, and artifact SHA-256 when present.
+- The helper fails before invoking build tooling when the configured source directory is absent.
+- Unit tests cover command construction, missing source handling, successful mocked build evidence capture, missing artifact handling, profile validation, and CLI output without invoking real wolfBoot tooling.
+- Direct-flash build behaviour remains unchanged.
+- Generated The default profile expects the produced ELF at `tools/wolfboot/wolfboot.elf`; generated wolfBoot ELF/BIN/HEX/MAP/object outputs under `tools/wolfboot` remain ignored by Git.
+- `configs/boot/wolfboot_ecdsa_p256.yaml` remains `runnable: false`.
+
+Not implemented in Phase 10f:
+
+- wolfBoot source vendoring or submodule setup
+- signing-key generation
+- image signing
+- wolfBoot flashing
+- signed application flashing
+- UART boot evidence
+- secure-boot runtime success claims
+
+Manual wolfBoot build-profile command:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+Expected result: when the configured wolfBoot source and toolchain are available, the command returns success and records a retained `wolfboot.elf` plus SHA-256 evidence. When `tools/wolfboot` is absent, the command returns non-zero before invoking build tooling and records a clear missing-source result.
+
+Hardware success must still only be claimed from user-provided logs.
+
+Risks and unresolved items:
+
+- The exact wolfBoot source version, vendoring method, and final project-local STM32L4R5 target adaptation remain unresolved.
+- The current build profile is intentionally command-driven so the exact wolfBoot invocation can be refined once the source layout is selected.
+- A successful wolfBoot build is not evidence that the secure-boot path flashes or boots. Flashing, signing, and UART evidence remain later phases.

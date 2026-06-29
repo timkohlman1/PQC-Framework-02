@@ -49,6 +49,7 @@ from framework.build import execute_build
 from framework.flash import execute_flash
 from framework.manifest import create_result_folder, read_manifest, update_manifest
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
+from framework.wolfboot_build import execute_wolfboot_build
 
 
 class ConfigError(Exception):
@@ -205,6 +206,41 @@ def validate_host_config(config: dict[str, Any]) -> None:
         require_field(config, field, "host config")
 
 
+
+
+def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
+    """Validate required fields for a wolfBoot build-profile config."""
+
+    required_fields = [
+        "id",
+        "description",
+        "source_dir",
+        "output_dir",
+        "artifact",
+        "target",
+        "signature_algorithm",
+        "boot_profile",
+        "build.command",
+    ]
+
+    for field in required_fields:
+        require_field(config, field, "wolfBoot build profile")
+
+    if require_field(config, "signature_algorithm", "wolfBoot build profile") != "ecdsa_p256":
+        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256 for Phase 10f")
+
+
+def repo_root_from_build_profile_path(profile_path: Path | str) -> Path:
+    """Resolve the repository root from configs/builds/<name>.yaml."""
+
+    resolved_path = Path(profile_path).resolve()
+    if resolved_path.parent.name != "builds":
+        raise ConfigError(
+            "wolfBoot build profile must live under configs/builds/ for automatic repository resolution"
+        )
+
+    configs_root = resolved_path.parent.parent
+    return configs_root.parent
 
 def validate_boot_config_for_inspection(config: dict[str, Any]) -> None:
     """Validate fields required to inspect any boot config.
@@ -1234,6 +1270,38 @@ def run_monitor_command(args: argparse.Namespace) -> int:
     return monitor_result.return_code
 
 
+
+def run_wolfboot_build_command(args: argparse.Namespace) -> int:
+    """Run a configured wolfBoot build profile without flashing or UART access."""
+
+    profile = load_config(args.profile)
+    validate_wolfboot_build_profile_config(profile)
+    repo_root = repo_root_from_build_profile_path(args.profile)
+
+    result = execute_wolfboot_build(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=args.results_dir,
+    )
+
+    print("wolfBoot build completed" if result.return_code == 0 else "wolfBoot build failed")
+    print("------------------------" if result.return_code == 0 else "---------------------")
+    print(f"Profile: {result.profile_id}")
+    print(f"Result directory: {result.result_dir}")
+    print(f"Build log: {result.log_path}")
+    print(f"Source directory: {result.source_dir}")
+    print(f"Output directory: {result.output_dir}")
+    print(f"Artifact path: {result.artifact_path}")
+    print(f"Artifact exists: {result.artifact_exists}")
+    if result.artifact_sha256 is not None:
+        print(f"Artifact SHA-256: {result.artifact_sha256}")
+    if result.failure_reason is not None:
+        print(f"Failure reason: {result.failure_reason}")
+    print(f"Return code: {result.return_code}")
+    print("No signing key generation, application signing, flash, UART access, SSH, hardware access, or network access was performed.")
+
+    return result.return_code
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -1434,6 +1502,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Bounded UART capture duration used for the baseline pass/fail verdict.",
     )
     run_parser.set_defaults(func=run_full_baseline_command)
+
+
+    wolfboot_build_parser = subparsers.add_parser(
+        "build-wolfboot",
+        help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
+    )
+    wolfboot_build_parser.add_argument(
+        "--profile",
+        required=True,
+        type=Path,
+        help="Path to a wolfBoot build-profile YAML config under configs/builds/.",
+    )
+    wolfboot_build_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where wolfBoot build evidence folders are created.",
+    )
+    wolfboot_build_parser.set_defaults(func=run_wolfboot_build_command)
 
     monitor_parser = subparsers.add_parser(
         "monitor",

@@ -44,3 +44,15 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# wolfBoot generated outputs from local source-tree builds
+# Do not store private wolfBoot signing keys in Git.
+tools/wolfboot/**/*.o
+tools/wolfboot/**/*.a
+tools/wolfboot/**/*.d
+tools/wolfboot/**/*.map
+tools/wolfboot/**/*.elf
+tools/wolfboot/**/*.bin
+tools/wolfboot/**/*.hex
+tools/wolfboot/wolfboot.elf
+tools/wolfboot/wolfboot.bin

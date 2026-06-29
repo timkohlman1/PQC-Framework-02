@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source, image signing, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address, but it does not sign, flash, or validate wolfBoot at runtime.
+- wolfBoot source is not included in the repository context by default. Phase 10f adds a configurable framework build profile for wolfBoot ECDSA-P256 builds, but image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds wolfBoot build evidence capture only; it does not sign, flash, or validate wolfBoot at runtime.
 
 ## AI-assisted development
 
@@ -297,6 +297,35 @@ Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
 ```
 
 Expected result: CMake configure/build returns success and `Test-Path` prints `True`. This verifies only that the relocated application builds locally. Do not flash this ELF as a working secure-boot image and do not claim boot success unless UART logs from a later wolfBoot flashing workflow confirm the expected boot evidence.
+
+## Phase 10f wolfBoot build profile
+
+Phase 10f adds a build-only wolfBoot profile at:
+
+```text
+configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+The profile is invoked through the framework with:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+The command creates a wolfBoot build evidence directory under:
+
+```text
+results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/
+  manifest.json
+  wolfboot_build.log
+  wolfboot.elf  # only when the configured build produces the expected artifact
+```
+
+The manifest and log record the configured source directory, output directory, command, return code, duration, expected artifact path, retained artifact path, and artifact SHA-256 when present. Unit tests use mocked command runners; they do not invoke wolfBoot tooling.
+
+The default profile expects local wolfBoot source at `tools/wolfboot`. If that directory is absent, `build-wolfboot` fails before invoking build tooling and records a clear missing-source result. The default profile expects the produced ELF at `tools/wolfboot/wolfboot.elf`; generated wolfBoot ELF/BIN/HEX/MAP/object outputs under `tools/wolfboot` remain ignored by Git.
+
+This phase does not vendor wolfBoot source, generate signing keys, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
 
 ## Tests
 

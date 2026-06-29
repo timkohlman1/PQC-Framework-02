@@ -345,6 +345,37 @@ Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
 
 This does not implement wolfBoot source, image signing, signed-image flashing, or UART boot evidence. The planned wolfBoot profile remains `runnable: false`.
 
+### Phase 10f wolfBoot build profile
+
+Phase 10f adds framework support for a local, configurable wolfBoot build profile without changing the direct-flash baseline. The build profile lives at:
+
+```text
+configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+The profile records the intended STM32L4R5/project-local target identity, ECDSA-P256 signature algorithm, configured wolfBoot source directory, output directory, expected artifact path, and command scalar used by the framework build helper. The current command is intentionally profile-driven rather than hard-coded into the Python helper so the project-local wolfBoot target adaptation can refine the exact upstream invocation later without changing unrelated framework behaviour.
+
+The framework command is:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+```
+
+The command creates evidence under:
+
+```text
+results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/
+  manifest.json
+  wolfboot_build.log
+  wolfboot.elf  # copied only when the configured build emits the expected artifact
+```
+
+The manifest records `record_type: wolfboot_build`, the profile ID, result, target, `signature_algorithm: ecdsa_p256`, source directory, output directory, command, working directory, return code, duration, log name, expected artifact path, artifact existence, artifact SHA-256 when available, and retained artifact path when copied.
+
+The helper fails before invoking build tooling when the configured source directory is absent. This allows the repository to carry the profile and tests without vendoring wolfBoot source or claiming a successful wolfBoot build. Unit tests use injected command runners and do not invoke wolfBoot, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
+
+Phase 10f still does not implement signing-key generation, application image signing, wolfBoot flashing, signed-application flashing, UART boot evidence, or secure-boot runtime success claims. The planned boot profile remains `runnable: false`; normal experiment execution workflows still reject it.
+
 ## Integration Test Support
 
 The framework has pytest capability probes in:
@@ -651,4 +682,4 @@ Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile
 
 The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
 
-Phase 10d defines the planned secure-boot flash layout for this profile. No wolfBoot source, signing workflow, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b, Phase 10c, Phase 10d, or Phase 10e. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot. Phase 10d adds only the documented memory map and planned config metadata. Phase 10e adds only the local relocated HAL build profile and related metadata.
+Phase 10d defines the planned secure-boot flash layout for this profile. Phase 10f adds a configurable wolfBoot build-profile command and evidence capture, but no wolfBoot source, signing workflow, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b through Phase 10f. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot. Phase 10d adds only the documented memory map and planned config metadata. Phase 10e adds only the local relocated HAL build profile and related metadata.
