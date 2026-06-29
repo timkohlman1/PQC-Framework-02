@@ -1459,6 +1459,19 @@ Do not invent files that were not shown or described.
 
 If context is missing, ask for it before giving a patch.
 
+When asking the user to upload more than one repository file, include a copy-paste PowerShell `Compress-Archive` command that zips exactly those requested files to `C:\Users\timko\Downloads\<descriptive-context-name>.zip`. Use a `$files = @(...)` list containing repository-relative paths and a command in this form:
+
+```powershell
+$files = @(
+  "path/to/first-file",
+  "path/to/second-file"
+)
+
+Compress-Archive -LiteralPath $files -DestinationPath "$env:USERPROFILE\Downloads\<descriptive-context-name>.zip" -Force
+```
+
+If asking for only one file, a ZIP command is optional.
+
 When providing code changes, clearly identify the target file path.
 
 For every file that needs to be modified or created, provide a downloadable replacement artifact using the exact target filename. This requirement applies to documentation, code, configuration, scripts, tests, and any other text file changed by the request.
@@ -1516,7 +1529,7 @@ For each new feature request:
    - safety constraints
    - current implementation phase
 
-4. The AI asks for only the relevant source, config, test, and documentation files needed for the requested change.
+4. The AI asks for only the relevant source, config, test, and documentation files needed for the requested change. When requesting more than one repository file, the AI also provides a copy-paste PowerShell `Compress-Archive` command so the user can zip the requested files and upload one context archive.
 
 5. The user provides the requested files.
 

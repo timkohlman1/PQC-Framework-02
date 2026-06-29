@@ -7,7 +7,7 @@ At the start of every fresh feature-request chat, if the user has not already pr
 After AI_BUILD_GUIDE.md is provided:
 1. Read it first.
 2. Treat it as the source of truth for repository structure, current phase, known-good baseline, workflow rules, testing rules, documentation rules, and safety constraints.
-3. Ask only for the specific files needed for the requested change or review.
+3. Ask only for the specific files needed for the requested change or review. When asking for more than one repository file, also provide a copy-paste PowerShell `Compress-Archive` command that zips exactly those requested files to `C:\Users\timko\Downloads\<descriptive-context-name>.zip`, using repository-relative paths in a `$files = @(...)` list.
 4. Do not request the whole repository by default.
 5. Do not implement code until the required context is available.
 6. Do not assume repository state beyond AI_BUILD_GUIDE.md and uploaded files.

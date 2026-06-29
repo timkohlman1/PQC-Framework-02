@@ -42,6 +42,19 @@ The goal is to reduce the amount of context that must be uploaded for each AI-as
 
    If more context is required later, the AI agent should ask for the specific missing file and explain why it is needed.
 
+   When requesting more than one repository file, the AI agent must include a copy-paste PowerShell `Compress-Archive` command that zips exactly those requested files to `C:\Users\timko\Downloads\<descriptive-context-name>.zip`. The command should use a `$files = @(...)` list containing repository-relative paths and this form:
+
+   ```powershell
+   $files = @(
+     "path/to/first-file",
+     "path/to/second-file"
+   )
+
+   Compress-Archive -LiteralPath $files -DestinationPath "$env:USERPROFILE\Downloads\<descriptive-context-name>.zip" -Force
+   ```
+
+   If the AI agent requests only one repository file, a ZIP command is optional.
+
 6. The AI agent proposes a small controlled change.
 
    The proposal should cover:
@@ -111,6 +124,8 @@ AI agents must not assume repository structure beyond the provided files and the
 AI agents must not implement future phases early.
 
 AI agents must ask for relevant files only and must not request the full repository by default.
+
+When asking the user to upload more than one repository file, AI agents must provide a copy-paste PowerShell `Compress-Archive` command that zips the requested files into a context archive under `C:\Users\timko\Downloads\`. The command must use repository-relative paths and must not require the user to manually collect files.
 
 AI agents must include tests and documentation updates where appropriate.
 
