@@ -1,14 +1,14 @@
 id: wolfboot_ecdsa_p256
 mode: wolfboot_ecdsa_p256
-description: Planned wolfBoot ECDSA-P256 secure-boot profile placeholder. Not implemented or runnable.
+description: Planned wolfBoot ECDSA-P256 secure-boot profile. Generic direct-flash execution remains blocked; Phase 10h provides an explicit two-artifact flash workflow.
 runnable: false
-status: planned
-implementation_state: wolfboot_project_local_target_adaptation_defined_build_only_not_boot_validated
+status: phase_10h_flash_workflow_defined_not_boot_path_validated
+implementation_state: wolfboot_and_signed_application_flash_workflow_defined_not_boot_path_validated
 intended_signature_algorithm: ecdsa_p256
 application_slot_concept: planned_signed_application_primary_slot
-flash_layout_status: defined_phase_10d_planned_not_implemented
+flash_layout_status: defined_phase_10d_used_by_phase_10h_flash_workflow
 secure_boot_layout:
-  status: planned_not_runnable
+  status: planned_layout_used_by_phase_10h_flash_workflow
   decision_record: docs/decisions/0003_secure_boot_flash_layout.md
   internal_flash_base: 0x08000000
   internal_flash_size: 0x00200000
@@ -63,4 +63,15 @@ application_signing_profile:
   command: python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
   output_evidence: results/signing
   runtime_boot_validated: false
-notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow now exists and can convert the relocated ELF to a BIN before signing, but no wolfBoot flashing workflow, signed-application flashing workflow, or UART boot evidence is implemented.
+secure_boot_flash_profile:
+  status: defined_phase_10h_flash_and_uart_capture_not_boot_path_validated
+  experiment: configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+  command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 0x08000000
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+  signed_application_offset: 0x08020000
+  output_evidence: results
+  runtime_boot_path_validated: false
+
+notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10h now defines an explicit two-artifact flash workflow that can flash wolfBoot plus the signed application and capture UART evidence, but it still does not prove wolfBoot-mediated boot-path identity until Phase 10i adds a distinct UART marker.

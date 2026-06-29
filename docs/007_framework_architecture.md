@@ -746,3 +746,16 @@ results/signing/<timestamp>_wolfboot_ecdsa_p256_app/
 The signing manifest records the profile ID, input ELF path, input image path and SHA-256, binary-conversion working directory and return code, signed image path and SHA-256, signature algorithm, signature size, image version, private-key path, whether the private key existed before the command, whether it was present after the command, key-generation and signing working directories and return codes, and a retained signed-image path when signing succeeds.
 
 The workflow is local-only. It does not flash hardware, open UART devices, use SSH, or claim secure-boot runtime success. Private signing keys are never copied into result directories.
+
+
+## Phase 10h — Flash wolfBoot and Signed Application
+
+Phase 10h adds an explicit secure-boot flash workflow:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+```
+
+The workflow flashes `tools/wolfboot/wolfboot.elf` at the configured wolfBoot bootloader offset, then flashes `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` at the configured signed-application slot offset. It records both artifact hashes, offsets, SCP/helper return codes, remote staging paths, and `secure_boot_flash.log` in the result directory.
+
+After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`. The workflow does not claim wolfBoot-mediated boot-path identity; Phase 10i remains responsible for adding a distinct UART marker for that evidence.

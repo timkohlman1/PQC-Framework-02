@@ -93,3 +93,12 @@ That private key is local developer state. It must not be committed, uploaded in
 The default workflow may convert the relocated ELF into the configured BIN input before signing and may generate the local key when it is absent by invoking the configured wolfBoot key-generation command from `tools/wolfboot`. That working directory is required because wolfBoot keygen writes `src/keystore.c` relative to the wolfBoot source tree. The generated private key remains under `secrets/wolfboot/`, which is ignored by Git. Signed images and signing evidence are generated outputs and must not be treated as source files.
 
 Phase 10g still does not flash wolfBoot or a signed application and does not provide UART boot evidence. Hardware success must not be claimed from signing evidence alone.
+
+
+## Phase 10h — Flash wolfBoot and Signed Application
+
+The Phase 10h workflow flashes two generated artifacts: the locally built `tools/wolfboot/wolfboot.elf` bootloader and the locally signed `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` application image. The workflow records artifact hashes, flash offsets, gateway return codes, and UART evidence in `results/`.
+
+Private wolfBoot signing keys remain under `secrets/wolfboot/` and must not be committed or copied into result artifacts. The flash workflow reads only generated public artifacts and does not copy private key material.
+
+A successful flash command is not, by itself, proof of wolfBoot-mediated boot. Boot confirmation must come from the recorded UART log, and Phase 10i is still required to add a distinct wolfBoot boot marker.

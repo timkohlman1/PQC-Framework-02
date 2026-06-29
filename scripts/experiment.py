@@ -11,6 +11,7 @@ The initial supported commands are:
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
@@ -52,6 +53,10 @@ from framework.manifest import create_result_folder, read_manifest, update_manif
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
+from framework.secure_boot_flash import (
+    SecureBootFlashProfileError,
+    execute_secure_boot_flash,
+)
 
 
 class ConfigError(Exception):
@@ -429,6 +434,70 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     boot_mode = require_field(boot_config, "mode", "boot config")
     firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
 
+    if firmware_mode != boot_mode:
+        raise ConfigError(
+            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
+            f"but boot config mode is '{boot_mode}'"
+        )
+
+    return {
+        "experiment": experiment_config,
+        "board": board_config,
+        "host": host_config,
+        "boot": boot_config,
+    }
+
+
+def load_secure_boot_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, Any]]:
+    """Load a wolfBoot secure-boot flash experiment without enabling generic execution.
+
+    Phase 10h uses the planned wolfBoot boot config explicitly for the
+    two-artifact flash workflow. The generic experiment loader still rejects
+    non-runnable boot configs so normal direct-flash commands cannot
+    accidentally treat the wolfBoot profile as a validated boot path.
+    """
+
+    experiment_config_path = Path(experiment_path)
+
+    experiment_config = load_config(experiment_config_path)
+    validate_experiment_config(experiment_config)
+
+    board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
+
+    board_config = load_config(board_path)
+    host_config = load_config(host_path)
+    boot_config = load_config(boot_path)
+
+    validate_board_config(board_config)
+    validate_host_config(host_config)
+    validate_boot_config_for_inspection(boot_config)
+
+    expected_board_id = require_field(experiment_config, "board", "experiment config")
+    actual_board_id = require_field(board_config, "id", "board config")
+    if actual_board_id != expected_board_id:
+        raise ConfigError(
+            f"board config id mismatch: experiment references '{expected_board_id}' "
+            f"but {board_path} contains '{actual_board_id}'"
+        )
+
+    expected_host_id = require_field(experiment_config, "host", "experiment config")
+    actual_host_id = require_field(host_config, "id", "host config")
+    if actual_host_id != expected_host_id:
+        raise ConfigError(
+            f"host config id mismatch: experiment references '{expected_host_id}' "
+            f"but {host_path} contains '{actual_host_id}'"
+        )
+
+    expected_boot_id = require_field(experiment_config, "boot", "experiment config")
+    actual_boot_id = require_field(boot_config, "id", "boot config")
+    if actual_boot_id != expected_boot_id:
+        raise ConfigError(
+            f"boot config id mismatch: experiment references '{expected_boot_id}' "
+            f"but {boot_path} contains '{actual_boot_id}'"
+        )
+
+    boot_mode = require_field(boot_config, "mode", "boot config")
+    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
     if firmware_mode != boot_mode:
         raise ConfigError(
             f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
@@ -1409,6 +1478,139 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
 
     return result.return_code
 
+def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
+    """Run the Phase 10h wolfBoot + signed-application flash workflow."""
+
+    bundle = load_secure_boot_experiment_bundle(args.experiment)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    repo_root = repo_root_from_experiment_path(args.experiment)
+
+    try:
+        flash_result = execute_secure_boot_flash(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+        )
+    except SecureBootFlashProfileError as exc:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "result": "secure_boot_flash_failed",
+                "secure_boot_flash": {
+                    "return_code": 43,
+                    "failure_stage": "profile_validation",
+                    "failure_reason": str(exc),
+                    "log": None,
+                },
+            },
+        )
+        print(f"Error: {exc}", file=sys.stderr)
+        return 43
+
+    uart_return_code: int | None = None
+    uart_duration_seconds = 0.0
+    if flash_result.return_code == 0 and not args.skip_uart:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+        uart_return_code = uart_result.return_code
+        uart_duration_seconds = uart_result.duration_seconds
+    elif flash_result.return_code != 0:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "secure_boot_flash_failed",
+                },
+            },
+        )
+    elif args.skip_uart:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "uart": {
+                    "log": None,
+                    "skipped": True,
+                    "skip_reason": "explicit_skip_uart",
+                },
+            },
+        )
+
+    if flash_result.return_code != 0:
+        final_return_code = flash_result.return_code
+        failure_stage = flash_result.failure_stage
+    elif uart_return_code is not None and uart_return_code != 0:
+        final_return_code = uart_return_code
+        failure_stage = "uart"
+    else:
+        final_return_code = 0
+        failure_stage = "none"
+
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "result": (
+                "secure_boot_flash_uart_passed"
+                if final_return_code == 0 and uart_return_code is not None
+                else "secure_boot_flash_passed"
+                if final_return_code == 0
+                else "secure_boot_flash_failed"
+            ),
+            "secure_boot_run": {
+                "return_code": final_return_code,
+                "flash_return_code": flash_result.return_code,
+                "uart_return_code": uart_return_code,
+                "flash_log": "secure_boot_flash.log",
+                "uart_log": "uart.log" if uart_return_code is not None else None,
+                "uart_skipped": args.skip_uart or flash_result.return_code != 0,
+                "failure_stage": failure_stage,
+                "duration_seconds": round(
+                    flash_result.duration_seconds + uart_duration_seconds,
+                    3,
+                ),
+                "boot_confirmed_from_uart_log": uart_return_code == 0,
+                "boot_path_distinguished": False,
+            },
+        },
+    )
+
+    print("Secure-boot flash workflow completed" if final_return_code == 0 else "Secure-boot flash workflow failed")
+    print("------------------------------------" if final_return_code == 0 else "---------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Flash log: {flash_result.log_path}")
+    print(f"wolfBoot artifact: {flash_result.wolfboot.artifact_path}")
+    print(f"wolfBoot offset: {flash_result.wolfboot.offset}")
+    if flash_result.wolfboot.artifact_sha256 is not None:
+        print(f"wolfBoot SHA-256: {flash_result.wolfboot.artifact_sha256}")
+    print(f"Signed application artifact: {flash_result.signed_application.artifact_path}")
+    print(f"Signed application offset: {flash_result.signed_application.offset}")
+    if flash_result.signed_application.artifact_sha256 is not None:
+        print(f"Signed application SHA-256: {flash_result.signed_application.artifact_sha256}")
+    print(f"Flash return code: {flash_result.return_code}")
+    print(f"Failure stage: {failure_stage}")
+    if flash_result.failure_reason is not None:
+        print(f"Failure reason: {flash_result.failure_reason}")
+    if args.skip_uart:
+        print("UART capture skipped by explicit request. No boot confirmation was made.")
+    elif uart_return_code is None:
+        print("UART capture skipped because secure-boot flashing failed.")
+    else:
+        print(f"UART log: {result_dir / 'uart.log'}")
+        print(f"UART return code: {uart_return_code}")
+        print("Boot confirmation must be based only on the recorded UART log markers.")
+    print("This command does not prove wolfBoot-mediated boot-path identity; Phase 10i will add a distinct wolfBoot UART marker.")
+    print(f"Return code: {final_return_code}")
+
+    return final_return_code
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -1646,6 +1848,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory where signing evidence folders are created.",
     )
     sign_application_parser.set_defaults(func=run_sign_application_command)
+
+    secure_boot_flash_parser = subparsers.add_parser(
+        "flash-secure-boot",
+        help="Flash wolfBoot and a signed application image, then capture UART evidence.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to a wolfBoot secure-boot experiment YAML config.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--uart-duration-seconds",
+        default=DEFAULT_CAPTURE_DURATION_SECONDS,
+        type=int,
+        help="Bounded post-flash UART capture duration in seconds.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--skip-uart",
+        action="store_true",
+        help="Diagnostic escape hatch: flash both artifacts without post-flash UART capture.",
+    )
+    secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
 
     monitor_parser = subparsers.add_parser(
         "monitor",

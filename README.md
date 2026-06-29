@@ -459,3 +459,16 @@ results/signing/<timestamp>_wolfboot_ecdsa_p256_app/
 ```
 
 Expected evidence includes `manifest.json`, `signing.log`, and the retained signed image `application_signed.bin` when signing succeeds. This is not a flashing workflow and is not secure-boot UART evidence.
+
+
+## Phase 10h — Flash wolfBoot and Signed Application
+
+Phase 10h adds an explicit secure-boot flash workflow:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+```
+
+The workflow flashes `tools/wolfboot/wolfboot.elf` at the configured wolfBoot bootloader offset, then flashes `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` at the configured signed-application slot offset. It records both artifact hashes, offsets, SCP/helper return codes, remote staging paths, and `secure_boot_flash.log` in the result directory.
+
+After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`. The workflow does not claim wolfBoot-mediated boot-path identity; Phase 10i remains responsible for adding a distinct UART marker for that evidence.

@@ -1,0 +1,20 @@
+id: wolfboot_ecdsa_p256_uart
+description: Flash wolfBoot and the signed ECDSA-P256 application image, then capture UART evidence.
+board: board_a
+host: gateway
+boot: wolfboot_ecdsa_p256
+boot_crypto: ecdsa_p256
+firmware:
+  mode: wolfboot_ecdsa_p256
+  artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+uart:
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_message: tick
+secure_boot_flash:
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 0x08000000
+  wolfboot_pass_offset_to_helper: false
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+  signed_application_offset: 0x08020000
+  signed_application_pass_offset_to_helper: true
+  notes: Phase 10h flashes both required artifacts and captures UART markers, but does not prove wolfBoot-mediated boot-path identity until Phase 10i adds a distinct marker.
