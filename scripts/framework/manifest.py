@@ -92,6 +92,7 @@ def build_manifest(
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
+    boot = bundle.get("boot", {})
 
     firmware = experiment.get("firmware", {})
     transport = experiment.get("transport", {})
@@ -103,7 +104,7 @@ def build_manifest(
         "experiment": experiment["id"],
         "board": board["id"],
         "gateway": host["id"],
-        "boot_mode": firmware.get("mode", "unknown"),
+        "boot_mode": boot.get("mode", firmware.get("mode", "unknown")),
         "transport_mode": transport.get("mode", DEFAULT_TRANSPORT_MODE),
         "network_profile": network.get("profile", DEFAULT_NETWORK_PROFILE),
         "result": result,
@@ -118,6 +119,23 @@ def write_manifest(path: Path | str, manifest: dict[str, Any]) -> None:
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def read_manifest(path: Path | str) -> dict[str, Any]:
+    """Read a manifest JSON file."""
+
+    manifest_path = Path(path)
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def update_manifest(path: Path | str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Merge top-level updates into a manifest JSON file and rewrite it."""
+
+    manifest_path = Path(path)
+    manifest = read_manifest(manifest_path)
+    manifest.update(updates)
+    write_manifest(manifest_path, manifest)
+    return manifest
 
 
 def create_result_folder(

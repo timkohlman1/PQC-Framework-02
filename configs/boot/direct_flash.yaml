@@ -1,0 +1,4 @@
+id: direct_flash
+mode: direct_flash
+description: Direct-flash boot mode for the known-good STM32 HAL baseline.
+runnable: true

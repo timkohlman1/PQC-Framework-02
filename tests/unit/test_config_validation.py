@@ -38,6 +38,42 @@ def test_validate_experiment_config_rejects_missing_board():
         experiment_cli.validate_experiment_config(config)
 
 
+
+def test_validate_experiment_config_rejects_missing_boot():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "baseline_direct_uart",
+        "description": "Missing boot field.",
+        "board": "board_a",
+        "host": "gateway",
+        "firmware": {
+            "mode": "direct_flash",
+            "artifact": "build/Debug/stm32_basic_hal1.elf",
+        },
+        "uart": {
+            "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+            "expected_tick_message": "tick",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="boot"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_boot_config_rejects_non_runnable_boot_profile():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "direct_flash",
+        "mode": "direct_flash",
+        "description": "Direct-flash test boot config.",
+        "runnable": False,
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="runnable"):
+        experiment_cli.validate_boot_config(config)
+
 def test_validate_board_config_rejects_missing_stlink_serial():
     experiment_cli = load_experiment_module()
 
@@ -82,10 +118,12 @@ def test_load_experiment_bundle_rejects_board_id_mismatch(tmp_path):
     configs_root = tmp_path / "configs"
     boards_dir = configs_root / "boards"
     hosts_dir = configs_root / "hosts"
+    boot_dir = configs_root / "boot"
     experiments_dir = configs_root / "experiments"
 
     boards_dir.mkdir(parents=True)
     hosts_dir.mkdir(parents=True)
+    boot_dir.mkdir(parents=True)
     experiments_dir.mkdir(parents=True)
 
     (boards_dir / "board_a.yaml").write_text(
@@ -99,6 +137,19 @@ def test_load_experiment_bundle_rejects_board_id_mismatch(tmp_path):
                 '  serial: "123"',
                 "uart:",
                 "  baud: 115200",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    (boot_dir / "direct_flash.yaml").write_text(
+        "\n".join(
+            [
+                "id: direct_flash",
+                "mode: direct_flash",
+                "description: Direct-flash test boot config.",
+                "runnable: true",
                 "",
             ]
         ),
@@ -131,6 +182,7 @@ def test_load_experiment_bundle_rejects_board_id_mismatch(tmp_path):
                 "description: Test experiment.",
                 "board: board_a",
                 "host: gateway",
+                "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
                 "  artifact: build/Debug/stm32_basic_hal1.elf",

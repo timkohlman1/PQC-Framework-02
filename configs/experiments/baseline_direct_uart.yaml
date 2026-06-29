@@ -2,6 +2,7 @@ id: baseline_direct_uart
 description: Baseline direct-flash UART smoke experiment for the known-good STM32 HAL application.
 board: board_a
 host: gateway
+boot: direct_flash
 firmware:
   mode: direct_flash
   artifact: build/Debug/stm32_basic_hal1.elf

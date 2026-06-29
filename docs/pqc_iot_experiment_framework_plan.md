@@ -4,429 +4,73 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 0 — Freeze the Known-Good STM32 Baseline
 
-- [X] Keep the current CubeMX-generated firmware structure
-
-- [X] Delete stale build output:
-
-  ```powershell
-  Remove-Item -Recurse -Force .\build
-  ```
-
-- [X] Confirm the project builds from the new repo location.
-
-- [X] Confirm the app flashes via:
-
-  ```powershell
-  scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
-  ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
-  ```
-
-- [X] Confirm UART prints:
-
-  ```text
-  stm32-basic_hal1 boot v0.1.0
-  tick
-  tick
-  tick
-  ```
-
-- [X] Commit the CubeMX/HAL baseline:
-
-  ```powershell
-  git add .gitignore .clangd .mxproject .settings .vscode CMakeLists.txt CMakePresets.json Core Drivers STM32L4R5XX_FLASH.ld cmake startup_stm32l4r5xx.s stm32_basic_hal1.ioc
-  git commit -m "Add STM32 HAL baseline firmware project"
-  ```
-
----
-
 ## Phase 1 — Establish Documentation and AI Workflow
-
-- [X] Add root-level AI build guide:
-
-
-- [X] Add documentation skeleton:
-
-
-- [X] Add ChatGPT Project instructions separately in the ChatGPT Project settings.
-
-- [X] Ensure the ChatGPT Project workflow is documented:
-
-
-- [X] Document the secret-handling policy.
-
-- [X] Confirm docs state that these must not be committed:
-  - [X] SSH private keys
-  - [X] VPN private keys
-  - [X] TLS private keys
-  - [X] MQTT passwords
-  - [X] real `.env` files
-  - [X] private client certificates or key bundles
-
-- [X] Add SSH setup documentation explaining how each dev PC generates its own key and adds the public key to `pqc-gateway1`.
-
-- [X] Commit documentation baseline:
-
-  ```powershell
-  git add AI_BUILD_GUIDE.md docs
-  git commit -m "Add project documentation and AI workflow guide"
-  ```
-
----
 
 ## Phase 2 — Add Minimal Framework Skeleton
 
-- [ ] Add top-level framework folders:
-
-  ```text
-  configs/
-  scripts/
-  tests/
-  results/
-  tools/
-  ```
-
-- [ ] Add basic config files only:
-
-  ```text
-  configs/
-    boards/
-      board_a.yaml
-    hosts/
-      gateway.yaml
-    experiments/
-      baseline_direct_uart.yaml
-  ```
-
-- [ ] Add simple Python CLI:
-
-  ```text
-  scripts/experiment.py
-  ```
-
-- [ ] Implement only a `status` command first.
-
-- [ ] Confirm this command works:
-
-  ```powershell
-  python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Ensure the `status` command:
-  - [ ] loads the experiment config
-  - [ ] resolves board and host config
-  - [ ] validates required fields
-  - [ ] prints a summary
-  - [ ] does not build anything
-  - [ ] does not flash anything
-  - [ ] does not require hardware
-
-- [ ] Add unit tests for config loading and validation:
-  - [ ] `tests/unit/test_config_loading.py`
-  - [ ] `tests/unit/test_config_validation.py`
-
-- [ ] Update `AI_BUILD_GUIDE.md` with:
-  - [ ] new framework folders
-  - [ ] first CLI command
-  - [ ] config layout
-
-- [ ] Commit:
-
-  ```powershell
-  git add configs scripts tests AI_BUILD_GUIDE.md docs
-  git commit -m "Add initial experiment framework skeleton"
-  ```
-
----
-
 ## Phase 3 — Add Result Manifest Support
-
-- [ ] Add manifest utility:
-
-  ```text
-  scripts/framework/manifest.py
-  ```
-
-- [ ] Add run ID generation.
-
-- [ ] Use a run ID format similar to:
-
-  ```text
-  2026-06-25_001_baseline_direct_uart
-  ```
-
-- [ ] Add result folder creation:
-
-  ```text
-  results/<run_id>/
-    manifest.json
-    notes.md
-  ```
-
-- [ ] Add initial manifest fields:
-  - [ ] `run_id`
-  - [ ] `timestamp`
-  - [ ] `experiment`
-  - [ ] `board`
-  - [ ] `gateway`
-  - [ ] `boot_mode`
-  - [ ] `transport_mode`
-  - [ ] `network_profile`
-  - [ ] `result`
-
-- [ ] Add unit tests:
-  - [ ] `tests/unit/test_manifest.py`
-  - [ ] `tests/unit/test_run_id.py`
-
-- [ ] Add CLI command:
-
-  ```powershell
-  python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
 
 ## Phase 4 — Automate Build, But Do Not Flash Yet
 
-- [ ] Add build command:
-
-  ```powershell
-  python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Build command should wrap the current CMake/STM32 build process.
-
-- [ ] Capture:
-  - [ ] stdout
-  - [ ] stderr
-  - [ ] return code
-  - [ ] build duration
-  - [ ] output ELF path
-  - [ ] build log
-
-- [ ] Save build log under:
-
-  ```text
-  results/<run_id>/build.log
-  ```
-
-- [ ] Add unit tests for command construction.
-
-- [ ] Ensure unit tests do not invoke CubeMX/CMake directly.
-
-- [ ] Add integration test later for real build.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
-
 ## Phase 5 — Automate Remote Flash
-
-- [ ] Add flash command:
-
-  ```powershell
-  python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Initially wrap the known-good manual workflow:
-
-  ```powershell
-  scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
-  ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
-  ```
-
-- [ ] Capture:
-  - [ ] scp log
-  - [ ] flash log
-  - [ ] return code
-  - [ ] flashed artifact path
-  - [ ] ST-LINK serial
-
-- [ ] Save flash log:
-
-  ```text
-  results/<run_id>/flash.log
-  ```
-
-- [ ] Add unit tests for generated `scp` and `ssh` commands.
-
-- [ ] Add opt-in integration test:
-
-  ```text
-  tests/integration/test_gateway_flash_helper.py
-  ```
-
-- [ ] Confirm normal unit tests do not require hardware.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
 
 ## Phase 6 — Automate UART Capture
 
-- [ ] Add UART capture command:
-
-  ```powershell
-  python scripts/experiment.py capture-uart --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Use ST-LINK VCP path:
-
-  ```text
-  /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-  ```
-
-- [ ] Capture for a bounded duration, for example 10 seconds.
-
-- [ ] Save UART output:
-
-  ```text
-  results/<run_id>/uart.log
-  ```
-
-- [ ] Add pass/fail detection:
-  - [ ] expected boot marker present
-  - [ ] `tick` present
-
-- [ ] Update manifest result to `pass` or `fail`.
-
-- [ ] Add hardware test:
-
-  ```text
-  tests/hardware/test_baseline_uart.py
-  ```
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
-
 ## Phase 7 — Add Full Baseline Run Command
 
-- [ ] Add combined command:
-
-  ```powershell
-  python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
-  ```
-
-- [ ] Combined command should:
-  - [ ] create result directory
-  - [ ] build
-  - [ ] copy artifact
-  - [ ] flash
-  - [ ] capture UART
-  - [ ] evaluate pass/fail
-  - [ ] write manifest
-
-- [ ] Treat this as the known-good automated baseline.
-
-- [ ] Add tests for orchestration logic using mocked command runners.
-
-- [ ] Run manually and confirm output.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
 
 ## Phase 8 — Add Build Numbers and Artifact Tracking
 
-- [ ] Add build number tracking.
-
-- [ ] Start with simple file-based tracking if adequate:
-
-  ```text
-  .build_number
-  ```
-
-- [ ] Consider later upgrade to:
-
-  ```text
-  results/build_index.json
-  ```
-
-- [ ] Record in manifest:
-  - [ ] `build_number`
-  - [ ] `firmware_elf`
-  - [ ] `firmware_sha256`
-  - [ ] `git_commit`
-
-- [ ] Copy important artifacts into the result folder:
-  - [ ] `firmware.elf`
-  - [ ] `firmware.hex`
-  - [ ] `firmware.bin`
-  - [ ] `build.log`
-  - [ ] `flash.log`
-  - [ ] `uart.log`
-  - [ ] `manifest.json`
-
-- [ ] Add unit tests for:
-  - [ ] build number incrementing
-  - [ ] artifact hashing
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
-
----
-
 ## Phase 9 — Add Source-Hash Rebuild Skipping
 
-- [ ] Add source hash over relevant inputs:
-  - [ ] `Core/`
-  - [ ] `Drivers/`
-  - [ ] `CMakeLists.txt`
-  - [ ] `CMakePresets.json`
-  - [ ] `cmake/`
-  - [ ] `STM32L4R5XX_FLASH.ld`
-  - [ ] `startup_stm32l4r5xx.s`
-  - [ ] `stm32_basic_hal1.ioc`
 
-- [ ] Store last build hash.
 
-- [ ] Skip rebuild when:
-  - [ ] source hash unchanged
-  - [ ] ELF exists
-  - [ ] `--force` not supplied
 
-- [ ] Always allow forced build:
 
-  ```powershell
-  python scripts/experiment.py build --force
-  ```
+Phase 10d — Automatic Reuse of Matching Builds
 
-- [ ] Add unit tests for:
-  - [ ] hash calculation
-  - [ ] rebuild decision
+Goal: Let the framework reuse a previous matching build automatically when appropriate.
 
-- [ ] Update documentation.
+Scope:
 
-- [ ] Update `AI_BUILD_GUIDE.md`.
+Detect whether an existing build record matches the current source/build hash.
+Reuse a matching build when allowed by the command behavior.
+Create a new build when no matching build exists.
+Preserve explicit forced rebuild behavior.
+Record whether the run used a reused build or a newly created build.
+Add unit tests for automatic reuse, no matching build, forced rebuild, and stale artifact cases.
+Update documentation and AI_BUILD_GUIDE.md.
 
-- [ ] Commit.
+End state: Routine experiment runs can avoid unnecessary rebuilds while retaining full provenance.
 
----
+
+
+
+Phase 10e — Clean Up Build/Run Terminology and CLI
+
+Goal: Make the user-facing workflow consistent after build/run separation.
+
+Scope:
+
+Ensure command names, help text, manifest fields, documentation, and tests use consistent terminology:
+build record
+experiment run
+build number
+run ID
+reused build
+forced build
+Remove or deprecate ambiguous fields where safe.
+Preserve backward compatibility where needed.
+Update README, architecture docs, and AI_BUILD_GUIDE.md.
+
+End state: The framework has a clean distinction between build artifacts and experiment evidence.
+
+
+
+
+
+
+
 
 ## Phase 10 — Start Boot-Security Experiments
 

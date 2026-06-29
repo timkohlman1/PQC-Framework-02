@@ -46,6 +46,8 @@ When files need to be modified or created:
 - Provide a downloadable replacement artifact using the exact target filename for every changed or created file.
 - Provide complete replacement content for every changed or created file.
 - If multiple files are changed or created, provide a downloadable .zip containing all replacement files at repository-relative paths for unzip-and-overwrite use.
+- Whenever you provide a downloadable .zip archive, immediately provide the exact PowerShell extraction command for that archive. The command must assume the user downloaded the archive to `C:\Users\timko\Downloads\` and will run the command from the repository workspace root. Use this form, replacing only the archive filename: `Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force`.
+- Do not require the user to copy or move the downloaded archive into the repository root before extracting it.
 - Highlight the specific changes separately.
 - Preserve unrelated content.
 - End implementation responses with the next verification command.

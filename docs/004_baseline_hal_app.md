@@ -26,7 +26,7 @@ tick
 
 ## Current Role
 
-This is the direct-flash baseline.
+This is the direct-flash baseline. The experiment framework now represents that boot path with `configs/boot/direct_flash.yaml` and the baseline experiment references it with `boot: direct_flash`.
 
 It does not yet use:
 
@@ -35,6 +35,9 @@ It does not yet use:
 - TLS
 - PQC
 - network degradation
+- wolfBoot-mediated boot
+- image signing
+- relocated application launch
 - automated result manifests
 
 ## Build Status
