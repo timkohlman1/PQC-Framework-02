@@ -277,6 +277,26 @@ The build command also records source-control provenance in the compatibility ru
 The unit tests cover command construction, deterministic fingerprinting, fingerprint change detection, excluded-file behaviour, missing fingerprint input handling, rebuild-skip decisions, and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
 
 
+
+## wolfBoot STM32L4 Target Support Assessment
+
+Phase 10c adds a documented target-support decision without changing runtime behaviour:
+
+```text
+docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+```
+
+The decision is:
+
+- Use wolfBoot's existing STM32L4 support as the closest upstream starting point.
+- Do not treat the upstream STM32L4 example as directly runnable on the NUCLEO-L4R5ZI-P / STM32L4R5 board.
+- Create a project-local STM32L4R5 target configuration or adaptation before attempting a wolfBoot build.
+- Define the STM32L4R5 secure-boot flash layout in Phase 10d before linker relocation.
+
+Compatibility concerns recorded by the decision include flash size, flash page/sector layout, vector-table and image-header offset expectations, bootloader location, application offset, ECDSA-P256 signing support, and wolfBoot build/toolchain assumptions.
+
+No linker relocation, wolfBoot build profile, signing workflow, flashing workflow, UART evidence, or secure-boot runtime claim is implemented by Phase 10c.
+
 ## Integration Test Support
 
 The framework has pytest capability probes in:
@@ -583,4 +603,4 @@ Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile
 
 The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
 
-No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b.
+No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b or Phase 10c. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot.

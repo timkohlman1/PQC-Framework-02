@@ -3,8 +3,15 @@ mode: wolfboot_ecdsa_p256
 description: Planned wolfBoot ECDSA-P256 secure-boot profile placeholder. Not implemented or runnable.
 runnable: false
 status: planned
-implementation_state: placeholder_only
+implementation_state: target_support_assessed_placeholder_only
 intended_signature_algorithm: ecdsa_p256
 application_slot_concept: planned_signed_application_slot
-flash_layout_status: not_confirmed
+flash_layout_status: pending_phase_10d_decision
+target_support_assessment:
+  status: assessed_phase_10c
+  decision_record: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+  upstream_closest_target: stm32l4
+  project_target_strategy: project_local_stm32l4r5_target_configuration_or_adaptation
+  runnable: false
+  notes: Existing upstream STM32L4 wolfBoot support is the closest starting point, but STM32L4R5 / NUCLEO-L4R5ZI-P requires a project-local flash layout and target configuration before wolfBoot build, signing, flashing, or UART evidence can be claimed.
 notes: Placeholder only. No wolfBoot source, linker relocation, signing workflow, flash layout, flashing workflow, or UART evidence is implemented.

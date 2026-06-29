@@ -1100,6 +1100,7 @@ Current framework skeleton completed items:
 40. Allow `run --build-number <number>` to reuse an existing first-class build record after validating the record, retained artifact, artifact hash, and current source/build fingerprint.
 41. Add Phase 10a direct-flash boot config resolution through `configs/boot/direct_flash.yaml` without changing runtime behaviour or adding wolfBoot.
 42. Add Phase 10b planned wolfBoot boot config placeholder at `configs/boot/wolfboot_ecdsa_p256.yaml`; it is loadable for inspection but marked `runnable: false` and rejected by execution-oriented workflows.
+43. Add Phase 10c wolfBoot STM32L4 target support assessment in `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md`; upstream STM32L4 support is the closest starting point, but STM32L4R5 requires a project-local target configuration or adaptation before wolfBoot is built or treated as runnable.
 Current CLI commands are:
 
 ```powershell
@@ -1264,13 +1265,14 @@ Expected `build-flash` behaviour:
 
 Immediate next intended steps after this change:
 
-1. Run the unit tests.
-2. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
-3. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
-4. Run the strict gateway flash integration check only when the gateway and board are expected to be available.
-5. Run the strict baseline UART hardware check only when the gateway and board are expected to be available.
-6. Review user-provided logs before claiming hardware success.
-7. Commit after verification passes.
+1. Review the Phase 10c decision record and confirm the project-local STM32L4R5 target adaptation direction is acceptable.
+2. Run the unit tests.
+3. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
+4. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
+5. Run the strict gateway flash integration check only when the gateway and board are expected to be available.
+6. Run the strict baseline UART hardware check only when the gateway and board are expected to be available.
+7. Review user-provided logs before claiming hardware success.
+8. Commit after verification passes.
 
 ## 13. Common Manual Commands
 
@@ -1584,5 +1586,32 @@ Not implemented in Phase 10b:
 - image signing
 - wolfBoot flashing
 - wolfBoot UART evidence
+
+## Phase 10c wolfBoot STM32L4 Target Support Assessment
+
+Implemented scope:
+
+- `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md` records the Phase 10c decision.
+- The closest upstream wolfBoot target is the existing STM32L4 support.
+- The project decision is to use existing STM32L4 support as the starting point, but to create a project-local STM32L4R5 / NUCLEO-L4R5ZI-P target configuration or adaptation before building or flashing wolfBoot.
+- The decision records compatibility concerns for flash size, flash page/sector layout, vector-table and image-header offset expectations, bootloader location, application offset, ECDSA-P256 signing support, and wolfBoot build/toolchain assumptions.
+- `configs/boot/wolfboot_ecdsa_p256.yaml` remains non-runnable and now references the Phase 10c assessment decision.
+- The direct-flash baseline remains the only runnable boot mode.
+
+Not implemented in Phase 10c:
+
+- wolfBoot source vendoring or submodule setup
+- secure-boot flash layout finalization
+- linker relocation
+- wolfBoot build profile
+- image signing
+- signing-key generation
+- wolfBoot flashing
+- wolfBoot UART evidence
+- secure-boot runtime success claims
+
+Next intended Phase 10 step:
+
+- Phase 10d should define the STM32L4R5 secure-boot flash layout explicitly before any application relocation or wolfBoot build is attempted.
 
 Hardware success must still only be claimed from user-provided logs.

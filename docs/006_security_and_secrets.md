@@ -51,3 +51,10 @@ Future firmware signing private keys must be treated as secrets and kept outside
 VPN configuration and VPN private keys must not be committed.
 
 Document VPN requirements, but keep credentials local.
+
+
+## wolfBoot Target Assessment and Keys
+
+Phase 10c documents target-support suitability only. It does not generate signing keys, does not add test keys, and does not add a signing workflow.
+
+When later wolfBoot signing phases are implemented, private wolfBoot signing keys must remain outside the repository. Only public verification material, dummy/example keys clearly marked as non-secret, or documentation may be committed.

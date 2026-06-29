@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source, image signing, linker relocation, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet.
+- wolfBoot source, image signing, linker relocation, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet. Phase 10c only documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable.
 
 ## AI-assisted development
 
@@ -238,6 +238,24 @@ An experiment run record identifies what experiment was executed against hardwar
 - notes
 
 The separation is intended to make repeated PQC experiments easier to audit. A single validated build can be referenced by later runs, and a failed run can be diagnosed without treating the firmware build itself as failed. Existing flash/run workflows still use the compatibility run manifest where required, so this phase does not require a full CLI migration to build-number-only references.
+
+## wolfBoot STM32L4 target support decision
+
+Phase 10c records a documentation-only wolfBoot target support assessment in:
+
+```text
+docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+```
+
+Decision summary:
+
+- wolfBoot has upstream STM32L4 support and documents an STM32L4 example layout.
+- The project target is STM32L4R5 with 2 MB flash, so the upstream STM32L4 example is only the closest starting point, not a confirmed runnable target for this board.
+- The project will use existing STM32L4 support as the basis for a project-local STM32L4R5 / NUCLEO-L4R5ZI-P target configuration or adaptation.
+- The direct-flash baseline remains the only runnable boot path.
+- The planned wolfBoot profile remains non-runnable until layout, linker relocation, wolfBoot build, signing, flashing, and UART evidence are implemented in later phases.
+
+No linker script, firmware build, signing key, wolfBoot build, flash workflow, or runtime behaviour is changed by Phase 10c.
 
 ## Tests
 
