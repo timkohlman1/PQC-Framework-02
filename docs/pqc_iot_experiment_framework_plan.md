@@ -23,55 +23,6 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 9 — Add Source-Hash Rebuild Skipping
 
-
-
-
-
-Phase 10d — Automatic Reuse of Matching Builds
-
-Goal: Let the framework reuse a previous matching build automatically when appropriate.
-
-Scope:
-
-Detect whether an existing build record matches the current source/build hash.
-Reuse a matching build when allowed by the command behavior.
-Create a new build when no matching build exists.
-Preserve explicit forced rebuild behavior.
-Record whether the run used a reused build or a newly created build.
-Add unit tests for automatic reuse, no matching build, forced rebuild, and stale artifact cases.
-Update documentation and AI_BUILD_GUIDE.md.
-
-End state: Routine experiment runs can avoid unnecessary rebuilds while retaining full provenance.
-
-
-
-
-Phase 10e — Clean Up Build/Run Terminology and CLI
-
-Goal: Make the user-facing workflow consistent after build/run separation.
-
-Scope:
-
-Ensure command names, help text, manifest fields, documentation, and tests use consistent terminology:
-build record
-experiment run
-build number
-run ID
-reused build
-forced build
-Remove or deprecate ambiguous fields where safe.
-Preserve backward compatibility where needed.
-Update README, architecture docs, and AI_BUILD_GUIDE.md.
-
-End state: The framework has a clean distinction between build artifacts and experiment evidence.
-
-
-
-
-
-
-
-
 ## Phase 10 — Start Boot-Security Experiments
 
 - [ ] Add boot mode config:
@@ -139,7 +90,77 @@ End state: The framework has a clean distinction between build artifacts and exp
 
 ---
 
-## Phase 11 — Add MQTT Plain Baseline
+## Phase 11 — Containerised Build and Test Environment
+
+### Goal
+
+Provide a portable container-based development environment so the framework's build, signing, and non-hardware test workflows can be reproduced consistently across Windows, Linux, and macOS hosts.
+
+The initial scope should focus on build and software verification portability. Hardware flashing and UART workflows may be supported later through the existing gateway abstraction, but should not be required for the first container milestone.
+
+### Requirements / Outcomes
+
+- Add a project-owned container build environment for the STM32 framework.
+- Ensure a fresh checkout from Git, including required submodules, can run the documented container workflow.
+- Support the core non-hardware development commands inside the container, including:
+  - Python unit tests
+  - configuration/status checks
+  - direct-flash firmware build
+  - relocated firmware build
+  - wolfBoot build
+  - application signing
+- Keep hardware-dependent workflows separate from the default container workflow.
+- Do not require USB/ST-LINK passthrough for the initial container environment.
+- Do not bake private keys, SSH keys, VPN keys, credentials, signing keys, or other secrets into the container image.
+- Document how local-only secrets and generated signing material are handled when container workflows need them.
+- Preserve the existing host/gateway flashing and UART architecture.
+- Ensure generated build artifacts, object files, signing outputs, and result directories remain out of Git.
+- Add documentation describing:
+  - supported host platforms
+  - expected Docker or container runtime prerequisites
+  - commands to build or run the container
+  - which workflows are supported inside the container
+  - which workflows remain host/gateway/hardware dependent
+  - known limitations and reproducibility assumptions
+- Add tests or verification commands proving that the container can run the intended non-hardware workflow from a clean checkout.
+
+### Optional Later Extension
+
+Add an explicitly enabled hardware-capable container workflow that can use the existing SSH gateway abstraction to run flash and UART tests, without requiring direct USB/ST-LINK access from the container.
+
+This extension should:
+
+- mount or provide SSH access at runtime only
+- avoid storing SSH private keys in the image
+- preserve the existing `pqc-gateway1` flash and UART helper model
+- run hardware tests only when the gateway and board are intentionally available
+- keep hardware tests skipped or unavailable by default when prerequisites are missing
+
+### Pass Criteria
+
+- A developer on Windows, Linux, or macOS can clone the repository and run the documented container workflow for non-hardware development.
+- The container can run Python unit tests successfully.
+- The container can build the direct-flash firmware profile.
+- The container can build the relocated firmware profile.
+- The container can run the wolfBoot build workflow when the wolfBoot submodule and required tools are available.
+- The container can run the application signing workflow without committing or baking private signing keys into the image.
+- Hardware flashing and UART capture remain optional and are not required for the default container pass criteria.
+- Documentation clearly distinguishes build/test portability from hardware evidence collection.
+
+### Not in Scope for Initial Container Phase
+
+- Replacing the existing gateway flash workflow.
+- Replacing the existing UART capture workflow.
+- Running ST-LINK USB directly from inside the container.
+- Baking private credentials, SSH keys, signing keys, or generated secrets into the image.
+- Treating containerised hardware tests as mandatory for normal development.
+- Changing secure-boot flash layout, signing format, UART markers, or experiment semantics.
+
+---
+
+
+
+## Phase 12 — Add MQTT Plain Baseline
 
 - [ ] Add simple MQTT firmware variant.
 
@@ -183,7 +204,7 @@ End state: The framework has a clean distinction between build artifacts and exp
 
 ---
 
-## Phase 12 — Add Classical MQTT over TLS
+## Phase 13 — Add Classical MQTT over TLS
 
 - [ ] Add wolfSSL classical TLS firmware profile.
 
@@ -223,7 +244,7 @@ End state: The framework has a clean distinction between build artifacts and exp
 
 ---
 
-## Phase 13 — Add Network Degradation
+## Phase 14 — Add Network Degradation
 
 - [ ] Add network profile configs:
 
@@ -259,7 +280,7 @@ End state: The framework has a clean distinction between build artifacts and exp
 
 ---
 
-## Phase 14 — Add PQC/Hybrid Transport Experiments
+## Phase 15 — Add PQC/Hybrid Transport Experiments
 
 - [ ] Verify selected wolfSSL version.
 
@@ -293,7 +314,7 @@ End state: The framework has a clean distinction between build artifacts and exp
 
 ---
 
-## Phase 15 — Add Analysis and Reporting Tooling
+## Phase 16 — Add Analysis and Reporting Tooling
 
 - [ ] Add script to aggregate result manifests and metrics:
 
@@ -330,22 +351,3 @@ End state: The framework has a clean distinction between build artifacts and exp
 - [ ] Commit.
 
 ---
-
-## Immediate Next Actions
-
-- [ ] Finish `.gitignore`.
-- [ ] Commit the STM32 HAL baseline.
-- [ ] Create `AI_BUILD_GUIDE.md`.
-- [ ] Create the docs skeleton.
-- [ ] Create the ChatGPT Project instruction prompt.
-- [ ] Commit documentation.
-- [ ] Add `configs/`, `scripts/`, and `tests/`.
-- [ ] Implement `experiment.py status`.
-- [ ] Add unit tests for config loading.
-- [ ] Add manifest creation.
-- [ ] Add unit tests for manifest creation.
-- [ ] Only then automate build, flash, and UART capture.
-
-## Current Rule
-
-Do not start wolfBoot, MQTT, TLS, PQC, or network impairment until the baseline framework exists and has tests.

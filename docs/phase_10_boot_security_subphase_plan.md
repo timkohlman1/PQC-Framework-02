@@ -235,7 +235,7 @@ Adapt the upstream wolfBoot STM32L4 support so the framework can build wolfBoot 
 
 ---
 
-## Phase 10g — Signing Key and Image-Signing Workflow
+## Phase 10g — Signing Key and Image-Signing Workflow - competed 29/6
 
 ### Goal
 
@@ -259,7 +259,7 @@ Add a safe signing workflow for the relocated application image.
 
 ---
 
-## Phase 10h — Flash wolfBoot and Signed Application
+## Phase 10h — Flash wolfBoot and Signed Application - completed 29/6
 
 ### Goal
 
