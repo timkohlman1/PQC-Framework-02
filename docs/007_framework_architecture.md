@@ -718,3 +718,31 @@ wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b
 ```
 
 This evidence is limited to local wolfBoot build production and artifact capture. It is not signing, flashing, UART, or secure-boot runtime evidence.
+
+
+## Phase 10g Application Image Signing Workflow
+
+Phase 10g adds a signing-only workflow for the relocated HAL application image. The signing profile lives at:
+
+```text
+configs/signing/wolfboot_ecdsa_p256_app.yaml
+```
+
+The CLI command is:
+
+```powershell
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+```
+
+The command loads and validates the signing profile, verifies the configured relocated application BIN exists or derives it from the configured relocated ELF with `arm-none-eabi-objcopy -O binary`, optionally invokes the configured wolfBoot key-generation command from the configured `tools/wolfboot` working directory when the local private key is missing, invokes the configured wolfBoot signing command from its configured working directory, and records signing evidence under:
+
+```text
+results/signing/<timestamp>_wolfboot_ecdsa_p256_app/
+  manifest.json
+  signing.log
+  application_signed.bin
+```
+
+The signing manifest records the profile ID, input ELF path, input image path and SHA-256, binary-conversion working directory and return code, signed image path and SHA-256, signature algorithm, signature size, image version, private-key path, whether the private key existed before the command, whether it was present after the command, key-generation and signing working directories and return codes, and a retained signed-image path when signing succeeds.
+
+The workflow is local-only. It does not flash hardware, open UART devices, use SSH, or claim secure-boot runtime success. Private signing keys are never copied into result directories.

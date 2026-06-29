@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. No application signing workflow, wolfBoot flashing workflow, or secure-boot UART evidence is implemented.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. Phase 10g adds a local-only application signing workflow. No wolfBoot flashing workflow, signed-application flashing workflow, or secure-boot UART evidence is implemented.
 
 ## 4. Hardware and Host Context
 
@@ -178,6 +178,8 @@ configs/
     wolfboot_ecdsa_p256.yaml
   builds/
     wolfboot_stm32l4_ecdsa_p256.yaml
+  signing/
+    wolfboot_ecdsa_p256_app.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -197,6 +199,7 @@ scripts/
     manifest.py
     source.py
     uart.py
+    signing.py
 ```
 
 Current test layout:
@@ -238,6 +241,7 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
 The `status` command loads the experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -446,6 +450,7 @@ tests/unit/test_fingerprint.py
 tests/unit/test_flash.py
 tests/unit/test_source.py
 tests/unit/test_uart.py
+tests/unit/test_signing.py
 ```
 
 These tests validate the initial config loader, config resolution, required-field checks, ID mismatch handling, status-summary no-hardware/no-network behaviour, run ID generation, manifest field generation, result-folder creation, build command construction, and build-result handling.
@@ -553,6 +558,8 @@ configs/
     wolfboot_ecdsa_p256.yaml
   builds/
     wolfboot_stm32l4_ecdsa_p256.yaml
+  signing/
+    wolfboot_ecdsa_p256_app.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -1114,6 +1121,7 @@ Current framework skeleton completed items:
 45. Add Phase 10e relocated HAL application build profile using `RelocatedDebug`, `STM32L4R5XX_FLASH_RELOCATED.ld`, and vector offset `0x00020100` while preserving the direct-flash `Debug` baseline.
 46. Add Phase 10f configurable wolfBoot build profile support with `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`, `scripts/framework/wolfboot_build.py`, and `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`. This captures wolfBoot build evidence only and does not sign images, flash hardware, capture UART, or claim secure-boot runtime success.
 47. Add Phase 10f.1 project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot`, the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`, generated local copy `tools/wolfboot/.config`, `STM32CUBE=../..`, Phase 10d partition values, target-only Cortex-M4/thumb/HAL/CMSIS compile settings, and STM32L4R5 MCU macro selection that undefines upstream `STM32L4A6xx` before defining `STM32L4R5xx`, decimal `IMAGE_HEADER_SIZE=256`, and a temporary MinGW host-keytools stdio compatibility patch and temporary STM32L4 HAL config PWR/PWREx include patch. The command can retain `wolfboot.elf` and record SHA-256 when the submodule and required toolchain are available.
+49. Add Phase 10g local-only ECDSA-P256 application signing workflow with `configs/signing/wolfboot_ecdsa_p256_app.yaml`, `scripts/framework/signing.py`, and `python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml`. This can generate or use a local private signing key under `secrets/wolfboot/`, converts the relocated ELF to a BIN when needed, signs the relocated application BIN, records signing evidence under `results/signing/`, and does not copy private keys into results, flash hardware, capture UART, or claim secure-boot runtime success.
 Current CLI commands are:
 
 ```powershell
@@ -1130,6 +1138,7 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
 Expected `status` behaviour:
@@ -1430,6 +1439,7 @@ Build wolfBoot through the Phase 10f build profile when local wolfBoot source an
 
 ```powershell
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
 Expected result: the command creates `results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/manifest.json` and `wolfboot_build.log`. If `tools/wolfboot` is absent, the command fails before invoking build tooling and records a clear missing-source result. If `make` or the configured executable is unavailable, it records a controlled missing-tool result. With upstream wolfBoot source present, the current default profile may still fail at STM32L4 HAL/CMSIS integration until the project-local STM32L4R5 target adaptation is implemented.
@@ -1779,6 +1789,7 @@ Manual wolfBoot build-profile command:
 
 ```powershell
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
 Expected result: the command records build evidence for success or failure. When `tools/wolfboot` is absent, it returns non-zero before invoking build tooling and records a clear missing-source result. When `make` or the configured executable is unavailable, it records a controlled missing-tool result. With upstream wolfBoot source present, the Phase 10f.1 profile supplies the required project HAL/CMSIS integration, target-only ARM compile settings, STM32L4R5 macro selection, decimal image-header size, and temporary MinGW host-keytools stdio compatibility patch and temporary STM32L4 HAL config PWR/PWREx include patch. A successful retained `wolfboot.elf` still depends on the local wolfBoot source revision and toolchain.
@@ -1832,6 +1843,7 @@ Manual wolfBoot build-profile command:
 
 ```powershell
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
 Expected result: when the `tools/wolfboot` submodule, required submodules, `make`, and ARM cross-toolchain are available, the command should produce and retain `wolfboot.elf` under `results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/` and record its SHA-256. If prerequisites are absent, the command records a controlled failure. A successful wolfBoot build still does not prove signing, flashing, UART boot, or secure-boot runtime success.
@@ -1850,3 +1862,39 @@ These observed failures and fixes should be preserved for future AI-assisted cha
 8. **Generated and temporary files must stay out of Git** — `tools/wolfboot/.config`, wolfBoot build outputs, private signing keys, and generated artifacts remain untracked. Temporary patches are applied and restored during `build-wolfboot`.
 
 Future AI changes should avoid removing these fixes unless a new wolfBoot version or a deliberate target strategy change makes them unnecessary and that decision is documented.
+
+
+## Phase 10g Signing Key and Image-Signing Workflow
+
+Implemented scope:
+
+- Added `configs/signing/wolfboot_ecdsa_p256_app.yaml` as the signing-only profile for the relocated HAL application image.
+- Added `scripts/framework/signing.py` to construct and run configured local key-generation and image-signing commands through an injectable runner.
+- Added `python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml`.
+- The command expects the relocated application ELF at `build/RelocatedDebug/stm32_basic_hal1.elf` and signs `build/RelocatedDebug/stm32_basic_hal1.bin`. If the BIN is absent, it invokes the configured `arm-none-eabi-objcopy -O binary` conversion command before signing.
+- The default private key location is `secrets/wolfboot/ecdsa_p256_private_key.der`.
+- The command may generate the local ECDSA-P256 private key when absent by invoking the configured wolfBoot key-generation command from the configured `tools/wolfboot` working directory because wolfBoot keygen writes `src/keystore.c` relative to the wolfBoot source tree.
+- Private key material remains local and is not copied into `results/`, replacement artifacts, or documentation.
+- Signing evidence is recorded under `results/signing/<timestamp>_wolfboot_ecdsa_p256_app/` with `manifest.json`, `signing.log`, and retained `application_signed.bin` when signing succeeds.
+- Signing metadata includes input ELF path, input image path and SHA-256, binary-conversion working directory and return code, signed image path and SHA-256, signature algorithm, signature size, image version, private-key path, private-key presence booleans, key-generation and signing working directories and return codes, and retained signed-image path.
+- `.gitignore` excludes `secrets/wolfboot/` and generated signed images under `build/`.
+- Unit tests cover command construction, key generation, signing metadata, existing-key handling, missing input handling, disabled-keygen missing-key handling, and signing profile validation without invoking real wolfBoot tooling.
+
+Not implemented in Phase 10g:
+
+- wolfBoot flashing
+- signed-application flashing
+- UART boot evidence
+- secure-boot runtime success claims
+- negative corrupted-image boot tests
+- boot timing instrumentation
+
+Manual signing verification command:
+
+```powershell
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+```
+
+Expected result: when the relocated build artifact, local wolfBoot keytools, and required toolchain are available, the command should produce signing evidence under `results/signing/` and retain `application_signed.bin`. If prerequisites are absent, the command records a controlled failure. A successful signing result still does not prove flashing, UART boot, or secure-boot runtime success.

@@ -45,6 +45,13 @@ __pycache__/
 .coverage
 htmlcov/
 
+
+# Phase 10g local application-signing by-products
+# Private keys stay local. Signed images are generated artifacts.
+secrets/wolfboot/
+build/**/*_signed.bin
+build/**/*_v*_signed.bin
+
 # wolfBoot generated outputs from local source-tree builds
 # Do not store private wolfBoot signing keys in Git.
 tools/wolfboot/**/*.o

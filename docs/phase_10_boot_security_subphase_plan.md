@@ -43,7 +43,7 @@ Introduce boot mode as a first-class configuration concept without changing runt
 
 ---
 
-## Phase 10b — Add Planned wolfBoot Boot Config Placeholder
+## Phase 10b — Add Planned wolfBoot Boot Config Placeholder - COMPLETED 27/6
 
 ### Goal
 
@@ -71,7 +71,7 @@ Add a planned wolfBoot boot-profile config without enabling or implementing wolf
 
 ---
 
-## Phase 10c — wolfBoot STM32L4 Target Support Assessment
+## Phase 10c — wolfBoot STM32L4 Target Support Assessment - COMPLETED 29/6
 
 ### Goal
 
@@ -106,7 +106,7 @@ Produce a documented technical decision on whether wolfBoot already supports a s
 
 ---
 
-## Phase 10d — Define Secure-Boot Flash Layout
+## Phase 10d — Define Secure-Boot Flash Layout - COMPLETED 29/6
 
 ### Goal
 
@@ -140,7 +140,7 @@ Define the initial wolfBoot flash memory layout as a documented project decision
 
 ---
 
-## Phase 10e — Relocate HAL Application for Bootloader Launch
+## Phase 10e — Relocate HAL Application for Bootloader Launch  - COMPLETED 29/6
 
 ### Goal
 
@@ -203,7 +203,7 @@ Add framework support for invoking a wolfBoot build profile and capturing wolfBo
 
 ---
 
-## Phase 10f.1 — Project-Local wolfBoot STM32L4R5 Target Adaptation
+## Phase 10f.1 — Project-Local wolfBoot STM32L4R5 Target Adaptation - completed 29/6
 
 ### Goal
 

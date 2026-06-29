@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Image signing, wolfBoot flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable.
+- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Phase 10g adds a local-only relocated-application signing workflow. wolfBoot flashing, signed-application flashing, MQTT, TLS, PQC, network-degradation automation, and secure-boot UART evidence are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable.
 
 ## AI-assisted development
 
@@ -438,3 +438,24 @@ The profile copies `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolf
 The project-local adaptation also preserves the STM32L4R5-specific fixes discovered during local builds: STM32L4R5 MCU macro selection, decimal `IMAGE_HEADER_SIZE=256`, target-only Cortex-M4/thumb flags, temporary Windows/MinGW host-keytools compatibility patching, and temporary STM32L4 PWR/PWREx HAL config patching. These temporary patches are restored after the build so the wolfBoot submodule is not intentionally left dirty.
 
 This remains build-only evidence. Producing and hashing `wolfboot.elf` does not generate durable signing keys, sign an application image, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+
+
+## Phase 10g application signing
+
+Phase 10g adds a local signing workflow for the relocated HAL application image:
+
+```powershell
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+```
+
+The default profile signs `build/RelocatedDebug/stm32_basic_hal1.bin` with ECDSA-P256 using a local private key under `secrets/wolfboot/`. If the relocated BIN is absent but `build/RelocatedDebug/stm32_basic_hal1.elf` exists, the workflow first invokes the configured `arm-none-eabi-objcopy -O binary` conversion command. If the key is absent, the workflow can invoke the configured wolfBoot key-generation command from the `tools/wolfboot` working directory because wolfBoot keygen writes `src/keystore.c` relative to that directory. The default profile provides the explicit `Yes` stdin confirmation needed when regenerating wolfBoot's generated `src/keystore.c`; stdin remains closed for commands without configured stdin. The private key remains local and is not copied into `results/`.
+
+Signing evidence is recorded under:
+
+```text
+results/signing/<timestamp>_wolfboot_ecdsa_p256_app/
+```
+
+Expected evidence includes `manifest.json`, `signing.log`, and the retained signed image `application_signed.bin` when signing succeeds. This is not a flashing workflow and is not secure-boot UART evidence.

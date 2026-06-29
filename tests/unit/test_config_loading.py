@@ -280,3 +280,51 @@ def test_planned_wolfboot_flash_layout_metadata_is_loadable_for_inspection(tmp_p
     assert layout["wolfboot_partition_boot_address"] == "0x08020000"
     assert layout["wolfboot_partition_update_address"] == "0x08100000"
     assert layout["wolfboot_partition_swap_address"] == "0x081E0000"
+
+
+
+def test_application_signing_profile_is_loadable(tmp_path):
+    experiment_cli = load_experiment_module()
+
+    config_path = tmp_path / "wolfboot_ecdsa_p256_app.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "id: wolfboot_ecdsa_p256_app",
+                "description: Test signing profile.",
+                "input_elf: build/RelocatedDebug/stm32_basic_hal1.elf",
+                "input_image: build/RelocatedDebug/stm32_basic_hal1.bin",
+                "signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                "signature_algorithm: ecdsa_p256",
+                "signature_size_bytes: 64",
+                "image_version: 1",
+                "private_key: secrets/wolfboot/ecdsa_p256_private_key.der",
+                "binary_conversion:",
+                "  enabled: true",
+                "  command: arm-none-eabi-objcopy",
+                "  args: \"-O binary {input_elf} {input_image}\"",
+                "keygen:",
+                "  enabled: true",
+                "  working_dir: tools/wolfboot",
+                "  command: tools/keytools/keygen",
+                "  args: \"--ecc256 -g {private_key}\"",
+                "sign:",
+                "  working_dir: tools/wolfboot",
+                "  command: tools/keytools/sign",
+                "  args: \"--ecc256 {input_image} {private_key} {image_version}\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = experiment_cli.load_config(config_path)
+    experiment_cli.validate_application_signing_profile_config(config)
+
+    assert config["id"] == "wolfboot_ecdsa_p256_app"
+    assert config["signature_algorithm"] == "ecdsa_p256"
+    assert config["binary_conversion"]["enabled"] is True
+    assert config["keygen"]["enabled"] is True
+    assert config["keygen"]["working_dir"] == "tools/wolfboot"
+    assert config["sign"]["working_dir"] == "tools/wolfboot"
+    assert config["sign"]["command"] == "tools/keytools/sign"

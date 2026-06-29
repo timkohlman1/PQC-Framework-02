@@ -365,3 +365,71 @@ def test_validate_boot_config_still_rejects_planned_flash_layout_for_execution()
 
     with pytest.raises(experiment_cli.ConfigError, match="planned and not runnable"):
         experiment_cli.validate_boot_config(config)
+
+
+
+def test_validate_application_signing_profile_rejects_wrong_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_test_signing",
+        "description": "Invalid signing profile.",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "signature_algorithm": "ed25519",
+        "image_version": 1,
+        "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
+        "sign": {
+            "command": "tools/wolfboot/tools/keytools/sign",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256"):
+        experiment_cli.validate_application_signing_profile_config(config)
+
+
+def test_validate_application_signing_profile_requires_keygen_command_when_enabled():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_test_signing",
+        "description": "Invalid signing profile.",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "signature_algorithm": "ecdsa_p256",
+        "image_version": 1,
+        "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
+        "keygen": {
+            "enabled": True,
+        },
+        "sign": {
+            "command": "tools/wolfboot/tools/keytools/sign",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="keygen.command"):
+        experiment_cli.validate_application_signing_profile_config(config)
+
+
+def test_validate_application_signing_profile_requires_binary_conversion_command_when_enabled():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_test_signing",
+        "description": "Invalid signing profile.",
+        "input_elf": "build/RelocatedDebug/stm32_basic_hal1.elf",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "signature_algorithm": "ecdsa_p256",
+        "image_version": 1,
+        "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
+        "binary_conversion": {
+            "enabled": True,
+        },
+        "sign": {
+            "command": "tools/wolfboot/tools/keytools/sign",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="binary_conversion.command"):
+        experiment_cli.validate_application_signing_profile_config(config)

@@ -10,6 +10,7 @@ The initial supported commands are:
     python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
+    python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
@@ -50,6 +51,7 @@ from framework.flash import execute_flash
 from framework.manifest import create_result_folder, read_manifest, update_manifest
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 from framework.wolfboot_build import execute_wolfboot_build
+from framework.signing import execute_application_signing
 
 
 class ConfigError(Exception):
@@ -240,6 +242,63 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
             "wolfBoot build profile must set both build.config_template and "
             "build.generated_config, or neither"
         )
+
+
+def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
+    """Validate required fields for an application-signing profile config."""
+
+    required_fields = [
+        "id",
+        "description",
+        "input_image",
+        "signed_image",
+        "signature_algorithm",
+        "private_key",
+        "image_version",
+        "sign.command",
+    ]
+
+    for field in required_fields:
+        require_field(config, field, "application signing profile")
+
+    if require_field(config, "signature_algorithm", "application signing profile") != "ecdsa_p256":
+        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256 for Phase 10g")
+
+    sign_config = config.get("sign")
+    if not isinstance(sign_config, dict):
+        raise ConfigError("application signing profile sign field must be a mapping")
+
+    keygen_config = config.get("keygen", {})
+    if keygen_config is None:
+        keygen_config = {}
+    if not isinstance(keygen_config, dict):
+        raise ConfigError("application signing profile keygen field must be a mapping")
+
+    binary_conversion_config = config.get("binary_conversion", {})
+    if binary_conversion_config is None:
+        binary_conversion_config = {}
+    if not isinstance(binary_conversion_config, dict):
+        raise ConfigError("application signing profile binary_conversion field must be a mapping")
+
+    if keygen_config.get("enabled") is True:
+        require_field(config, "keygen.command", "application signing profile")
+
+    if binary_conversion_config.get("enabled") is True:
+        require_field(config, "input_elf", "application signing profile")
+        require_field(config, "binary_conversion.command", "application signing profile")
+
+
+def repo_root_from_signing_profile_path(profile_path: Path | str) -> Path:
+    """Resolve the repository root from configs/signing/<name>.yaml."""
+
+    resolved_path = Path(profile_path).resolve()
+    if resolved_path.parent.name != "signing":
+        raise ConfigError(
+            "application signing profile must live under configs/signing/ for automatic repository resolution"
+        )
+
+    configs_root = resolved_path.parent.parent
+    return configs_root.parent
 
 
 def repo_root_from_build_profile_path(profile_path: Path | str) -> Path:
@@ -1314,6 +1373,42 @@ def run_wolfboot_build_command(args: argparse.Namespace) -> int:
 
     return result.return_code
 
+
+def run_sign_application_command(args: argparse.Namespace) -> int:
+    """Run a configured local application-signing profile without flashing or UART access."""
+
+    profile = load_config(args.profile)
+    validate_application_signing_profile_config(profile)
+    repo_root = repo_root_from_signing_profile_path(args.profile)
+
+    result = execute_application_signing(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=args.results_dir,
+    )
+
+    print("Application signing completed" if result.return_code == 0 else "Application signing failed")
+    print("-----------------------------" if result.return_code == 0 else "--------------------------")
+    print(f"Profile: {result.profile_id}")
+    print(f"Result directory: {result.result_dir}")
+    print(f"Signing log: {result.log_path}")
+    print(f"Input image: {result.input_image_path}")
+    print(f"Signed image: {result.signed_image_path}")
+    print(f"Signature algorithm: {result.signature_algorithm}")
+    print(f"Image version: {result.image_version}")
+    print(f"Private key path: {result.private_key_path}")
+    print(f"Private key present after command: {result.private_key_present_after}")
+    if result.signed_image_sha256 is not None:
+        print(f"Signed image SHA-256: {result.signed_image_sha256}")
+    if result.retained_signed_image_path is not None:
+        print(f"Retained signed image: {result.retained_signed_image_path}")
+    if result.failure_reason is not None:
+        print(f"Failure reason: {result.failure_reason}")
+    print(f"Return code: {result.return_code}")
+    print("No private signing key was copied into results. No flash, UART access, SSH, hardware access, or network access was performed.")
+
+    return result.return_code
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
 
@@ -1533,6 +1628,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory where wolfBoot build evidence folders are created.",
     )
     wolfboot_build_parser.set_defaults(func=run_wolfboot_build_command)
+
+    sign_application_parser = subparsers.add_parser(
+        "sign-application",
+        help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
+    )
+    sign_application_parser.add_argument(
+        "--profile",
+        required=True,
+        type=Path,
+        help="Path to an application-signing YAML config under configs/signing/.",
+    )
+    sign_application_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where signing evidence folders are created.",
+    )
+    sign_application_parser.set_defaults(func=run_sign_application_command)
 
     monitor_parser = subparsers.add_parser(
         "monitor",
