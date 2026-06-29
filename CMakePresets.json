@@ -6,9 +6,8 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "cacheVariables": {
-            }
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {}
         },
         {
             "name": "Debug",
@@ -23,6 +22,16 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "RelocatedDebug",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "STM32_LINKER_SCRIPT": "${sourceDir}/STM32L4R5XX_FLASH_RELOCATED.ld",
+                "STM32_APP_VECTOR_OFFSET": "0x00020100"
+            }
         }
     ],
     "buildPresets": [
@@ -33,6 +42,10 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "RelocatedDebug",
+            "configurePreset": "RelocatedDebug"
         }
     ]
 }

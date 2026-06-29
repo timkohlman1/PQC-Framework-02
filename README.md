@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source, image signing, linker relocation, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout, but it does not relocate, build, sign, flash, or validate wolfBoot at runtime.
+- wolfBoot source, image signing, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet. Phase 10c documents that existing upstream STM32L4 wolfBoot support is the closest starting point and that this project needs a project-local STM32L4R5 target adaptation/configuration before wolfBoot can be built or treated as runnable. Phase 10d documents the planned STM32L4R5 secure-boot flash layout. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address, but it does not sign, flash, or validate wolfBoot at runtime.
 
 ## AI-assisted development
 
@@ -122,7 +122,7 @@ results/builds/<build_number>/
 
 The build command runs the CMake configure and build presets, captures stdout, stderr, return codes, build duration, the expected output ELF path, the firmware artifact SHA-256 after a successful build, and local Git source-control provenance. It increments the local `.build_number` counter when a build-producing workflow starts, records `build_number` in the compatibility run manifest, copies the built ELF into both the run-result directory and build-record directory as `firmware.elf`, and copies `firmware.hex` or `firmware.bin` when matching build outputs exist. Missing HEX/BIN files are recorded as absent optional artifacts rather than treated as build failures. It records build metadata, artifact provenance, source provenance, and `build.record_path` / `build.record_manifest` links in the run manifest. When a rebuild is skipped, the command still creates a result directory, writes `build.log`, copies the existing ELF into the result directory as `firmware.elf`, records `result: build_skipped`, records `build.skipped`, `build.skip_reason`, `build.skip_detail`, and `build.force` in `manifest.json`, and creates or refreshes the referenced build-record directory for compatibility when a build number is available from local state.
 
-The build command also records a deterministic build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The Phase 10a input set covers the resolved experiment, board, host, and boot configuration files plus `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`. Generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts remain excluded.
+The build command also records a deterministic build input fingerprint under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The build input fingerprint remains unchanged in Phase 10e because the relocated build is verified through an explicit local CMake preset rather than through the experiment build workflow. Generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts remain excluded.
 
 After a successful build, the framework updates the generated repository-local `.last_successful_build.json` state file. This state records the latest successful build fingerprint, fingerprint algorithm and inputs, successful return code, build number, run ID, configured artifact path, firmware SHA-256, and copied result-artifact metadata. It is generated local state and is not intended for Git. The build workflow uses this state to skip CMake configure/build only when the current build fingerprint matches the last successful build fingerprint, the expected ELF exists, and `--force` is not supplied. Missing state, invalid state, changed fingerprints, missing ELF output, failed prior-build state, or `--force` all preserve normal rebuild behaviour. Flash provenance continues to use explicit build-run manifests rather than this local state.
 
@@ -276,6 +276,28 @@ Decision summary:
 
 No linker script, vector-table configuration, firmware build, signing key, wolfBoot build, flash workflow, or runtime behaviour is changed by Phase 10d.
 
+## Phase 10e relocated HAL application build profile
+
+Phase 10e adds a build-only relocated HAL application profile for the planned wolfBoot primary signed-application slot. The direct-flash `Debug` preset remains the known-good baseline. The relocated profile uses:
+
+```text
+CMake configure preset: RelocatedDebug
+CMake build preset: RelocatedDebug
+Linker script: STM32L4R5XX_FLASH_RELOCATED.ld
+Application vector table / reset entry: 0x08020100
+Vector table offset from FLASH_BASE: 0x00020100
+```
+
+Manual build verification command:
+
+```powershell
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
+```
+
+Expected result: CMake configure/build returns success and `Test-Path` prints `True`. This verifies only that the relocated application builds locally. Do not flash this ELF as a working secure-boot image and do not claim boot success unless UART logs from a later wolfBoot flashing workflow confirm the expected boot evidence.
+
 ## Tests
 
 Run the full test suite from the repository root:
@@ -359,4 +381,4 @@ A planned wolfBoot placeholder also exists:
 configs/boot/wolfboot_ecdsa_p256.yaml
 ```
 
-This profile records the intended boot mode name, ECDSA-P256 signature algorithm, and the Phase 10d planned secure-boot flash layout. It is marked `runnable: false`, `status: planned`, and `flash_layout_status: defined_phase_10d_planned_not_implemented`. The config can be loaded for inspection, but execution-oriented experiment workflows reject it. It must not be used as evidence that wolfBoot source, linker relocation, signing, flashing, or UART boot validation is implemented.
+This profile records the intended boot mode name, ECDSA-P256 signature algorithm, and the Phase 10d planned secure-boot flash layout. It is marked `runnable: false`, `status: planned`, and `flash_layout_status: defined_phase_10d_planned_not_implemented`. The config can be loaded for inspection, but execution-oriented experiment workflows reject it. It must not be used as evidence that wolfBoot source, signing, flashing, or UART boot validation is implemented. Phase 10e records the build-only relocated HAL application profile, but the profile remains non-runnable.

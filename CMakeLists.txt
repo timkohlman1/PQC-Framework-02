@@ -28,6 +28,29 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
+# Select the linker script and vector-table offset for the requested build profile.
+#
+# The default Debug/Release presets keep the CubeMX direct-flash layout at
+# 0x08000000. The RelocatedDebug preset overrides these cache variables to build
+# the HAL application for wolfBoot handoff at 0x08020100.
+set(STM32_LINKER_SCRIPT
+    "${CMAKE_SOURCE_DIR}/STM32L4R5XX_FLASH.ld"
+    CACHE FILEPATH
+    "Linker script used for this STM32 firmware build"
+)
+set(STM32_APP_VECTOR_OFFSET
+    "0x00000000"
+    CACHE STRING
+    "Vector table offset from FLASH_BASE for this STM32 firmware build"
+)
+
+if(NOT EXISTS "${STM32_LINKER_SCRIPT}")
+    message(FATAL_ERROR "STM32 linker script not found: ${STM32_LINKER_SCRIPT}")
+endif()
+
+message("STM32 linker script: " ${STM32_LINKER_SCRIPT})
+message("STM32 vector table offset: " ${STM32_APP_VECTOR_OFFSET})
+
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
@@ -54,8 +77,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    USER_VECT_TAB_ADDRESS
+    VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
 )
+
+# The selected STM32 linker script is consumed by cmake/gcc-arm-none-eabi.cmake.
+# Keep linker-script selection in one place so the direct-flash and relocated
+# presets do not pass duplicate -T options to the linker.
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

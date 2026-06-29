@@ -264,7 +264,7 @@ When a build-producing workflow starts, the framework increments the local repos
 
 After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in the compatibility run manifest, in the build-record manifest, and as `Output ELF SHA-256` in `build.log`. It copies the ELF into the compatibility result directory and the build-record directory as `firmware.elf`, and records copied artifact metadata under `firmware.result_artifacts`. If sibling `.hex` or `.bin` outputs exist, they are copied as `firmware.hex` and `firmware.bin`; if they do not exist, the manifests record them as absent optional artifacts. This gives the built firmware artifact a stable identity even though the build output path stays the same across builds.
 
-The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 10a input set covers the resolved experiment, board, host, and boot configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
+The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The build input fingerprint remains unchanged in Phase 10e because the relocated build is verified through an explicit local CMake preset rather than through the experiment build workflow.
 
 The fingerprint intentionally excludes generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts. If a required fingerprint input is missing, the build fails before CMake runs and records the fingerprint error in `build.log` and `manifest.json`.
 
@@ -292,6 +292,7 @@ The decision is:
 - Do not treat the upstream STM32L4 example as directly runnable on the NUCLEO-L4R5ZI-P / STM32L4R5 board.
 - Create a project-local STM32L4R5 target configuration or adaptation before attempting a wolfBoot build.
 - Define the STM32L4R5 secure-boot flash layout in Phase 10d before linker relocation.
+- Relocate the HAL application build in Phase 10e before adding wolfBoot build, signing, or two-artifact flashing.
 
 Compatibility concerns recorded by the decision include flash size, flash page/sector layout, vector-table and image-header offset expectations, bootloader location, application offset, ECDSA-P256 signing support, and wolfBoot build/toolchain assumptions.
 
@@ -329,6 +330,20 @@ The selected primary signed application slot starts at `0x08020000`. The later r
 The planned wolfBoot boot config records this metadata under `secure_boot_layout`, but remains non-runnable. Execution-oriented workflows still reject it before build, flash, UART, SSH, or hardware-facing actions.
 
 No linker script relocation, vector-table update, wolfBoot source, wolfBoot build, signing workflow, wolfBoot flashing, or secure-boot UART evidence is implemented by Phase 10d.
+
+### Phase 10e relocated HAL application build profile
+
+Phase 10e adds a build-only relocated HAL application profile while preserving the direct-flash baseline. The default `Debug` preset continues to use `STM32L4R5XX_FLASH.ld` and vector offset `0x00000000`. The opt-in `RelocatedDebug` preset uses `STM32L4R5XX_FLASH_RELOCATED.ld` and vector offset `0x00020100`, placing the application vector table and reset entry at `0x08020100` inside the planned primary signed-application slot.
+
+Verification is local-build-only at this phase:
+
+```powershell
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
+```
+
+This does not implement wolfBoot source, image signing, signed-image flashing, or UART boot evidence. The planned wolfBoot profile remains `runnable: false`.
 
 ## Integration Test Support
 
@@ -636,4 +651,4 @@ Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile
 
 The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
 
-Phase 10d defines the planned secure-boot flash layout for this profile. No wolfBoot source, signing workflow, linker relocation, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b, Phase 10c, or Phase 10d. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot. Phase 10d adds only the documented memory map and planned config metadata.
+Phase 10d defines the planned secure-boot flash layout for this profile. No wolfBoot source, signing workflow, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b, Phase 10c, Phase 10d, or Phase 10e. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before building wolfBoot. Phase 10d adds only the documented memory map and planned config metadata. Phase 10e adds only the local relocated HAL build profile and related metadata.

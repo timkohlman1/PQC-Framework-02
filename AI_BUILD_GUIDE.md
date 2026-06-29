@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile, but no linker relocation, wolfBoot build, signing workflow, flashing workflow, or secure-boot UART evidence is implemented.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address, but no wolfBoot build, signing workflow, flashing workflow, or secure-boot UART evidence is implemented.
 
 ## 4. Hardware and Host Context
 
@@ -863,7 +863,7 @@ The current fingerprint algorithm is:
 sha256-build-inputs-v1
 ```
 
-The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The Phase 9a input set covers the resolved experiment, board, host, and boot configuration files plus the required firmware and build inputs: `Core/`, `Drivers/`, `CMakeLists.txt`, `CMakePresets.json`, `cmake/`, `STM32L4R5XX_FLASH.ld`, `startup_stm32l4r5xx.s`, and `stm32_basic_hal1.ioc`.
+The aggregate fingerprint hashes a sorted list of repository-relative input paths and each file's content SHA-256. The build input fingerprint remains unchanged in Phase 10e because the relocated build is verified through an explicit local CMake preset rather than through the experiment build workflow.
 
 The fingerprint intentionally excludes `results/`, `build/`, `.venv/`, `.git/`, documentation-only files, and unrelated generated artifacts.
 
@@ -1103,6 +1103,7 @@ Current framework skeleton completed items:
 42. Add Phase 10b planned wolfBoot boot config placeholder at `configs/boot/wolfboot_ecdsa_p256.yaml`; it is loadable for inspection but marked `runnable: false` and rejected by execution-oriented workflows.
 43. Add Phase 10c wolfBoot STM32L4 target support assessment in `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md`; upstream STM32L4 support is the closest starting point, but STM32L4R5 requires a project-local target configuration or adaptation before wolfBoot is built or treated as runnable.
 44. Add Phase 10d secure-boot flash layout decision in `docs/decisions/0003_secure_boot_flash_layout.md`; `configs/boot/wolfboot_ecdsa_p256.yaml` now records the planned STM32L4R5 layout metadata while remaining non-runnable.
+45. Add Phase 10e relocated HAL application build profile using `RelocatedDebug`, `STM32L4R5XX_FLASH_RELOCATED.ld`, and vector offset `0x00020100` while preserving the direct-flash `Debug` baseline.
 Current CLI commands are:
 
 ```powershell
@@ -1267,7 +1268,7 @@ Expected `build-flash` behaviour:
 
 Immediate next intended steps after this change:
 
-1. Review the Phase 10d secure-boot flash layout decision and confirm the `0x08020000` primary signed-application slot direction is acceptable.
+1. Run the Phase 10e relocated local build verification command when the local STM32/CMake/Ninja toolchain is available.
 2. Run the unit tests.
 3. Run `python -m pytest` and confirm unavailable integration or hardware capabilities produce clear skips rather than environment-variable setup errors.
 4. Run the strict local-build integration check only when the local STM32/CMake/Ninja toolchain is expected to be available.
@@ -1646,6 +1647,42 @@ Not implemented in Phase 10d:
 - signed application flashing
 - wolfBoot UART evidence
 - secure-boot runtime success claims
+
+
+## Phase 10e Relocate HAL Application for Bootloader Launch
+
+Implemented scope:
+
+- Added the opt-in CMake configure/build preset `RelocatedDebug`.
+- Added `STM32L4R5XX_FLASH_RELOCATED.ld` for the relocated HAL application build.
+- The relocated linker script places the application vector table and reset entry at `0x08020100`, leaving the planned `0x100` wolfBoot image header at `0x08020000..0x080200FF`.
+- The relocated preset sets `STM32_APP_VECTOR_OFFSET` to `0x00020100`, which is passed into the existing `system_stm32l4xx.c` vector-table configuration path through `VECT_TAB_OFFSET`.
+- The default direct-flash `Debug` preset remains available and uses `STM32L4R5XX_FLASH.ld` with vector offset `0x00000000`.
+- `configs/boot/wolfboot_ecdsa_p256.yaml` records the relocated build metadata but remains `runnable: false`.
+- Unit tests cover the relocated CMake preset and linker-script address selection.
+
+Manual relocated-build verification command:
+
+```powershell
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
+```
+
+Expected result: the configure/build commands return success and `Test-Path` prints `True` when the local STM32/CMake/Ninja toolchain is available.
+
+Not implemented in Phase 10e:
+
+- wolfBoot source vendoring or submodule setup
+- wolfBoot build profile
+- signing-key generation
+- image signing
+- wolfBoot flashing
+- signed application flashing
+- wolfBoot UART evidence
+- secure-boot runtime success claims
+
+Hardware success must still only be claimed from user-provided logs.
 
 Risks and unresolved items:
 
