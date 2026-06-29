@@ -10,8 +10,9 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - Firmware can be flashed remotely through `pqc-gateway1`.
 - ST-LINK UART logging works.
 - The app prints a boot message and repeated `tick` messages.
-- The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit boot profile.
-- wolfBoot, MQTT, TLS, PQC, and network-degradation automation are not implemented yet.
+- The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
+- `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
+- wolfBoot source, image signing, linker relocation, wolfBoot flashing, MQTT, TLS, PQC, and network-degradation automation are not implemented yet.
 
 ## AI-assisted development
 
@@ -314,3 +315,11 @@ configs/boot/direct_flash.yaml
 ```json
 "boot_mode": "direct_flash"
 ```
+
+A planned wolfBoot placeholder also exists:
+
+```text
+configs/boot/wolfboot_ecdsa_p256.yaml
+```
+
+This profile records the intended boot mode name, ECDSA-P256 signature algorithm, and a planned signed-application slot concept. It is marked `runnable: false`, `status: planned`, and `flash_layout_status: not_confirmed`. The config can be loaded for inspection, but execution-oriented experiment workflows reject it. It must not be used as evidence that wolfBoot, a secure-boot flash layout, linker relocation, signing, flashing, or UART boot validation is implemented.

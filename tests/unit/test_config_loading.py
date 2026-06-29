@@ -184,4 +184,36 @@ def test_status_summary_states_no_hardware_actions(tmp_path):
     assert "Boot config: direct_flash" in summary
     assert "Boot mode: direct_flash" in summary
     assert "No build, flash, UART access, SSH, hardware access, or network access was performed." in summary
-    
+
+def test_planned_wolfboot_boot_config_is_loadable_for_inspection(tmp_path):
+    experiment_cli = load_experiment_module()
+
+    config_path = tmp_path / "wolfboot_ecdsa_p256.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "id: wolfboot_ecdsa_p256",
+                "mode: wolfboot_ecdsa_p256",
+                "description: Planned wolfBoot ECDSA-P256 placeholder.",
+                "runnable: false",
+                "status: planned",
+                "implementation_state: placeholder_only",
+                "intended_signature_algorithm: ecdsa_p256",
+                "application_slot_concept: planned_signed_application_slot",
+                "flash_layout_status: not_confirmed",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = experiment_cli.load_config(config_path)
+    experiment_cli.validate_boot_config_for_inspection(config)
+
+    assert config["id"] == "wolfboot_ecdsa_p256"
+    assert config["runnable"] is False
+    assert config["status"] == "planned"
+    assert config["intended_signature_algorithm"] == "ecdsa_p256"
+    assert config["application_slot_concept"] == "planned_signed_application_slot"
+    assert config["flash_layout_status"] == "not_confirmed"
+

@@ -206,8 +206,13 @@ def validate_host_config(config: dict[str, Any]) -> None:
 
 
 
-def validate_boot_config(config: dict[str, Any]) -> None:
-    """Validate required fields for a boot config schema."""
+def validate_boot_config_for_inspection(config: dict[str, Any]) -> None:
+    """Validate fields required to inspect any boot config.
+
+    Planned boot profiles use the same base schema as runnable profiles, but
+    they are allowed to set ``runnable: false`` so they can exist in Git without
+    being accepted by execution-oriented experiment workflows.
+    """
 
     required_fields = [
         "id",
@@ -219,8 +224,14 @@ def validate_boot_config(config: dict[str, Any]) -> None:
     for field in required_fields:
         require_field(config, field, "boot config")
 
+
+def validate_boot_config(config: dict[str, Any]) -> None:
+    """Validate a boot config for execution-oriented experiment workflows."""
+
+    validate_boot_config_for_inspection(config)
+
     if require_field(config, "runnable", "boot config") is not True:
-        raise ConfigError("boot config must be runnable for execution: runnable")
+        raise ConfigError("boot config is planned and not runnable for execution: runnable")
 
 
 def _configs_root_from_experiment_path(experiment_path: Path) -> Path:

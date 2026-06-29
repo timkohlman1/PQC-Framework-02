@@ -35,6 +35,7 @@ configs/
     gateway.yaml
   boot/
     direct_flash.yaml
+    wolfboot_ecdsa_p256.yaml  # planned, non-runnable placeholder
   experiments/
     baseline_direct_uart.yaml
 scripts/
@@ -578,4 +579,8 @@ The manifest records the resolved boot config mode as:
 boot_mode: direct_flash
 ```
 
-No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, or wolfBoot runtime claim is implemented in Phase 10a.
+Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile placeholder. It is intentionally marked `runnable: false` and `status: planned`. The placeholder records the intended boot mode name, intended ECDSA-P256 signature algorithm, a planned signed-application slot concept, and `flash_layout_status: not_confirmed`.
+
+The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
+
+No wolfBoot source, signing workflow, linker relocation, secure-boot flash layout, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b.

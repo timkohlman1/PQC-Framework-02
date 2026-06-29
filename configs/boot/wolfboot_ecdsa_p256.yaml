@@ -1,0 +1,10 @@
+id: wolfboot_ecdsa_p256
+mode: wolfboot_ecdsa_p256
+description: Planned wolfBoot ECDSA-P256 secure-boot profile placeholder. Not implemented or runnable.
+runnable: false
+status: planned
+implementation_state: placeholder_only
+intended_signature_algorithm: ecdsa_p256
+application_slot_concept: planned_signed_application_slot
+flash_layout_status: not_confirmed
+notes: Placeholder only. No wolfBoot source, linker relocation, signing workflow, flash layout, flashing workflow, or UART evidence is implemented.

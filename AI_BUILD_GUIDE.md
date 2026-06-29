@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit boot config `configs/boot/direct_flash.yaml`. It does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation.
 
 ## 4. Hardware and Host Context
 
@@ -175,6 +175,7 @@ configs/
     gateway.yaml
   boot/
     direct_flash.yaml
+    wolfboot_ecdsa_p256.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -544,6 +545,7 @@ configs/
     gateway.yaml
   boot/
     direct_flash.yaml
+    wolfboot_ecdsa_p256.yaml
   experiments/
     baseline_direct_uart.yaml
 ```
@@ -609,6 +611,19 @@ mode
 description
 runnable
 ```
+
+Planned boot profiles may include additional descriptive metadata, for example:
+
+```text
+status
+implementation_state
+intended_signature_algorithm
+application_slot_concept
+flash_layout_status
+notes
+```
+
+Execution-oriented experiment workflows require `runnable: true`. Planned boot configs such as `wolfboot_ecdsa_p256` may be loaded for inspection but must be rejected before build, flash, UART, SSH, or hardware-facing actions.
 
 Current optional host reset field used by `monitor --restart` when present:
 
@@ -1084,6 +1099,7 @@ Current framework skeleton completed items:
 39. Create first-class build result directories under `results/builds/<build_number>/` while preserving compatibility run-result directories.
 40. Allow `run --build-number <number>` to reuse an existing first-class build record after validating the record, retained artifact, artifact hash, and current source/build fingerprint.
 41. Add Phase 10a direct-flash boot config resolution through `configs/boot/direct_flash.yaml` without changing runtime behaviour or adding wolfBoot.
+42. Add Phase 10b planned wolfBoot boot config placeholder at `configs/boot/wolfboot_ecdsa_p256.yaml`; it is loadable for inspection but marked `runnable: false` and rejected by execution-oriented workflows.
 Current CLI commands are:
 
 ```powershell
@@ -1543,6 +1559,27 @@ Not implemented in Phase 10a:
 
 - wolfBoot build support
 - wolfBoot flash layout
+- linker relocation
+- image signing
+- wolfBoot flashing
+- wolfBoot UART evidence
+
+## Phase 10b Planned wolfBoot Boot Config Placeholder
+
+Implemented scope:
+
+- `configs/boot/wolfboot_ecdsa_p256.yaml` exists as a planned, inactive boot profile.
+- The planned profile records `mode: wolfboot_ecdsa_p256`, `runnable: false`, `status: planned`, intended ECDSA-P256 signature metadata, a planned signed-application slot concept, and `flash_layout_status: not_confirmed`.
+- The planned profile avoids claiming a final flash layout.
+- The direct-flash baseline remains unchanged and continues to reference `direct_flash`.
+- Boot config validation distinguishes inspection from execution: planned configs can be schema-validated for inspection, but execution-oriented experiment bundle loading rejects non-runnable boot configs.
+- Unit tests cover planned wolfBoot config inspection and execution rejection.
+
+Not implemented in Phase 10b:
+
+- wolfBoot source
+- wolfBoot target support
+- secure-boot flash layout
 - linker relocation
 - image signing
 - wolfBoot flashing
