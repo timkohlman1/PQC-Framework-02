@@ -521,6 +521,7 @@ The current hardware test is:
 
 ```text
 tests/hardware/test_baseline_uart.py
+tests/hardware/test_secure_boot_flash_workflow.py
 ```
 
 These may:
@@ -539,10 +540,17 @@ Hardware tests must remain marked separately and must skip cleanly when required
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
 ```
 
+The Phase 10h secure-boot workflow hardware test runs only when the `local_toolchain`, `gateway`, `flash_helper`, and `uart_device` capability probes pass and the local `tools/wolfboot/wolfboot.elf` artifact already exists. It builds the relocated application, signs it, flashes wolfBoot plus the signed application, captures UART, and verifies the normal boot/tick markers. It does not prove wolfBoot-mediated boot-path identity; Phase 10i adds the distinct marker required for that evidence.
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
+```
+
 Strict hardware mode turns missing expected hardware capabilities into failures:
 
 ```powershell
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 ```
 
 ## 10. Configuration Model
@@ -1338,6 +1346,7 @@ Implemented scope:
 - Added `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` as the explicit Phase 10h wolfBoot flash experiment profile.
 - Added `scripts/framework/secure_boot_flash.py` for the two-artifact flash workflow. Unit tests use injected command runners and do not require SSH, UART, gateway access, or STM32 hardware.
 - Added `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`.
+- Added `tests/hardware/test_secure_boot_flash_workflow.py` as a capability-gated Phase 10h hardware workflow test that runs the relocated build, application signing, two-artifact secure-boot flash, and UART marker check when the required local toolchain, gateway, flash helper, UART device, and prebuilt wolfBoot artifact are available.
 - The command stages and flashes the configured wolfBoot bootloader artifact first, then stages and flashes the configured signed application image.
 - The command records the wolfBoot artifact path, signed application artifact path, SHA-256 values, configured flash offsets, remote staging paths, SCP return codes, helper return codes, ST-LINK serial, Git source provenance, and a `secure_boot_flash.log` file in the run result directory.
 - The command captures UART by default after successful two-artifact flashing and records UART marker evaluation in `uart.log` and `manifest.json`.
@@ -1357,6 +1366,13 @@ Manual Phase 10h command:
 
 ```powershell
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+```
+
+Phase 10h hardware workflow test:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 ```
 
 Expected result: when `tools/wolfboot/wolfboot.elf`, `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin`, the gateway, flash helper, ST-LINK, and board are intentionally available, the command creates a normal result run directory containing `manifest.json`, `secure_boot_flash.log`, `uart.log`, and `notes.md`. Hardware success must still only be claimed from user-provided logs. A successful Phase 10h run does not by itself prove wolfBoot-mediated boot-path identity.
@@ -1494,10 +1510,17 @@ Run the baseline UART hardware test with automatic capability checks:
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware
 ```
 
+Run the Phase 10h secure-boot build/sign/flash/UART hardware workflow test with automatic capability checks:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
+```
+
 Require hardware/UART capability to be present, failing rather than skipping if it is missing:
 
 ```powershell
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 ```
 
 Flash current firmware manually:

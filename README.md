@@ -374,6 +374,7 @@ Useful focused runs:
 python -m pytest tests/unit
 python -m pytest tests/integration -m integration
 python -m pytest tests/hardware -m hardware
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
 ```
 
 The local build integration test runs automatically only when the local STM32/CMake/Ninja build capability is detected. It does not flash hardware, open UART devices, use SSH, or touch network resources.
@@ -381,6 +382,8 @@ The local build integration test runs automatically only when the local STM32/CM
 The gateway flash integration test runs automatically only when the local build capability, SSH gateway, and configured gateway flash helper are detected. It performs a real build and then flashes the verified build through the gateway.
 
 The baseline UART hardware test runs automatically only when the SSH gateway and configured ST-LINK VCP UART device are detected. It captures real UART output through the configured gateway device.
+
+The Phase 10h secure-boot hardware workflow test runs automatically only when the local build toolchain, SSH gateway, configured flash helper, and configured ST-LINK VCP UART device are detected, and when the local `tools/wolfboot/wolfboot.elf` artifact already exists. It runs the relocated build, signs the application, flashes wolfBoot plus the signed application, captures UART, and validates the normal boot/tick markers. It does not prove wolfBoot-mediated boot-path identity; Phase 10i adds the distinct UART marker required for that evidence.
 
 ## Development rule
 
@@ -472,3 +475,15 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 The workflow flashes `tools/wolfboot/wolfboot.elf` at the configured wolfBoot bootloader offset, then flashes `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` at the configured signed-application slot offset. It records both artifact hashes, offsets, SCP/helper return codes, remote staging paths, and `secure_boot_flash.log` in the result directory.
 
 After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`. The workflow does not claim wolfBoot-mediated boot-path identity; Phase 10i remains responsible for adding a distinct UART marker for that evidence.
+
+The focused hardware workflow test for this path is:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware
+```
+
+Use strict mode when the gateway and board are expected to be present:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
+```
