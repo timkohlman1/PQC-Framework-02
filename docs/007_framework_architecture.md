@@ -888,3 +888,19 @@ Phase 11.3 extends `secure_boot_benchmark` with build-level metrics that can be 
 
 `secure_boot_benchmark.runtime_memory_metrics` remains unavailable until a later phase adds explicit firmware-side stack or heap evidence. Static RAM metrics are not treated as maximum stack usage or total runtime RAM pressure.
 
+## Phase 11.4 — Runtime Stack and Memory Metrics
+
+Phase 11.4 extends the secure-boot benchmark with explicit firmware-side runtime memory evidence. The temporary wolfBoot instrumentation used for local STM32L4R5 benchmark builds paints the available verification stack region before `wolfBoot_verify_authenticity()` runs, scans the sentinel after verification, and writes the measured maximum stack high-water value into the RAM2 mailbox. The relocated HAL application emits the parsed UART marker `wolfBoot verification max stack used: <bytes> bytes` after UART initialization.
+
+The manifest records available stack evidence under `uart`, top-level `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`. When static RAM metrics are available, `secure_boot_benchmark.runtime_memory_metrics.estimated_total_ram_pressure_bytes` is calculated as static RAM plus measured stack high-water usage. Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted and parsed.
+
+Runtime memory values are never inferred from host-side timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone. If the explicit stack marker is absent, the runtime memory fields remain null/unavailable and include a limitation note.
+
+## Phase 11.4 secure-boot artifact freshness evidence
+
+The Phase 11.4 secure-boot workflow now records evidence fingerprints for the secure-boot build/sign/flash chain separately from the existing direct-flash firmware build fingerprint. The direct-flash fingerprint remains scoped to the framework-managed CMake build and rebuild-skip workflow. Secure boot uses additional generated artifacts and tools, including the wolfBoot make build, the relocated CMake preset, the application signing profile, and the two-artifact flash workflow.
+
+The wolfBoot build manifest records a secure-boot input fingerprint over the configured wolfBoot build profile, project-local wolfBoot config template, framework wolfBoot build helper, and available wolfBoot source inputs. The application-signing manifest records a secure-boot input fingerprint over the signing profile, signing helper, and relocated application build inputs. The secure-boot flash manifest records workflow/artifact freshness evidence over the flash workflow plus secure-boot artifact producer inputs, including the wolfBoot build helper/profile, signing helper/profile, project-local wolfBoot config template, relocated application build inputs, and selected wolfBoot source files where present. It also records the SHA-256 values of the wolfBoot and signed-application artifacts being flashed.
+
+These fingerprints are evidence fields in this phase; `flash-secure-boot` records `artifact_freshness_status: recorded_not_enforced` and does not yet refuse stale artifacts. The secure-boot hardware workflow test cleans generated secure-boot outputs before rebuilding so test results are not dependent on stale local `build/` or `tools/wolfboot/` artifacts.
+

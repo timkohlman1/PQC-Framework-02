@@ -134,6 +134,10 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     private_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     input_elf.parent.mkdir(parents=True)
     input_elf.write_bytes(b"relocated app elf")
+    (repo_root / "scripts" / "framework").mkdir(parents=True)
+    (repo_root / "scripts" / "framework" / "signing.py").write_text("signing helper\n", encoding="utf-8")
+    (repo_root / "configs" / "signing").mkdir(parents=True)
+    (repo_root / "configs" / "signing" / "wolfboot_ecdsa_p256_app.yaml").write_text("profile\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     def fake_runner(command: list[str], cwd: Path, stdin_text: str | None = None):
@@ -188,10 +192,15 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert manifest["signing"]["input_image_sha256"] == expected_input_sha
     assert manifest["signing"]["binary_conversion_enabled"] is True
     assert manifest["signing"]["binary_conversion_return_code"] == 0
+    assert manifest["signing"]["fingerprint_status"] == "available"
+    assert len(manifest["signing"]["fingerprint"]) == 64
+    assert manifest["signing"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
+    assert "scripts/framework/signing.py" in manifest["signing"]["requested_fingerprint_inputs"]
     assert manifest["signing"]["signed_image_sha256"] == expected_signed_sha
     assert manifest["signing"]["key_material_copied_to_results"] is False
     assert not (result.result_dir / "ecdsa_p256_private_key.der").exists()
     assert "Private signing keys are local-only evidence inputs" in log_text
+    assert "Input fingerprint status: available" in log_text
 
 
 def test_execute_application_signing_uses_existing_private_key_without_keygen(tmp_path):

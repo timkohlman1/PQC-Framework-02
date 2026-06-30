@@ -542,3 +542,36 @@ def test_apply_repeated_run_samples_preserves_phase_11_3_static_metrics():
     assert updated["signed_artifact_metrics"]["unsigned_application_size_bytes"] == 500
     assert updated["signed_artifact_metrics"]["signed_image_overhead_bytes"] == 64
     assert updated["aggregate_statistics"]["sample_count"] == 1
+
+
+def test_build_secure_boot_benchmark_model_records_phase_11_4_runtime_stack_metrics():
+    manifest = load_manifest_module()
+
+    benchmark = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+        bootloader_text_bytes=300,
+        bootloader_data_bytes=40,
+        bootloader_bss_bytes=80,
+        bootloader_flash_bytes=340,
+        bootloader_static_ram_bytes=120,
+        static_metrics_source="wolfboot_elf_section_headers",
+        max_stack_used_bytes=2048,
+        stack_metric_source="uart_explicit_stack_high_water_marker",
+        runtime_memory_limitations="Stack evidence came from explicit firmware-side instrumentation.",
+    )
+
+    assert benchmark["model_phase"] == "phase_11_4_runtime_memory_metrics"
+    memory = benchmark["runtime_memory_metrics"]
+    assert memory["status"] == "available"
+    assert memory["unavailable"] is None
+    assert memory["max_stack_used_bytes"] == 2048
+    assert memory["stack_metric_source"] == "uart_explicit_stack_high_water_marker"
+    assert memory["heap_used_bytes"] is None
+    assert memory["heap_metric_source"] == "unavailable"
+    assert memory["static_ram_bytes"] == 120
+    assert memory["estimated_total_ram_pressure_bytes"] == 2168
+    assert "Runtime stack and heap metrics require explicit firmware-side measurement evidence" not in "\n".join(benchmark["limitations"])

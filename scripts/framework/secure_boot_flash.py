@@ -19,6 +19,11 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
+from framework.fingerprint import (
+    FingerprintInputError,
+    calculate_existing_inputs_fingerprint,
+    default_secure_boot_flash_fingerprint_inputs,
+)
 from framework.manifest import build_secure_boot_benchmark_model, read_elf_alloc_section_metrics, read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
@@ -181,6 +186,79 @@ def construct_ssh_flash_command(
     if pass_offset_to_helper:
         remote_command += f" {shlex.quote(str(offset))}"
     return ["ssh", gateway_alias, remote_command]
+
+
+def _fingerprint_evidence(
+    *,
+    repo_root: Path,
+    bundle: dict[str, dict[str, Any]],
+    wolfboot: SecureBootFlashArtifactResult,
+    signed_application: SecureBootFlashArtifactResult,
+) -> dict[str, Any]:
+    experiment = bundle.get("experiment", {})
+    boot = bundle.get("boot", {})
+    experiment_id = str(experiment.get("id", "unknown"))
+    boot_id = None
+    if isinstance(boot, dict) and boot.get("id") not in (None, ""):
+        boot_id = str(boot.get("id"))
+    requested_inputs = default_secure_boot_flash_fingerprint_inputs(
+        experiment_id=experiment_id,
+        boot_id=boot_id,
+    )
+    missing_inputs = [
+        relative_input
+        for relative_input in requested_inputs
+        if not (repo_root / relative_input).exists()
+    ]
+    try:
+        fingerprint = calculate_existing_inputs_fingerprint(
+            repo_root=repo_root,
+            relative_inputs=requested_inputs,
+        )
+    except FingerprintInputError as exc:
+        fingerprint_payload = {
+            "status": "unavailable",
+            "fingerprint": None,
+            "fingerprint_algorithm": None,
+            "fingerprint_inputs": [],
+            "requested_fingerprint_inputs": requested_inputs,
+            "missing_fingerprint_inputs": missing_inputs,
+            "limitations": str(exc),
+        }
+    else:
+        fingerprint_payload = {
+            "status": "available",
+            "fingerprint": fingerprint.fingerprint,
+            "fingerprint_algorithm": fingerprint.algorithm,
+            "fingerprint_inputs": fingerprint.inputs,
+            "requested_fingerprint_inputs": requested_inputs,
+            "missing_fingerprint_inputs": missing_inputs,
+            "limitations": None
+            if not missing_inputs
+            else "Some optional secure-boot flash inputs were absent and therefore not hashed; fingerprint_inputs lists the exact files covered.",
+        }
+
+    return {
+        **fingerprint_payload,
+        "artifact_freshness_status": "recorded_not_enforced",
+        "artifact_freshness_limitations": (
+            "Phase 11.4 records secure-boot workflow and artifact fingerprints as evidence, "
+            "but flash-secure-boot does not yet refuse stale artifacts. Hardware tests clean "
+            "generated secure-boot outputs before rebuilding to avoid timestamp-dependent stale artifacts."
+        ),
+        "artifacts": {
+            "wolfboot": {
+                "path": str(wolfboot.artifact_path),
+                "exists": wolfboot.artifact_exists,
+                "sha256": wolfboot.artifact_sha256,
+            },
+            "signed_application": {
+                "path": str(signed_application.artifact_path),
+                "exists": signed_application.artifact_exists,
+                "sha256": signed_application.artifact_sha256,
+            },
+        },
+    }
 
 
 def _format_command(command: list[str]) -> str:
@@ -570,6 +648,13 @@ def execute_secure_boot_flash(
         else capture_git_provenance(repo_root_path, git_runner)
     )
 
+    fingerprint_evidence = _fingerprint_evidence(
+        repo_root=repo_root_path,
+        bundle=bundle,
+        wolfboot=wolfboot,
+        signed_application=signed_application,
+    )
+
     result = SecureBootFlashResult(
         return_code=return_code,
         duration_seconds=duration_seconds,
@@ -669,10 +754,13 @@ def execute_secure_boot_flash(
                 "build_evidence": {
                     "wolfboot_artifact_path": str(wolfboot.artifact_path),
                     "wolfboot_sha256": wolfboot.artifact_sha256,
+                    "secure_boot_flash_fingerprint": fingerprint_evidence.get("fingerprint"),
+                    "secure_boot_flash_fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
                 },
                 "signing_evidence": {
                     "signed_application_artifact_path": str(signed_application.artifact_path),
                     "signed_application_sha256": signed_application.artifact_sha256,
+                    "secure_boot_flash_fingerprint": fingerprint_evidence.get("fingerprint"),
                     "original_signed_application_path": str(original_signed_application_path),
                     "original_signed_application_sha256": original_signed_application_sha256,
                 },
@@ -698,6 +786,7 @@ def execute_secure_boot_flash(
                     "verification_time_ms": None,
                     "verification_time_source": "unavailable",
                 },
+                "artifact_freshness": fingerprint_evidence,
                 "negative_test": {
                     "enabled": negative_test_enabled,
                     "method": corruption_method,
@@ -716,6 +805,7 @@ def execute_secure_boot_flash(
                 "stlink_serial": stlink_serial,
                 "negative_test_enabled": negative_test_enabled,
                 "corruption_method": corruption_method,
+                "artifact_freshness": fingerprint_evidence,
                 "wolfboot": _artifact_result_to_manifest(wolfboot),
                 "signed_application": _artifact_result_to_manifest(signed_application),
                 "negative_test": {

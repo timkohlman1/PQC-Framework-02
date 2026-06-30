@@ -68,6 +68,11 @@ class UartResult:
     verification_time_source: str
     verification_time_measurement_method: str
     verification_time_limitations: str
+    max_stack_used_bytes: int | None
+    stack_metric_source: str
+    heap_used_bytes: int | None
+    heap_metric_source: str
+    runtime_memory_limitations: str
 
 
 @dataclass(frozen=True)
@@ -190,6 +195,20 @@ DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS = (
     "Timing is reported by firmware over UART and includes only the values emitted by wolfBoot or the instrumented boot path; "
     "host-side UART capture latency is not used to derive these values."
 )
+DEFAULT_STACK_MEMORY_SOURCE = "uart_explicit_stack_high_water_marker"
+DEFAULT_HEAP_MEMORY_SOURCE = "uart_explicit_heap_marker"
+DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE = "unavailable"
+DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS = (
+    "No explicit firmware-side stack high-water mark line was present in the captured UART output; "
+    "runtime stack and heap values are intentionally null rather than inferred."
+)
+DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS = (
+    "Stack high-water usage is reported by firmware over UART from wolfBoot verification instrumentation; "
+    "host-side timing, UART capture duration, reset delay, linker output, and build output are not used to derive runtime memory values."
+)
+DEFAULT_HEAP_MEMORY_UNAVAILABLE_LIMITATIONS = (
+    "Heap usage is not recorded because no explicit firmware-side heap measurement evidence was emitted."
+)
 _VERIFICATION_TIME_PATTERNS = [
     re.compile(
         r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification(?: time)?[^\r\n]*?[:=]\s*(?P<value>\d+(?:\.\d+)?)\s*ms\b",
@@ -227,6 +246,27 @@ _VERIFICATION_RESULT_PATTERNS = [
     ),
     re.compile(
         r"\bverification_result(?:_code)?\s*[:=]\s*(?P<value>-?\d+)\b",
+        re.IGNORECASE,
+    ),
+]
+
+_STACK_HIGH_WATER_PATTERNS = [
+    re.compile(
+        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*(?:max(?:imum)?\s+)?stack(?:\s+high[-_ ]?water|\s+used)?[^\r\n]*[:=]\s*(?P<value>\d+)\s*(?:bytes|B)?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bmax_stack_used_bytes\s*[:=]\s*(?P<value>\d+)\b",
+        re.IGNORECASE,
+    ),
+]
+_HEAP_USED_PATTERNS = [
+    re.compile(
+        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*heap(?:\s+used)?[^\r\n]*[:=]\s*(?P<value>\d+)\s*(?:bytes|B)?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bheap_used_bytes\s*[:=]\s*(?P<value>\d+)\b",
         re.IGNORECASE,
     ),
 ]
@@ -273,6 +313,40 @@ def parse_verification_result_code(uart_output: str) -> int | None:
     """Parse explicit wolfBoot verification return code from UART output."""
 
     return _parse_first_int(_VERIFICATION_RESULT_PATTERNS, uart_output)
+
+
+def parse_max_stack_used_bytes(uart_output: str) -> int | None:
+    """Parse explicit firmware-side maximum stack high-water mark from UART output."""
+
+    return _parse_first_int(_STACK_HIGH_WATER_PATTERNS, uart_output)
+
+
+def parse_heap_used_bytes(uart_output: str) -> int | None:
+    """Parse explicit firmware-side heap usage evidence from UART output."""
+
+    return _parse_first_int(_HEAP_USED_PATTERNS, uart_output)
+
+
+def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
+    max_stack_used_bytes = parse_max_stack_used_bytes(uart_output)
+    heap_used_bytes = parse_heap_used_bytes(uart_output)
+    if max_stack_used_bytes is None:
+        return {
+            "max_stack_used_bytes": None,
+            "stack_metric_source": DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
+            "heap_used_bytes": heap_used_bytes,
+            "heap_metric_source": DEFAULT_HEAP_MEMORY_SOURCE if heap_used_bytes is not None else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
+            "limitations": DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS,
+        }
+    return {
+        "max_stack_used_bytes": max_stack_used_bytes,
+        "stack_metric_source": DEFAULT_STACK_MEMORY_SOURCE,
+        "heap_used_bytes": heap_used_bytes,
+        "heap_metric_source": DEFAULT_HEAP_MEMORY_SOURCE if heap_used_bytes is not None else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
+        "limitations": DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS
+        if heap_used_bytes is not None
+        else f"{DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS} {DEFAULT_HEAP_MEMORY_UNAVAILABLE_LIMITATIONS}",
+    }
 
 
 def _boot_timing_evidence(uart_output: str) -> dict[str, Any]:
@@ -331,6 +405,7 @@ def _write_uart_capture_log(
     return_code: int,
     duration_seconds: float,
     boot_timing: dict[str, Any],
+    runtime_memory: dict[str, Any],
 ) -> None:
     lines = [
         "UART post-flash capture log",
@@ -364,6 +439,14 @@ def _write_uart_capture_log(
         f"verification_time_source: {boot_timing['verification_time_source']}",
         f"Measurement method: {boot_timing['measurement_method']}",
         f"Limitations: {boot_timing['limitations']}",
+        "",
+        "Runtime memory evidence",
+        "-----------------------",
+        f"max_stack_used_bytes: {runtime_memory['max_stack_used_bytes'] if runtime_memory['max_stack_used_bytes'] is not None else 'unavailable'}",
+        f"stack_metric_source: {runtime_memory['stack_metric_source']}",
+        f"heap_used_bytes: {runtime_memory['heap_used_bytes'] if runtime_memory['heap_used_bytes'] is not None else 'unavailable'}",
+        f"heap_metric_source: {runtime_memory['heap_metric_source']}",
+        f"runtime_memory_limitations: {runtime_memory['limitations']}",
         "",
         "Capture command",
         "---------------",
@@ -530,6 +613,7 @@ def execute_uart_capture(
     )
     capture_completed = _capture_completed(capture_execution.return_code)
     boot_timing = _boot_timing_evidence(capture_execution.stdout)
+    runtime_memory = _runtime_memory_evidence(capture_execution.stdout)
 
     if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
         return_code = 0
@@ -559,6 +643,7 @@ def execute_uart_capture(
         return_code=return_code,
         duration_seconds=duration,
         boot_timing=boot_timing,
+        runtime_memory=runtime_memory,
     )
 
     update_manifest(
@@ -591,8 +676,14 @@ def execute_uart_capture(
                 "verification_time_source": boot_timing["verification_time_source"],
                 "verification_time_measurement_method": boot_timing["measurement_method"],
                 "verification_time_limitations": boot_timing["limitations"],
+                "max_stack_used_bytes": runtime_memory["max_stack_used_bytes"],
+                "stack_metric_source": runtime_memory["stack_metric_source"],
+                "heap_used_bytes": runtime_memory["heap_used_bytes"],
+                "heap_metric_source": runtime_memory["heap_metric_source"],
+                "runtime_memory_limitations": runtime_memory["limitations"],
             },
             "boot_timing": boot_timing,
+            "runtime_memory": runtime_memory,
         },
     )
 
@@ -618,6 +709,11 @@ def execute_uart_capture(
         verification_time_source=boot_timing["verification_time_source"],
         verification_time_measurement_method=boot_timing["measurement_method"],
         verification_time_limitations=boot_timing["limitations"],
+        max_stack_used_bytes=runtime_memory["max_stack_used_bytes"],
+        stack_metric_source=runtime_memory["stack_metric_source"],
+        heap_used_bytes=runtime_memory["heap_used_bytes"],
+        heap_metric_source=runtime_memory["heap_metric_source"],
+        runtime_memory_limitations=runtime_memory["limitations"],
     )
 
 

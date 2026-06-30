@@ -70,6 +70,7 @@ typedef struct
   uint32_t elapsed_cycles;
   uint32_t cpu_hz;
   uint32_t verification_result;
+  uint32_t max_stack_used_bytes;
 } PQC_BootTimingMailbox;
 
 static void APP_UART_WriteString(const char *text)
@@ -132,6 +133,13 @@ static void APP_PrintWolfBootVerificationTiming(void)
     APP_UART_WriteString("wolfBoot verification result: ");
     APP_UART_WriteUint32(mailbox->verification_result);
     APP_UART_WriteString("\r\n");
+
+    if (mailbox->max_stack_used_bytes != 0xFFFFFFFFUL)
+    {
+      APP_UART_WriteString("wolfBoot verification max stack used: ");
+      APP_UART_WriteUint32(mailbox->max_stack_used_bytes);
+      APP_UART_WriteString(" bytes\r\n");
+    }
   }
 }
 #endif

@@ -1555,6 +1555,11 @@ def _secure_boot_sample_from_uart_result(
         uart_marker_detection_result=marker_detection,
         sample_verdict="passed" if sample_passed else "failed",
         referenced_artifact_identity=artifact_identity,
+        max_stack_used_bytes=getattr(uart_result, "max_stack_used_bytes", None),
+        stack_metric_source=getattr(uart_result, "stack_metric_source", "unavailable"),
+        heap_used_bytes=getattr(uart_result, "heap_used_bytes", None),
+        heap_metric_source=getattr(uart_result, "heap_metric_source", "unavailable"),
+        runtime_memory_limitations=getattr(uart_result, "runtime_memory_limitations", None),
     )
 
 def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
@@ -1693,6 +1698,35 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         if uart_result is None
         else uart_result.verification_time_limitations
     )
+    stack_sample_values = [
+        sample.get("runtime_memory_metrics", {}).get("max_stack_used_bytes")
+        for sample in samples
+        if isinstance(sample.get("runtime_memory_metrics"), dict)
+        and sample.get("runtime_memory_metrics", {}).get("max_stack_used_bytes") is not None
+    ]
+    max_stack_used_bytes = max(stack_sample_values) if stack_sample_values else (None if uart_result is None else getattr(uart_result, "max_stack_used_bytes", None))
+    stack_metric_source = (
+        "unavailable"
+        if max_stack_used_bytes is None
+        else ("uart_explicit_stack_high_water_marker" if stack_sample_values else getattr(uart_result, "stack_metric_source", "unavailable"))
+    )
+    heap_sample_values = [
+        sample.get("runtime_memory_metrics", {}).get("heap_used_bytes")
+        for sample in samples
+        if isinstance(sample.get("runtime_memory_metrics"), dict)
+        and sample.get("runtime_memory_metrics", {}).get("heap_used_bytes") is not None
+    ]
+    heap_used_bytes = max(heap_sample_values) if heap_sample_values else (None if uart_result is None else getattr(uart_result, "heap_used_bytes", None))
+    heap_metric_source = (
+        "unavailable"
+        if heap_used_bytes is None
+        else ("uart_explicit_heap_marker" if heap_sample_values else getattr(uart_result, "heap_metric_source", "unavailable"))
+    )
+    runtime_memory_limitations = (
+        "No UART runtime memory evidence was captured because UART was skipped or secure-boot flashing failed."
+        if uart_result is None
+        else getattr(uart_result, "runtime_memory_limitations", "No explicit runtime memory evidence was available.")
+    )
     capture_completed = (
         False
         if uart_result is None
@@ -1774,6 +1808,13 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "measurement_method": verification_time_measurement_method,
                 "limitations": verification_time_limitations,
             },
+            "runtime_memory": {
+                "max_stack_used_bytes": max_stack_used_bytes,
+                "stack_metric_source": stack_metric_source,
+                "heap_used_bytes": heap_used_bytes,
+                "heap_metric_source": heap_metric_source,
+                "limitations": runtime_memory_limitations,
+            },
             "negative_test": {
                 "enabled": negative_test_requested,
                 "verdict": (
@@ -1850,6 +1891,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         ),
         runtime_measurement_method=verification_time_measurement_method,
         runtime_limitations=verification_time_limitations,
+        max_stack_used_bytes=max_stack_used_bytes,
+        stack_metric_source=stack_metric_source,
+        heap_used_bytes=heap_used_bytes,
+        heap_metric_source=heap_metric_source,
+        runtime_memory_limitations=runtime_memory_limitations,
     )
     if samples:
         benchmark_evidence = apply_repeated_run_samples_to_benchmark_model(
@@ -1904,6 +1950,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "verification_time_source": verification_time_source,
                 "verification_time_measurement_method": verification_time_measurement_method,
                 "verification_time_limitations": verification_time_limitations,
+                "max_stack_used_bytes": max_stack_used_bytes,
+                "stack_metric_source": stack_metric_source,
+                "heap_used_bytes": heap_used_bytes,
+                "heap_metric_source": heap_metric_source,
+                "runtime_memory_limitations": runtime_memory_limitations,
             },
             "boot_timing": {
                 "verification_time_ms": verification_time_ms,
@@ -1913,6 +1964,13 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
                 "limitations": verification_time_limitations,
+            },
+            "runtime_memory": {
+                "max_stack_used_bytes": max_stack_used_bytes,
+                "stack_metric_source": stack_metric_source,
+                "heap_used_bytes": heap_used_bytes,
+                "heap_metric_source": heap_metric_source,
+                "limitations": runtime_memory_limitations,
             },
             "secure_boot_negative_test": {
                 "enabled": negative_test_requested,

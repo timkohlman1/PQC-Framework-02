@@ -22,6 +22,11 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.fingerprint import (
+    FingerprintInputError,
+    calculate_existing_inputs_fingerprint,
+    default_signing_fingerprint_inputs,
+)
 
 MISSING_INPUT_IMAGE_RETURN_CODE = 30
 SIGNED_IMAGE_MISSING_RETURN_CODE = 31
@@ -389,6 +394,49 @@ def create_signing_result_dir(
     return result_dir
 
 
+def _path_relative_to_repo(path: Path, repo_root: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _fingerprint_evidence(*, repo_root: Path, profile: dict[str, Any]) -> dict[str, Any]:
+    profile_id = str(profile.get("id", "unknown"))
+    requested_inputs = default_signing_fingerprint_inputs(profile_id=profile_id)
+    missing_inputs = [
+        relative_input
+        for relative_input in requested_inputs
+        if not (repo_root / relative_input).exists()
+    ]
+    try:
+        fingerprint = calculate_existing_inputs_fingerprint(
+            repo_root=repo_root,
+            relative_inputs=requested_inputs,
+        )
+    except FingerprintInputError as exc:
+        return {
+            "status": "unavailable",
+            "fingerprint": None,
+            "fingerprint_algorithm": None,
+            "fingerprint_inputs": [],
+            "requested_fingerprint_inputs": requested_inputs,
+            "missing_fingerprint_inputs": missing_inputs,
+            "limitations": str(exc),
+        }
+    return {
+        "status": "available",
+        "fingerprint": fingerprint.fingerprint,
+        "fingerprint_algorithm": fingerprint.algorithm,
+        "fingerprint_inputs": fingerprint.inputs,
+        "requested_fingerprint_inputs": requested_inputs,
+        "missing_fingerprint_inputs": missing_inputs,
+        "limitations": None
+        if not missing_inputs
+        else "Some optional signing or relocated-application inputs were absent and therefore not hashed; fingerprint_inputs lists the exact files covered.",
+    }
+
+
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -425,6 +473,7 @@ def _write_log(
     return_code: int,
     duration_seconds: float,
     failure_reason: str | None,
+    fingerprint_evidence: dict[str, Any] | None = None,
 ) -> None:
     lines = [
         "Application signing log",
@@ -435,6 +484,10 @@ def _write_log(
         f"Input image path: {input_image_path}",
         f"Input ELF path: {input_elf_path if input_elf_path is not None else 'unconfigured'}",
         f"Input image SHA-256: {input_image_sha256 if input_image_sha256 is not None else 'unavailable'}",
+        f"Input fingerprint status: {fingerprint_evidence.get('status') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint algorithm: {fingerprint_evidence.get('fingerprint_algorithm') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint: {fingerprint_evidence.get('fingerprint') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint file count: {len(fingerprint_evidence.get('fingerprint_inputs', [])) if fingerprint_evidence else 0}",
         f"Signed image path: {signed_image_path}",
         f"Signed image SHA-256: {signed_image_sha256 if signed_image_sha256 is not None else 'unavailable'}",
         f"Signed image size bytes: {signed_image_size_bytes if signed_image_size_bytes is not None else 'unavailable'}",
@@ -523,6 +576,7 @@ def _profile_error_result(
         return_code=SIGNING_PROFILE_ERROR_RETURN_CODE,
         duration_seconds=duration_seconds,
         failure_reason=failure_reason,
+        fingerprint_evidence=None,
     )
     _write_json(
         result_dir / "manifest.json",
@@ -621,6 +675,7 @@ def execute_application_signing(
     signed_image_size_bytes: int | None = None
     return_code = 0
     failure_reason: str | None = None
+    fingerprint_evidence = _fingerprint_evidence(repo_root=repo_root_path, profile=profile)
 
     if binary_conversion_enabled and input_elf_path is not None and input_elf_path.is_file():
         input_image_path.parent.mkdir(parents=True, exist_ok=True)
@@ -760,6 +815,7 @@ def execute_application_signing(
         return_code=return_code,
         duration_seconds=duration_seconds,
         failure_reason=failure_reason,
+        fingerprint_evidence=fingerprint_evidence,
     )
 
     _write_json(
@@ -777,6 +833,13 @@ def execute_application_signing(
                 "duration_seconds": round(duration_seconds, 3),
                 "log": DEFAULT_SIGNING_LOG_NAME,
                 "failure_reason": failure_reason,
+                "fingerprint": fingerprint_evidence.get("fingerprint"),
+                "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
+                "fingerprint_inputs": fingerprint_evidence.get("fingerprint_inputs", []),
+                "requested_fingerprint_inputs": fingerprint_evidence.get("requested_fingerprint_inputs", []),
+                "missing_fingerprint_inputs": fingerprint_evidence.get("missing_fingerprint_inputs", []),
+                "fingerprint_status": fingerprint_evidence.get("status"),
+                "fingerprint_limitations": fingerprint_evidence.get("limitations"),
                 "signature_algorithm": profile.get("signature_algorithm"),
                 "signature_size": signature_size_bytes,
                 "signature_size_bytes": signature_size_bytes,

@@ -14,6 +14,36 @@ from typing import Iterable, NamedTuple
 
 BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-v1"
 
+
+
+# Phase 11.4 secure-boot artifact fingerprints are evidence fingerprints for
+# generated wolfBoot/signing artifacts. They are intentionally separate from
+# the baseline direct-flash rebuild-skip fingerprint because secure-boot uses
+# a different build chain: wolfBoot make, direct RelocatedDebug CMake/Ninja,
+# application signing, and two-artifact flashing.
+SECURE_BOOT_FINGERPRINT_ALGORITHM = "sha256-secure-boot-inputs-v1"
+
+DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS = [
+    "Core",
+    "Drivers",
+    "CMakeLists.txt",
+    "CMakePresets.json",
+    "cmake",
+    "STM32L4R5XX_FLASH_RELOCATED.ld",
+    "startup_stm32l4r5xx.s",
+    "stm32_basic_hal1.ioc",
+]
+
+DEFAULT_WOLFBOOT_SOURCE_FINGERPRINT_INPUTS = [
+    "Makefile",
+    "src",
+    "hal",
+    "include",
+    "lib",
+    "wolfcrypt",
+    "tools/keytools/Makefile",
+]
+
 DEFAULT_FIRMWARE_FINGERPRINT_INPUTS = [
     "Core",
     "Drivers",
@@ -177,3 +207,120 @@ def calculate_default_build_fingerprint(
         repo_root=repo_root,
         relative_inputs=default_build_fingerprint_inputs(bundle),
     )
+
+
+def calculate_existing_inputs_fingerprint(
+    repo_root: Path | str,
+    relative_inputs: Iterable[str],
+    *,
+    algorithm: str = SECURE_BOOT_FINGERPRINT_ALGORITHM,
+) -> BuildFingerprint:
+    """Calculate a fingerprint over the subset of inputs that currently exists.
+
+    This helper is used for secure-boot evidence where some optional upstream
+    wolfBoot directories may vary by submodule revision. Missing inputs are not
+    silently claimed as covered; callers should record the requested input list
+    separately when they need an audit trail. The returned ``inputs`` list is the
+    exact repository-relative file list that was actually hashed.
+    """
+
+    repo_root_path = Path(repo_root)
+    existing_inputs = [
+        relative_input
+        for relative_input in relative_inputs
+        if (repo_root_path / relative_input).exists()
+    ]
+    if not existing_inputs:
+        raise FingerprintInputError("No existing inputs were available for fingerprinting")
+
+    files = _collect_files(repo_root_path, existing_inputs)
+    file_entries = [
+        {
+            "path": _relative_path(path, repo_root_path),
+            "sha256": _file_sha256(path),
+        }
+        for path in files
+    ]
+    payload = {
+        "algorithm": algorithm,
+        "files": file_entries,
+    }
+    encoded_payload = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return BuildFingerprint(
+        fingerprint=hashlib.sha256(encoded_payload).hexdigest(),
+        inputs=[entry["path"] for entry in file_entries],
+        algorithm=algorithm,
+    )
+
+
+def default_relocated_application_fingerprint_inputs() -> list[str]:
+    """Return the default input set for the relocated secure-boot application."""
+
+    return list(DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS)
+
+
+def default_wolfboot_fingerprint_inputs(
+    *,
+    profile_id: str,
+    source_dir: str,
+    config_template: str | None = None,
+) -> list[str]:
+    """Return secure-boot wolfBoot build fingerprint input candidates."""
+
+    inputs = [
+        f"configs/builds/{profile_id}.yaml",
+        "scripts/framework/wolfboot_build.py",
+    ]
+    if config_template:
+        inputs.append(config_template)
+    source_prefix = source_dir.rstrip("/\\")
+    inputs.extend(f"{source_prefix}/{relative}" for relative in DEFAULT_WOLFBOOT_SOURCE_FINGERPRINT_INPUTS)
+    return inputs
+
+
+def default_signing_fingerprint_inputs(*, profile_id: str) -> list[str]:
+    """Return secure-boot application signing fingerprint input candidates."""
+
+    return [
+        f"configs/signing/{profile_id}.yaml",
+        "scripts/framework/signing.py",
+        *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
+    ]
+
+
+def default_secure_boot_flash_fingerprint_inputs(*, experiment_id: str, boot_id: str | None = None) -> list[str]:
+    """Return secure-boot flash workflow fingerprint input candidates.
+
+    This evidence fingerprint intentionally covers more than the flash helper
+    itself. The configured secure-boot artifacts are produced by the wolfBoot
+    build helper, relocated application build, and signing helper before
+    ``flash-secure-boot`` consumes them. Including those source/config inputs
+    makes the recorded fingerprint useful for spotting stale artifacts when a
+    source/config change occurred but the generated ELF/BIN files were not
+    rebuilt.
+    """
+
+    inputs = [
+        f"configs/experiments/{experiment_id}.yaml",
+        "scripts/framework/secure_boot_flash.py",
+        "scripts/framework/uart.py",
+        "scripts/framework/manifest.py",
+        "scripts/framework/wolfboot_build.py",
+        "scripts/framework/signing.py",
+        "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
+        "configs/signing/wolfboot_ecdsa_p256_app.yaml",
+        "configs/wolfboot/stm32l4r5_ecdsa_p256.config",
+        *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
+        "tools/wolfboot/Makefile",
+        "tools/wolfboot/src/image.c",
+        "tools/wolfboot/hal/stm32l4.c",
+        "tools/wolfboot/hal/stm32l4xx_hal_conf.h",
+        "tools/wolfboot/tools/keytools/Makefile",
+    ]
+    if boot_id:
+        inputs.append(f"configs/boot/{boot_id}.yaml")
+    return inputs

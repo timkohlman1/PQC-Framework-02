@@ -25,6 +25,7 @@ SECURE_BOOT_BENCHMARK_SCHEMA_VERSION = 1
 SECURE_BOOT_BENCHMARK_MODEL_PHASE = "phase_11_1_schema_only"
 SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE = "phase_11_2_repeated_run_support"
 SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE = "phase_11_3_static_build_resource_metrics"
+SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE = "phase_11_4_runtime_memory_metrics"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
 
@@ -70,6 +71,11 @@ def build_secure_boot_benchmark_model(
     verification_cycles_source: str = UNAVAILABLE_METRIC_SOURCE,
     runtime_measurement_method: str | None = None,
     runtime_limitations: str | list[str] | None = None,
+    max_stack_used_bytes: int | None = None,
+    stack_metric_source: str = UNAVAILABLE_METRIC_SOURCE,
+    heap_used_bytes: int | None = None,
+    heap_metric_source: str = UNAVAILABLE_METRIC_SOURCE,
+    runtime_memory_limitations: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Build the Phase 11.1 secure-boot benchmark evidence schema.
 
@@ -93,8 +99,12 @@ def build_secure_boot_benchmark_model(
         "Phase 11.1 records the schema placeholder only when either input is unavailable."
     )
     unavailable_runtime_memory_reason = (
-        "Runtime stack and heap metrics require explicit firmware-side measurement "
-        "evidence and are added in the later Phase 11.4 runtime-memory step."
+        "Runtime stack and heap metrics require explicit firmware-side measurement evidence; "
+        "no explicit firmware-side stack or heap evidence was available for this run."
+    )
+    unavailable_heap_reason = (
+        "Heap usage is not recorded because the secure-boot verification path does not provide "
+        "explicit firmware-side heap measurement evidence."
     )
     unavailable_repeated_reason = (
         "Repeated execution has not been configured for this run."
@@ -116,6 +126,13 @@ def build_secure_boot_benchmark_model(
         static_limitations_list = [str(item) for item in static_metrics_limitations]
     else:
         static_limitations_list = [str(static_metrics_limitations)]
+
+    if runtime_memory_limitations is None:
+        runtime_memory_limitations_list: list[str] = []
+    elif isinstance(runtime_memory_limitations, list):
+        runtime_memory_limitations_list = [str(item) for item in runtime_memory_limitations]
+    else:
+        runtime_memory_limitations_list = [str(runtime_memory_limitations)]
 
     static_metric_values = [
         bootloader_text_bytes,
@@ -166,10 +183,32 @@ def build_secure_boot_benchmark_model(
 
     runtime_status = "available" if verification_time_ms is not None else "unavailable"
     cycles_status = "available" if verification_cycles is not None else "unavailable"
+    runtime_memory_available = max_stack_used_bytes is not None
+    runtime_memory_status = "available" if runtime_memory_available else "unavailable"
+    runtime_memory_unavailable = None if runtime_memory_available else _unavailable_reason(unavailable_runtime_memory_reason)
+    heap_unavailable = None if heap_used_bytes is not None else _unavailable_reason(unavailable_heap_reason)
+    estimated_total_ram_pressure_bytes = (
+        None
+        if bootloader_static_ram_bytes is None or max_stack_used_bytes is None
+        else bootloader_static_ram_bytes + max_stack_used_bytes
+    )
+    if runtime_memory_available:
+        runtime_memory_limitations_final = list(runtime_memory_limitations_list)
+        if heap_used_bytes is None:
+            runtime_memory_limitations_final.append(unavailable_heap_reason)
+    else:
+        runtime_memory_limitations_final = [unavailable_runtime_memory_reason] + runtime_memory_limitations_list
+
+    if runtime_memory_available:
+        model_phase = SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE
+    elif static_metrics_available:
+        model_phase = SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE
+    else:
+        model_phase = SECURE_BOOT_BENCHMARK_MODEL_PHASE
 
     return {
         "schema_version": SECURE_BOOT_BENCHMARK_SCHEMA_VERSION,
-        "model_phase": SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE if static_metrics_available else SECURE_BOOT_BENCHMARK_MODEL_PHASE,
+        "model_phase": model_phase,
         "benchmark_scope": "secure_boot_classical_signing_algorithm",
         "profile_id": experiment_id,
         "boot_mode": boot_mode,
@@ -221,14 +260,21 @@ def build_secure_boot_benchmark_model(
             "limitations": runtime_limitations_list,
         },
         "runtime_memory_metrics": {
-            "status": "unavailable",
-            "unavailable": _unavailable_reason(unavailable_runtime_memory_reason),
-            "max_stack_used_bytes": None,
-            "stack_metric_source": UNAVAILABLE_METRIC_SOURCE,
-            "heap_used_bytes": None,
-            "heap_metric_source": UNAVAILABLE_METRIC_SOURCE,
-            "estimated_total_ram_pressure_bytes": None,
-            "runtime_memory_limitations": [unavailable_runtime_memory_reason],
+            "status": runtime_memory_status,
+            "unavailable": runtime_memory_unavailable,
+            "max_stack_used_bytes": max_stack_used_bytes,
+            "stack_metric_source": stack_metric_source,
+            "heap_used_bytes": heap_used_bytes,
+            "heap_metric_source": heap_metric_source,
+            "heap_unavailable": heap_unavailable,
+            "static_ram_bytes": bootloader_static_ram_bytes,
+            "estimated_total_ram_pressure_bytes": estimated_total_ram_pressure_bytes,
+            "measurement_method": (
+                "Parse explicit firmware-side stack high-water evidence emitted by the secure-boot application over UART."
+                if runtime_memory_available
+                else None
+            ),
+            "runtime_memory_limitations": runtime_memory_limitations_final,
         },
         "repeated_run_samples": {
             "status": "not_configured",
@@ -244,6 +290,13 @@ def build_secure_boot_benchmark_model(
                 "uart_marker_detection_result": None,
                 "sample_verdict": None,
                 "referenced_artifact_identity": None,
+                "runtime_memory_metrics": {
+                    "max_stack_used_bytes": None,
+                    "stack_metric_source": None,
+                    "heap_used_bytes": None,
+                    "heap_metric_source": None,
+                    "runtime_memory_limitations": None,
+                },
             },
             "limitations": [unavailable_repeated_reason],
         },
@@ -279,8 +332,10 @@ def build_secure_boot_benchmark_model(
         },
         "limitations": (
             ([] if static_metrics_available else [unavailable_build_reason])
-            + [unavailable_runtime_memory_reason, unavailable_repeated_reason, unavailable_aggregate_reason]
+            + ([] if runtime_memory_available else [unavailable_runtime_memory_reason])
+            + [unavailable_repeated_reason, unavailable_aggregate_reason]
             + static_limitations_list
+            + runtime_memory_limitations_list
         ),
     }
 
@@ -393,6 +448,11 @@ def build_secure_boot_benchmark_sample(
     uart_marker_detection_result: dict[str, Any],
     sample_verdict: str,
     referenced_artifact_identity: dict[str, Any],
+    max_stack_used_bytes: int | None = None,
+    stack_metric_source: str = UNAVAILABLE_METRIC_SOURCE,
+    heap_used_bytes: int | None = None,
+    heap_metric_source: str = UNAVAILABLE_METRIC_SOURCE,
+    runtime_memory_limitations: str | None = None,
 ) -> dict[str, Any]:
     """Build one Phase 11.2 repeated-run benchmark sample."""
 
@@ -411,6 +471,13 @@ def build_secure_boot_benchmark_sample(
         and verification_time_ms is not None
         and verification_cycles is not None,
         "referenced_artifact_identity": referenced_artifact_identity,
+        "runtime_memory_metrics": {
+            "max_stack_used_bytes": max_stack_used_bytes,
+            "stack_metric_source": stack_metric_source,
+            "heap_used_bytes": heap_used_bytes,
+            "heap_metric_source": heap_metric_source,
+            "runtime_memory_limitations": runtime_memory_limitations,
+        },
     }
 
 
@@ -507,8 +574,15 @@ def apply_repeated_run_samples_to_benchmark_model(
         isinstance(build_time_metrics, dict)
         and build_time_metrics.get("status") == "available"
     )
+    runtime_memory_metrics = updated.get("runtime_memory_metrics", {})
+    runtime_memory_available = (
+        isinstance(runtime_memory_metrics, dict)
+        and runtime_memory_metrics.get("status") == "available"
+    )
     updated["model_phase"] = (
-        SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE
+        SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE
+        if runtime_memory_available
+        else SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE
         if static_metrics_available
         else SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE
     )
@@ -528,6 +602,13 @@ def apply_repeated_run_samples_to_benchmark_model(
             "sample_verdict": None,
             "valid_for_statistics": None,
             "referenced_artifact_identity": None,
+            "runtime_memory_metrics": {
+                "max_stack_used_bytes": None,
+                "stack_metric_source": None,
+                "heap_used_bytes": None,
+                "heap_metric_source": None,
+                "runtime_memory_limitations": None,
+            },
         },
         "limitations": [
             "Each sample is based on explicit firmware/UART verification markers only; host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as timing evidence."

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,29 @@ def _run_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProces
 
 def _run_cli(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return _run_command(repo_root, [sys.executable, "scripts/experiment.py", *args])
+
+
+
+
+def _clean_secure_boot_generated_outputs(repo_root: Path) -> None:
+    """Remove generated secure-boot artifacts before hardware workflow builds.
+
+    The secure-boot hardware test validates a build/sign/flash chain from a
+    zero-generated-artifact state. Cleaning these outputs avoids timestamp-based
+    stale artifacts after ZIP extraction or local source edits.
+    """
+
+    shutil.rmtree(repo_root / "build", ignore_errors=True)
+    for relative_path in (
+        "tools/wolfboot/wolfboot.elf",
+        "tools/wolfboot/wolfboot.bin",
+        "tools/wolfboot/wolfboot.hex",
+        "tools/wolfboot/wolfboot.map",
+        "tools/wolfboot/.config",
+    ):
+        path = repo_root / relative_path
+        if path.exists():
+            path.unlink()
 
 
 def _skip_if_missing(path: Path, reason: str) -> None:
@@ -130,6 +154,12 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert signed_application["scp_return_code"] == 0
     assert signed_application["helper_return_code"] == 0
 
+    artifact_freshness = manifest["secure_boot_flash"].get("artifact_freshness", {})
+    assert artifact_freshness.get("artifact_freshness_status") == "recorded_not_enforced"
+    if artifact_freshness.get("status") == "available":
+        assert len(artifact_freshness["fingerprint"]) == 64
+        assert artifact_freshness["fingerprint_inputs"]
+
     assert manifest["uart"]["return_code"] == 0
     assert manifest["uart"]["boot_marker_present"] is True
     assert manifest["uart"]["tick_present"] is True
@@ -169,6 +199,24 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["secure_boot_run"]["verification_cpu_hz"] == 80000000
     assert manifest["secure_boot_run"]["verification_result_code"] == 0
 
+    assert "runtime_memory" in manifest
+    runtime_memory = manifest["runtime_memory"]
+    benchmark_memory = manifest["secure_boot_benchmark"]["runtime_memory_metrics"]
+    assert manifest["secure_boot_benchmark"]["model_phase"] == "phase_11_4_runtime_memory_metrics"
+    assert benchmark_memory["max_stack_used_bytes"] == runtime_memory["max_stack_used_bytes"]
+    assert benchmark_memory["stack_metric_source"] == runtime_memory["stack_metric_source"]
+
+    if runtime_memory["max_stack_used_bytes"] is None:
+        assert runtime_memory["stack_metric_source"] == "unavailable"
+        assert benchmark_memory["status"] == "unavailable"
+        assert runtime_memory["limitations"]
+        assert benchmark_memory["runtime_memory_limitations"]
+    else:
+        assert isinstance(runtime_memory["max_stack_used_bytes"], int)
+        assert runtime_memory["max_stack_used_bytes"] > 0
+        assert runtime_memory["stack_metric_source"] == "uart_explicit_stack_high_water_marker"
+        assert benchmark_memory["status"] == "available"
+
 
 def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path) -> subprocess.CompletedProcess[str]:
     return _run_cli(
@@ -198,7 +246,9 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     The test validates positive secure-boot evidence by requiring the distinct
     secure-boot application UART marker, the normal boot marker, the tick
     marker, and a parsed wolfBoot verification-time value after the two-artifact
-    flash workflow.
+    flash workflow. Runtime stack evidence is accepted when present and must be
+    recorded as unavailable with limitations when no explicit firmware-side stack
+    marker is emitted.
     """
 
     pqc_require_capabilities(
@@ -219,6 +269,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
     _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
 
+    _clean_secure_boot_generated_outputs(repo_root)
     _prepare_instrumented_wolfboot(repo_root, results_dir)
     _prepare_signed_secure_boot_application(repo_root, results_dir)
 
@@ -266,6 +317,11 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     assert "verification_cycles:" in uart_log
     assert "verification_cpu_hz: 80000000" in uart_log
     assert "verification_result_code: 0" in uart_log
+    assert "max_stack_used_bytes:" in uart_log
+    if "max_stack_used_bytes: unavailable" in uart_log:
+        assert "stack_metric_source: unavailable" in uart_log
+    else:
+        assert "stack_metric_source: uart_explicit_stack_high_water_marker" in uart_log
 
 @pytest.mark.hardware
 def test_secure_boot_negative_corrupted_application_then_restore_workflow(
@@ -299,6 +355,7 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
     _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
     _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
 
+    _clean_secure_boot_generated_outputs(repo_root)
     _prepare_instrumented_wolfboot(repo_root, results_dir)
     _prepare_signed_secure_boot_application(repo_root, results_dir)
 

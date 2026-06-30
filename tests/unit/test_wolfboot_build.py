@@ -159,6 +159,9 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "pqc_boot_timing_write_mailbox" in patched_image_source
         assert "elapsed_cycles" in patched_image_source
         assert "verification_result" in patched_image_source
+        assert "max_stack_used_bytes" in patched_image_source
+        assert "pqc_boot_stack_high_water" in patched_image_source
+        assert "PQC_BOOT_STACK_SENTINEL" in patched_image_source
         assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
         assert "wolfBoot_printf" not in patched_image_source
         assert "pqc_boot_timing_uart_write" not in patched_hal_source
@@ -220,11 +223,17 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_applied"] is True
     assert manifest["wolfboot_build"]["boot_timing_image_path"] == str(image_source_path)
     assert manifest["wolfboot_build"]["boot_timing_hal_path"] is None
+    assert manifest["wolfboot_build"]["fingerprint_status"] == "available"
+    assert len(manifest["wolfboot_build"]["fingerprint"]) == 64
+    assert manifest["wolfboot_build"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
+    assert "scripts/framework/wolfboot_build.py" in manifest["wolfboot_build"]["requested_fingerprint_inputs"]
+    assert "tools/wolfboot/src/image.c" in manifest["wolfboot_build"]["fingerprint_inputs"]
     assert manifest["artifact"]["sha256"] == expected_sha256
     assert "Project-local config applied: true" in build_log
     assert "Keytools MinGW stdio patch applied: true" in build_log
     assert "STM32L4 HAL config PWR patch applied: true" in build_log
     assert "Boot timing instrumentation patch applied: true" in build_log
+    assert "Input fingerprint status: available" in build_log
     assert f"Config template path: {config_template_path}" in build_log
     assert f"Generated config path: {source_dir / '.config'}" in build_log
 

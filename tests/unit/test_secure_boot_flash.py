@@ -232,6 +232,16 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert manifest["secure_boot_flash"]["negative_test"]["source_image_modified"] is False
     assert manifest["secure_boot_flash"]["signed_application"]["offset"] == "0x08020000"
     assert manifest["secure_boot_flash"]["signed_application"]["pass_offset_to_helper"] is True
+    freshness = manifest["secure_boot_flash"]["artifact_freshness"]
+    assert freshness["artifact_freshness_status"] == "recorded_not_enforced"
+    assert freshness["artifacts"]["wolfboot"]["sha256"] == wolfboot_sha
+    assert freshness["artifacts"]["signed_application"]["sha256"] == signed_sha
+    assert "scripts/framework/secure_boot_flash.py" in freshness["requested_fingerprint_inputs"]
+    assert "scripts/framework/wolfboot_build.py" in freshness["requested_fingerprint_inputs"]
+    assert "scripts/framework/signing.py" in freshness["requested_fingerprint_inputs"]
+    assert "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
+    assert "configs/signing/wolfboot_ecdsa_p256_app.yaml" in freshness["requested_fingerprint_inputs"]
+    assert "STM32L4R5XX_FLASH_RELOCATED.ld" in freshness["requested_fingerprint_inputs"]
     evidence = manifest["secure_boot_evidence"]
     assert evidence["schema_version"] == 1
     assert evidence["boot_mode"] == "wolfboot_ecdsa_p256"
@@ -240,6 +250,7 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert evidence["signature_size"] == 64
     assert evidence["build_evidence"]["wolfboot_sha256"] == wolfboot_sha
     assert evidence["signing_evidence"]["signed_application_sha256"] == signed_sha
+    assert evidence["artifact_freshness"]["artifact_freshness_status"] == "recorded_not_enforced"
     assert evidence["flash_evidence"]["return_code"] == 0
     assert evidence["uart_evidence"]["skipped"] is True
     assert evidence["boot_timing"]["verification_time_ms"] is None
@@ -395,3 +406,31 @@ def test_execute_secure_boot_flash_negative_test_flashes_corrupted_copy_without_
     assert negative["original_signed_application_path"] == str(signed_artifact)
     assert negative["corrupted_signed_application_path"] == str(corrupted_path)
     assert negative["original_signed_application_sha256"] != negative["corrupted_signed_application_sha256"]
+
+
+def load_uart_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    module_path = scripts_path / "framework" / "uart.py"
+    spec = importlib.util.spec_from_file_location("framework_uart", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_uart_parses_explicit_runtime_stack_high_water_marker_only():
+    uart = load_uart_module()
+
+    output = """
+    wolfBoot verification time: 17 ms
+    wolfBoot verification cycles: 1360000 cycles
+    wolfBoot verification max stack used: 2048 bytes
+    """
+
+    assert uart.parse_max_stack_used_bytes(output) == 2048
+    assert uart.parse_max_stack_used_bytes("capture duration: 10 seconds") is None
+    assert uart.parse_heap_used_bytes("wolfBoot verification heap used: 512 bytes") == 512

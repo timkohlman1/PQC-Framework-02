@@ -193,3 +193,58 @@ def test_missing_required_directory_fails_clearly(tmp_path):
         assert "Required build fingerprint input is missing: Drivers" in str(exc)
     else:
         raise AssertionError("missing directory input must raise FingerprintInputError")
+
+
+def test_secure_boot_existing_inputs_fingerprint_records_exact_coverage(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "scripts" / "framework").mkdir(parents=True)
+    (repo_root / "scripts" / "framework" / "wolfboot_build.py").write_text("patch source\n", encoding="utf-8")
+    (repo_root / "configs" / "builds").mkdir(parents=True)
+    (repo_root / "configs" / "builds" / "wolfboot_stm32l4_ecdsa_p256.yaml").write_text("profile\n", encoding="utf-8")
+
+    requested = fingerprint.default_wolfboot_fingerprint_inputs(
+        profile_id="wolfboot_stm32l4_ecdsa_p256",
+        source_dir="tools/wolfboot",
+        config_template=None,
+    )
+    result = fingerprint.calculate_existing_inputs_fingerprint(repo_root, requested)
+
+    assert result.algorithm == "sha256-secure-boot-inputs-v1"
+    assert len(result.fingerprint) == 64
+    assert result.inputs == [
+        "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
+        "scripts/framework/wolfboot_build.py",
+    ]
+
+
+def test_signing_fingerprint_inputs_cover_relocated_linker_script():
+    fingerprint = load_fingerprint_module()
+
+    inputs = fingerprint.default_signing_fingerprint_inputs(
+        profile_id="wolfboot_ecdsa_p256_app"
+    )
+
+    assert "configs/signing/wolfboot_ecdsa_p256_app.yaml" in inputs
+    assert "scripts/framework/signing.py" in inputs
+    assert "STM32L4R5XX_FLASH_RELOCATED.ld" in inputs
+    assert "STM32L4R5XX_FLASH.ld" not in inputs
+
+
+def test_secure_boot_flash_fingerprint_inputs_cover_artifact_producers():
+    fingerprint = load_fingerprint_module()
+
+    inputs = fingerprint.default_secure_boot_flash_fingerprint_inputs(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_id="wolfboot_ecdsa_p256",
+    )
+
+    assert "scripts/framework/secure_boot_flash.py" in inputs
+    assert "scripts/framework/wolfboot_build.py" in inputs
+    assert "scripts/framework/signing.py" in inputs
+    assert "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml" in inputs
+    assert "configs/signing/wolfboot_ecdsa_p256_app.yaml" in inputs
+    assert "configs/wolfboot/stm32l4r5_ecdsa_p256.config" in inputs
+    assert "STM32L4R5XX_FLASH_RELOCATED.ld" in inputs
+    assert "tools/wolfboot/src/image.c" in inputs

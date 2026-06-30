@@ -19,6 +19,11 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.fingerprint import (
+    FingerprintInputError,
+    calculate_existing_inputs_fingerprint,
+    default_wolfboot_fingerprint_inputs,
+)
 
 MISSING_SOURCE_RETURN_CODE = 20
 WOLFBOOT_BUILD_ARTIFACT_MISSING_RETURN_CODE = 21
@@ -364,6 +369,9 @@ def _temporarily_patch_boot_timing_instrumentation(
 #define PQC_BOOT_TIMING_DWT_CYCCNTENA (1UL << 0)
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
 #define PQC_BOOT_TIMING_MAILBOX_VERSION 1UL
+#define PQC_BOOT_STACK_SENTINEL 0xA5U
+#define PQC_BOOT_STACK_SCAN_GUARD_BYTES 256U
+#define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
 
 struct pqc_boot_timing_mailbox {
     uint32_t magic;
@@ -372,6 +380,7 @@ struct pqc_boot_timing_mailbox {
     uint32_t elapsed_cycles;
     uint32_t cpu_hz;
     uint32_t verification_result;
+    uint32_t max_stack_used_bytes;
 };
 
 static void pqc_boot_timing_counter_start(uint32_t *start_cycles)
@@ -388,10 +397,58 @@ static uint32_t pqc_boot_timing_counter_elapsed(uint32_t start_cycles)
     return end_cycles - start_cycles;
 }
 
+static uintptr_t pqc_boot_current_stack_pointer(void)
+{
+    uintptr_t sp;
+    __asm__ volatile ("mrs %0, msp" : "=r" (sp));
+    return sp;
+}
+
+static uint8_t *pqc_boot_stack_paint_start(void)
+{
+    extern uint8_t _end;
+    return &_end;
+}
+
+static uint8_t *pqc_boot_stack_paint_end(void)
+{
+    uintptr_t sp = pqc_boot_current_stack_pointer();
+    if (sp <= PQC_BOOT_STACK_SCAN_GUARD_BYTES) {
+        return pqc_boot_stack_paint_start();
+    }
+    return (uint8_t *)(sp - PQC_BOOT_STACK_SCAN_GUARD_BYTES);
+}
+
+static void pqc_boot_stack_paint(uint8_t *start, uint8_t *end)
+{
+    uint8_t *cursor;
+    if (end <= start) {
+        return;
+    }
+    for (cursor = start; cursor < end; cursor++) {
+        *cursor = PQC_BOOT_STACK_SENTINEL;
+    }
+}
+
+static uint32_t pqc_boot_stack_high_water(uint8_t *start, uint8_t *end)
+{
+    uint8_t *cursor;
+    if (end <= start) {
+        return PQC_BOOT_STACK_UNAVAILABLE;
+    }
+    for (cursor = start; cursor < end; cursor++) {
+        if (*cursor != PQC_BOOT_STACK_SENTINEL) {
+            return (uint32_t)(end - cursor);
+        }
+    }
+    return 0U;
+}
+
 static void pqc_boot_timing_write_mailbox(
     unsigned long elapsed_ms,
     uint32_t elapsed_cycles,
-    int verification_result
+    int verification_result,
+    uint32_t max_stack_used_bytes
 )
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
@@ -403,6 +460,7 @@ static void pqc_boot_timing_write_mailbox(
     mailbox->elapsed_cycles = elapsed_cycles;
     mailbox->cpu_hz = (uint32_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ;
     mailbox->verification_result = (uint32_t)verification_result;
+    mailbox->max_stack_used_bytes = max_stack_used_bytes;
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
@@ -410,17 +468,25 @@ int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 {
     uint32_t start_cycles;
     uint32_t elapsed_cycles;
+    uint32_t max_stack_used_bytes;
     unsigned long elapsed_ms;
+    uint8_t *stack_paint_start;
+    uint8_t *stack_paint_end;
     int ret;
+
+    stack_paint_start = pqc_boot_stack_paint_start();
+    stack_paint_end = pqc_boot_stack_paint_end();
+    pqc_boot_stack_paint(stack_paint_start, stack_paint_end);
 
     pqc_boot_timing_counter_start(&start_cycles);
     ret = wolfBoot_verify_authenticity_impl(img);
     elapsed_cycles = pqc_boot_timing_counter_elapsed(start_cycles);
+    max_stack_used_bytes = pqc_boot_stack_high_water(stack_paint_start, stack_paint_end);
     elapsed_ms = (unsigned long)((((uint64_t)elapsed_cycles) * 1000ULL +
         ((uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ / 2ULL)) /
         (uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ);
 
-    pqc_boot_timing_write_mailbox(elapsed_ms, elapsed_cycles, ret);
+    pqc_boot_timing_write_mailbox(elapsed_ms, elapsed_cycles, ret, max_stack_used_bytes);
     return ret;
 }
 #endif
@@ -533,6 +599,61 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _path_relative_to_repo(path: Path, repo_root: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _fingerprint_evidence(
+    *,
+    repo_root: Path,
+    profile: dict[str, Any],
+    source_dir: Path,
+    config_template_path: Path | None,
+) -> dict[str, Any]:
+    profile_id = str(profile.get("id", "unknown"))
+    requested_inputs = default_wolfboot_fingerprint_inputs(
+        profile_id=profile_id,
+        source_dir=_path_relative_to_repo(source_dir, repo_root),
+        config_template=None
+        if config_template_path is None
+        else _path_relative_to_repo(config_template_path, repo_root),
+    )
+    missing_inputs = [
+        relative_input
+        for relative_input in requested_inputs
+        if not (repo_root / relative_input).exists()
+    ]
+    try:
+        fingerprint = calculate_existing_inputs_fingerprint(
+            repo_root=repo_root,
+            relative_inputs=requested_inputs,
+        )
+    except FingerprintInputError as exc:
+        return {
+            "status": "unavailable",
+            "fingerprint": None,
+            "fingerprint_algorithm": None,
+            "fingerprint_inputs": [],
+            "requested_fingerprint_inputs": requested_inputs,
+            "missing_fingerprint_inputs": missing_inputs,
+            "limitations": str(exc),
+        }
+    return {
+        "status": "available",
+        "fingerprint": fingerprint.fingerprint,
+        "fingerprint_algorithm": fingerprint.algorithm,
+        "fingerprint_inputs": fingerprint.inputs,
+        "requested_fingerprint_inputs": requested_inputs,
+        "missing_fingerprint_inputs": missing_inputs,
+        "limitations": None
+        if not missing_inputs
+        else "Some optional wolfBoot source inputs were absent and therefore not hashed; fingerprint_inputs lists the exact files covered.",
+    }
+
+
 def _format_command(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
@@ -566,6 +687,7 @@ def _write_log(
     duration_seconds: float,
     execution: WolfBootCommandExecution | None,
     failure_reason: str | None,
+    fingerprint_evidence: dict[str, Any] | None = None,
 ) -> None:
     lines = [
         "wolfBoot build log",
@@ -582,6 +704,10 @@ def _write_log(
         f"Artifact path: {artifact_path}",
         f"Artifact exists: {str(artifact_exists).lower()}",
         f"Artifact SHA-256: {artifact_sha256 if artifact_sha256 is not None else 'unavailable'}",
+        f"Input fingerprint status: {fingerprint_evidence.get('status') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint algorithm: {fingerprint_evidence.get('fingerprint_algorithm') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint: {fingerprint_evidence.get('fingerprint') if fingerprint_evidence else 'unavailable'}",
+        f"Input fingerprint file count: {len(fingerprint_evidence.get('fingerprint_inputs', [])) if fingerprint_evidence else 0}",
         f"Config template path: {config_template_path if config_template_path is not None else 'unavailable'}",
         f"Generated config path: {generated_config_path if generated_config_path is not None else 'unavailable'}",
         f"Project-local config applied: {str(config_applied).lower()}",
@@ -748,6 +874,15 @@ def execute_wolfboot_build(
     artifact_sha256: str | None = None
     retained_artifact_path: Path | None = None
     failure_reason: str | None = None
+    fingerprint_evidence: dict[str, Any] = {
+        "status": "unavailable",
+        "fingerprint": None,
+        "fingerprint_algorithm": None,
+        "fingerprint_inputs": [],
+        "requested_fingerprint_inputs": [],
+        "missing_fingerprint_inputs": [],
+        "limitations": "wolfBoot source directory was not inspected before fingerprinting.",
+    }
 
     if not source_dir.is_dir():
         return_code = MISSING_SOURCE_RETURN_CODE
@@ -764,6 +899,12 @@ def execute_wolfboot_build(
             return_code = PROFILE_ERROR_RETURN_CODE
             failure_reason = str(exc)
         else:
+            fingerprint_evidence = _fingerprint_evidence(
+                repo_root=repo_root_path,
+                profile=profile,
+                source_dir=source_dir,
+                config_template_path=config_template_path,
+            )
             try:
                 (
                     keytools_makefile_path,
@@ -892,6 +1033,7 @@ def execute_wolfboot_build(
         duration_seconds=duration_seconds,
         execution=execution,
         failure_reason=failure_reason,
+        fingerprint_evidence=fingerprint_evidence,
     )
 
     manifest = {
@@ -913,6 +1055,13 @@ def execute_wolfboot_build(
             "duration_seconds": round(duration_seconds, 3),
             "log": DEFAULT_WOLFBOOT_LOG_NAME,
             "failure_reason": failure_reason,
+            "fingerprint": fingerprint_evidence.get("fingerprint"),
+            "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
+            "fingerprint_inputs": fingerprint_evidence.get("fingerprint_inputs", []),
+            "requested_fingerprint_inputs": fingerprint_evidence.get("requested_fingerprint_inputs", []),
+            "missing_fingerprint_inputs": fingerprint_evidence.get("missing_fingerprint_inputs", []),
+            "fingerprint_status": fingerprint_evidence.get("status"),
+            "fingerprint_limitations": fingerprint_evidence.get("limitations"),
             "config_template": None if config_template_path is None else str(config_template_path),
             "generated_config": None if generated_config_path is None else str(generated_config_path),
             "config_applied": config_applied,

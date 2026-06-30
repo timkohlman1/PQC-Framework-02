@@ -1161,6 +1161,7 @@ Current framework skeleton completed items:
 55. Add Phase 11.1 secure-boot benchmark result model. Secure-boot run manifests now record `secure_boot_benchmark` as a schema-first evidence object that distinguishes build-time metrics, signed-artifact metrics, runtime verification metrics, runtime memory metrics, repeated-run samples, aggregate statistics, and limitations. Existing secure-boot timing fields remain compatible. Metrics not implemented until later Phase 11 steps are recorded explicitly as unavailable rather than omitted. Phase 11.1 does not add new signing profiles, repeated-run execution, aggregation commands, or runtime stack/heap instrumentation.
 56. Add Phase 11.2 repeated-run measurement support. The secure-boot flash workflow supports `--repeat-count <N>` for repeated post-flash reset/UART verification samples of the same profile. Each sample records run index, timestamp, explicit timing/cycle/CPU/result-code evidence, UART marker verdict, pass/fail sample verdict, and referenced wolfBoot/signed-application artifact identity. Aggregates record sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and cycles. Median values are the primary headline metrics. The CLI summary prints the aggregate counts and timing/cycle statistics at the end of the repeated-run workflow. Phase 11.2 does not add new signing profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output.
 57. Add Phase 11.3 static build and resource metrics. Secure-boot benchmark manifests now record wolfBoot ELF section/resource metrics when the configured ELF is available, including `.text`, `.data`, `.bss`, flash-relevant size, and static RAM estimate. They also record wolfBoot ELF size, retained wolfBoot artifact size, unsigned application size when configured and present, signed application size, signed-image overhead bytes, and signed-image overhead percentage. Runtime stack and heap metrics remain explicitly unavailable because Phase 11.3 does not add firmware-side runtime memory instrumentation.
+58. Add Phase 11.4 runtime stack and memory metrics. The wolfBoot timing instrumentation now also paints and scans firmware-side stack sentinel evidence around `wolfBoot_verify_authenticity()`, writes the maximum stack high-water value into the RAM2 mailbox, and the relocated application emits `wolfBoot verification max stack used: <N> bytes` over UART. Secure-boot manifests record runtime stack evidence only from explicit firmware/UART markers under `uart`, `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`. Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted. Runtime memory is not inferred from host timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone.
 Current CLI commands are:
 
 ```powershell
@@ -1579,6 +1580,37 @@ python -m pytest
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When the configured wolfBoot ELF, unsigned application BIN, and signed application BIN exist, secure-boot benchmark manifests record static build/resource metrics and signed-image overhead. Hardware success, timing values, and runtime memory values must still only be claimed from explicit evidence.
+
+
+## Phase 11.4 Runtime Stack and Memory Metrics
+
+Implemented scope:
+
+- The Phase 10k wolfBoot instrumentation patch now also records firmware-side runtime stack high-water evidence during `wolfBoot_verify_authenticity()`.
+- The instrumentation paints the available verification stack region with a sentinel before verification, scans it after verification, and writes `max_stack_used_bytes` into the RAM2 mailbox alongside timing, cycle, CPU-Hz, and verification-result evidence.
+- The relocated HAL application emits `wolfBoot verification max stack used: <N> bytes` over UART when the RAM2 mailbox contains available stack evidence.
+- UART capture parses explicit stack high-water markers and records them under `uart.max_stack_used_bytes`, `uart.stack_metric_source`, top-level `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`.
+- `secure_boot_benchmark.runtime_memory_metrics.estimated_total_ram_pressure_bytes` is calculated only when static RAM metrics and explicit stack high-water evidence are both available.
+- Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted and parsed.
+- If no explicit firmware-side stack marker is present, runtime memory metrics remain null/unavailable with a limitation note.
+- Runtime stack and heap values are not inferred from host-side timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone.
+- Phase 11.4 does not add new signing-algorithm profiles or benchmark aggregation output.
+
+Manual Phase 11.4 command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.4 verification commands:
+
+```powershell
+python -m pytest tests/unit/test_manifest.py tests/unit/test_secure_boot_flash.py tests/unit/test_wolfboot_build.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When hardware is intentionally available and explicit stack markers are emitted, secure-boot benchmark manifests record runtime stack high-water evidence. Hardware success, timing values, and runtime memory values must still only be claimed from explicit UART/log evidence.
 
 ## 13. Common Manual Commands
 
@@ -2168,3 +2200,12 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 ```
 
 Expected result: when the relocated build artifact, local wolfBoot keytools, and required toolchain are available, the command should produce signing evidence under `results/signing/` and retain `application_signed.bin`. If prerequisites are absent, the command records a controlled failure. A successful signing result still does not prove flashing, UART boot, or secure-boot runtime success.
+
+## Phase 11.4 secure-boot artifact freshness evidence
+
+The Phase 11.4 secure-boot workflow now records evidence fingerprints for the secure-boot build/sign/flash chain separately from the existing direct-flash firmware build fingerprint. The direct-flash fingerprint remains scoped to the framework-managed CMake build and rebuild-skip workflow. Secure boot uses additional generated artifacts and tools, including the wolfBoot make build, the relocated CMake preset, the application signing profile, and the two-artifact flash workflow.
+
+The wolfBoot build manifest records a secure-boot input fingerprint over the configured wolfBoot build profile, project-local wolfBoot config template, framework wolfBoot build helper, and available wolfBoot source inputs. The application-signing manifest records a secure-boot input fingerprint over the signing profile, signing helper, and relocated application build inputs. The secure-boot flash manifest records workflow/artifact freshness evidence over the flash workflow plus secure-boot artifact producer inputs, including the wolfBoot build helper/profile, signing helper/profile, project-local wolfBoot config template, relocated application build inputs, and selected wolfBoot source files where present. It also records the SHA-256 values of the wolfBoot and signed-application artifacts being flashed.
+
+These fingerprints are evidence fields in this phase; `flash-secure-boot` records `artifact_freshness_status: recorded_not_enforced` and does not yet refuse stale artifacts. The secure-boot hardware workflow test cleans generated secure-boot outputs before rebuilding so test results are not dependent on stale local `build/` or `tools/wolfboot/` artifacts.
+
