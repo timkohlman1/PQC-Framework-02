@@ -12,6 +12,7 @@ The initial supported commands are:
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -50,7 +51,15 @@ from framework.artifacts import copy_artifact_to_result
 from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
 from framework.flash import execute_flash
-from framework.manifest import build_secure_boot_benchmark_model, create_result_folder, read_manifest, update_manifest
+from framework.manifest import (
+    apply_repeated_run_samples_to_benchmark_model,
+    build_secure_boot_benchmark_model,
+    build_secure_boot_benchmark_sample,
+    create_result_folder,
+    format_manifest_timestamp,
+    read_manifest,
+    update_manifest,
+)
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
@@ -1480,15 +1489,99 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
 
     return result.return_code
 
-def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
-    """Run the wolfBoot secure-boot flash, evidence, and negative-test workflow."""
 
+
+def _secure_boot_sample_artifact_identity(
+    *,
+    flash_result: Any,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Build artifact identity evidence referenced by one benchmark sample."""
+
+    boot_signature = manifest.get("boot_signature", {})
+    if not isinstance(boot_signature, dict):
+        boot_signature = {}
+
+    return {
+        "run_id": manifest.get("run_id"),
+        "experiment": manifest.get("experiment"),
+        "boot_mode": manifest.get("boot_mode"),
+        "boot_crypto": manifest.get("boot_crypto"),
+        "signature_algorithm": boot_signature.get("algorithm"),
+        "signature_size_bytes": boot_signature.get("signature_size_bytes", manifest.get("signature_size")),
+        "image_version": boot_signature.get("image_version"),
+        "wolfboot_artifact_path": str(flash_result.wolfboot.artifact_path),
+        "wolfboot_sha256": flash_result.wolfboot.artifact_sha256,
+        "signed_application_artifact_path": str(flash_result.signed_application.artifact_path),
+        "signed_application_sha256": flash_result.signed_application.artifact_sha256,
+    }
+
+
+def _secure_boot_sample_from_uart_result(
+    *,
+    run_index: int,
+    uart_result: Any,
+    artifact_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert one UART capture result into a Phase 11.2 benchmark sample."""
+
+    marker_detection = {
+        "boot_marker_present": uart_result.boot_marker_present,
+        "tick_present": uart_result.tick_present,
+        "secure_boot_marker_present": uart_result.secure_boot_marker_present,
+        "data_captured": uart_result.data_captured,
+        "uart_return_code": uart_result.return_code,
+        "capture_return_code": uart_result.capture.return_code,
+        "log": uart_result.log_path.name,
+    }
+    sample_passed = (
+        uart_result.return_code == 0
+        and uart_result.verification_time_ms is not None
+        and uart_result.verification_cycles is not None
+    )
+    return build_secure_boot_benchmark_sample(
+        run_index=run_index,
+        timestamp=format_manifest_timestamp(),
+        verification_time_ms=uart_result.verification_time_ms,
+        verification_cycles=uart_result.verification_cycles,
+        verification_cpu_hz=uart_result.verification_cpu_hz,
+        verification_result_code=uart_result.verification_result_code,
+        verification_time_source=uart_result.verification_time_source,
+        verification_cycles_source=(
+            "uart_explicit_verification_cycles_marker"
+            if uart_result.verification_cycles is not None
+            else "unavailable"
+        ),
+        uart_marker_detection_result=marker_detection,
+        sample_verdict="passed" if sample_passed else "failed",
+        referenced_artifact_identity=artifact_identity,
+    )
+
+def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
+    """Run the wolfBoot secure-boot flash, evidence, repeated-run, and negative-test workflow."""
+
+    repeat_count = int(getattr(args, "repeat_count", 1))
+    if repeat_count < 1:
+        print("Error: --repeat-count must be at least 1.", file=sys.stderr)
+        return 45
     if args.negative_corrupt_application and args.skip_uart:
         print(
             "Error: --negative-corrupt-application requires UART capture evidence; do not combine it with --skip-uart.",
             file=sys.stderr,
         )
         return 44
+    if args.skip_uart and repeat_count > 1:
+        print(
+            "Error: --repeat-count greater than 1 requires UART capture; do not combine it with --skip-uart.",
+            file=sys.stderr,
+        )
+        return 45
+    if args.negative_corrupt_application and repeat_count > 1:
+        print(
+            "Error: repeated-run benchmark samples are only supported for the positive secure-boot path; do not combine --repeat-count greater than 1 with --negative-corrupt-application.",
+            file=sys.stderr,
+        )
+        return 45
 
     bundle = load_secure_boot_experiment_bundle(args.experiment)
     if args.negative_corrupt_application:
@@ -1521,19 +1614,39 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 43
 
-    uart_result = None
+    uart_results: list[Any] = []
+    samples: list[dict[str, Any]] = []
     uart_return_code: int | None = None
     uart_duration_seconds = 0.0
     if flash_result.return_code == 0 and not args.skip_uart:
-        uart_result = execute_uart_capture(
-            bundle=bundle,
-            repo_root=repo_root,
-            result_dir=result_dir,
-            duration_seconds=args.uart_duration_seconds,
-            restart_command=_monitor_restart_command(bundle, None),
+        manifest_after_flash = read_manifest(result_dir / "manifest.json")
+        artifact_identity = _secure_boot_sample_artifact_identity(
+            flash_result=flash_result,
+            manifest=manifest_after_flash,
         )
-        uart_return_code = uart_result.return_code
-        uart_duration_seconds = uart_result.duration_seconds
+        for run_index in range(1, repeat_count + 1):
+            log_name = "uart.log" if repeat_count == 1 else f"uart_sample_{run_index:03d}.log"
+            uart_result = execute_uart_capture(
+                bundle=bundle,
+                repo_root=repo_root,
+                result_dir=result_dir,
+                duration_seconds=args.uart_duration_seconds,
+                restart_command=_monitor_restart_command(bundle, None),
+                log_name=log_name,
+            )
+            uart_results.append(uart_result)
+            uart_duration_seconds += uart_result.duration_seconds
+            samples.append(
+                _secure_boot_sample_from_uart_result(
+                    run_index=run_index,
+                    uart_result=uart_result,
+                    artifact_identity=artifact_identity,
+                )
+            )
+            if uart_result.return_code != 0:
+                uart_return_code = uart_result.return_code
+            elif uart_return_code is None:
+                uart_return_code = 0
     elif flash_result.return_code != 0:
         update_manifest(
             result_dir / "manifest.json",
@@ -1557,6 +1670,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             },
         )
 
+    uart_result = uart_results[-1] if uart_results else None
     secure_boot_marker_present = (
         None if uart_result is None else uart_result.secure_boot_marker_present
     )
@@ -1596,8 +1710,13 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     positive_boot_evidence_passed = (
         not negative_test_requested
         and flash_result.return_code == 0
-        and uart_return_code == 0
+        and bool(uart_results)
+        and all(sample.get("sample_verdict") == "passed" for sample in samples)
         and secure_boot_marker_present is True
+    )
+
+    any_invalid_sample = bool(samples) and any(
+        sample.get("sample_verdict") != "passed" for sample in samples
     )
 
     if flash_result.return_code != 0:
@@ -1609,6 +1728,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     elif uart_return_code is not None and uart_return_code != 0:
         final_return_code = uart_return_code
         failure_stage = "uart"
+    elif any_invalid_sample:
+        final_return_code = 9
+        failure_stage = "benchmark_sample"
     else:
         final_return_code = 0
         failure_stage = "none"
@@ -1620,7 +1742,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             else "secure_boot_negative_test_failed"
         )
     elif positive_boot_evidence_passed:
-        result_status = "secure_boot_positive_boot_evidence_passed"
+        result_status = "secure_boot_benchmark_repeated_run_passed" if repeat_count > 1 else "secure_boot_positive_boot_evidence_passed"
     elif final_return_code == 0 and uart_return_code is None:
         result_status = "secure_boot_flash_passed"
     else:
@@ -1634,7 +1756,8 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         {
             "result": result_status,
             "uart_evidence": {
-                "log": "uart.log" if uart_return_code is not None else None,
+                "log": None if uart_return_code is None else ("uart.log" if repeat_count == 1 else uart_results[-1].log_path.name),
+                "logs": [result.log_path.name for result in uart_results],
                 "skipped": args.skip_uart or flash_result.return_code != 0,
                 "return_code": uart_return_code,
                 "boot_marker_present": boot_marker_present,
@@ -1713,6 +1836,18 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         runtime_measurement_method=verification_time_measurement_method,
         runtime_limitations=verification_time_limitations,
     )
+    if samples:
+        benchmark_evidence = apply_repeated_run_samples_to_benchmark_model(
+            benchmark_evidence,
+            samples,
+        )
+
+    aggregate_statistics = benchmark_evidence.get("aggregate_statistics", {})
+    headline_metrics = (
+        aggregate_statistics.get("headline_metrics", {})
+        if isinstance(aggregate_statistics, dict)
+        else {}
+    )
 
     update_manifest(
         result_dir / "manifest.json",
@@ -1725,7 +1860,8 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "flash_return_code": flash_result.return_code,
                 "uart_return_code": uart_return_code,
                 "flash_log": "secure_boot_flash.log",
-                "uart_log": "uart.log" if uart_return_code is not None else None,
+                "uart_log": None if uart_return_code is None else ("uart.log" if repeat_count == 1 else uart_results[-1].log_path.name),
+                "uart_logs": [result.log_path.name for result in uart_results],
                 "uart_skipped": args.skip_uart or flash_result.return_code != 0,
                 "failure_stage": failure_stage,
                 "duration_seconds": round(
@@ -1741,6 +1877,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "boot_marker_present": boot_marker_present,
                 "tick_present": tick_present,
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
+                "repeat_count_requested": repeat_count,
+                "repeated_run_sample_count": len(samples),
+                "primary_verification_time_ms": headline_metrics.get("primary_verification_time_ms"),
+                "primary_verification_cycles": headline_metrics.get("primary_verification_cycles"),
+                "primary_statistic": headline_metrics.get("primary_statistic") if headline_metrics else None,
                 "verification_time_ms": verification_time_ms,
                 "verification_cycles": verification_cycles,
                 "verification_cpu_hz": verification_cpu_hz,
@@ -1798,17 +1939,51 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     elif uart_return_code is None:
         print("UART capture skipped because secure-boot flashing failed.")
     else:
-        print(f"UART log: {result_dir / 'uart.log'}")
+        print(f"UART samples: {len(uart_results)}")
+        for result in uart_results:
+            print(f"UART log: {result.log_path}")
         print(f"UART return code: {uart_return_code}")
         print("Boot confirmation is based on the recorded UART marker evaluation.")
-        if verification_time_ms is None:
+        if isinstance(aggregate_statistics, dict):
+            print(f"Benchmark sample count: {aggregate_statistics.get('sample_count', len(uart_results))}")
+            print(f"Benchmark valid samples: {aggregate_statistics.get('valid_sample_count', 0)}")
+            print(f"Benchmark failed samples: {aggregate_statistics.get('failed_sample_count', 0)}")
+        if headline_metrics.get("primary_verification_time_ms") is not None:
+            print(f"Primary verification time (median): {headline_metrics['primary_verification_time_ms']} ms")
+        elif verification_time_ms is None:
             print("Verification time: unavailable")
         else:
             print(f"Verification time: {verification_time_ms} ms")
-        if verification_cycles is None:
+        if headline_metrics.get("primary_verification_cycles") is not None:
+            print(f"Primary verification cycles (median): {headline_metrics['primary_verification_cycles']}")
+        elif verification_cycles is None:
             print("Verification cycles: unavailable")
         else:
             print(f"Verification cycles: {verification_cycles}")
+        verification_time_stats = aggregate_statistics.get("verification_time_ms", {}) if isinstance(aggregate_statistics, dict) else {}
+        verification_cycle_stats = aggregate_statistics.get("verification_cycles", {}) if isinstance(aggregate_statistics, dict) else {}
+        if verification_time_stats.get("median") is not None:
+            print(
+                "Verification time stats (ms): "
+                f"min={verification_time_stats.get('minimum')}, "
+                f"mean={verification_time_stats.get('mean')}, "
+                f"median={verification_time_stats.get('median')}, "
+                f"max={verification_time_stats.get('maximum')}, "
+                f"std={verification_time_stats.get('standard_deviation')}, "
+                f"range={verification_time_stats.get('range')}, "
+                f"cv_percent={verification_time_stats.get('coefficient_of_variation_percent')}"
+            )
+        if verification_cycle_stats.get("median") is not None:
+            print(
+                "Verification cycle stats: "
+                f"min={verification_cycle_stats.get('minimum')}, "
+                f"mean={verification_cycle_stats.get('mean')}, "
+                f"median={verification_cycle_stats.get('median')}, "
+                f"max={verification_cycle_stats.get('maximum')}, "
+                f"std={verification_cycle_stats.get('standard_deviation')}, "
+                f"range={verification_cycle_stats.get('range')}, "
+                f"cv_percent={verification_cycle_stats.get('coefficient_of_variation_percent')}"
+            )
         if verification_cpu_hz is None:
             print("Verification CPU Hz: unavailable")
         else:
@@ -1821,11 +1996,10 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         if args.negative_corrupt_application:
             print("Negative test passes only when the normal application and secure-boot markers are absent after flashing the corrupted result-local image.")
         else:
-            print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, and tick marker.")
+            print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, tick marker, and explicit verification timing evidence for benchmark-valid samples.")
     print(f"Return code: {final_return_code}")
 
     return final_return_code
-
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
@@ -2096,6 +2270,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--negative-corrupt-application",
         action="store_true",
         help="Create and flash a result-local corrupted copy of the signed application image, then require UART evidence that normal application markers are absent.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--repeat-count",
+        default=1,
+        type=int,
+        help="Run repeated post-flash secure-boot verification samples for the same benchmark profile. Each sample captures explicit UART timing evidence after reset.",
     )
     secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
 

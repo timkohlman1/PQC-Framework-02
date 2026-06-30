@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ DEFAULT_NETWORK_PROFILE = "none"
 
 SECURE_BOOT_BENCHMARK_SCHEMA_VERSION = 1
 SECURE_BOOT_BENCHMARK_MODEL_PHASE = "phase_11_1_schema_only"
+SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE = "phase_11_2_repeated_run_support"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
 
@@ -81,12 +83,10 @@ def build_secure_boot_benchmark_model(
         "evidence and are added in the later Phase 11.4 runtime-memory step."
     )
     unavailable_repeated_reason = (
-        "Phase 11.1 defines the repeated-run sample schema only; repeated execution "
-        "is added in the later Phase 11.2 step."
+        "Repeated execution has not been configured for this run."
     )
     unavailable_aggregate_reason = (
-        "Aggregate statistics require repeated-run samples and are calculated in "
-        "later Phase 11 steps."
+        "Aggregate statistics require repeated-run samples; no repeated samples are available for this run."
     )
 
     if runtime_limitations is None:
@@ -186,6 +186,8 @@ def build_secure_boot_benchmark_model(
                 "median": None,
                 "maximum": None,
                 "standard_deviation": None,
+                "range": None,
+                "coefficient_of_variation_percent": None,
             },
             "verification_cycles": {
                 "minimum": None,
@@ -193,6 +195,8 @@ def build_secure_boot_benchmark_model(
                 "median": None,
                 "maximum": None,
                 "standard_deviation": None,
+                "range": None,
+                "coefficient_of_variation_percent": None,
             },
             "derived_metrics": {
                 "cycles_per_kb": None,
@@ -207,6 +211,165 @@ def build_secure_boot_benchmark_model(
             unavailable_aggregate_reason,
         ],
     }
+
+
+
+def build_secure_boot_benchmark_sample(
+    *,
+    run_index: int,
+    timestamp: str,
+    verification_time_ms: float | int | None,
+    verification_cycles: int | None,
+    verification_cpu_hz: int | None,
+    verification_result_code: int | None,
+    verification_time_source: str,
+    verification_cycles_source: str,
+    uart_marker_detection_result: dict[str, Any],
+    sample_verdict: str,
+    referenced_artifact_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one Phase 11.2 repeated-run benchmark sample."""
+
+    return {
+        "run_index": int(run_index),
+        "timestamp": timestamp,
+        "verification_time_ms": verification_time_ms,
+        "verification_cycles": verification_cycles,
+        "verification_cpu_hz": verification_cpu_hz,
+        "verification_result_code": verification_result_code,
+        "verification_time_source": verification_time_source,
+        "verification_cycles_source": verification_cycles_source,
+        "uart_marker_detection_result": uart_marker_detection_result,
+        "sample_verdict": sample_verdict,
+        "valid_for_statistics": sample_verdict == "passed"
+        and verification_time_ms is not None
+        and verification_cycles is not None,
+        "referenced_artifact_identity": referenced_artifact_identity,
+    }
+
+
+def _metric_statistics(values: list[float | int]) -> dict[str, Any]:
+    if not values:
+        return {
+            "minimum": None,
+            "mean": None,
+            "median": None,
+            "maximum": None,
+            "standard_deviation": None,
+            "range": None,
+            "coefficient_of_variation_percent": None,
+        }
+    mean_value = statistics.mean(values)
+    standard_deviation = 0.0 if len(values) == 1 else statistics.stdev(values)
+    return {
+        "minimum": min(values),
+        "mean": mean_value,
+        "median": statistics.median(values),
+        "maximum": max(values),
+        "standard_deviation": standard_deviation,
+        "range": max(values) - min(values),
+        "coefficient_of_variation_percent": (
+            None if mean_value == 0 else (standard_deviation / mean_value) * 100
+        ),
+    }
+
+
+def calculate_secure_boot_benchmark_aggregate_statistics(
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Calculate Phase 11.2 aggregate statistics over valid samples only."""
+
+    valid_samples = [
+        sample
+        for sample in samples
+        if sample.get("valid_for_statistics") is True
+    ]
+    failed_samples = [
+        sample
+        for sample in samples
+        if sample.get("valid_for_statistics") is not True
+    ]
+    time_values = [
+        sample["verification_time_ms"]
+        for sample in valid_samples
+        if sample.get("verification_time_ms") is not None
+    ]
+    cycle_values = [
+        sample["verification_cycles"]
+        for sample in valid_samples
+        if sample.get("verification_cycles") is not None
+    ]
+    time_stats = _metric_statistics(time_values)
+    cycle_stats = _metric_statistics(cycle_values)
+
+    return {
+        "status": "available" if samples else "unavailable",
+        "sample_count": len(samples),
+        "valid_sample_count": len(valid_samples),
+        "failed_sample_count": len(failed_samples),
+        "verification_time_ms": time_stats,
+        "verification_cycles": cycle_stats,
+        "headline_metrics": {
+            "primary_verification_time_ms": time_stats["median"],
+            "primary_verification_cycles": cycle_stats["median"],
+            "primary_statistic": "median",
+        },
+        "derived_metrics": {
+            "cycles_per_kb": None,
+            "time_ms_per_kb": None,
+        },
+        "limitations": [
+            "Aggregate statistics include only samples marked valid_for_statistics. Host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as verification timing evidence."
+        ],
+    }
+
+
+def apply_repeated_run_samples_to_benchmark_model(
+    benchmark: dict[str, Any],
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return a benchmark model updated with Phase 11.2 samples and aggregates."""
+
+    updated = dict(benchmark)
+    updated["model_phase"] = SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE
+    updated["repeated_run_samples"] = {
+        "status": "completed" if samples else "not_configured",
+        "samples": samples,
+        "sample_schema": {
+            "run_index": None,
+            "timestamp": None,
+            "verification_time_ms": None,
+            "verification_cycles": None,
+            "verification_cpu_hz": None,
+            "verification_result_code": None,
+            "verification_time_source": None,
+            "verification_cycles_source": None,
+            "uart_marker_detection_result": None,
+            "sample_verdict": None,
+            "valid_for_statistics": None,
+            "referenced_artifact_identity": None,
+        },
+        "limitations": [
+            "Each sample is based on explicit firmware/UART verification markers only; host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as timing evidence."
+        ],
+    }
+    updated["aggregate_statistics"] = calculate_secure_boot_benchmark_aggregate_statistics(samples)
+    stale_repeated_limitations = {
+        "Repeated execution has not been configured for this run.",
+        "Aggregate statistics require repeated-run samples; no repeated samples are available for this run.",
+    }
+    limitations = [
+        limitation
+        for limitation in list(updated.get("limitations", []))
+        if not samples or limitation not in stale_repeated_limitations
+    ]
+    repeated_limitation = (
+        "Phase 11.2 repeated-run support records one sample per secure-boot reset/capture and uses median values as primary headline metrics."
+    )
+    if samples and repeated_limitation not in limitations:
+        limitations.append(repeated_limitation)
+    updated["limitations"] = limitations
+    return updated
 
 
 def _coerce_timestamp(timestamp: datetime | None) -> datetime:

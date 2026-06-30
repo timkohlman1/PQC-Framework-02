@@ -466,6 +466,7 @@ def execute_uart_capture(
     runner: Runner = default_runner,
     duration_seconds: int = DEFAULT_CAPTURE_DURATION_SECONDS,
     restart_command: str | None = None,
+    log_name: str = "uart.log",
 ) -> UartResult:
     """Capture post-flash UART output through the configured gateway.
 
@@ -480,7 +481,7 @@ def execute_uart_capture(
 
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
-    log_path = result_dir_path / "uart.log"
+    log_path = result_dir_path / log_name
 
     gateway_alias = str(bundle["host"]["alias"])
     device = str(bundle["host"]["uart"]["device"])
@@ -569,7 +570,7 @@ def execute_uart_capture(
                 "capture_return_code": capture_execution.return_code,
                 "duration_seconds": round(duration, 3),
                 "capture_duration_seconds": round(capture_execution.duration_seconds, 3),
-                "log": "uart.log",
+                "log": log_name,
                 "device": device,
                 "baud": baud,
                 "requested_duration_seconds": duration_seconds,

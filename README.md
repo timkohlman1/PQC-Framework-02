@@ -590,3 +590,18 @@ Existing secure-boot timing fields remain compatible. The current single secure-
 Metrics that are not implemented yet are not omitted. The manifest records them as unavailable with a reason. In Phase 11.1, static build/resource metrics, unsigned-image overhead metrics, runtime stack/heap metrics, repeated-run samples, and aggregate statistics remain explicit placeholders until the later Phase 11 sub-steps implement collection and calculation.
 
 Phase 11.1 does not add new signing profiles, benchmark aggregation commands, runtime stack/heap instrumentation, or hardware benchmark loops. Hardware success and timing values must still come from user-provided flash and UART logs.
+
+## Phase 11.2 — Repeated-Run Measurement Support
+
+Phase 11.2 adds repeated secure-boot benchmark measurement for the existing secure-boot profile. The same `flash-secure-boot` workflow can now run multiple post-flash verification samples with `--repeat-count <N>`:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
+```
+
+The workflow flashes the configured wolfBoot and signed-application artifacts once, then performs one reset/UART capture per sample. Single-sample runs preserve the existing `uart.log` filename. Repeated runs write `uart_sample_001.log`, `uart_sample_002.log`, and so on. Each sample is recorded under `secure_boot_benchmark.repeated_run_samples.samples` with its run index, timestamp, explicit verification time, cycles, CPU frequency, verification result code, UART marker detection result, sample verdict, and referenced wolfBoot/signed-application artifact identity.
+
+Aggregate statistics are recorded under `secure_boot_benchmark.aggregate_statistics`. The framework calculates sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and verification cycles. Only samples with passing UART evidence and explicit timing/cycle markers are valid for statistics. Failed or incomplete samples remain visible but do not contaminate timing aggregates. The primary headline values are the median fields recorded under `secure_boot_benchmark.aggregate_statistics.headline_metrics` and mirrored into `secure_boot_run.primary_verification_time_ms` and `secure_boot_run.primary_verification_cycles`. The `flash-secure-boot` command prints the same sample counts and timing/cycle statistics at the end of a repeated-run workflow.
+
+Phase 11.2 still does not add new classical signing-algorithm profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output. Verification timing is still taken only from explicit firmware/UART markers. Host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as timing evidence.
+

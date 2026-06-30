@@ -245,6 +245,7 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 ```
 
@@ -1158,6 +1159,7 @@ Current framework skeleton completed items:
 53. Add Phase 10k boot timing instrumentation. The wolfBoot build helper temporarily instruments local STM32L4R5 wolfBoot `src/image.c` during `build-wolfboot`, wraps `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement, writes the measured millisecond value into a RAM2 mailbox before jumping to the application, restores the submodule files after the build, and records the application-emitted `wolfBoot verification time: <N> ms` UART evidence in the secure-boot run manifest. Host-side SSH, reset, and UART capture duration are not treated as verification time.
 54. Add Phase 10l secure-boot manifest and documentation consolidation. Secure-boot run manifests now record the required consolidated fields `boot_mode`, `boot_crypto`, `signature_size`, `boot_signature.signature_size`, `boot_signature.signature_size_bytes`, and `boot_timing.verification_time_ms`. They also record `secure_boot_evidence` to link wolfBoot build-artifact evidence, signed-application evidence, flash evidence, UART marker evidence, timing evidence, final result, and negative-test evidence in one object. The signing manifest also records `signing.signature_size` alongside `signing.signature_size_bytes`.
 55. Add Phase 11.1 secure-boot benchmark result model. Secure-boot run manifests now record `secure_boot_benchmark` as a schema-first evidence object that distinguishes build-time metrics, signed-artifact metrics, runtime verification metrics, runtime memory metrics, repeated-run samples, aggregate statistics, and limitations. Existing secure-boot timing fields remain compatible. Metrics not implemented until later Phase 11 steps are recorded explicitly as unavailable rather than omitted. Phase 11.1 does not add new signing profiles, repeated-run execution, aggregation commands, or runtime stack/heap instrumentation.
+56. Add Phase 11.2 repeated-run measurement support. The secure-boot flash workflow supports `--repeat-count <N>` for repeated post-flash reset/UART verification samples of the same profile. Each sample records run index, timestamp, explicit timing/cycle/CPU/result-code evidence, UART marker verdict, pass/fail sample verdict, and referenced wolfBoot/signed-application artifact identity. Aggregates record sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and cycles. Median values are the primary headline metrics. The CLI summary prints the aggregate counts and timing/cycle statistics at the end of the repeated-run workflow. Phase 11.2 does not add new signing profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output.
 Current CLI commands are:
 
 ```powershell
@@ -1515,6 +1517,37 @@ python -m pytest
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Secure-boot manifests contain `secure_boot_benchmark` with explicit unavailable placeholders for later Phase 11 metrics. Hardware success and timing values must still only be claimed from user-provided logs.
+
+
+## Phase 11.2 Repeated-Run Measurement Support
+
+Implemented scope:
+
+- `flash-secure-boot` supports `--repeat-count <N>` for repeated secure-boot verification samples of the same configured profile.
+- The workflow flashes wolfBoot and the signed application once, then performs one reset/UART capture per sample.
+- Single-sample runs preserve `uart.log`; repeated runs write `uart_sample_001.log`, `uart_sample_002.log`, and so on.
+- Each sample is recorded under `secure_boot_benchmark.repeated_run_samples.samples` with run index, timestamp, verification time in milliseconds, verification cycles, verification CPU frequency, verification result code, timing source, cycle source, UART marker detection result, sample verdict, validity-for-statistics flag, and referenced artifact identity.
+- `secure_boot_benchmark.aggregate_statistics` records sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and verification cycles.
+- Primary headline metrics use the median and are recorded under `secure_boot_benchmark.aggregate_statistics.headline_metrics` and mirrored into `secure_boot_run.primary_verification_time_ms` and `secure_boot_run.primary_verification_cycles`.
+- Failed samples and samples missing explicit timing or cycle evidence remain visible in the manifest but are excluded from valid timing/cycle statistics.
+- Host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as verification timing evidence.
+- Phase 11.2 does not add new classical signing-algorithm profiles, static build/resource metrics, runtime stack/heap instrumentation, or benchmark aggregation output files.
+
+Manual Phase 11.2 command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.2 verification commands:
+
+```powershell
+python -m pytest tests/unit/test_manifest.py tests/unit/test_secure_boot_flash.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When hardware is intentionally available, repeated secure-boot runs record one sample per reset/UART capture and aggregate only valid explicit timing/cycle samples. Hardware success and timing values must still only be claimed from user-provided logs.
 
 ## 13. Common Manual Commands
 

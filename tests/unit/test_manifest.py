@@ -278,3 +278,92 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["repeated_run_samples"]["samples"] == []
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
     assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
+
+
+def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samples_only():
+    manifest = load_manifest_module()
+
+    base = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+    )
+    artifact_identity = {
+        "wolfboot_sha256": "wolfboot-sha",
+        "signed_application_sha256": "app-sha",
+    }
+    samples = [
+        manifest.build_secure_boot_benchmark_sample(
+            run_index=1,
+            timestamp="2026-06-30T10:00:00+10:00",
+            verification_time_ms=17,
+            verification_cycles=1360000,
+            verification_cpu_hz=80000000,
+            verification_result_code=0,
+            verification_time_source="uart_explicit_verification_time_marker",
+            verification_cycles_source="uart_explicit_verification_cycles_marker",
+            uart_marker_detection_result={"boot_marker_present": True, "tick_present": True, "secure_boot_marker_present": True},
+            sample_verdict="passed",
+            referenced_artifact_identity=artifact_identity,
+        ),
+        manifest.build_secure_boot_benchmark_sample(
+            run_index=2,
+            timestamp="2026-06-30T10:01:00+10:00",
+            verification_time_ms=19,
+            verification_cycles=1520000,
+            verification_cpu_hz=80000000,
+            verification_result_code=0,
+            verification_time_source="uart_explicit_verification_time_marker",
+            verification_cycles_source="uart_explicit_verification_cycles_marker",
+            uart_marker_detection_result={"boot_marker_present": True, "tick_present": True, "secure_boot_marker_present": True},
+            sample_verdict="passed",
+            referenced_artifact_identity=artifact_identity,
+        ),
+        manifest.build_secure_boot_benchmark_sample(
+            run_index=3,
+            timestamp="2026-06-30T10:02:00+10:00",
+            verification_time_ms=None,
+            verification_cycles=None,
+            verification_cpu_hz=None,
+            verification_result_code=None,
+            verification_time_source="unavailable",
+            verification_cycles_source="unavailable",
+            uart_marker_detection_result={"boot_marker_present": False, "tick_present": False, "secure_boot_marker_present": False},
+            sample_verdict="failed",
+            referenced_artifact_identity=artifact_identity,
+        ),
+    ]
+
+    updated = manifest.apply_repeated_run_samples_to_benchmark_model(base, samples)
+
+    assert updated["model_phase"] == "phase_11_2_repeated_run_support"
+    assert updated["repeated_run_samples"]["status"] == "completed"
+    assert updated["repeated_run_samples"]["samples"] == samples
+    assert samples[0]["valid_for_statistics"] is True
+    assert samples[2]["valid_for_statistics"] is False
+    aggregate = updated["aggregate_statistics"]
+    assert aggregate["status"] == "available"
+    assert aggregate["sample_count"] == 3
+    assert aggregate["valid_sample_count"] == 2
+    assert aggregate["failed_sample_count"] == 1
+    assert aggregate["verification_time_ms"]["minimum"] == 17
+    assert aggregate["verification_time_ms"]["mean"] == 18
+    assert aggregate["verification_time_ms"]["median"] == 18.0
+    assert aggregate["verification_time_ms"]["maximum"] == 19
+    assert round(aggregate["verification_time_ms"]["standard_deviation"], 6) == 1.414214
+    assert aggregate["verification_time_ms"]["range"] == 2
+    assert round(aggregate["verification_time_ms"]["coefficient_of_variation_percent"], 6) == 7.856742
+    assert aggregate["verification_cycles"]["median"] == 1440000.0
+    assert aggregate["verification_cycles"]["range"] == 160000
+    assert aggregate["headline_metrics"] == {
+        "primary_verification_time_ms": 18.0,
+        "primary_verification_cycles": 1440000.0,
+        "primary_statistic": "median",
+    }
+    assert "Repeated execution has not been configured for this run." not in updated["limitations"]
+    assert (
+        "Aggregate statistics require repeated-run samples; no repeated samples are available for this run."
+        not in updated["limitations"]
+    )

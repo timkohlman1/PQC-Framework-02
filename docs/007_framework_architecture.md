@@ -863,3 +863,18 @@ secure_boot_benchmark.limitations
 `build_time_metrics`, runtime stack/heap fields, repeated-run samples, and aggregate statistics are present but marked unavailable in Phase 11.1. This makes missing evidence auditable instead of inferred from absent fields. Later Phase 11 steps may populate those sections after implementing repeated-run execution, static build/resource parsing, runtime stack/memory instrumentation, and cross-profile aggregation.
 
 Phase 11.1 intentionally does not add new signing-algorithm profiles, aggregation output commands, or runtime stack/heap instrumentation.
+
+## Phase 11.2 — Repeated-Run Measurement Support
+
+Phase 11.2 extends the secure-boot execution path with repeated post-flash verification samples for the same benchmark profile. The command remains the explicit secure-boot workflow:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
+```
+
+The workflow records each sample in `secure_boot_benchmark.repeated_run_samples.samples`. A sample contains `run_index`, `timestamp`, explicit verification timing, cycles, CPU frequency, verification result code, UART marker detection evidence, sample verdict, validity-for-statistics flag, and referenced artifact identity for the wolfBoot and signed application artifacts.
+
+`secure_boot_benchmark.aggregate_statistics` records sample count, valid sample count, failed sample count, and minimum/mean/median/maximum/standard-deviation/range/coefficient-of-variation values for verification time and verification cycles. Median is the primary headline statistic and is also reflected in the secure-boot run summary. Failed samples and samples missing explicit timing or cycle evidence are retained but excluded from aggregate timing statistics. The CLI summary prints the same counts and timing/cycle statistics after repeated-run benchmark collection completes.
+
+Repeated-run support does not add signing-algorithm profiles or aggregation output files. It also does not infer timing from SSH duration, UART capture duration, reset delay, marker ordering, or any host-side elapsed time.
+
