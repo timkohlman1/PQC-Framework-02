@@ -154,28 +154,15 @@ Expected outcomes:
 
 ## 11.8 Phase 11.5 — Classical Signing-Algorithm Benchmark Profiles
 
-After the metrics and repeated-run model are in place, add experiment, build, and signing profiles for the classical signing algorithms.
+After the benchmark result model, repeated-run support, static metrics, and runtime memory metrics are in place, add classical signing-algorithm benchmark profiles incrementally.
 
-Recommended full profile set:
+This phase should be split into smaller implementation steps so each algorithm family can be added and tested without combining too many changes at once.
 
-- `ED25519`
-- `ED448`
-- `ECC256`
-- `ECC384`
-- `ECC521`
-- `RSA2048`
-- `RSA4096`
+### Phase 11.5a — Classical Profile Model and Minimum Comparison Scope
 
-Alternative profile set if scope needs to be reduced:
+Define the reusable model for classical signing-algorithm benchmark profiles before adding multiple new runnable profiles.
 
-- `ED25519`
-- `ECC256`
-- `ECC384`
-- `RSA2048`
-- `RSA3072`
-- `RSA4096`
-
-Minimum practical comparison set:
+The initial benchmark scope should use the minimum practical comparison set:
 
 - `ED25519`
 - `ECC256`
@@ -183,10 +170,60 @@ Minimum practical comparison set:
 
 Expected outcomes:
 
-- Each profile can build wolfBoot with a defined signing algorithm.
-- Each profile can sign the same application payload.
-- Each profile can run through the same benchmark workflow.
-- Results are comparable because the image payload, board, clock speed, measurement method, and run count are controlled.
+- The framework has a stable profile schema for classical signing benchmarks.
+- Existing `ECC256` behaviour remains the known-good reference path.
+- Profile metadata clearly records algorithm, curve or key size, signature size, image version, signing profile, wolfBoot build profile, experiment profile, and benchmark assumptions.
+- Missing or unsupported profile capabilities are represented explicitly rather than inferred.
+- No broader algorithm set is added yet.
+
+### Phase 11.5b — ED25519 Benchmark Profile
+
+Add `ED25519` as the first new non-ECC256 benchmark profile.
+
+Expected outcomes:
+
+- The framework has an ED25519 wolfBoot build profile.
+- The framework has an ED25519 application signing profile.
+- The framework has an ED25519 secure-boot benchmark experiment profile.
+- ED25519 uses the same application payload, board, clock speed, measurement method, repeated-run model, static metrics, runtime memory model, and manifest schema as the ECC256 reference profile.
+- Unit tests validate ED25519 config loading, validation, command construction, manifest metadata, and unavailable-metric handling.
+- RSA profiles and cross-profile aggregation remain out of scope for this sub-phase.
+
+### Phase 11.5c — RSA2048 Benchmark Profile
+
+Add `RSA2048` as the first RSA benchmark profile after ED25519 proves the generalised profile model.
+
+Expected outcomes:
+
+- The framework has an RSA2048 wolfBoot build profile.
+- The framework has an RSA2048 application signing profile.
+- The framework has an RSA2048 secure-boot benchmark experiment profile.
+- RSA-specific metadata such as key size and signature size is recorded in benchmark manifests.
+- The profile fails clearly if local wolfBoot, key-generation, signing, or build prerequisites are unavailable.
+- Unit tests validate RSA2048 config loading, validation, command construction, manifest metadata, and unavailable-metric handling.
+- RSA3072, RSA4096, ED448, ECC384, ECC521, and benchmark aggregation remain out of scope for this sub-phase.
+
+### Phase 11.5d — Optional Expanded Classical Profile Set
+
+After the minimum practical comparison set is stable, add any additional classical profiles needed for the full benchmark.
+
+Candidate expanded profiles:
+
+- `ECC384`
+- `ECC521`
+- `ED448`
+- `RSA3072`
+- `RSA4096`
+
+Expected outcomes:
+
+- Each added profile has a matching wolfBoot build profile, signing profile, and secure-boot benchmark experiment profile.
+- Each added profile records comparable benchmark metadata and uses the same payload, board, clock speed, measurement method, and repeated-run settings.
+- Unsupported or unverified algorithms are marked explicitly as unavailable, unsupported, or non-runnable.
+- Existing ECC256, ED25519, RSA2048, direct-flash baseline, and secure-boot benchmark behaviour remain unchanged.
+- Cross-profile summary generation remains Phase 11.6 scope.
+
+
 
 ## 11.9 Phase 11.6 — Benchmark Aggregation Output
 
