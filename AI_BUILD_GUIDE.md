@@ -2262,6 +2262,7 @@ Implemented scope:
 - Build, signing, and secure-boot flash workflows record non-secret SHA-256 key fingerprints and do not copy private key material into results.
 - `flash-secure-boot` refuses SCP, SSH, and hardware flashing when both configured key files exist and their fingerprints differ.
 - RSA2048 remains reserved for Phase 11.5c, and cross-profile aggregation remains Phase 11.6 scope.
+- Added `tests/hardware/test_secure_boot_algorithm_benchmarks.py` as a side-by-side hardware benchmark workflow for ECC256 and ED25519. The test cleans generated wolfBoot and relocated application outputs before each algorithm, builds the selected wolfBoot profile, rebuilds the relocated HAL application, signs with the matching signing profile, runs `flash-secure-boot --repeat-count 2`, verifies two valid repeated-run samples, and intentionally leaves result evidence under `results/`.
 
 Manual Phase 11.5b commands:
 
@@ -2279,6 +2280,7 @@ Manual Phase 11.5b verification commands:
 python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_wolfboot_build.py tests/unit/test_signing.py tests/unit/test_secure_boot_flash.py tests/unit/test_manifest.py
 python -m pytest tests/unit
 python -m pytest
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. ED25519 hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided flash and UART logs.

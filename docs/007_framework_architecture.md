@@ -953,3 +953,9 @@ The ED25519 profile consists of:
 The ED25519 experiment reuses the existing relocated application payload and measurement model so profile comparisons remain comparable. The framework records key-fingerprint consistency evidence for the canonical local signing key and the wolfBoot working-tree key, and it refuses secure-boot flashing when available fingerprints differ.
 
 Cross-profile summary output remains Phase 11.6 scope.
+
+### Phase 11.5b side-by-side hardware benchmark test
+
+The hardware test `tests/hardware/test_secure_boot_algorithm_benchmarks.py` automates the clean side-by-side benchmark workflow for the ECC256 reference profile and the ED25519 Phase 11.5b profile. For each algorithm, the test runs wolfBoot `keysclean`, removes generated wolfBoot artifacts and the relocated app build directory, builds the selected wolfBoot profile, rebuilds the relocated HAL application, signs with the matching signing profile, and runs `flash-secure-boot --repeat-count 2` against the matching experiment profile.
+
+The test is marked `hardware`, uses the same capability gates as the existing secure-boot hardware workflows, and intentionally leaves result artifacts under `results/` so the manifests, flash logs, signing logs, wolfBoot build logs, and UART sample logs remain available as benchmark evidence. It validates positive secure-boot marker evidence, explicit timing and cycle evidence, repeated-run sample counts, valid-sample counts, failed-sample counts, and classical profile metadata for both ECC256 and ED25519.

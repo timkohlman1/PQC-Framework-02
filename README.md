@@ -681,3 +681,14 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 Private ED25519 signing-key material is local-only. The canonical local key is `secrets/wolfboot/ed25519_private_key.der`, and the wolfBoot working-tree key path is `tools/wolfboot/wolfboot_signing_private_key.der`. Build, signing, and secure-boot flash evidence record SHA-256 key fingerprints only; private keys are not copied into `results/` and must not be committed. The secure-boot flash workflow refuses to proceed when both configured key files exist and their fingerprints differ.
 
 RSA2048 and cross-profile benchmark aggregation remain out of scope until later Phase 11 sub-phases. Hardware success and benchmark values must only be claimed from user-provided flash and UART logs.
+
+### Phase 11.5b side-by-side hardware benchmark test
+
+The ECC256 reference profile and ED25519 benchmark profile can be exercised through one hardware-marked pytest workflow. The test intentionally follows the manual clean/build/sign/flash sequence for each algorithm and leaves generated benchmark evidence under `results/`, including wolfBoot build evidence, signing evidence, secure-boot manifests, flash logs, and UART sample logs.
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+```
+
+Expected result: when the local toolchain, wolfBoot source and keytools, gateway, flash helper, ST-LINK UART device, and board are available, the test runs ECC256 and ED25519 sequentially with `--repeat-count 2`, verifies two valid benchmark samples for each profile, and checks positive secure-boot UART marker and explicit timing/cycle evidence. If required hardware capabilities are not available and strict hardware mode is not requested, the test skips cleanly. Hardware success and benchmark values must still be based on the generated result manifests and UART logs.
+
