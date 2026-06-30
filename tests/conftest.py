@@ -14,6 +14,52 @@ SSH_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 5
 
 
+TEST_PHASE_UNIT = "unit"
+TEST_PHASE_OTHER = "other"
+TEST_PHASE_INTEGRATION = "integration"
+TEST_PHASE_HARDWARE = "hardware"
+TEST_PHASE_ORDER = {
+    TEST_PHASE_UNIT: 0,
+    TEST_PHASE_OTHER: 1,
+    TEST_PHASE_INTEGRATION: 2,
+    TEST_PHASE_HARDWARE: 3,
+}
+LOWER_TEST_PHASES = {
+    TEST_PHASE_UNIT: (),
+    TEST_PHASE_OTHER: (TEST_PHASE_UNIT,),
+    TEST_PHASE_INTEGRATION: (TEST_PHASE_UNIT, TEST_PHASE_OTHER),
+    TEST_PHASE_HARDWARE: (
+        TEST_PHASE_UNIT,
+        TEST_PHASE_OTHER,
+        TEST_PHASE_INTEGRATION,
+    ),
+}
+FAILED_TEST_PHASES_KEY = "pqc_failed_test_phases"
+
+
+def _normalised_nodeid(item: pytest.Item) -> str:
+    return item.nodeid.replace("\\", "/")
+
+
+def _test_phase(item: pytest.Item) -> str:
+    nodeid = _normalised_nodeid(item)
+    if nodeid.startswith("tests/hardware/") or item.get_closest_marker(TEST_PHASE_HARDWARE):
+        return TEST_PHASE_HARDWARE
+    if nodeid.startswith("tests/integration/") or item.get_closest_marker(TEST_PHASE_INTEGRATION):
+        return TEST_PHASE_INTEGRATION
+    if nodeid.startswith("tests/unit/"):
+        return TEST_PHASE_UNIT
+    return TEST_PHASE_OTHER
+
+
+def _failed_test_phases(config: pytest.Config) -> set[str]:
+    failed = getattr(config, FAILED_TEST_PHASES_KEY, None)
+    if failed is None:
+        failed = set()
+        setattr(config, FAILED_TEST_PHASES_KEY, failed)
+    return failed
+
+
 @dataclass(frozen=True)
 class CapabilityResult:
     name: str
@@ -276,6 +322,39 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "hardware: tests that require physical STM32 hardware, gateway access, or UART capture; auto-skip when required capabilities are unavailable",
     )
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    items.sort(key=lambda item: (TEST_PHASE_ORDER[_test_phase(item)], item.nodeid))
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    phase = _test_phase(item)
+    failed_lower_phases = [
+        lower_phase
+        for lower_phase in LOWER_TEST_PHASES[phase]
+        if lower_phase in _failed_test_phases(item.config)
+    ]
+    if not failed_lower_phases:
+        return
+
+    failed_phase_list = ", ".join(failed_lower_phases)
+    pytest.exit(
+        f"Stopping before {phase} tests because lower-level pytest phase(s) failed: {failed_phase_list}",
+        returncode=1,
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[object]):
+    outcome = yield
+    report = outcome.get_result()
+    if not report.failed:
+        return
+    if report.when not in {"setup", "call"}:
+        return
+
+    _failed_test_phases(item.config).add(_test_phase(item))
 
 
 @pytest.fixture(scope="session")
