@@ -57,6 +57,73 @@ static void MX_LPUART1_UART_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#ifdef SECURE_BOOT_APPLICATION
+#define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
+#define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   1UL
+
+typedef struct
+{
+  uint32_t magic;
+  uint32_t version;
+  uint32_t verification_time_ms;
+  uint32_t elapsed_cycles;
+  uint32_t cpu_hz;
+  uint32_t verification_result;
+} PQC_BootTimingMailbox;
+
+static void APP_UART_WriteString(const char *text)
+{
+  uint16_t length = 0U;
+
+  while (text[length] != '\0')
+  {
+    length++;
+  }
+
+  HAL_UART_Transmit(&hlpuart1, (uint8_t *)text, length, HAL_MAX_DELAY);
+}
+
+static void APP_UART_WriteUint32(uint32_t value)
+{
+  char digits[10];
+  uint32_t count = 0U;
+
+  if (value == 0U)
+  {
+    APP_UART_WriteString("0");
+    return;
+  }
+
+  while ((value > 0U) && (count < sizeof(digits)))
+  {
+    digits[count] = (char)('0' + (value % 10U));
+    value /= 10U;
+    count++;
+  }
+
+  while (count > 0U)
+  {
+    count--;
+    HAL_UART_Transmit(&hlpuart1, (uint8_t *)&digits[count], 1U, HAL_MAX_DELAY);
+  }
+}
+
+static void APP_PrintWolfBootVerificationTiming(void)
+{
+  volatile const PQC_BootTimingMailbox *mailbox =
+      (volatile const PQC_BootTimingMailbox *)PQC_BOOT_TIMING_MAILBOX_ADDR;
+
+  if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
+      (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
+  {
+    APP_UART_WriteString("wolfBoot verification time: ");
+    APP_UART_WriteUint32(mailbox->verification_time_ms);
+    APP_UART_WriteString(" ms\r\n");
+  }
+}
+#endif
+
 /* USER CODE END 0 */
 
 /**
@@ -94,6 +161,8 @@ int main(void)
 #ifdef SECURE_BOOT_APPLICATION
   const char secure_boot_msg[] = "\r\nstm32-basic_hal1 secure-boot app v0.1.0\r\n";
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)secure_boot_msg, sizeof(secure_boot_msg) - 1, HAL_MAX_DELAY);
+
+  APP_PrintWolfBootVerificationTiming();
 
   const char boot_msg[] = "stm32-basic_hal1 boot v0.1.0\r\n";
 #else

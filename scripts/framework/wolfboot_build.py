@@ -29,6 +29,8 @@ DEFAULT_WOLFBOOT_LOG_NAME = "wolfboot_build.log"
 MINGW_KEYTOOLS_STDIO_DEFINE = "-D__USE_MINGW_ANSI_STDIO=1"
 KEYTOOLS_MAKEFILE_RELATIVE_PATH = Path("tools/keytools/Makefile")
 STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
+STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
+WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 
 
@@ -67,6 +69,10 @@ class WolfBootBuildResult:
     stm32l4_hal_conf_pwr_patch_enabled: bool
     stm32l4_hal_conf_pwr_patch_applied: bool
     stm32l4_hal_conf_path: Path | None
+    boot_timing_instrumentation_patch_enabled: bool
+    boot_timing_instrumentation_patch_applied: bool
+    boot_timing_image_path: Path | None
+    boot_timing_hal_path: Path | None
     artifact_sha256: str | None
     retained_artifact_path: Path | None
     execution: WolfBootCommandExecution | None
@@ -287,6 +293,156 @@ def _temporarily_patch_stm32l4_hal_conf(
     return hal_conf_path, True, original_text
 
 
+
+def _temporarily_patch_boot_timing_instrumentation(
+    *,
+    profile: dict[str, Any],
+    source_dir: Path,
+) -> tuple[Path | None, Path | None, bool, str | None, str | None]:
+    """Temporarily instrument wolfBoot verification timing for STM32L4R5.
+
+    Phase 10k needs wolfBoot to produce a concrete timing value. The earlier
+    UART-in-wolfBoot approach was unreliable because the application UART path
+    is already known-good while the bootloader's early USART state is not. This
+    patch wraps wolfBoot's image-authenticity function with a Cortex-M DWT
+    cycle-counter measurement and writes the measured value to a fixed RAM2
+    mailbox. The relocated HAL application reads that mailbox after its UART is
+    initialized and emits the framework-parsed line:
+
+        wolfBoot verification time: <N> ms
+
+    The wolfBoot source is restored after the build command runs.
+    """
+
+    if not _optional_profile_bool(profile, "build.boot_timing_instrumentation_patch"):
+        return None, None, False, None, None
+
+    image_path = source_dir / WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH
+    if not image_path.is_file():
+        raise WolfBootBuildProfileError(
+            f"wolfBoot image source not found for boot timing patch: {image_path}"
+        )
+
+    original_image_text = image_path.read_text(encoding="utf-8")
+
+    image_marker = "PQC_BOOT_TIMING_MAILBOX_MAGIC"
+    image_already_patched = image_marker in original_image_text
+
+    patched_image_text = original_image_text
+    image_original_to_restore: str | None = original_image_text
+
+    if not image_already_patched:
+        signature = "#else\nint wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n{"
+        replacement = (
+            "#else\n"
+            "#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n"
+            "static int wolfBoot_verify_authenticity_impl(struct wolfBoot_image *img)\n"
+            "#else\n"
+            "int wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n"
+            "#endif\n"
+            "{"
+        )
+        if signature not in patched_image_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate wolfBoot_verify_authenticity() for boot timing patch"
+            )
+        patched_image_text = patched_image_text.replace(signature, replacement, 1)
+
+        wrapper_marker = "#endif\n\n/**\n * @brief Peek at the content of the image at a specific offset."
+        wrapper = """\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)
+#ifndef WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ
+#define WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ 80000000UL
+#endif
+#ifndef WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR
+#define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
+#endif
+
+#define PQC_BOOT_TIMING_DEMCR        (*(volatile uint32_t *)0xE000EDFCUL)
+#define PQC_BOOT_TIMING_DWT_CTRL     (*(volatile uint32_t *)0xE0001000UL)
+#define PQC_BOOT_TIMING_DWT_CYCCNT   (*(volatile uint32_t *)0xE0001004UL)
+#define PQC_BOOT_TIMING_DEMCR_TRCENA (1UL << 24)
+#define PQC_BOOT_TIMING_DWT_CYCCNTENA (1UL << 0)
+#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 1UL
+
+struct pqc_boot_timing_mailbox {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t verification_time_ms;
+    uint32_t elapsed_cycles;
+    uint32_t cpu_hz;
+    uint32_t verification_result;
+};
+
+static void pqc_boot_timing_counter_start(uint32_t *start_cycles)
+{
+    PQC_BOOT_TIMING_DEMCR |= PQC_BOOT_TIMING_DEMCR_TRCENA;
+    PQC_BOOT_TIMING_DWT_CYCCNT = 0U;
+    PQC_BOOT_TIMING_DWT_CTRL |= PQC_BOOT_TIMING_DWT_CYCCNTENA;
+    *start_cycles = PQC_BOOT_TIMING_DWT_CYCCNT;
+}
+
+static uint32_t pqc_boot_timing_counter_elapsed(uint32_t start_cycles)
+{
+    uint32_t end_cycles = PQC_BOOT_TIMING_DWT_CYCCNT;
+    return end_cycles - start_cycles;
+}
+
+static void pqc_boot_timing_write_mailbox(
+    unsigned long elapsed_ms,
+    uint32_t elapsed_cycles,
+    int verification_result
+)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+
+    mailbox->magic = 0U;
+    mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
+    mailbox->verification_time_ms = (uint32_t)elapsed_ms;
+    mailbox->elapsed_cycles = elapsed_cycles;
+    mailbox->cpu_hz = (uint32_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ;
+    mailbox->verification_result = (uint32_t)verification_result;
+    mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
+}
+
+int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
+{
+    uint32_t start_cycles;
+    uint32_t elapsed_cycles;
+    unsigned long elapsed_ms;
+    int ret;
+
+    pqc_boot_timing_counter_start(&start_cycles);
+    ret = wolfBoot_verify_authenticity_impl(img);
+    elapsed_cycles = pqc_boot_timing_counter_elapsed(start_cycles);
+    elapsed_ms = (unsigned long)((((uint64_t)elapsed_cycles) * 1000ULL +
+        ((uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ / 2ULL)) /
+        (uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ);
+
+    pqc_boot_timing_write_mailbox(elapsed_ms, elapsed_cycles, ret);
+    return ret;
+}
+#endif
+"""
+        if wrapper_marker not in patched_image_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate safe insertion point after wolfBoot_verify_authenticity()"
+            )
+        patched_image_text = patched_image_text.replace(
+            wrapper_marker,
+            f"{wrapper}\n{wrapper_marker}",
+            1,
+        )
+    else:
+        image_original_to_restore = None
+
+    if patched_image_text != original_image_text:
+        image_path.write_text(patched_image_text, encoding="utf-8")
+
+    return image_path, None, True, image_original_to_restore, None
+
+
 def _copy_project_local_config(
     *,
     profile: dict[str, Any],
@@ -402,6 +558,10 @@ def _write_log(
     stm32l4_hal_conf_pwr_patch_enabled: bool,
     stm32l4_hal_conf_pwr_patch_applied: bool,
     stm32l4_hal_conf_path: Path | None,
+    boot_timing_instrumentation_patch_enabled: bool,
+    boot_timing_instrumentation_patch_applied: bool,
+    boot_timing_image_path: Path | None,
+    boot_timing_hal_path: Path | None,
     return_code: int,
     duration_seconds: float,
     execution: WolfBootCommandExecution | None,
@@ -431,6 +591,10 @@ def _write_log(
         f"STM32L4 HAL config PWR patch enabled: {str(stm32l4_hal_conf_pwr_patch_enabled).lower()}",
         f"STM32L4 HAL config PWR patch applied: {str(stm32l4_hal_conf_pwr_patch_applied).lower()}",
         f"STM32L4 HAL config path: {stm32l4_hal_conf_path if stm32l4_hal_conf_path is not None else 'unavailable'}",
+        f"Boot timing instrumentation patch enabled: {str(boot_timing_instrumentation_patch_enabled).lower()}",
+        f"Boot timing instrumentation patch applied: {str(boot_timing_instrumentation_patch_applied).lower()}",
+        f"Boot timing image source path: {boot_timing_image_path if boot_timing_image_path is not None else 'unavailable'}",
+        f"Boot timing HAL source path: {boot_timing_hal_path if boot_timing_hal_path is not None else 'unavailable'}",
         f"Final return code: {return_code}",
         f"Total duration seconds: {duration_seconds:.3f}",
     ]
@@ -515,6 +679,10 @@ def execute_wolfboot_build(
             stm32l4_hal_conf_pwr_patch_enabled=False,
             stm32l4_hal_conf_pwr_patch_applied=False,
             stm32l4_hal_conf_path=None,
+            boot_timing_instrumentation_patch_enabled=False,
+            boot_timing_instrumentation_patch_applied=False,
+            boot_timing_image_path=None,
+            boot_timing_hal_path=None,
             return_code=PROFILE_ERROR_RETURN_CODE,
             duration_seconds=duration_seconds,
             execution=None,
@@ -543,6 +711,10 @@ def execute_wolfboot_build(
             stm32l4_hal_conf_pwr_patch_enabled=False,
             stm32l4_hal_conf_pwr_patch_applied=False,
             stm32l4_hal_conf_path=None,
+            boot_timing_instrumentation_patch_enabled=False,
+            boot_timing_instrumentation_patch_applied=False,
+            boot_timing_image_path=None,
+            boot_timing_hal_path=None,
             retained_artifact_path=None,
             execution=None,
             failure_reason=failure_reason,
@@ -562,6 +734,12 @@ def execute_wolfboot_build(
     stm32l4_hal_conf_pwr_patch_applied = False
     stm32l4_hal_conf_path: Path | None = None
     stm32l4_hal_conf_original_text: str | None = None
+    boot_timing_instrumentation_patch_enabled = _optional_profile_bool(profile, "build.boot_timing_instrumentation_patch")
+    boot_timing_instrumentation_patch_applied = False
+    boot_timing_image_path: Path | None = None
+    boot_timing_hal_path: Path | None = None
+    boot_timing_image_original_text: str | None = None
+    boot_timing_hal_original_text: str | None = None
     working_directory = source_dir
     result_dir = create_wolfboot_build_result_dir(profile_id, results_root, timestamp)
     log_path = result_dir / DEFAULT_WOLFBOOT_LOG_NAME
@@ -614,23 +792,48 @@ def execute_wolfboot_build(
                         failure_reason = str(exc)
                     else:
                         try:
-                            execution = runner(command, working_directory)
-                            return_code = execution.return_code
-                        except FileNotFoundError as exc:
-                            missing_executable = command[0] if command else "configured build tool"
-                            return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
-                            failure_reason = (
-                                "wolfBoot build command could not be started because the executable was not found: "
-                                f"{missing_executable}"
+                            (
+                                boot_timing_image_path,
+                                boot_timing_hal_path,
+                                boot_timing_instrumentation_patch_applied,
+                                boot_timing_image_original_text,
+                                boot_timing_hal_original_text,
+                            ) = _temporarily_patch_boot_timing_instrumentation(
+                                profile=profile,
+                                source_dir=source_dir,
                             )
-                            execution = WolfBootCommandExecution(
-                                command=command,
-                                return_code=return_code,
-                                stdout="",
-                                stderr=f"{failure_reason}\n{exc}",
-                                duration_seconds=perf_counter() - start,
-                            )
+                        except WolfBootBuildProfileError as exc:
+                            return_code = PROFILE_ERROR_RETURN_CODE
+                            failure_reason = str(exc)
+                        else:
+                            try:
+                                execution = runner(command, working_directory)
+                                return_code = execution.return_code
+                            except FileNotFoundError as exc:
+                                missing_executable = command[0] if command else "configured build tool"
+                                return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
+                                failure_reason = (
+                                    "wolfBoot build command could not be started because the executable was not found: "
+                                    f"{missing_executable}"
+                                )
+                                execution = WolfBootCommandExecution(
+                                    command=command,
+                                    return_code=return_code,
+                                    stdout="",
+                                    stderr=f"{failure_reason}\n{exc}",
+                                    duration_seconds=perf_counter() - start,
+                                )
                 finally:
+                    if boot_timing_image_original_text is not None and boot_timing_image_path is not None:
+                        boot_timing_image_path.write_text(
+                            boot_timing_image_original_text,
+                            encoding="utf-8",
+                        )
+                    if boot_timing_hal_original_text is not None and boot_timing_hal_path is not None:
+                        boot_timing_hal_path.write_text(
+                            boot_timing_hal_original_text,
+                            encoding="utf-8",
+                        )
                     if stm32l4_hal_conf_original_text is not None and stm32l4_hal_conf_path is not None:
                         stm32l4_hal_conf_path.write_text(
                             stm32l4_hal_conf_original_text,
@@ -681,6 +884,10 @@ def execute_wolfboot_build(
         stm32l4_hal_conf_pwr_patch_enabled=stm32l4_hal_conf_pwr_patch_enabled,
         stm32l4_hal_conf_pwr_patch_applied=stm32l4_hal_conf_pwr_patch_applied,
         stm32l4_hal_conf_path=stm32l4_hal_conf_path,
+        boot_timing_instrumentation_patch_enabled=boot_timing_instrumentation_patch_enabled,
+        boot_timing_instrumentation_patch_applied=boot_timing_instrumentation_patch_applied,
+        boot_timing_image_path=boot_timing_image_path,
+        boot_timing_hal_path=boot_timing_hal_path,
         return_code=return_code,
         duration_seconds=duration_seconds,
         execution=execution,
@@ -715,6 +922,10 @@ def execute_wolfboot_build(
             "stm32l4_hal_conf_pwr_patch_enabled": stm32l4_hal_conf_pwr_patch_enabled,
             "stm32l4_hal_conf_pwr_patch_applied": stm32l4_hal_conf_pwr_patch_applied,
             "stm32l4_hal_conf_path": None if stm32l4_hal_conf_path is None else str(stm32l4_hal_conf_path),
+            "boot_timing_instrumentation_patch_enabled": boot_timing_instrumentation_patch_enabled,
+            "boot_timing_instrumentation_patch_applied": boot_timing_instrumentation_patch_applied,
+            "boot_timing_image_path": None if boot_timing_image_path is None else str(boot_timing_image_path),
+            "boot_timing_hal_path": None if boot_timing_hal_path is None else str(boot_timing_hal_path),
         },
         "artifact": {
             "path": str(artifact_path),
@@ -747,6 +958,10 @@ def execute_wolfboot_build(
         stm32l4_hal_conf_pwr_patch_enabled=stm32l4_hal_conf_pwr_patch_enabled,
         stm32l4_hal_conf_pwr_patch_applied=stm32l4_hal_conf_pwr_patch_applied,
         stm32l4_hal_conf_path=stm32l4_hal_conf_path,
+        boot_timing_instrumentation_patch_enabled=boot_timing_instrumentation_patch_enabled,
+        boot_timing_instrumentation_patch_applied=boot_timing_instrumentation_patch_applied,
+        boot_timing_image_path=boot_timing_image_path,
+        boot_timing_hal_path=boot_timing_hal_path,
         retained_artifact_path=retained_artifact_path,
         execution=execution,
         failure_reason=failure_reason,

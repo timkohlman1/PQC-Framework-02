@@ -172,7 +172,7 @@ pass/fail verdict
 notes
 ```
 
-Flash evidence includes the flashed firmware hash, provenance verification status, gateway helper return codes, remote artifact path, ST-LINK serial, flash log reference, and flash-time source-control provenance where applicable. UART evidence includes the UART log reference, device, baud rate, capture return code, marker-detection booleans, data-captured status, reset command, and capture duration.
+Flash evidence includes the flashed firmware hash, provenance verification status, gateway helper return codes, remote artifact path, ST-LINK serial, flash log reference, and flash-time source-control provenance where applicable. UART evidence includes the UART log reference, device, baud rate, capture return code, marker-detection booleans, data-captured status, reset command, capture duration, and boot timing evidence. Secure-boot verification timing is recorded only when an explicit UART timing marker is captured; otherwise `verification_time_ms` is recorded as `null` with an unavailable source and limitations. Host-side capture duration is not used as verification time.
 
 The run record should not be treated as the owner of the build when it merely references an existing build. Conversely, a build failure should not be confused with a hardware or UART experiment failure.
 
@@ -185,6 +185,14 @@ python scripts/experiment.py run --experiment configs/experiments/baseline_direc
 When a build number is supplied, the run command validates `results/builds/<build_number>/manifest.json` before any hardware-facing stage. The validation requires a first-class build record with the requested build number, a successful or safely skipped build result, matching experiment and board identity, a retained `firmware.elf`, matching firmware SHA-256, and a matching current source/build fingerprint. If the manifest is missing, malformed, incomplete, points to a missing artifact, records a mismatched artifact hash, or records a mismatched build fingerprint, the run is refused before flash or UART capture.
 
 A run that reuses an existing build copies the verified build-record artifact into its own run directory as `firmware.elf`, flashes that run-scoped copy, captures UART, and records the referenced build number and artifact hash under `build_reference`, `run.referenced_build_number`, and `run.referenced_build_artifact_sha256`.
+
+### Boot timing evidence
+
+Phase 10k records secure-boot timing evidence under `boot_timing` in the run manifest. The wolfBoot build profile enables temporary local instrumentation that wraps `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement and writes the measured millisecond value into a RAM2 mailbox at `0x10000000`. The relocated HAL application reads that mailbox after UART initialization and emits a line such as `wolfBoot verification time: 17 ms`. The patch is applied only while `build-wolfboot` runs and the local wolfBoot submodule files are restored afterward.
+
+The UART capture parser accepts explicit lines such as `wolfBoot verification time: 17 ms` or `verification_time_ms=17`. When such a line is present, `verification_time_ms` contains the parsed value and `verification_time_source` is `uart_explicit_verification_time_marker`. When it is absent, `verification_time_ms` is `null`, `verification_time_source` is `unavailable`, and the manifest records the measurement method and limitations.
+
+This model avoids inventing verification timing from SSH command duration, UART capture duration, reset delay, or marker ordering. Direct-flash UART captures can therefore be compared at the evidence-record level without pretending that host-side timing is a secure-boot verification measurement. The secure-boot hardware workflow test is end-to-end: it builds the instrumented wolfBoot artifact, builds and signs the relocated application, flashes both artifacts, captures UART, and validates parsed timing evidence instead of skipping solely because generated artifacts are absent.
 
 ### Current layout compatibility
 

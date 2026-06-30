@@ -9,6 +9,7 @@ import pytest
 
 SECURE_BOOT_EXPERIMENT_CONFIG = "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
 SIGNING_PROFILE = "configs/signing/wolfboot_ecdsa_p256_app.yaml"
+WOLFBOOT_BUILD_PROFILE = "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
 SIGNED_APPLICATION_ARTIFACT = "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
@@ -57,6 +58,24 @@ def _single_secure_boot_result_dir(results_dir: Path) -> Path:
     result_dirs = _secure_boot_result_dirs(results_dir)
     assert len(result_dirs) == 1
     return result_dirs[0]
+
+
+def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path) -> None:
+    build_completed = _run_cli(
+        repo_root,
+        [
+            "build-wolfboot",
+            "--profile",
+            WOLFBOOT_BUILD_PROFILE,
+            "--results-dir",
+            str(results_dir),
+        ],
+    )
+    assert build_completed.returncode == 0, (
+        f"build-wolfboot stdout:\n{build_completed.stdout}\n"
+        f"build-wolfboot stderr:\n{build_completed.stderr}"
+    )
+    assert (repo_root / WOLFBOOT_ARTIFACT).is_file()
 
 
 def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) -> None:
@@ -126,6 +145,18 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["secure_boot_run"]["secure_boot_marker_present"] is True
     assert manifest["secure_boot_run"]["positive_boot_evidence_passed"] is True
 
+    assert "boot_timing" in manifest
+    assert isinstance(manifest["boot_timing"]["verification_time_ms"], int)
+    assert manifest["boot_timing"]["verification_time_ms"] > 0
+    assert (
+        manifest["boot_timing"]["verification_time_source"]
+        == "uart_explicit_verification_time_marker"
+    )
+    assert isinstance(manifest["uart"]["verification_time_ms"], int)
+    assert manifest["uart"]["verification_time_ms"] > 0
+    assert isinstance(manifest["secure_boot_run"]["verification_time_ms"], int)
+    assert manifest["secure_boot_run"]["verification_time_ms"] > 0
+
 
 def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path) -> subprocess.CompletedProcess[str]:
     return _run_cli(
@@ -148,12 +179,14 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
 
     This hardware-dependent system workflow auto-skips unless the local build
     toolchain, SSH gateway, configured flash helper, and configured ST-LINK VCP
-    UART device are available. It also requires an already-built wolfBoot ELF,
-    because rebuilding wolfBoot belongs to the separate build-wolfboot workflow.
+    UART device are available. It builds the instrumented wolfBoot ELF, builds
+    and signs the relocated HAL application, flashes both artifacts, captures
+    UART, and verifies timing evidence from a zero-generated-artifact state.
 
     The test validates positive secure-boot evidence by requiring the distinct
-    secure-boot application UART marker, the normal boot marker, and the tick
-    marker after the two-artifact flash workflow.
+    secure-boot application UART marker, the normal boot marker, the tick
+    marker, and a parsed wolfBoot verification-time value after the two-artifact
+    flash workflow.
     """
 
     pqc_require_capabilities(
@@ -172,11 +205,9 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
         "secure-boot experiment config is missing",
     )
     _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
-    _skip_if_missing(
-        repo_root / WOLFBOOT_ARTIFACT,
-        "wolfBoot artifact is missing; run build-wolfboot first",
-    )
+    _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
 
+    _prepare_instrumented_wolfboot(repo_root, results_dir)
     _prepare_signed_secure_boot_application(repo_root, results_dir)
 
     flash_completed = _run_cli(
@@ -219,6 +250,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     assert "Tick marker present: true" in uart_log
     assert "Secure-boot marker present: true" in uart_log
     assert "Data captured: true" in uart_log
+    assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
 
 @pytest.mark.hardware
 def test_secure_boot_negative_corrupted_application_then_restore_workflow(
@@ -227,8 +259,9 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
     """Flash a corrupted signed application and restore the valid image afterward.
 
     This hardware-dependent Phase 10j workflow auto-skips under the same
-    capability rules as the positive secure-boot hardware test. It verifies that
-    a result-local corrupted signed image does not produce the normal
+    capability rules as the positive secure-boot hardware test. It builds the
+    instrumented wolfBoot ELF and signed relocated application before flashing.
+    It verifies that a result-local corrupted signed image does not produce the normal
     application markers, then flashes the valid signed application again so the
     board is left in the positive secure-boot state when restoration succeeds.
     """
@@ -249,11 +282,9 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         "secure-boot experiment config is missing",
     )
     _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
-    _skip_if_missing(
-        repo_root / WOLFBOOT_ARTIFACT,
-        "wolfBoot artifact is missing; run build-wolfboot first",
-    )
+    _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
 
+    _prepare_instrumented_wolfboot(repo_root, results_dir)
     _prepare_signed_secure_boot_application(repo_root, results_dir)
 
     try:

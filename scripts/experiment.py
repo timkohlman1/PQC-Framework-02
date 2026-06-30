@@ -1562,6 +1562,20 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     )
     boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
     tick_present = None if uart_result is None else uart_result.tick_present
+    verification_time_ms = None if uart_result is None else uart_result.verification_time_ms
+    verification_time_source = (
+        "unavailable" if uart_result is None else uart_result.verification_time_source
+    )
+    verification_time_measurement_method = (
+        "UART capture did not run, so no verification timing source was available."
+        if uart_result is None
+        else uart_result.verification_time_measurement_method
+    )
+    verification_time_limitations = (
+        "No UART timing evidence was captured because UART was skipped or secure-boot flashing failed."
+        if uart_result is None
+        else uart_result.verification_time_limitations
+    )
     capture_completed = (
         False
         if uart_result is None
@@ -1634,6 +1648,16 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "boot_marker_present": boot_marker_present,
                 "tick_present": tick_present,
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
+                "verification_time_ms": verification_time_ms,
+                "verification_time_source": verification_time_source,
+                "verification_time_measurement_method": verification_time_measurement_method,
+                "verification_time_limitations": verification_time_limitations,
+            },
+            "boot_timing": {
+                "verification_time_ms": verification_time_ms,
+                "verification_time_source": verification_time_source,
+                "measurement_method": verification_time_measurement_method,
+                "limitations": verification_time_limitations,
             },
             "secure_boot_negative_test": {
                 "enabled": negative_test_requested,
@@ -1678,6 +1702,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         print(f"UART log: {result_dir / 'uart.log'}")
         print(f"UART return code: {uart_return_code}")
         print("Boot confirmation is based on the recorded UART marker evaluation.")
+        if verification_time_ms is None:
+            print("Verification time: unavailable")
+        else:
+            print(f"Verification time: {verification_time_ms} ms")
+        print(f"Verification timing source: {verification_time_source}")
         if args.negative_corrupt_application:
             print("Negative test passes only when the normal application and secure-boot markers are absent after flashing the corrupted result-local image.")
         else:

@@ -205,6 +205,15 @@ def test_constructs_monitor_with_delayed_restart_command():
     assert command[2].index("sleep 0.2") < command[2].index("timeout 10s cat")
 
 
+
+def test_parse_verification_time_ms_accepts_explicit_uart_markers():
+    uart = load_uart_module()
+
+    assert uart.parse_verification_time_ms("wolfBoot verification time: 17 ms\n") == 17
+    assert uart.parse_verification_time_ms("verification_time_ms=23.5\n") == 23.5
+    assert uart.parse_verification_time_ms("stm32-basic_hal1 boot v0.1.0\ntick\n") is None
+
+
 def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
     uart = load_uart_module()
     repo_root = tmp_path / "repo"
@@ -257,7 +266,7 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
         return uart.CommandExecution(
             command=command,
             return_code=124,
-            stdout="stm32-basic_hal1 boot v0.1.0\ntick\ntick\n",
+            stdout="wolfBoot verification time: 17 ms\nstm32-basic_hal1 boot v0.1.0\ntick\ntick\n",
             stderr="",
             duration_seconds=10.0,
         )
@@ -276,6 +285,8 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert result.boot_marker_present is True
     assert result.tick_present is True
     assert result.data_captured is True
+    assert result.verification_time_ms == 17
+    assert result.verification_time_source == "uart_explicit_verification_time_marker"
     assert len(calls) == 1
     assert manifest["result"] == "pass"
     assert manifest["uart"]["return_code"] == 0
@@ -283,6 +294,10 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert manifest["uart"]["boot_marker_present"] is True
     assert manifest["uart"]["tick_present"] is True
     assert manifest["uart"]["data_captured"] is True
+    assert manifest["uart"]["verification_time_ms"] == 17
+    assert manifest["boot_timing"]["verification_time_ms"] == 17
+    assert manifest["boot_timing"]["verification_time_source"] == "uart_explicit_verification_time_marker"
+    assert "verification_time_ms: 17" in log
     assert "Boot marker present: true" in log
     assert "Tick marker present: true" in log
     assert "stm32-basic_hal1 boot v0.1.0" in log
@@ -320,7 +335,11 @@ def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_pa
     assert missing_result.boot_marker_present is True
     assert missing_result.tick_present is True
     assert missing_result.secure_boot_marker_present is False
+    assert missing_result.verification_time_ms is None
+    assert missing_result.verification_time_source == "unavailable"
     assert missing_manifest["uart"]["secure_boot_marker_present"] is False
+    assert missing_manifest["boot_timing"]["verification_time_ms"] is None
+    assert missing_manifest["boot_timing"]["verification_time_source"] == "unavailable"
 
     def secure_marker_runner(command, cwd):
         return uart.CommandExecution(

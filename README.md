@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Phase 10g adds a local-only relocated-application signing workflow. wolfBoot flashing, signed-application flashing, positive secure-boot UART evidence, and a corrupted-application negative-test workflow are now defined for Phase 10i/10j. MQTT, TLS, PQC, and network-degradation automation are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable for generic direct-flash workflows.
+- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Phase 10g adds a local-only relocated-application signing workflow. wolfBoot flashing, signed-application flashing, positive secure-boot UART evidence, a corrupted-application negative-test workflow, and boot timing evidence are now defined through Phase 10k. MQTT, TLS, PQC, and network-degradation automation are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable for generic direct-flash workflows.
 
 ## AI-assisted development
 
@@ -511,3 +511,31 @@ Use strict mode when the gateway and board are expected to be present:
 ```powershell
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 ```
+
+## Phase 10k — Boot Timing Instrumentation
+
+Phase 10k now instruments the local STM32L4R5 wolfBoot build so wolfBoot measures verification time during secure boot and passes the result to the relocated HAL application through a RAM2 mailbox. The build helper applies a temporary patch to the local wolfBoot `src/image.c` file while `build-wolfboot` runs, then restores the submodule file afterward. The instrumentation measures elapsed Cortex-M DWT cycle-counter time around `wolfBoot_verify_authenticity()`. After the application initializes its known-good UART path, it reads the mailbox and prints a UART line such as:
+
+```text
+wolfBoot verification time: 17 ms
+```
+
+The secure-boot UART capture records boot timing evidence in `manifest.json` under both `boot_timing` and `secure_boot_run`. When that line is present in captured UART output, the manifest records `verification_time_ms` with the parsed millisecond value and `verification_time_source: uart_explicit_verification_time_marker`. When the line is absent, the manifest records `verification_time_ms: null`, `verification_time_source: unavailable`, the parsing method, and a limitation explaining that the framework did not estimate timing from host-side capture duration or UART marker ordering.
+
+To refresh the instrumented bootloader and signed relocated app before a timing run, rebuild wolfBoot, rebuild and sign the relocated application, and then run the secure-boot workflow:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+```
+
+Direct-flash and secure-boot UART captures still record command duration and capture duration separately. Those host-side timings are useful diagnostics, but they are not treated as wolfBoot verification time.
+The secure-boot hardware workflow test is end-to-end. When the required hardware capabilities are available, it builds the instrumented wolfBoot artifact and the signed relocated application itself instead of skipping because generated artifacts are absent:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
+```
+

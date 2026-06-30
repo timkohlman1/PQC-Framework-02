@@ -13,6 +13,7 @@ devices, a gateway, or hardware.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -60,6 +61,10 @@ class UartResult:
     tick_present: bool
     secure_boot_marker_present: bool | None
     data_captured: bool
+    verification_time_ms: float | None
+    verification_time_source: str
+    verification_time_measurement_method: str
+    verification_time_limitations: str
 
 
 @dataclass(frozen=True)
@@ -169,6 +174,65 @@ def _capture_completed(return_code: int) -> bool:
     return return_code in {0, TIMEOUT_RETURN_CODE}
 
 
+DEFAULT_VERIFICATION_TIME_SOURCE = "uart_explicit_verification_time_marker"
+DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE = "unavailable"
+DEFAULT_VERIFICATION_TIME_METHOD = (
+    "Parse an explicit wolfBoot verification-time line from captured UART output."
+)
+DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS = (
+    "No explicit wolfBoot verification-time line was present in the captured UART output; "
+    "verification_time_ms is intentionally null rather than estimated."
+)
+DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS = (
+    "Timing is reported by firmware over UART and includes only the value emitted by wolfBoot or the instrumented boot path; "
+    "host-side UART capture latency is not used to derive this value."
+)
+_VERIFICATION_TIME_PATTERNS = [
+    re.compile(
+        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification(?: time)?[^\r\n]*?[:=]\s*(?P<value>\d+(?:\.\d+)?)\s*ms\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bverification_time_ms\s*[:=]\s*(?P<value>\d+(?:\.\d+)?)\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def parse_verification_time_ms(uart_output: str) -> float | None:
+    """Parse an explicit wolfBoot verification-time value from UART output.
+
+    The parser intentionally accepts only lines that contain explicit
+    verification-time wording and a millisecond unit, or an explicit
+    ``verification_time_ms`` key. It does not infer timing from host-side
+    command duration or marker ordering.
+    """
+
+    for pattern in _VERIFICATION_TIME_PATTERNS:
+        match = pattern.search(uart_output)
+        if match is not None:
+            value = float(match.group("value"))
+            return int(value) if value.is_integer() else value
+    return None
+
+
+def _boot_timing_evidence(uart_output: str) -> dict[str, Any]:
+    verification_time_ms = parse_verification_time_ms(uart_output)
+    if verification_time_ms is None:
+        return {
+            "verification_time_ms": None,
+            "verification_time_source": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE,
+            "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
+            "limitations": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS,
+        }
+    return {
+        "verification_time_ms": verification_time_ms,
+        "verification_time_source": DEFAULT_VERIFICATION_TIME_SOURCE,
+        "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
+        "limitations": DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS,
+    }
+
+
 def _timestamped_monitor_log_path(results_root: Path) -> Path:
     adhoc_dir = results_root / "adhoc"
     adhoc_dir.mkdir(parents=True, exist_ok=True)
@@ -198,6 +262,7 @@ def _write_uart_capture_log(
     restart_command: str | None,
     return_code: int,
     duration_seconds: float,
+    boot_timing: dict[str, Any],
 ) -> None:
     lines = [
         "UART post-flash capture log",
@@ -221,6 +286,13 @@ def _write_uart_capture_log(
         f"Tick marker present: {str(tick_present).lower()}",
         f"Secure-boot marker present: {str(secure_boot_marker_present).lower() if secure_boot_marker_present is not None else 'not configured'}",
         f"Data captured: {str(data_captured).lower()}",
+        "",
+        "Boot timing evidence",
+        "--------------------",
+        f"verification_time_ms: {boot_timing['verification_time_ms'] if boot_timing['verification_time_ms'] is not None else 'unavailable'}",
+        f"verification_time_source: {boot_timing['verification_time_source']}",
+        f"Measurement method: {boot_timing['measurement_method']}",
+        f"Limitations: {boot_timing['limitations']}",
         "",
         "Capture command",
         "---------------",
@@ -385,6 +457,7 @@ def execute_uart_capture(
         expected_secure_boot_message is None or secure_boot_marker_present is True
     )
     capture_completed = _capture_completed(capture_execution.return_code)
+    boot_timing = _boot_timing_evidence(capture_execution.stdout)
 
     if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
         return_code = 0
@@ -413,6 +486,7 @@ def execute_uart_capture(
         restart_command=restart_command,
         return_code=return_code,
         duration_seconds=duration,
+        boot_timing=boot_timing,
     )
 
     update_manifest(
@@ -438,7 +512,12 @@ def execute_uart_capture(
                 "restart_command": restart_command,
                 "restart_during_capture": restart_command is not None,
                 "skipped": False,
+                "verification_time_ms": boot_timing["verification_time_ms"],
+                "verification_time_source": boot_timing["verification_time_source"],
+                "verification_time_measurement_method": boot_timing["measurement_method"],
+                "verification_time_limitations": boot_timing["limitations"],
             },
+            "boot_timing": boot_timing,
         },
     )
 
@@ -457,6 +536,10 @@ def execute_uart_capture(
         tick_present=tick_present,
         secure_boot_marker_present=secure_boot_marker_present,
         data_captured=data_captured,
+        verification_time_ms=boot_timing["verification_time_ms"],
+        verification_time_source=boot_timing["verification_time_source"],
+        verification_time_measurement_method=boot_timing["measurement_method"],
+        verification_time_limitations=boot_timing["limitations"],
     )
 
 

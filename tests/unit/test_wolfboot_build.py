@@ -33,6 +33,7 @@ def sample_profile() -> dict[str, object]:
             "generated_config": "tools/wolfboot/.config",
             "mingw_keytools_ansi_stdio_patch": True,
             "stm32l4_hal_conf_pwr_patch": True,
+            "boot_timing_instrumentation_patch": True,
         },
     }
 
@@ -71,6 +72,46 @@ def write_stm32l4_hal_conf(source_dir: Path) -> Path:
 
 
 
+def write_wolfboot_image_source(source_dir: Path) -> Path:
+    image_path = source_dir / "src" / "image.c"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_text(
+        "#include <stdint.h>\n"
+        "#include \"printf.h\"\n"
+        "struct wolfBoot_image;\n"
+        "#else\n"
+        "int wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n"
+        "{\n"
+        "    (void)img;\n"
+        "    return 0;\n"
+        "}\n"
+        "#endif\n"
+        "\n"
+        "/**\n"
+        " * @brief Peek at the content of the image at a specific offset.\n"
+        " */\n",
+        encoding="utf-8",
+    )
+    return image_path
+
+
+def write_stm32l4_source(source_dir: Path) -> Path:
+    hal_path = source_dir / "hal" / "stm32l4.c"
+    hal_path.parent.mkdir(parents=True, exist_ok=True)
+    hal_path.write_text(
+        "#include <stdint.h>\n"
+        "/* Assembly helpers */\n"
+        "#define DMB() asm volatile (\"dmb\")\n"
+        "static void clockconfig(int powersave) { (void)powersave; }\n"
+        "void hal_init(void)\n"
+        "{\n"
+        "    clockconfig(0);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    return hal_path
+
+
 def test_construct_wolfboot_build_command_uses_profile_scalars():
     wolfboot_build = load_wolfboot_build_module()
 
@@ -93,8 +134,12 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     source_dir.mkdir(parents=True)
     makefile_path = write_keytools_makefile(source_dir)
     hal_conf_path = write_stm32l4_hal_conf(source_dir)
+    image_source_path = write_wolfboot_image_source(source_dir)
+    hal_source_path = write_stm32l4_source(source_dir)
     original_makefile_text = makefile_path.read_text(encoding="utf-8")
     original_hal_conf_text = hal_conf_path.read_text(encoding="utf-8")
+    original_image_source_text = image_source_path.read_text(encoding="utf-8")
+    original_hal_source_text = hal_source_path.read_text(encoding="utf-8")
     config_template_path.parent.mkdir(parents=True)
     config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
     calls: list[tuple[list[str], Path]] = []
@@ -108,6 +153,14 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "#define HAL_PWR_MODULE_ENABLED" in patched_hal_conf
         assert "#include \"stm32l4xx_hal_pwr.h\"" in patched_hal_conf
         assert "#include \"stm32l4xx_hal_pwr_ex.h\"" in patched_hal_conf
+        patched_image_source = image_source_path.read_text(encoding="utf-8")
+        patched_hal_source = hal_source_path.read_text(encoding="utf-8")
+        assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
+        assert "pqc_boot_timing_write_mailbox" in patched_image_source
+        assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
+        assert "wolfBoot_printf" not in patched_image_source
+        assert "pqc_boot_timing_uart_write" not in patched_hal_source
+        assert "uart_printf" not in patched_hal_source
         artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
         return wolfboot_build.WolfBootCommandExecution(
             command=command,
@@ -137,8 +190,14 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert result.stm32l4_hal_conf_pwr_patch_enabled is True
     assert result.stm32l4_hal_conf_pwr_patch_applied is True
     assert result.stm32l4_hal_conf_path == hal_conf_path
+    assert result.boot_timing_instrumentation_patch_enabled is True
+    assert result.boot_timing_instrumentation_patch_applied is True
+    assert result.boot_timing_image_path == image_source_path
+    assert result.boot_timing_hal_path is None
     assert makefile_path.read_text(encoding="utf-8") == original_makefile_text
     assert hal_conf_path.read_text(encoding="utf-8") == original_hal_conf_text
+    assert image_source_path.read_text(encoding="utf-8") == original_image_source_text
+    assert hal_source_path.read_text(encoding="utf-8") == original_hal_source_text
     assert result.config_template_path == config_template_path
     assert result.generated_config_path == source_dir / ".config"
     assert result.artifact_sha256 == expected_sha256
@@ -155,10 +214,15 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert manifest["wolfboot_build"]["stm32l4_hal_conf_pwr_patch_enabled"] is True
     assert manifest["wolfboot_build"]["stm32l4_hal_conf_pwr_patch_applied"] is True
     assert manifest["wolfboot_build"]["stm32l4_hal_conf_path"] == str(hal_conf_path)
+    assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_enabled"] is True
+    assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_applied"] is True
+    assert manifest["wolfboot_build"]["boot_timing_image_path"] == str(image_source_path)
+    assert manifest["wolfboot_build"]["boot_timing_hal_path"] is None
     assert manifest["artifact"]["sha256"] == expected_sha256
     assert "Project-local config applied: true" in build_log
     assert "Keytools MinGW stdio patch applied: true" in build_log
     assert "STM32L4 HAL config PWR patch applied: true" in build_log
+    assert "Boot timing instrumentation patch applied: true" in build_log
     assert f"Config template path: {config_template_path}" in build_log
     assert f"Generated config path: {source_dir / '.config'}" in build_log
 
@@ -219,6 +283,11 @@ def test_project_local_wolfboot_config_selects_stm32l4r5_header():
     assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
     assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
     assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
+    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
+    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL" in config_text
+    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
+    assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
+    assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
     assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
 
 
@@ -230,6 +299,7 @@ def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
 
     assert 'args: "WOLFBOOT_ROOT=. wolfboot.elf"' in profile_text
     assert "stm32l4_hal_conf_pwr_patch: true" in profile_text
+    assert "boot_timing_instrumentation_patch: true" in profile_text
     assert wolfboot_build.construct_wolfboot_build_command({
         "id": "wolfboot_stm32l4_ecdsa_p256",
         "description": "Test wolfBoot profile.",
