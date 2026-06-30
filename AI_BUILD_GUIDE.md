@@ -1157,6 +1157,7 @@ Current framework skeleton completed items:
 52. Add Phase 10j corrupted-application negative-test support with `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application`. This creates a result-local corrupted copy of the signed application image, flashes that copy, captures UART, and passes only when the normal boot, tick, and secure-boot markers are absent. It does not modify the original signed image or private signing key. The hardware workflow test also covers this negative path and restores the valid signed image afterward.
 53. Add Phase 10k boot timing instrumentation. The wolfBoot build helper temporarily instruments local STM32L4R5 wolfBoot `src/image.c` during `build-wolfboot`, wraps `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement, writes the measured millisecond value into a RAM2 mailbox before jumping to the application, restores the submodule files after the build, and records the application-emitted `wolfBoot verification time: <N> ms` UART evidence in the secure-boot run manifest. Host-side SSH, reset, and UART capture duration are not treated as verification time.
 54. Add Phase 10l secure-boot manifest and documentation consolidation. Secure-boot run manifests now record the required consolidated fields `boot_mode`, `boot_crypto`, `signature_size`, `boot_signature.signature_size`, `boot_signature.signature_size_bytes`, and `boot_timing.verification_time_ms`. They also record `secure_boot_evidence` to link wolfBoot build-artifact evidence, signed-application evidence, flash evidence, UART marker evidence, timing evidence, final result, and negative-test evidence in one object. The signing manifest also records `signing.signature_size` alongside `signing.signature_size_bytes`.
+55. Add Phase 11.1 secure-boot benchmark result model. Secure-boot run manifests now record `secure_boot_benchmark` as a schema-first evidence object that distinguishes build-time metrics, signed-artifact metrics, runtime verification metrics, runtime memory metrics, repeated-run samples, aggregate statistics, and limitations. Existing secure-boot timing fields remain compatible. Metrics not implemented until later Phase 11 steps are recorded explicitly as unavailable rather than omitted. Phase 11.1 does not add new signing profiles, repeated-run execution, aggregation commands, or runtime stack/heap instrumentation.
 Current CLI commands are:
 
 ```powershell
@@ -1490,6 +1491,30 @@ python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware -
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When hardware is intentionally available, the secure-boot workflow manifest contains coherent `secure_boot_evidence`, `signature_size`, `boot_crypto`, `boot_mode`, and `boot_timing.verification_time_ms` evidence. Hardware success and timing values must still only be claimed from user-provided logs.
+
+
+## Phase 11.1 Secure-Boot Benchmark Result Model
+
+Implemented scope:
+
+- Secure-boot run manifests now include `secure_boot_benchmark` alongside the existing Phase 10l `secure_boot_evidence` object.
+- The benchmark schema records `schema_version: 1`, `model_phase: phase_11_1_schema_only`, benchmark scope, profile identity, boot mode, boot crypto, signature algorithm, signature size, and image version.
+- The schema separates `build_time_metrics`, `signed_artifact_metrics`, `runtime_verification_metrics`, `runtime_memory_metrics`, `repeated_run_samples`, `aggregate_statistics`, and top-level limitations.
+- Existing secure-boot timing fields remain compatible under `boot_timing`, `secure_boot_run`, and `secure_boot_evidence.boot_timing`. Available timing evidence is mirrored into `secure_boot_benchmark.runtime_verification_metrics`.
+- Signed-artifact evidence records available artifact identity and file-size evidence, including wolfBoot ELF and signed-application size when those artifacts exist.
+- Static build/resource metrics, unsigned-image overhead metrics, runtime stack/heap metrics, repeated-run samples, and aggregate statistics are explicitly recorded as unavailable placeholders with reasons until later Phase 11 sub-steps implement their collection or calculation.
+- Phase 11.1 does not add new signing-algorithm profiles, benchmark aggregation commands, repeated-run execution behaviour, or runtime stack/heap instrumentation.
+- Unit tests cover schema creation and secure-boot manifest population without requiring SSH, UART, gateway access, STM32 hardware, or real wolfBoot tooling.
+
+Manual Phase 11.1 verification commands:
+
+```powershell
+python -m pytest tests/unit/test_manifest.py tests/unit/test_secure_boot_flash.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Secure-boot manifests contain `secure_boot_benchmark` with explicit unavailable placeholders for later Phase 11 metrics. Hardware success and timing values must still only be claimed from user-provided logs.
 
 ## 13. Common Manual Commands
 

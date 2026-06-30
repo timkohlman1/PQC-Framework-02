@@ -19,6 +19,196 @@ DEFAULT_TRANSPORT_MODE = "direct_uart"
 DEFAULT_NETWORK_PROFILE = "none"
 
 
+SECURE_BOOT_BENCHMARK_SCHEMA_VERSION = 1
+SECURE_BOOT_BENCHMARK_MODEL_PHASE = "phase_11_1_schema_only"
+UNAVAILABLE_METRIC_SOURCE = "unavailable"
+
+
+def _unavailable_reason(reason: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "source": UNAVAILABLE_METRIC_SOURCE,
+        "reason": reason,
+    }
+
+
+def build_secure_boot_benchmark_model(
+    *,
+    experiment_id: str,
+    boot_mode: str,
+    boot_crypto: str | None,
+    signature_algorithm: str | None,
+    signature_size_bytes: int | None,
+    image_version: Any = None,
+    wolfboot_artifact_path: str | None = None,
+    wolfboot_sha256: str | None = None,
+    wolfboot_elf_size_bytes: int | None = None,
+    signed_application_artifact_path: str | None = None,
+    signed_application_sha256: str | None = None,
+    signed_application_size_bytes: int | None = None,
+    verification_time_ms: int | None = None,
+    verification_cycles: int | None = None,
+    verification_cpu_hz: int | None = None,
+    verification_result_code: int | None = None,
+    verification_time_source: str = UNAVAILABLE_METRIC_SOURCE,
+    verification_cycles_source: str = UNAVAILABLE_METRIC_SOURCE,
+    runtime_measurement_method: str | None = None,
+    runtime_limitations: str | list[str] | None = None,
+) -> dict[str, Any]:
+    """Build the Phase 11.1 secure-boot benchmark evidence schema.
+
+    The Phase 11.1 model is intentionally schema-first. It records any
+    already available secure-boot timing and artifact-size evidence, while
+    explicitly marking repeated-run, aggregate, static-resource, stack, and
+    heap metrics as unavailable until later Phase 11 sub-steps implement the
+    required collection mechanisms.
+    """
+
+    unavailable_build_reason = (
+        "Phase 11.1 defines the benchmark schema only; static build/resource "
+        "metrics are added in the later Phase 11.3 build-metrics step."
+    )
+    unavailable_unsigned_reason = (
+        "Unsigned application size is not linked into the Phase 11.1 secure-boot "
+        "run schema yet."
+    )
+    unavailable_overhead_reason = (
+        "Signed-image overhead requires both unsigned and signed image sizes; "
+        "Phase 11.1 records the schema placeholder only when either input is unavailable."
+    )
+    unavailable_runtime_memory_reason = (
+        "Runtime stack and heap metrics require explicit firmware-side measurement "
+        "evidence and are added in the later Phase 11.4 runtime-memory step."
+    )
+    unavailable_repeated_reason = (
+        "Phase 11.1 defines the repeated-run sample schema only; repeated execution "
+        "is added in the later Phase 11.2 step."
+    )
+    unavailable_aggregate_reason = (
+        "Aggregate statistics require repeated-run samples and are calculated in "
+        "later Phase 11 steps."
+    )
+
+    if runtime_limitations is None:
+        runtime_limitations_list: list[str] = []
+    elif isinstance(runtime_limitations, list):
+        runtime_limitations_list = [str(item) for item in runtime_limitations]
+    else:
+        runtime_limitations_list = [str(runtime_limitations)]
+
+    runtime_status = "available" if verification_time_ms is not None else "unavailable"
+    cycles_status = "available" if verification_cycles is not None else "unavailable"
+
+    return {
+        "schema_version": SECURE_BOOT_BENCHMARK_SCHEMA_VERSION,
+        "model_phase": SECURE_BOOT_BENCHMARK_MODEL_PHASE,
+        "benchmark_scope": "secure_boot_classical_signing_algorithm",
+        "profile_id": experiment_id,
+        "boot_mode": boot_mode,
+        "boot_crypto": boot_crypto,
+        "signature_algorithm": signature_algorithm,
+        "signature_size_bytes": signature_size_bytes,
+        "image_version": image_version,
+        "build_time_metrics": {
+            "status": "unavailable",
+            "unavailable": _unavailable_reason(unavailable_build_reason),
+            "bootloader_text_bytes": None,
+            "bootloader_data_bytes": None,
+            "bootloader_bss_bytes": None,
+            "bootloader_flash_bytes": None,
+            "bootloader_static_ram_bytes": None,
+            "static_ram_bytes": None,
+            "limitations": [unavailable_build_reason],
+        },
+        "signed_artifact_metrics": {
+            "status": "partial" if signed_application_size_bytes is not None or wolfboot_elf_size_bytes is not None else "unavailable",
+            "wolfboot_artifact_path": wolfboot_artifact_path,
+            "wolfboot_sha256": wolfboot_sha256,
+            "wolfboot_elf_size_bytes": wolfboot_elf_size_bytes,
+            "signed_application_artifact_path": signed_application_artifact_path,
+            "signed_application_sha256": signed_application_sha256,
+            "signed_application_size_bytes": signed_application_size_bytes,
+            "signature_size_bytes": signature_size_bytes,
+            "unsigned_application_size_bytes": None,
+            "unsigned_application_size_unavailable": _unavailable_reason(unavailable_unsigned_reason),
+            "signed_image_overhead_bytes": None,
+            "signed_image_overhead_percent": None,
+            "signed_image_overhead_unavailable": _unavailable_reason(unavailable_overhead_reason),
+            "limitations": [unavailable_unsigned_reason, unavailable_overhead_reason],
+        },
+        "runtime_verification_metrics": {
+            "status": runtime_status,
+            "verification_time_ms": verification_time_ms,
+            "verification_cycles": verification_cycles,
+            "verification_cpu_hz": verification_cpu_hz,
+            "verification_result_code": verification_result_code,
+            "verification_time_source": verification_time_source,
+            "verification_cycles_source": verification_cycles_source,
+            "measurement_method": runtime_measurement_method,
+            "limitations": runtime_limitations_list,
+        },
+        "runtime_memory_metrics": {
+            "status": "unavailable",
+            "unavailable": _unavailable_reason(unavailable_runtime_memory_reason),
+            "max_stack_used_bytes": None,
+            "stack_metric_source": UNAVAILABLE_METRIC_SOURCE,
+            "heap_used_bytes": None,
+            "heap_metric_source": UNAVAILABLE_METRIC_SOURCE,
+            "estimated_total_ram_pressure_bytes": None,
+            "runtime_memory_limitations": [unavailable_runtime_memory_reason],
+        },
+        "repeated_run_samples": {
+            "status": "not_configured",
+            "unavailable": _unavailable_reason(unavailable_repeated_reason),
+            "samples": [],
+            "sample_schema": {
+                "run_index": None,
+                "timestamp": None,
+                "verification_time_ms": None,
+                "verification_cycles": None,
+                "verification_cpu_hz": None,
+                "verification_result_code": None,
+                "uart_marker_detection_result": None,
+                "sample_verdict": None,
+                "referenced_artifact_identity": None,
+            },
+            "limitations": [unavailable_repeated_reason],
+        },
+        "aggregate_statistics": {
+            "status": "unavailable",
+            "unavailable": _unavailable_reason(unavailable_aggregate_reason),
+            "sample_count": 0,
+            "valid_sample_count": 0,
+            "failed_sample_count": 0,
+            "verification_time_ms": {
+                "minimum": None,
+                "mean": None,
+                "median": None,
+                "maximum": None,
+                "standard_deviation": None,
+            },
+            "verification_cycles": {
+                "minimum": None,
+                "mean": None,
+                "median": None,
+                "maximum": None,
+                "standard_deviation": None,
+            },
+            "derived_metrics": {
+                "cycles_per_kb": None,
+                "time_ms_per_kb": None,
+            },
+            "limitations": [unavailable_aggregate_reason],
+        },
+        "limitations": [
+            unavailable_build_reason,
+            unavailable_runtime_memory_reason,
+            unavailable_repeated_reason,
+            unavailable_aggregate_reason,
+        ],
+    }
+
+
 def _coerce_timestamp(timestamp: datetime | None) -> datetime:
     """Return a timestamp, using local time when one is not supplied."""
 

@@ -565,3 +565,28 @@ The `secure_boot_evidence` object links the same run's build, signing, flash, UA
 Generated outputs and secrets remain excluded from Git. The relevant ignored paths include `results/*`, `.last_successful_build.json`, `secrets/`, `secrets/wolfboot/`, signed images under `build/`, wolfBoot generated artifacts under `tools/wolfboot`, and `tools/wolfboot/.config`.
 
 Phase 10l does not change the direct-flash baseline or make `configs/boot/wolfboot_ecdsa_p256.yaml` a generic runnable boot profile. Hardware success and timing values must still come from user-provided flash and UART logs.
+
+## Phase 11.1 — Benchmark Result Model
+
+Phase 11.1 defines the secure-boot benchmark evidence schema before adding repeated-run execution or additional signing-algorithm profiles. Secure-boot run manifests now include a `secure_boot_benchmark` object alongside the existing Phase 10l `secure_boot_evidence` object.
+
+The benchmark object is schema-first and separates these metric groups:
+
+```text
+secure_boot_benchmark.schema_version
+secure_boot_benchmark.model_phase
+secure_boot_benchmark.benchmark_scope
+secure_boot_benchmark.build_time_metrics
+secure_boot_benchmark.signed_artifact_metrics
+secure_boot_benchmark.runtime_verification_metrics
+secure_boot_benchmark.runtime_memory_metrics
+secure_boot_benchmark.repeated_run_samples
+secure_boot_benchmark.aggregate_statistics
+secure_boot_benchmark.limitations
+```
+
+Existing secure-boot timing fields remain compatible. The current single secure-boot workflow still records `boot_timing.verification_time_ms`, `secure_boot_run.verification_time_ms`, and `secure_boot_evidence.boot_timing.verification_time_ms` as before. Phase 11.1 mirrors available timing evidence into `secure_boot_benchmark.runtime_verification_metrics` without adding repeated-run execution behaviour.
+
+Metrics that are not implemented yet are not omitted. The manifest records them as unavailable with a reason. In Phase 11.1, static build/resource metrics, unsigned-image overhead metrics, runtime stack/heap metrics, repeated-run samples, and aggregate statistics remain explicit placeholders until the later Phase 11 sub-steps implement collection and calculation.
+
+Phase 11.1 does not add new signing profiles, benchmark aggregation commands, runtime stack/heap instrumentation, or hardware benchmark loops. Hardware success and timing values must still come from user-provided flash and UART logs.

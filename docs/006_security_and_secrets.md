@@ -139,3 +139,9 @@ tools/wolfboot/*.pem
 ```
 
 A consolidated manifest is not sufficient by itself to claim hardware success. Secure-boot success, negative-test success, and timing values must still be supported by user-provided `secure_boot_flash.log`, `uart.log`, and `manifest.json` evidence from the actual run.
+
+## Phase 11.1 Benchmark Evidence and Secret Handling
+
+The Phase 11.1 benchmark result model records artifact paths, hashes, sizes when available, runtime verification evidence, unavailable-metric reasons, and future repeated-run or aggregate placeholders. It must not copy private signing keys, private certificates, passwords, SSH private keys, or other local credentials into result manifests or replacement artifacts.
+
+Private wolfBoot signing keys remain local under ignored paths such as `secrets/wolfboot/`. Benchmark manifests may identify the signing algorithm and signature size, but they must not embed private key material.

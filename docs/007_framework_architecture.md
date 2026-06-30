@@ -841,3 +841,25 @@ secure_boot_evidence.negative_test.verdict
 The signing workflow manifest records `signing.signature_size` and `signing.signature_size_bytes` with the same byte count. This keeps the signing evidence and secure-boot run evidence consistent while preserving the earlier explicit byte-named field.
 
 The direct-flash baseline remains the known-good runnable path. The planned wolfBoot boot profile remains `runnable: false` for generic direct-flash workflows; secure-boot execution still uses the explicit `flash-secure-boot` command. Generated outputs and private signing keys remain ignored and must not be committed.
+
+## Phase 11.1 — Secure-Boot Benchmark Result Model
+
+Phase 11.1 adds a first-class secure-boot benchmark schema without changing the secure-boot execution path. The existing `secure_boot_evidence`, `boot_timing`, and `secure_boot_run` fields remain compatible. New benchmark evidence is recorded under `secure_boot_benchmark`.
+
+The schema distinguishes:
+
+```text
+secure_boot_benchmark.build_time_metrics
+secure_boot_benchmark.signed_artifact_metrics
+secure_boot_benchmark.runtime_verification_metrics
+secure_boot_benchmark.runtime_memory_metrics
+secure_boot_benchmark.repeated_run_samples
+secure_boot_benchmark.aggregate_statistics
+secure_boot_benchmark.limitations
+```
+
+`runtime_verification_metrics` mirrors explicit UART timing evidence when available, including verification time, cycles, CPU frequency, result code, source, measurement method, and limitations. Host-side SSH duration, UART capture duration, reset delay, and marker ordering are still not used as verification time.
+
+`build_time_metrics`, runtime stack/heap fields, repeated-run samples, and aggregate statistics are present but marked unavailable in Phase 11.1. This makes missing evidence auditable instead of inferred from absent fields. Later Phase 11 steps may populate those sections after implementing repeated-run execution, static build/resource parsing, runtime stack/memory instrumentation, and cross-profile aggregation.
+
+Phase 11.1 intentionally does not add new signing-algorithm profiles, aggregation output commands, or runtime stack/heap instrumentation.

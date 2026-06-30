@@ -19,7 +19,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
-from framework.manifest import read_manifest, update_manifest
+from framework.manifest import build_secure_boot_benchmark_model, read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE = 40
@@ -273,6 +273,10 @@ def _artifact_result_to_manifest(result: SecureBootFlashArtifactResult) -> dict[
         "scp_return_code": None if result.scp is None else result.scp.return_code,
         "helper_return_code": None if result.flash is None else result.flash.return_code,
     }
+
+
+def _artifact_size_bytes(path: Path) -> int | None:
+    return path.stat().st_size if path.is_file() else None
 
 
 def _write_secure_boot_flash_log(
@@ -579,6 +583,25 @@ def execute_secure_boot_flash(
     boot_signature = _signature_metadata(experiment)
     signature_size = boot_signature["signature_size"]
     flash_result_status = "secure_boot_flash_passed" if return_code == 0 else "secure_boot_flash_failed"
+    boot_mode = str(bundle.get("boot", {}).get("mode", experiment.get("firmware", {}).get("mode", "unknown")))
+    benchmark_evidence = build_secure_boot_benchmark_model(
+        experiment_id=str(experiment["id"]),
+        boot_mode=boot_mode,
+        boot_crypto=boot_crypto,
+        signature_algorithm=boot_signature["algorithm"],
+        signature_size_bytes=signature_size,
+        image_version=boot_signature["image_version"],
+        wolfboot_artifact_path=str(wolfboot.artifact_path),
+        wolfboot_sha256=wolfboot.artifact_sha256,
+        wolfboot_elf_size_bytes=_artifact_size_bytes(wolfboot.artifact_path),
+        signed_application_artifact_path=str(signed_application.artifact_path),
+        signed_application_sha256=signed_application.artifact_sha256,
+        signed_application_size_bytes=_artifact_size_bytes(signed_application.artifact_path),
+        verification_time_source="unavailable",
+        verification_cycles_source="unavailable",
+        runtime_measurement_method="UART capture has not run at the secure-boot flash stage.",
+        runtime_limitations="No runtime verification timing evidence is available until post-flash UART capture runs.",
+    )
 
     update_manifest(
         manifest_path,
@@ -592,7 +615,7 @@ def execute_secure_boot_flash(
             "secure_boot_evidence": {
                 "schema_version": 1,
                 "result": flash_result_status,
-                "boot_mode": str(bundle.get("boot", {}).get("mode", experiment.get("firmware", {}).get("mode", "unknown"))),
+                "boot_mode": boot_mode,
                 "boot_crypto": boot_crypto,
                 "signature_algorithm": boot_signature["algorithm"],
                 "signature_size": signature_size,
@@ -636,6 +659,7 @@ def execute_secure_boot_flash(
                     "source_image_modified": False,
                 },
             },
+            "secure_boot_benchmark": benchmark_evidence,
             "secure_boot_flash": {
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),

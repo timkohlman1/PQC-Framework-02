@@ -50,7 +50,7 @@ from framework.artifacts import copy_artifact_to_result
 from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
 from framework.flash import execute_flash
-from framework.manifest import create_result_folder, read_manifest, update_manifest
+from framework.manifest import build_secure_boot_benchmark_model, create_result_folder, read_manifest, update_manifest
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
@@ -1669,11 +1669,57 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         }
     )
 
+    boot_signature = manifest_before_final_update.get("boot_signature", {})
+    if not isinstance(boot_signature, dict):
+        boot_signature = {}
+    secure_boot_flash = manifest_before_final_update.get("secure_boot_flash", {})
+    if not isinstance(secure_boot_flash, dict):
+        secure_boot_flash = {}
+    wolfboot_evidence = secure_boot_flash.get("wolfboot", {})
+    if not isinstance(wolfboot_evidence, dict):
+        wolfboot_evidence = {}
+    signed_application_evidence = secure_boot_flash.get("signed_application", {})
+    if not isinstance(signed_application_evidence, dict):
+        signed_application_evidence = {}
+    prior_benchmark_evidence = manifest_before_final_update.get("secure_boot_benchmark", {})
+    if not isinstance(prior_benchmark_evidence, dict):
+        prior_benchmark_evidence = {}
+    prior_signed_artifact_metrics = prior_benchmark_evidence.get("signed_artifact_metrics", {})
+    if not isinstance(prior_signed_artifact_metrics, dict):
+        prior_signed_artifact_metrics = {}
+    benchmark_evidence = build_secure_boot_benchmark_model(
+        experiment_id=str(bundle["experiment"]["id"]),
+        boot_mode=str(bundle.get("boot", {}).get("mode", bundle["experiment"].get("firmware", {}).get("mode", "unknown"))),
+        boot_crypto=str(manifest_before_final_update.get("boot_crypto", bundle["experiment"].get("boot_crypto", "ecdsa_p256"))),
+        signature_algorithm=boot_signature.get("algorithm"),
+        signature_size_bytes=boot_signature.get("signature_size_bytes", manifest_before_final_update.get("signature_size")),
+        image_version=boot_signature.get("image_version"),
+        wolfboot_artifact_path=wolfboot_evidence.get("artifact_path"),
+        wolfboot_sha256=wolfboot_evidence.get("sha256"),
+        wolfboot_elf_size_bytes=prior_signed_artifact_metrics.get("wolfboot_elf_size_bytes"),
+        signed_application_artifact_path=signed_application_evidence.get("artifact_path"),
+        signed_application_sha256=signed_application_evidence.get("sha256"),
+        signed_application_size_bytes=prior_signed_artifact_metrics.get("signed_application_size_bytes"),
+        verification_time_ms=verification_time_ms,
+        verification_cycles=verification_cycles,
+        verification_cpu_hz=verification_cpu_hz,
+        verification_result_code=verification_result_code,
+        verification_time_source=verification_time_source,
+        verification_cycles_source=(
+            "uart_explicit_verification_cycles_marker"
+            if verification_cycles is not None
+            else "unavailable"
+        ),
+        runtime_measurement_method=verification_time_measurement_method,
+        runtime_limitations=verification_time_limitations,
+    )
+
     update_manifest(
         result_dir / "manifest.json",
         {
             "result": result_status,
             "secure_boot_evidence": secure_boot_evidence,
+            "secure_boot_benchmark": benchmark_evidence,
             "secure_boot_run": {
                 "return_code": final_return_code,
                 "flash_return_code": flash_result.return_code,

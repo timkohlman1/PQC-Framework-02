@@ -196,6 +196,26 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert evidence["flash_evidence"]["return_code"] == 0
     assert evidence["uart_evidence"]["skipped"] is True
     assert evidence["boot_timing"]["verification_time_ms"] is None
+    benchmark = manifest["secure_boot_benchmark"]
+    assert benchmark["schema_version"] == 1
+    assert benchmark["model_phase"] == "phase_11_1_schema_only"
+    assert benchmark["benchmark_scope"] == "secure_boot_classical_signing_algorithm"
+    assert benchmark["profile_id"] == "wolfboot_ecdsa_p256_uart"
+    assert benchmark["signature_algorithm"] == "ecdsa_p256"
+    assert benchmark["signature_size_bytes"] == 64
+    assert benchmark["build_time_metrics"]["status"] == "unavailable"
+    assert benchmark["build_time_metrics"]["bootloader_text_bytes"] is None
+    assert benchmark["signed_artifact_metrics"]["status"] == "partial"
+    assert benchmark["signed_artifact_metrics"]["wolfboot_elf_size_bytes"] == len(b"wolfboot elf")
+    assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == len(b"signed application")
+    assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"]["status"] == "unavailable"
+    assert benchmark["runtime_verification_metrics"]["status"] == "unavailable"
+    assert benchmark["runtime_verification_metrics"]["verification_time_ms"] is None
+    assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
+    assert benchmark["repeated_run_samples"]["status"] == "not_configured"
+    assert benchmark["repeated_run_samples"]["samples"] == []
+    assert benchmark["aggregate_statistics"]["status"] == "unavailable"
+    assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
     assert manifest["source"] == {
         "git_commit": "abc123",
         "git_dirty": False,

@@ -232,3 +232,49 @@ def test_create_run_command_creates_result_folder_without_hardware_actions(tmp_p
     assert (result_dirs[0] / "manifest.json").is_file()
     assert (result_dirs[0] / "notes.md").is_file()
     assert "No build, flash, UART access, SSH, hardware access, or network access was performed." in output
+
+
+def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavailable_metrics():
+    manifest = load_manifest_module()
+
+    benchmark = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+        image_version=1,
+        wolfboot_artifact_path="tools/wolfboot/wolfboot.elf",
+        wolfboot_sha256="abc",
+        wolfboot_elf_size_bytes=12345,
+        signed_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        signed_application_sha256="def",
+        signed_application_size_bytes=54321,
+        verification_time_ms=17,
+        verification_cycles=1360000,
+        verification_cpu_hz=80000000,
+        verification_result_code=0,
+        verification_time_source="uart_explicit_verification_time_marker",
+        verification_cycles_source="uart_explicit_verification_cycles_marker",
+        runtime_measurement_method="Explicit UART marker parsed from application mailbox output.",
+        runtime_limitations="Host-side capture duration is not verification time.",
+    )
+
+    assert benchmark["schema_version"] == 1
+    assert benchmark["model_phase"] == "phase_11_1_schema_only"
+    assert benchmark["benchmark_scope"] == "secure_boot_classical_signing_algorithm"
+    assert benchmark["profile_id"] == "wolfboot_ecdsa_p256_uart"
+    assert benchmark["build_time_metrics"]["status"] == "unavailable"
+    assert benchmark["build_time_metrics"]["bootloader_text_bytes"] is None
+    assert benchmark["signed_artifact_metrics"]["status"] == "partial"
+    assert benchmark["signed_artifact_metrics"]["wolfboot_elf_size_bytes"] == 12345
+    assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == 54321
+    assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"]["status"] == "unavailable"
+    assert benchmark["runtime_verification_metrics"]["status"] == "available"
+    assert benchmark["runtime_verification_metrics"]["verification_time_ms"] == 17
+    assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
+    assert benchmark["runtime_memory_metrics"]["max_stack_used_bytes"] is None
+    assert benchmark["repeated_run_samples"]["status"] == "not_configured"
+    assert benchmark["repeated_run_samples"]["samples"] == []
+    assert benchmark["aggregate_statistics"]["status"] == "unavailable"
+    assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
