@@ -169,8 +169,10 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result"] == "secure_boot_flash_passed"
     assert manifest["boot_crypto"] == "ecdsa_p256"
+    assert manifest["signature_size"] == 64
     assert manifest["boot_signature"] == {
         "algorithm": "ecdsa_p256",
+        "signature_size": 64,
         "signature_size_bytes": 64,
         "image_version": 1,
     }
@@ -183,6 +185,17 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert manifest["secure_boot_flash"]["negative_test"]["source_image_modified"] is False
     assert manifest["secure_boot_flash"]["signed_application"]["offset"] == "0x08020000"
     assert manifest["secure_boot_flash"]["signed_application"]["pass_offset_to_helper"] is True
+    evidence = manifest["secure_boot_evidence"]
+    assert evidence["schema_version"] == 1
+    assert evidence["boot_mode"] == "wolfboot_ecdsa_p256"
+    assert evidence["boot_crypto"] == "ecdsa_p256"
+    assert evidence["signature_algorithm"] == "ecdsa_p256"
+    assert evidence["signature_size"] == 64
+    assert evidence["build_evidence"]["wolfboot_sha256"] == wolfboot_sha
+    assert evidence["signing_evidence"]["signed_application_sha256"] == signed_sha
+    assert evidence["flash_evidence"]["return_code"] == 0
+    assert evidence["uart_evidence"]["skipped"] is True
+    assert evidence["boot_timing"]["verification_time_ms"] is None
     assert manifest["source"] == {
         "git_commit": "abc123",
         "git_dirty": False,

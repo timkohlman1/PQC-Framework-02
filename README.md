@@ -12,7 +12,7 @@ The current known-good baseline is a CubeMX-generated STM32 HAL firmware project
 - The app prints a boot message and repeated `tick` messages.
 - The baseline experiment now references `configs/boot/direct_flash.yaml` as its explicit runnable boot profile.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` exists only as a planned, non-runnable wolfBoot placeholder.
-- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Phase 10g adds a local-only relocated-application signing workflow. wolfBoot flashing, signed-application flashing, positive secure-boot UART evidence, a corrupted-application negative-test workflow, and boot timing evidence are now defined through Phase 10k. MQTT, TLS, PQC, and network-degradation automation are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable for generic direct-flash workflows.
+- wolfBoot source is managed as a local Git submodule at `tools/wolfboot`. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation for ECDSA-P256 builds by copying `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` before invoking `make` through `build-wolfboot`. Phase 10g adds a local-only relocated-application signing workflow. wolfBoot flashing, signed-application flashing, positive secure-boot UART evidence, a corrupted-application negative-test workflow, boot timing evidence, and consolidated secure-boot manifest evidence are now defined through Phase 10l. MQTT, TLS, PQC, and network-degradation automation are not implemented yet. The direct-flash baseline remains the known-good runnable path, and the planned wolfBoot boot profile remains non-runnable for generic direct-flash workflows.
 
 ## AI-assisted development
 
@@ -544,3 +544,24 @@ The secure-boot hardware workflow test is end-to-end. When the required hardware
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 ```
 
+
+
+## Phase 10l — Secure-Boot Manifest and Documentation Consolidation
+
+Phase 10l keeps the existing secure-boot workflow but makes the run evidence easier to audit. A secure-boot run manifest now records the consolidated fields required for the current wolfBoot experiment:
+
+```text
+boot_mode
+boot_crypto
+signature_size
+boot_signature.signature_size
+boot_signature.signature_size_bytes
+boot_timing.verification_time_ms
+secure_boot_evidence
+```
+
+The `secure_boot_evidence` object links the same run's build, signing, flash, UART, timing, result, and negative-test evidence. It records the wolfBoot artifact path and SHA-256, signed-application artifact path and SHA-256, flash log and return codes, UART log and marker results when UART capture runs, positive evidence verdict, negative-test verdict, and explicit boot-timing values. The signing evidence manifest also records `signing.signature_size` alongside `signing.signature_size_bytes` for consistency with the secure-boot run manifest.
+
+Generated outputs and secrets remain excluded from Git. The relevant ignored paths include `results/*`, `.last_successful_build.json`, `secrets/`, `secrets/wolfboot/`, signed images under `build/`, wolfBoot generated artifacts under `tools/wolfboot`, and `tools/wolfboot/.config`.
+
+Phase 10l does not change the direct-flash baseline or make `configs/boot/wolfboot_ecdsa_p256.yaml` a generic runnable boot profile. Hardware success and timing values must still come from user-provided flash and UART logs.

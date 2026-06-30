@@ -1626,10 +1626,54 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     else:
         result_status = "secure_boot_flash_failed"
 
+    manifest_before_final_update = read_manifest(result_dir / "manifest.json")
+    secure_boot_evidence = manifest_before_final_update.get("secure_boot_evidence", {})
+    if not isinstance(secure_boot_evidence, dict):
+        secure_boot_evidence = {}
+    secure_boot_evidence.update(
+        {
+            "result": result_status,
+            "uart_evidence": {
+                "log": "uart.log" if uart_return_code is not None else None,
+                "skipped": args.skip_uart or flash_result.return_code != 0,
+                "return_code": uart_return_code,
+                "boot_marker_present": boot_marker_present,
+                "tick_present": tick_present,
+                "secure_boot_marker_present": secure_boot_marker_present,
+                "positive_boot_evidence_passed": positive_boot_evidence_passed,
+            },
+            "boot_timing": {
+                "verification_time_ms": verification_time_ms,
+                "verification_cycles": verification_cycles,
+                "verification_cpu_hz": verification_cpu_hz,
+                "verification_result_code": verification_result_code,
+                "verification_time_source": verification_time_source,
+                "measurement_method": verification_time_measurement_method,
+                "limitations": verification_time_limitations,
+            },
+            "negative_test": {
+                "enabled": negative_test_requested,
+                "verdict": (
+                    "passed"
+                    if negative_test_passed
+                    else "failed"
+                    if negative_test_requested
+                    else "not_run"
+                ),
+                "normal_boot_marker_absent": boot_marker_present is False,
+                "tick_marker_absent": tick_present is False,
+                "secure_boot_marker_absent": secure_boot_marker_present is False,
+                "capture_completed": capture_completed,
+                "source_image_modified": False,
+            },
+        }
+    )
+
     update_manifest(
         result_dir / "manifest.json",
         {
             "result": result_status,
+            "secure_boot_evidence": secure_boot_evidence,
             "secure_boot_run": {
                 "return_code": final_return_code,
                 "flash_return_code": flash_result.return_code,

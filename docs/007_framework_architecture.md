@@ -785,6 +785,8 @@ The secure-boot run manifest records:
 ```text
 boot_crypto
 boot_signature.algorithm
+signature_size
+boot_signature.signature_size
 boot_signature.signature_size_bytes
 boot_signature.image_version
 secure_boot_run.boot_confirmed_from_uart_log
@@ -802,3 +804,40 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 ```
 
 The command copies the signed application image into the result directory, corrupts the result-local copy by flipping the first byte, and flashes that corrupted copy instead of the original signed image. It records the original and corrupted image SHA-256 values and `source_image_modified: false` in the manifest. The negative test passes only when the UART capture completes and the secure-boot marker, normal boot marker, and tick marker are absent.
+
+## Phase 10l — Secure-Boot Manifest and Documentation Consolidation
+
+Phase 10l consolidates the secure-boot evidence model after the working wolfBoot build, signing, flash, UART, negative-test, and timing paths exist. It does not add a new hardware operation. It makes the manifest schema more explicit and easier to audit.
+
+A secure-boot run manifest records these required top-level or established fields:
+
+```text
+boot_mode
+boot_crypto
+signature_size
+boot_signature.algorithm
+boot_signature.signature_size
+boot_signature.signature_size_bytes
+boot_signature.image_version
+boot_timing.verification_time_ms
+```
+
+The run also records `secure_boot_evidence`, a consolidated evidence object that links:
+
+```text
+secure_boot_evidence.build_evidence.wolfboot_artifact_path
+secure_boot_evidence.build_evidence.wolfboot_sha256
+secure_boot_evidence.signing_evidence.signed_application_artifact_path
+secure_boot_evidence.signing_evidence.signed_application_sha256
+secure_boot_evidence.flash_evidence.log
+secure_boot_evidence.flash_evidence.return_code
+secure_boot_evidence.uart_evidence.log
+secure_boot_evidence.uart_evidence.secure_boot_marker_present
+secure_boot_evidence.uart_evidence.positive_boot_evidence_passed
+secure_boot_evidence.boot_timing.verification_time_ms
+secure_boot_evidence.negative_test.verdict
+```
+
+The signing workflow manifest records `signing.signature_size` and `signing.signature_size_bytes` with the same byte count. This keeps the signing evidence and secure-boot run evidence consistent while preserving the earlier explicit byte-named field.
+
+The direct-flash baseline remains the known-good runnable path. The planned wolfBoot boot profile remains `runnable: false` for generic direct-flash workflows; secure-boot execution still uses the explicit `flash-secure-boot` command. Generated outputs and private signing keys remain ignored and must not be committed.

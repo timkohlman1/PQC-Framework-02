@@ -1079,6 +1079,7 @@ Expected future manifest fields include:
 
 ```text
 boot_crypto
+signature_size
 transport_crypto
 logs
 artifacts
@@ -1155,6 +1156,7 @@ Current framework skeleton completed items:
 51. Add Phase 10i positive wolfBoot boot evidence by compiling a distinct relocated secure-boot application UART marker, requiring it in the wolfBoot UART experiment, and recording `secure_boot_run.boot_path_distinguished`, `secure_boot_run.secure_boot_marker_present`, and signature metadata in the manifest.
 52. Add Phase 10j corrupted-application negative-test support with `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application`. This creates a result-local corrupted copy of the signed application image, flashes that copy, captures UART, and passes only when the normal boot, tick, and secure-boot markers are absent. It does not modify the original signed image or private signing key. The hardware workflow test also covers this negative path and restores the valid signed image afterward.
 53. Add Phase 10k boot timing instrumentation. The wolfBoot build helper temporarily instruments local STM32L4R5 wolfBoot `src/image.c` during `build-wolfboot`, wraps `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement, writes the measured millisecond value into a RAM2 mailbox before jumping to the application, restores the submodule files after the build, and records the application-emitted `wolfBoot verification time: <N> ms` UART evidence in the secure-boot run manifest. Host-side SSH, reset, and UART capture duration are not treated as verification time.
+54. Add Phase 10l secure-boot manifest and documentation consolidation. Secure-boot run manifests now record the required consolidated fields `boot_mode`, `boot_crypto`, `signature_size`, `boot_signature.signature_size`, `boot_signature.signature_size_bytes`, and `boot_timing.verification_time_ms`. They also record `secure_boot_evidence` to link wolfBoot build-artifact evidence, signed-application evidence, flash evidence, UART marker evidence, timing evidence, final result, and negative-test evidence in one object. The signing manifest also records `signing.signature_size` alongside `signing.signature_size_bytes`.
 Current CLI commands are:
 
 ```powershell
@@ -1376,6 +1378,7 @@ Implemented after Phase 10h:
 
 - Phase 10i adds the distinct secure-boot application UART marker and positive boot-evidence manifest fields.
 - Phase 10j adds the corrupted-application negative-test workflow.
+- Phase 10l consolidates secure-boot manifest evidence and documentation after Phase 10k timing instrumentation.
 
 Still not implemented:
 
@@ -1464,6 +1467,29 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 ```
 
 Expected result: the wolfBoot build evidence records that the boot timing instrumentation patch was enabled and applied, the submodule files are restored after the build, the relocated application emits `wolfBoot verification time: <N> ms`, `wolfBoot verification cycles: <N> cycles`, `wolfBoot verification cpu_hz: <N>`, and `wolfBoot verification result: <N>` from the RAM2 mailbox after boot, and the run manifest records the parsed millisecond, cycle-count, CPU-Hz, and verification-result values. If the captured UART log does not contain such lines, the manifest records unavailable/null timing with the unavailable source and documented limitations. Hardware success and timing evidence must still only be claimed from user-provided logs.
+
+
+## Phase 10l Secure-Boot Manifest and Documentation Consolidation
+
+Implemented scope:
+
+- Secure-boot run manifests record the required Phase 10l fields `boot_mode`, `boot_crypto`, `signature_size`, and `boot_timing.verification_time_ms`.
+- `boot_signature` now records both `signature_size` and `signature_size_bytes` for the configured signature byte count while preserving `algorithm` and `image_version`.
+- `secure_boot_evidence` links the run's wolfBoot artifact evidence, signed-application evidence, flash evidence, UART marker evidence, boot-timing evidence, result status, and negative-test verdict in one consolidated object.
+- The application-signing manifest records `signing.signature_size` alongside `signing.signature_size_bytes` so signing evidence and secure-boot run evidence use a consistent field name.
+- Documentation has been consolidated in `README.md`, `docs/007_framework_architecture.md`, `docs/006_security_and_secrets.md`, and this build guide.
+- `.gitignore` continues to exclude generated outputs, result directories, local signing keys, signed images, wolfBoot generated artifacts, and `tools/wolfboot/.config`.
+- The direct-flash baseline remains available and `configs/boot/wolfboot_ecdsa_p256.yaml` remains non-runnable for generic direct-flash workflows.
+
+Manual Phase 10l verification commands:
+
+```powershell
+python -m pytest tests/unit
+python -m pytest
+python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When hardware is intentionally available, the secure-boot workflow manifest contains coherent `secure_boot_evidence`, `signature_size`, `boot_crypto`, `boot_mode`, and `boot_timing.verification_time_ms` evidence. Hardware success and timing values must still only be claimed from user-provided logs.
 
 ## 13. Common Manual Commands
 

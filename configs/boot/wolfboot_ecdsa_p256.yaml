@@ -2,8 +2,8 @@ id: wolfboot_ecdsa_p256
 mode: wolfboot_ecdsa_p256
 description: Planned wolfBoot ECDSA-P256 secure-boot profile. Generic direct-flash execution remains blocked; Phase 10h provides an explicit two-artifact flash workflow.
 runnable: false
-status: phase_10i_positive_boot_evidence_and_phase_10j_negative_test_defined
-implementation_state: positive_secure_boot_uart_marker_and_corrupted_application_negative_test_defined
+status: phase_10l_secure_boot_manifest_and_documentation_consolidated
+implementation_state: positive_negative_timing_and_consolidated_manifest_evidence_defined
 intended_signature_algorithm: ecdsa_p256
 application_slot_concept: planned_signed_application_primary_slot
 flash_layout_status: defined_phase_10d_used_by_phase_10h_flash_workflow
@@ -64,7 +64,7 @@ application_signing_profile:
   output_evidence: results/signing
   runtime_boot_validated: false
 secure_boot_flash_profile:
-  status: defined_phase_10h_flash_and_uart_capture_not_boot_path_validated
+  status: defined_phase_10l_consolidated_manifest_evidence
   experiment: configs/experiments/wolfboot_ecdsa_p256_uart.yaml
   command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
   wolfboot_artifact: tools/wolfboot/wolfboot.elf
@@ -76,5 +76,7 @@ secure_boot_flash_profile:
   expected_secure_boot_uart_marker: stm32-basic_hal1 secure-boot app v0.1.0
   positive_boot_evidence_status: defined_phase_10i
   negative_corrupted_application_test_status: defined_phase_10j
+  boot_timing_status: defined_phase_10k
+  manifest_consolidation_status: defined_phase_10l
 
-notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10i now defines a distinct secure-boot application UART marker for positive boot evidence, and Phase 10j defines a corrupted-application negative test. Hardware success must still only be claimed from user-provided flash and UART logs.
+notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10i defines a distinct secure-boot application UART marker for positive boot evidence, Phase 10j defines a corrupted-application negative test, Phase 10k records explicit verification timing evidence, and Phase 10l consolidates secure-boot manifest evidence. Hardware success must still only be claimed from user-provided flash and UART logs.

@@ -778,6 +778,7 @@ def execute_application_signing(
                 "log": DEFAULT_SIGNING_LOG_NAME,
                 "failure_reason": failure_reason,
                 "signature_algorithm": profile.get("signature_algorithm"),
+                "signature_size": signature_size_bytes,
                 "signature_size_bytes": signature_size_bytes,
                 "image_version": str(profile.get("image_version")),
                 "input_elf": None if input_elf_path is None else str(input_elf_path),

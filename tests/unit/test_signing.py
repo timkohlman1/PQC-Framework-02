@@ -182,6 +182,7 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert manifest["record_type"] == "application_signing"
     assert manifest["result"] == "application_signing_passed"
     assert manifest["signing"]["signature_algorithm"] == "ecdsa_p256"
+    assert manifest["signing"]["signature_size"] == 64
     assert manifest["signing"]["signature_size_bytes"] == 64
     assert manifest["signing"]["input_elf"].endswith("stm32_basic_hal1.elf")
     assert manifest["signing"]["input_image_sha256"] == expected_input_sha

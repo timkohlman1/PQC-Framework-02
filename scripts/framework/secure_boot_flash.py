@@ -239,13 +239,25 @@ def _corrupt_signed_application_copy(
     return corrupted_path
 
 
+def _signature_size_bytes(experiment: dict[str, Any]) -> int | None:
+    secure_boot_config = experiment.get("secure_boot_flash", {})
+    if not isinstance(secure_boot_config, dict):
+        secure_boot_config = {}
+    configured = secure_boot_config.get("signature_size_bytes")
+    if configured in (None, ""):
+        return None
+    return int(configured)
+
+
 def _signature_metadata(experiment: dict[str, Any]) -> dict[str, Any]:
     secure_boot_config = experiment.get("secure_boot_flash", {})
     if not isinstance(secure_boot_config, dict):
         secure_boot_config = {}
+    signature_size = _signature_size_bytes(experiment)
     return {
         "algorithm": str(secure_boot_config.get("signature_algorithm", experiment.get("boot_crypto", "ecdsa_p256"))),
-        "signature_size_bytes": secure_boot_config.get("signature_size_bytes"),
+        "signature_size": signature_size,
+        "signature_size_bytes": signature_size,
         "image_version": secure_boot_config.get("image_version"),
     }
 
@@ -563,14 +575,67 @@ def execute_secure_boot_flash(
         }
     )
 
+    boot_crypto = str(experiment.get("boot_crypto", "ecdsa_p256"))
+    boot_signature = _signature_metadata(experiment)
+    signature_size = boot_signature["signature_size"]
+    flash_result_status = "secure_boot_flash_passed" if return_code == 0 else "secure_boot_flash_failed"
+
     update_manifest(
         manifest_path,
         {
-            "result": "secure_boot_flash_passed" if return_code == 0 else "secure_boot_flash_failed",
+            "result": flash_result_status,
             "source": source,
             "firmware": current_firmware,
-            "boot_crypto": str(experiment.get("boot_crypto", "ecdsa_p256")),
-            "boot_signature": _signature_metadata(experiment),
+            "boot_crypto": boot_crypto,
+            "signature_size": signature_size,
+            "boot_signature": boot_signature,
+            "secure_boot_evidence": {
+                "schema_version": 1,
+                "result": flash_result_status,
+                "boot_mode": str(bundle.get("boot", {}).get("mode", experiment.get("firmware", {}).get("mode", "unknown"))),
+                "boot_crypto": boot_crypto,
+                "signature_algorithm": boot_signature["algorithm"],
+                "signature_size": signature_size,
+                "signature_size_bytes": signature_size,
+                "image_version": boot_signature["image_version"],
+                "build_evidence": {
+                    "wolfboot_artifact_path": str(wolfboot.artifact_path),
+                    "wolfboot_sha256": wolfboot.artifact_sha256,
+                },
+                "signing_evidence": {
+                    "signed_application_artifact_path": str(signed_application.artifact_path),
+                    "signed_application_sha256": signed_application.artifact_sha256,
+                    "original_signed_application_path": str(original_signed_application_path),
+                    "original_signed_application_sha256": original_signed_application_sha256,
+                },
+                "flash_evidence": {
+                    "log": DEFAULT_SECURE_BOOT_FLASH_LOG_NAME,
+                    "return_code": return_code,
+                    "failure_stage": failure_stage,
+                    "wolfboot_offset": wolfboot.offset,
+                    "signed_application_offset": signed_application.offset,
+                    "wolfboot_scp_return_code": None if wolfboot.scp is None else wolfboot.scp.return_code,
+                    "wolfboot_helper_return_code": None if wolfboot.flash is None else wolfboot.flash.return_code,
+                    "signed_application_scp_return_code": None if signed_application.scp is None else signed_application.scp.return_code,
+                    "signed_application_helper_return_code": None if signed_application.flash is None else signed_application.flash.return_code,
+                },
+                "uart_evidence": {
+                    "log": None,
+                    "skipped": True,
+                    "boot_marker_present": None,
+                    "tick_present": None,
+                    "secure_boot_marker_present": None,
+                },
+                "boot_timing": {
+                    "verification_time_ms": None,
+                    "verification_time_source": "unavailable",
+                },
+                "negative_test": {
+                    "enabled": negative_test_enabled,
+                    "method": corruption_method,
+                    "source_image_modified": False,
+                },
+            },
             "secure_boot_flash": {
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),

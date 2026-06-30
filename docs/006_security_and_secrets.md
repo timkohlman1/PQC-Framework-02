@@ -114,3 +114,28 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 ```
 
 The manifest records the original signed-image SHA-256, corrupted-image SHA-256, corruption method, corrupted result-local path, and `source_image_modified: false`. Do not commit corrupted images, result directories, private keys, or generated signing outputs.
+
+
+## Phase 10l — Consolidated Secure-Boot Evidence
+
+Phase 10l adds consolidated manifest evidence only. It does not add new private-key material, public certificates, credentials, or production secrets.
+
+Secure-boot run manifests may record local artifact paths, SHA-256 hashes, signature algorithm, `signature_size`, UART evidence, and boot-timing values. These are experiment evidence, not secrets. Private signing keys remain under `secrets/wolfboot/`, are not copied into `results/`, and must not be uploaded in AI context archives or committed.
+
+The following generated or local-only paths must remain ignored:
+
+```text
+results/*
+.last_successful_build.json
+secrets/
+secrets/wolfboot/
+build/**/*_signed.bin
+build/**/*_v*_signed.bin
+tools/wolfboot/.config
+tools/wolfboot/**/*.elf
+tools/wolfboot/**/*.bin
+tools/wolfboot/*.der
+tools/wolfboot/*.pem
+```
+
+A consolidated manifest is not sufficient by itself to claim hardware success. Secure-boot success, negative-test success, and timing values must still be supported by user-provided `secure_boot_flash.log`, `uart.log`, and `manifest.json` evidence from the actual run.
