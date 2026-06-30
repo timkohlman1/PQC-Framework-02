@@ -326,33 +326,38 @@ def _corrupt_signed_application_copy(
 
 
 def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | None:
-    """Return Phase 11.5a classical benchmark profile metadata from the experiment config."""
-
     profile = experiment.get("secure_boot_benchmark_profile")
     if not isinstance(profile, dict):
         return None
+
+    algorithm = str(profile.get("algorithm", "ECC256"))
+    profile_status = str(profile.get("status", "reference_existing_phase_10_11_profile"))
+    ed25519_runnable = algorithm == "ED25519" and profile.get("runnable") is True
 
     minimum_scope = {
         "status": str(profile.get("minimum_scope_status", "defined_phase_11_5a_minimum_classical_scope")),
         "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
         "implemented_reference_algorithm": "ECC256",
-        "planned_non_runnable_algorithms": ["ED25519", "RSA2048"],
+        "implemented_algorithms": ["ECC256"] + (["ED25519"] if ed25519_runnable else []),
+        "planned_non_runnable_algorithms": ["RSA2048"] if ed25519_runnable else ["ED25519", "RSA2048"],
         "scope_limitations": str(
             profile.get(
                 "scope_limitations",
-                "Phase 11.5a defines the profile model only; ED25519 and RSA2048 runnable profiles are added in later sub-phases.",
+                "Phase 11.5b adds ED25519 while RSA2048 remains reserved for Phase 11.5c.",
             )
         ),
     }
 
     capability_status = {
         "ed25519": {
-            "status": str(profile.get("ed25519_status", "planned_phase_11_5b_not_implemented")),
-            "runnable": False,
-            "unavailable": {
+            "status": str(profile.get("ed25519_status", "configured_phase_11_5b_runnable_profile_not_hardware_validated" if ed25519_runnable else "planned_phase_11_5b_not_implemented")),
+            "runnable": ed25519_runnable,
+            "unavailable": None
+            if ed25519_runnable
+            else {
                 "status": "unavailable",
                 "source": "profile_model",
-                "reason": "ED25519 benchmark profile is reserved in the Phase 11.5a minimum scope but is not runnable until Phase 11.5b.",
+                "reason": "ED25519 benchmark profile is reserved in the minimum scope but this experiment is not the Phase 11.5b ED25519 profile.",
             },
         },
         "rsa2048": {
@@ -361,19 +366,19 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
             "unavailable": {
                 "status": "unavailable",
                 "source": "profile_model",
-                "reason": "RSA2048 benchmark profile is reserved in the Phase 11.5a minimum scope but is not runnable until Phase 11.5c.",
+                "reason": "RSA2048 benchmark profile is reserved in the minimum comparison scope but is not runnable until Phase 11.5c.",
             },
         },
     }
 
     return {
         "schema_version": int(profile.get("schema_version", 1)),
-        "model_phase": "phase_11_5a_classical_profile_model",
+        "model_phase": "phase_11_5b_ed25519_profile" if ed25519_runnable else "phase_11_5a_classical_profile_model",
         "profile_model": str(profile.get("profile_model", "configs/benchmarks/classical_signing_profiles.yaml")),
         "profile_id": str(profile.get("profile_id", experiment.get("id", "unknown"))),
-        "algorithm": str(profile.get("algorithm", "ECC256")),
-        "wolfboot_sign": str(profile.get("wolfboot_sign", "ECC256")),
-        "signature_algorithm": str(profile.get("signature_algorithm", "ecdsa_p256")),
+        "algorithm": algorithm,
+        "wolfboot_sign": str(profile.get("wolfboot_sign", "ECC256" if algorithm == "ECC256" else algorithm)),
+        "signature_algorithm": str(profile.get("signature_algorithm", experiment.get("boot_crypto", "ecdsa_p256"))),
         "curve": profile.get("curve"),
         "key_size_bits": profile.get("key_size_bits"),
         "signature_size_bytes": profile.get("signature_size_bytes"),
@@ -383,7 +388,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "experiment_profile": profile.get("experiment_profile"),
         "boot_profile": profile.get("boot_profile"),
         "runnable": profile.get("runnable") is True,
-        "status": str(profile.get("status", "reference_existing_phase_10_11_profile")),
+        "status": profile_status,
         "benchmark_assumptions": {
             "application_payload": str(profile.get("application_payload", "same_relocated_hal_application_payload")),
             "board": str(profile.get("board", experiment.get("board", "unknown"))),

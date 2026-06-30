@@ -138,9 +138,9 @@ def validate_wolfboot_build_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm != "ecdsa_p256":
+    if algorithm not in {"ecdsa_p256", "ed25519"}:
         raise WolfBootBuildProfileError(
-            "Phase 10f supports only signature_algorithm: ecdsa_p256"
+            "wolfBoot build profile signature_algorithm must be ecdsa_p256 or ed25519"
         )
 
 

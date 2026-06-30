@@ -11,7 +11,9 @@ The initial supported commands are:
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+    python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ed25519_app.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ed25519_uart.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 
@@ -245,15 +247,21 @@ def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) ->
         "profiles.ecc256_reference.signing_profile",
         "profiles.ecc256_reference.wolfboot_build_profile",
         "profiles.ecc256_reference.experiment_profile",
-        "profiles.ed25519_reserved.algorithm",
         "profiles.rsa2048_reserved.algorithm",
     ]
 
     for field in required_fields:
         require_field(config, field, "classical benchmark profile model")
 
-    if require_field(config, "model_phase", "classical benchmark profile model") != "phase_11_5a_classical_profile_model":
-        raise ConfigError("classical benchmark profile model must use model_phase: phase_11_5a_classical_profile_model")
+    model_phase = require_field(config, "model_phase", "classical benchmark profile model")
+    allowed_model_phases = {
+        "phase_11_5a_classical_profile_model",
+        "phase_11_5b_ed25519_profile",
+    }
+    if model_phase not in allowed_model_phases:
+        raise ConfigError(
+            "classical benchmark profile model must use a supported Phase 11.5 model_phase"
+        )
 
     scope = config.get("minimum_comparison_scope")
     if not isinstance(scope, dict):
@@ -277,15 +285,34 @@ def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) ->
     if ecc256.get("runnable") is not True:
         raise ConfigError("profiles.ecc256_reference.runnable must remain true for the known-good reference path")
 
-    for reserved_profile_id, expected_algorithm in (("ed25519_reserved", "ED25519"), ("rsa2048_reserved", "RSA2048")):
-        reserved = profiles.get(reserved_profile_id)
-        if not isinstance(reserved, dict):
-            raise ConfigError(f"classical benchmark profile model missing profiles.{reserved_profile_id}")
-        if reserved.get("algorithm") != expected_algorithm:
-            raise ConfigError(f"profiles.{reserved_profile_id}.algorithm must be {expected_algorithm}")
-        if reserved.get("runnable") is not False:
-            raise ConfigError(f"profiles.{reserved_profile_id}.runnable must remain false until its implementation sub-phase")
-        require_field(reserved, "unsupported_reason", f"profiles.{reserved_profile_id}")
+    if model_phase == "phase_11_5a_classical_profile_model":
+        ed25519 = profiles.get("ed25519_reserved")
+        if not isinstance(ed25519, dict):
+            raise ConfigError("classical benchmark profile model missing profiles.ed25519_reserved")
+        if ed25519.get("algorithm") != "ED25519":
+            raise ConfigError("profiles.ed25519_reserved.algorithm must be ED25519")
+        if ed25519.get("runnable") is not False:
+            raise ConfigError("profiles.ed25519_reserved.runnable must remain false until its implementation sub-phase")
+        require_field(ed25519, "unsupported_reason", "profiles.ed25519_reserved")
+    else:
+        ed25519 = profiles.get("ed25519_benchmark")
+        if not isinstance(ed25519, dict):
+            raise ConfigError("classical benchmark profile model missing profiles.ed25519_benchmark")
+        if ed25519.get("algorithm") != "ED25519":
+            raise ConfigError("profiles.ed25519_benchmark.algorithm must be ED25519")
+        if ed25519.get("runnable") is not True:
+            raise ConfigError("profiles.ed25519_benchmark.runnable must be true for Phase 11.5b")
+        for field in ("signature_algorithm", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
+            require_field(ed25519, field, "profiles.ed25519_benchmark")
+
+    rsa2048 = profiles.get("rsa2048_reserved")
+    if not isinstance(rsa2048, dict):
+        raise ConfigError("classical benchmark profile model missing profiles.rsa2048_reserved")
+    if rsa2048.get("algorithm") != "RSA2048":
+        raise ConfigError("profiles.rsa2048_reserved.algorithm must be RSA2048")
+    if rsa2048.get("runnable") is not False:
+        raise ConfigError("profiles.rsa2048_reserved.runnable must remain false until Phase 11.5c")
+    require_field(rsa2048, "unsupported_reason", "profiles.rsa2048_reserved")
 
 
 def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
@@ -306,8 +333,9 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
     for field in required_fields:
         require_field(config, field, "wolfBoot build profile")
 
-    if require_field(config, "signature_algorithm", "wolfBoot build profile") != "ecdsa_p256":
-        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256 for Phase 10f.1")
+    algorithm = require_field(config, "signature_algorithm", "wolfBoot build profile")
+    if algorithm not in {"ecdsa_p256", "ed25519"}:
+        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256 or ed25519")
 
     build_config = config.get("build")
     if not isinstance(build_config, dict):
@@ -339,8 +367,9 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
     for field in required_fields:
         require_field(config, field, "application signing profile")
 
-    if require_field(config, "signature_algorithm", "application signing profile") != "ecdsa_p256":
-        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256 for Phase 10g")
+    algorithm = require_field(config, "signature_algorithm", "application signing profile")
+    if algorithm not in {"ecdsa_p256", "ed25519"}:
+        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256 or ed25519")
 
     sign_config = config.get("sign")
     if not isinstance(sign_config, dict):

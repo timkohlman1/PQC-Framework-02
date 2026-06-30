@@ -509,3 +509,37 @@ def test_uart_parses_explicit_runtime_stack_high_water_marker_only():
     assert uart.parse_max_stack_used_bytes(output) == 2048
     assert uart.parse_max_stack_used_bytes("capture duration: 10 seconds") is None
     assert uart.parse_heap_used_bytes("wolfBoot verification heap used: 512 bytes") == 512
+
+
+
+def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
+    secure_flash = load_secure_boot_flash_module()
+    bundle = sample_bundle()
+    experiment = bundle["experiment"]
+    experiment["id"] = "wolfboot_ed25519_uart"
+    experiment["boot"] = "wolfboot_ed25519"
+    experiment["boot_crypto"] = "ed25519"
+    experiment["firmware"]["mode"] = "wolfboot_ed25519"
+    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin"
+    experiment["secure_boot_benchmark_profile"].update(
+        {
+            "profile_id": "ed25519_benchmark",
+            "algorithm": "ED25519",
+            "wolfboot_sign": "ED25519",
+            "signature_algorithm": "ed25519",
+            "status": "configured_phase_11_5b_ed25519_profile",
+            "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
+            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
+            "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
+            "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
+            "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
+        }
+    )
+
+    metadata = secure_flash._classical_profile_metadata(experiment)
+
+    assert metadata["model_phase"] == "phase_11_5b_ed25519_profile"
+    assert metadata["algorithm"] == "ED25519"
+    assert metadata["signature_algorithm"] == "ed25519"
+    assert metadata["capability_status"]["ed25519"]["runnable"] is True
+    assert metadata["capability_status"]["rsa2048"]["runnable"] is False

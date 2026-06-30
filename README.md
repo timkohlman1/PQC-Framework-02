@@ -663,3 +663,21 @@ configs/benchmarks/classical_signing_profiles.yaml
 The existing ECC256 secure-boot experiment records `secure_boot_benchmark_profile` metadata and mirrors it into `secure_boot_benchmark.classical_profile_metadata` in generated manifests. ED25519 and RSA2048 are explicitly represented as planned non-runnable capabilities until Phase 11.5b and Phase 11.5c add their build, signing, and experiment profiles.
 
 Phase 11.5a does not loosen the existing ECC256-only build or signing validators, does not add ED25519 or RSA2048 runnable profiles, does not change signing-key handling, and does not claim new hardware evidence.
+
+## Phase 11.5b ED25519 secure-boot benchmark profile
+
+Phase 11.5b adds ED25519 as the first runnable non-ECC256 classical secure-boot benchmark profile. The ED25519 profile uses the same relocated STM32 HAL application payload, STM32L4R5 board, 80 MHz timing assumption, UART marker model, repeated-run model, static metric model, runtime stack high-water model, and secure-boot benchmark manifest schema as the ECC256 reference profile.
+
+Manual ED25519 profile commands:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ed25519.yaml
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ed25519_app.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ed25519_uart.yaml --repeat-count 5
+```
+
+Private ED25519 signing-key material is local-only. The canonical local key is `secrets/wolfboot/ed25519_private_key.der`, and the wolfBoot working-tree key path is `tools/wolfboot/wolfboot_signing_private_key.der`. Build, signing, and secure-boot flash evidence record SHA-256 key fingerprints only; private keys are not copied into `results/` and must not be committed. The secure-boot flash workflow refuses to proceed when both configured key files exist and their fingerprints differ.
+
+RSA2048 and cross-profile benchmark aggregation remain out of scope until later Phase 11 sub-phases. Hardware success and benchmark values must only be claimed from user-provided flash and UART logs.

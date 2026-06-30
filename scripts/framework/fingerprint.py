@@ -304,6 +304,15 @@ def default_secure_boot_flash_fingerprint_inputs(*, experiment_id: str, boot_id:
     rebuilt.
     """
 
+    if experiment_id == "wolfboot_ed25519_uart":
+        wolfboot_build_profile = "configs/builds/wolfboot_stm32l4_ed25519.yaml"
+        signing_profile = "configs/signing/wolfboot_ed25519_app.yaml"
+        wolfboot_config_template = "configs/wolfboot/stm32l4r5_ed25519.config"
+    else:
+        wolfboot_build_profile = "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
+        signing_profile = "configs/signing/wolfboot_ecdsa_p256_app.yaml"
+        wolfboot_config_template = "configs/wolfboot/stm32l4r5_ecdsa_p256.config"
+
     inputs = [
         f"configs/experiments/{experiment_id}.yaml",
         "scripts/framework/secure_boot_flash.py",
@@ -311,9 +320,9 @@ def default_secure_boot_flash_fingerprint_inputs(*, experiment_id: str, boot_id:
         "scripts/framework/manifest.py",
         "scripts/framework/wolfboot_build.py",
         "scripts/framework/signing.py",
-        "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
-        "configs/signing/wolfboot_ecdsa_p256_app.yaml",
-        "configs/wolfboot/stm32l4r5_ecdsa_p256.config",
+        wolfboot_build_profile,
+        signing_profile,
+        wolfboot_config_template,
         *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
         "tools/wolfboot/Makefile",
         "tools/wolfboot/src/image.c",

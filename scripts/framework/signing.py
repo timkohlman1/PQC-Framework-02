@@ -150,9 +150,9 @@ def validate_application_signing_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm != "ecdsa_p256":
+    if algorithm not in {"ecdsa_p256", "ed25519"}:
         raise ApplicationSigningProfileError(
-            "Phase 10g supports only signature_algorithm: ecdsa_p256"
+            "application signing profile signature_algorithm must be ecdsa_p256 or ed25519"
         )
 
     sign_config = profile.get("sign")

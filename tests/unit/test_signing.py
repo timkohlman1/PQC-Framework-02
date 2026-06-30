@@ -337,3 +337,47 @@ def test_default_application_signing_profile_is_safe_and_phase_10g_scoped():
     assert "command: tools/keytools/sign" in profile_text
     assert "signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin" in profile_text
     assert "No private" not in profile_text
+
+
+
+def test_construct_ed25519_signing_commands_expand_profile_placeholders(tmp_path):
+    signing = load_signing_module()
+    repo_root = tmp_path / "repo"
+    profile = sample_profile()
+    profile["id"] = "wolfboot_ed25519_app"
+    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519.bin"
+    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin"
+    profile["signature_algorithm"] = "ed25519"
+    profile["private_key"] = "secrets/wolfboot/ed25519_private_key.der"
+    profile["keygen"]["args"] = "--ed25519 -g {private_key}"
+    profile["sign"]["args"] = "--ed25519 {input_image} {private_key} {image_version}"
+
+    keygen_command = signing.construct_keygen_command(profile, repo_root)
+    sign_command = signing.construct_signing_command(profile, repo_root)
+
+    assert keygen_command == [
+        "tools/keytools/keygen",
+        "--ed25519",
+        "-g",
+        str(repo_root / "secrets" / "wolfboot" / "ed25519_private_key.der"),
+    ]
+    assert sign_command == [
+        "tools/keytools/sign",
+        "--ed25519",
+        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_ed25519.bin"),
+        str(repo_root / "secrets" / "wolfboot" / "ed25519_private_key.der"),
+        "1",
+    ]
+
+
+def test_validate_application_signing_profile_rejects_rsa2048_until_phase_11_5c():
+    signing = load_signing_module()
+    profile = sample_profile()
+    profile["signature_algorithm"] = "rsa2048"
+
+    try:
+        signing.validate_application_signing_profile(profile)
+    except signing.ApplicationSigningProfileError as exc:
+        assert "ecdsa_p256 or ed25519" in str(exc)
+    else:
+        raise AssertionError("rsa2048 signing profile should not validate in Phase 11.5b")

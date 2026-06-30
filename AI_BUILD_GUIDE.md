@@ -2249,3 +2249,36 @@ python -m pytest
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Secure-boot benchmark manifests include `secure_boot_benchmark.classical_profile_metadata` for the ECC256 reference profile and explicitly show ED25519/RSA2048 as non-runnable planned capabilities. Hardware success and timing values must still only be claimed from explicit user-provided evidence.
+
+
+## Phase 11.5b ED25519 Benchmark Profile
+
+Implemented scope:
+
+- Added ED25519 wolfBoot build, signing, boot, and secure-boot experiment profiles.
+- ED25519 uses the same relocated HAL application payload, board, CPU-Hz assumption, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as the ECC256 reference profile.
+- The ED25519 canonical local private key is `secrets/wolfboot/ed25519_private_key.der`.
+- The wolfBoot working-tree private-key path remains `tools/wolfboot/wolfboot_signing_private_key.der` for the active wolfBoot build profile.
+- Build, signing, and secure-boot flash workflows record non-secret SHA-256 key fingerprints and do not copy private key material into results.
+- `flash-secure-boot` refuses SCP, SSH, and hardware flashing when both configured key files exist and their fingerprints differ.
+- RSA2048 remains reserved for Phase 11.5c, and cross-profile aggregation remains Phase 11.6 scope.
+
+Manual Phase 11.5b commands:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ed25519.yaml
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ed25519_app.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ed25519_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.5b verification commands:
+
+```powershell
+python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_wolfboot_build.py tests/unit/test_signing.py tests/unit/test_secure_boot_flash.py tests/unit/test_manifest.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. ED25519 hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided flash and UART logs.

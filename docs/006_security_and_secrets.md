@@ -167,3 +167,11 @@ Before hardware flashing, `flash-secure-boot` checks configured local key finger
 The Phase 11.5a classical profile model is metadata only. It records the ECC256 reference profile and reserves ED25519 and RSA2048 for later sub-phases, but it does not add new private keys, new signing commands, or new runnable non-ECC256 profiles.
 
 Private signing keys remain local generated state and must not be committed or copied into result artifacts. ED25519 and RSA2048 key material must not be introduced until the corresponding implementation sub-phase defines the local-only key-generation and signing workflow.
+
+## Phase 11.5b ED25519 signing-key handling
+
+The ED25519 benchmark profile uses a canonical local private key at `secrets/wolfboot/ed25519_private_key.der`. The wolfBoot build workflow uses the working-tree private-key path `tools/wolfboot/wolfboot_signing_private_key.der` while generating the local keystore. Both paths are local developer state and must remain ignored by Git.
+
+The framework records non-secret SHA-256 key fingerprints as consistency evidence in build, signing, and secure-boot flash manifests. It does not copy private key material into result directories. `flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when both configured key files exist and their SHA-256 fingerprints differ.
+
+The ECC256 key path remains `secrets/wolfboot/ecdsa_p256_private_key.der`. RSA2048 key handling is not implemented in Phase 11.5b.

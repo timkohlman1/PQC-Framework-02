@@ -937,3 +937,19 @@ secure_boot_benchmark.classical_profile_metadata
 ```
 
 This keeps algorithm-comparison assumptions visible beside timing, cycle, static-resource, runtime-stack, repeated-run, and aggregate benchmark evidence.
+
+## Phase 11.5b ED25519 benchmark profile architecture
+
+Phase 11.5b adds ED25519 as a runnable classical secure-boot benchmark profile beside the ECC256 reference path. The profile set is still intentionally small: ECC256 remains the known-good reference, ED25519 is the first new runnable comparison profile, and RSA2048 remains reserved for Phase 11.5c.
+
+The ED25519 profile consists of:
+
+- `configs/wolfboot/stm32l4r5_ed25519.config`
+- `configs/builds/wolfboot_stm32l4_ed25519.yaml`
+- `configs/signing/wolfboot_ed25519_app.yaml`
+- `configs/boot/wolfboot_ed25519.yaml`
+- `configs/experiments/wolfboot_ed25519_uart.yaml`
+
+The ED25519 experiment reuses the existing relocated application payload and measurement model so profile comparisons remain comparable. The framework records key-fingerprint consistency evidence for the canonical local signing key and the wolfBoot working-tree key, and it refuses secure-boot flashing when available fingerprints differ.
+
+Cross-profile summary output remains Phase 11.6 scope.

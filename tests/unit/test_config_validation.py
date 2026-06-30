@@ -368,7 +368,7 @@ def test_validate_boot_config_still_rejects_planned_flash_layout_for_execution()
 
 
 
-def test_validate_application_signing_profile_rejects_wrong_algorithm():
+def test_validate_application_signing_profile_accepts_ed25519_algorithm():
     experiment_cli = load_experiment_module()
 
     config = {
@@ -384,8 +384,7 @@ def test_validate_application_signing_profile_rejects_wrong_algorithm():
         },
     }
 
-    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256"):
-        experiment_cli.validate_application_signing_profile_config(config)
+    experiment_cli.validate_application_signing_profile_config(config)
 
 
 def test_validate_application_signing_profile_requires_keygen_command_when_enabled():
@@ -493,3 +492,65 @@ def test_validate_classical_profile_model_rejects_runnable_reserved_profile():
 
     with pytest.raises(experiment_cli.ConfigError, match="ed25519_reserved.*runnable must remain false"):
         experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+
+
+def test_validate_application_signing_profile_rejects_unsupported_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_test_signing",
+        "description": "Invalid signing profile.",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "signature_algorithm": "rsa2048",
+        "image_version": 1,
+        "private_key": "secrets/wolfboot/rsa2048_private_key.der",
+        "sign": {"command": "tools/wolfboot/tools/keytools/sign"},
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256 or ed25519"):
+        experiment_cli.validate_application_signing_profile_config(config)
+
+
+def test_validate_wolfboot_build_profile_accepts_ed25519_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_stm32l4_ed25519",
+        "description": "ED25519 build profile.",
+        "source_dir": "tools/wolfboot",
+        "output_dir": "tools/wolfboot",
+        "artifact": "tools/wolfboot/wolfboot.elf",
+        "target": "stm32l4r5_project_local",
+        "signature_algorithm": "ed25519",
+        "boot_profile": "wolfboot_ed25519",
+        "build": {
+            "command": "make",
+            "config_template": "configs/wolfboot/stm32l4r5_ed25519.config",
+            "generated_config": "tools/wolfboot/.config",
+        },
+    }
+
+    experiment_cli.validate_wolfboot_build_profile_config(config)
+
+
+def test_validate_classical_profile_model_accepts_phase_11_5b_ed25519_profile():
+    experiment_cli = load_experiment_module()
+    config = _valid_classical_profile_model()
+    config["model_phase"] = "phase_11_5b_ed25519_profile"
+    config["minimum_comparison_scope"]["ed25519"]["runnable"] = True
+    config["minimum_comparison_scope"]["ed25519"]["signature_algorithm"] = "ed25519"
+    del config["profiles"]["ed25519_reserved"]
+    config["profiles"]["ed25519_benchmark"] = {
+        "algorithm": "ED25519",
+        "signature_algorithm": "ed25519",
+        "signature_size_bytes": 64,
+        "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
+        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
+        "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
+        "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
+        "runnable": True,
+    }
+
+    experiment_cli.validate_classical_benchmark_profile_model_config(config)
