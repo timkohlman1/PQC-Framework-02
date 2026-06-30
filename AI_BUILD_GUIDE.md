@@ -1034,10 +1034,16 @@ uart.restart_command
 uart.restart_during_capture
 uart.skipped
 uart.verification_time_ms
+uart.verification_cycles
+uart.verification_cpu_hz
+uart.verification_result_code
 uart.verification_time_source
 uart.verification_time_measurement_method
 uart.verification_time_limitations
 boot_timing.verification_time_ms
+boot_timing.verification_cycles
+boot_timing.verification_cpu_hz
+boot_timing.verification_result_code
 boot_timing.verification_time_source
 boot_timing.measurement_method
 boot_timing.limitations
@@ -1435,13 +1441,13 @@ Expected result: the corrupted application does not produce the normal applicati
 Implemented scope:
 
 - The wolfBoot build profile enables a temporary Phase 10k instrumentation patch during `build-wolfboot`.
-- The build helper temporarily patches local wolfBoot `src/image.c` to wrap `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement and write the measured millisecond value into a RAM2 mailbox at `0x10000000`.
-- The relocated HAL application reads the RAM2 mailbox after UART initialization and emits the parser-compatible line `wolfBoot verification time: <N> ms` over the known-good application UART path.
+- The build helper temporarily patches local wolfBoot `src/image.c` to wrap `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement and write the measured millisecond value, elapsed cycle count, configured CPU frequency, and verification return code into a RAM2 mailbox at `0x10000000`.
+- The relocated HAL application reads the RAM2 mailbox after UART initialization and emits parser-compatible lines such as `wolfBoot verification time: <N> ms`, `wolfBoot verification cycles: <N> cycles`, `wolfBoot verification cpu_hz: <N>`, and `wolfBoot verification result: <N>` over the known-good application UART path.
 - The tracked project-local wolfBoot config defines `WOLFBOOT_PQC_BOOT_TIMING`, `WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL`, and `WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL` for the instrumented build.
-- Post-flash UART capture parses explicit verification-time UART evidence, for example `wolfBoot verification time: 17 ms` or `verification_time_ms=17`.
-- The run manifest records `boot_timing.verification_time_ms`, `boot_timing.verification_time_source`, `boot_timing.measurement_method`, and `boot_timing.limitations`.
-- The secure-boot run summary mirrors the same timing evidence under `secure_boot_run.verification_time_ms` and related source/method/limitation fields.
-- When no explicit UART timing marker is present, the framework records `verification_time_ms: null`, `verification_time_source: unavailable`, and a limitation explaining that timing was not estimated.
+- Post-flash UART capture parses explicit verification-time UART evidence, for example `wolfBoot verification time: 17 ms`, `verification_time_ms=17`, `wolfBoot verification cycles: 1360000 cycles`, `verification_cycles=1360000`, `wolfBoot verification cpu_hz: 80000000`, and `verification_result_code=0`.
+- The run manifest records `boot_timing.verification_time_ms`, `boot_timing.verification_cycles`, `boot_timing.verification_cpu_hz`, `boot_timing.verification_result_code`, `boot_timing.verification_time_source`, `boot_timing.measurement_method`, and `boot_timing.limitations`.
+- The secure-boot run summary mirrors the same timing evidence under `secure_boot_run.verification_time_ms`, `secure_boot_run.verification_cycles`, `secure_boot_run.verification_cpu_hz`, `secure_boot_run.verification_result_code`, and related source/method/limitation fields.
+- When no explicit UART timing marker is present, the framework records `verification_time_ms: null`, `verification_cycles: null` when no cycle marker is present, `verification_time_source: unavailable`, and a limitation explaining that timing was not estimated.
 - Host-side SSH command duration, UART capture duration, reset delay, and marker ordering are not used as wolfBoot verification time.
 - `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml` records that boot timing instrumentation is enabled for the local wolfBoot build.
 - `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` documents the expected timing source and unavailable-timing behaviour.
@@ -1457,7 +1463,7 @@ python scripts/experiment.py sign-application --profile configs/signing/wolfboot
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
 ```
 
-Expected result: the wolfBoot build evidence records that the boot timing instrumentation patch was enabled and applied, the submodule files are restored after the build, the relocated application emits `wolfBoot verification time: <N> ms` from the RAM2 mailbox after boot, and the run manifest records the parsed millisecond value. If the captured UART log does not contain such a line, the manifest records `verification_time_ms: null` with the unavailable source and documented limitations. Hardware success and timing evidence must still only be claimed from user-provided logs.
+Expected result: the wolfBoot build evidence records that the boot timing instrumentation patch was enabled and applied, the submodule files are restored after the build, the relocated application emits `wolfBoot verification time: <N> ms`, `wolfBoot verification cycles: <N> cycles`, `wolfBoot verification cpu_hz: <N>`, and `wolfBoot verification result: <N>` from the RAM2 mailbox after boot, and the run manifest records the parsed millisecond, cycle-count, CPU-Hz, and verification-result values. If the captured UART log does not contain such lines, the manifest records unavailable/null timing with the unavailable source and documented limitations. Hardware success and timing evidence must still only be claimed from user-provided logs.
 
 ## 13. Common Manual Commands
 

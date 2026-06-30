@@ -120,6 +120,18 @@ static void APP_PrintWolfBootVerificationTiming(void)
     APP_UART_WriteString("wolfBoot verification time: ");
     APP_UART_WriteUint32(mailbox->verification_time_ms);
     APP_UART_WriteString(" ms\r\n");
+
+    APP_UART_WriteString("wolfBoot verification cycles: ");
+    APP_UART_WriteUint32(mailbox->elapsed_cycles);
+    APP_UART_WriteString(" cycles\r\n");
+
+    APP_UART_WriteString("wolfBoot verification cpu_hz: ");
+    APP_UART_WriteUint32(mailbox->cpu_hz);
+    APP_UART_WriteString("\r\n");
+
+    APP_UART_WriteString("wolfBoot verification result: ");
+    APP_UART_WriteUint32(mailbox->verification_result);
+    APP_UART_WriteString("\r\n");
   }
 }
 #endif

@@ -1563,6 +1563,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
     tick_present = None if uart_result is None else uart_result.tick_present
     verification_time_ms = None if uart_result is None else uart_result.verification_time_ms
+    verification_cycles = None if uart_result is None else uart_result.verification_cycles
+    verification_cpu_hz = None if uart_result is None else uart_result.verification_cpu_hz
+    verification_result_code = None if uart_result is None else uart_result.verification_result_code
     verification_time_source = (
         "unavailable" if uart_result is None else uart_result.verification_time_source
     )
@@ -1649,12 +1652,18 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "tick_present": tick_present,
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
                 "verification_time_ms": verification_time_ms,
+                "verification_cycles": verification_cycles,
+                "verification_cpu_hz": verification_cpu_hz,
+                "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "verification_time_measurement_method": verification_time_measurement_method,
                 "verification_time_limitations": verification_time_limitations,
             },
             "boot_timing": {
                 "verification_time_ms": verification_time_ms,
+                "verification_cycles": verification_cycles,
+                "verification_cpu_hz": verification_cpu_hz,
+                "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
                 "limitations": verification_time_limitations,
@@ -1706,6 +1715,18 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             print("Verification time: unavailable")
         else:
             print(f"Verification time: {verification_time_ms} ms")
+        if verification_cycles is None:
+            print("Verification cycles: unavailable")
+        else:
+            print(f"Verification cycles: {verification_cycles}")
+        if verification_cpu_hz is None:
+            print("Verification CPU Hz: unavailable")
+        else:
+            print(f"Verification CPU Hz: {verification_cpu_hz}")
+        if verification_result_code is None:
+            print("Verification result code: unavailable")
+        else:
+            print(f"Verification result code: {verification_result_code}")
         print(f"Verification timing source: {verification_time_source}")
         if args.negative_corrupt_application:
             print("Negative test passes only when the normal application and secure-boot markers are absent after flashing the corrupted result-local image.")

@@ -157,6 +157,8 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         patched_hal_source = hal_source_path.read_text(encoding="utf-8")
         assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" in patched_image_source
+        assert "elapsed_cycles" in patched_image_source
+        assert "verification_result" in patched_image_source
         assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
         assert "wolfBoot_printf" not in patched_image_source
         assert "pqc_boot_timing_uart_write" not in patched_hal_source
