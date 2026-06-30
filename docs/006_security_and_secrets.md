@@ -151,3 +151,12 @@ Private wolfBoot signing keys remain local under ignored paths such as `secrets/
 Phase 11.3 records static build/resource metrics from local wolfBoot and application artifacts only. It must not copy private signing keys, private certificates, credentials, or other secret material into result directories. The unsigned and signed application size metrics are file-size evidence only; they do not require exposing or retaining signing keys.
 
 Runtime stack and heap metrics remain unavailable unless a later phase adds explicit firmware-side measurement evidence. Host-side timing, UART capture duration, reset delay, build logs, and ELF section sizes must not be used to claim runtime stack or heap usage.
+
+## Secure-Boot Signing-Key Consistency
+
+The ECDSA-P256 secure-boot profile uses one canonical local private key path: `secrets/wolfboot/ecdsa_p256_private_key.der`. The wolfBoot build workflow coordinates that key with wolfBoot's local key file at `tools/wolfboot/wolfboot_signing_private_key.der` so the bootloader keystore and the signed application are generated from matching key material.
+
+The framework may record SHA-256 fingerprints of local signing-key files in generated manifests and logs as non-secret consistency evidence. It must not copy private key material into `results/`, replacement artifacts, documentation, or Git. Generated key files remain local developer state and must stay ignored by Git.
+
+Before hardware flashing, `flash-secure-boot` checks configured local key fingerprints when both key files are available. If the wolfBoot private key and application-signing private key differ, the command fails before SCP, SSH, or flash-helper execution.
+

@@ -1,8 +1,8 @@
 """wolfBoot build-profile helpers.
 
 This module runs a configured local wolfBoot build and records build evidence.
-It does not flash hardware, open UART devices, use SSH, generate signing keys,
-or sign application images.
+It does not flash hardware, open UART devices, use SSH, sign application images,
+or copy private signing keys into result directories.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ KEYTOOLS_MAKEFILE_RELATIVE_PATH = Path("tools/keytools/Makefile")
 STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
 STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
+DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.der")
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 
 
@@ -80,6 +81,12 @@ class WolfBootBuildResult:
     boot_timing_hal_path: Path | None
     artifact_sha256: str | None
     retained_artifact_path: Path | None
+    signing_key_path: Path | None
+    wolfboot_private_key_path: Path | None
+    signing_key_sha256: str | None
+    wolfboot_private_key_sha256: str | None
+    key_consistency_status: str
+    key_consistency_message: str | None
     execution: WolfBootCommandExecution | None
     failure_reason: str | None = None
 
@@ -606,6 +613,82 @@ def _path_relative_to_repo(path: Path, repo_root: Path) -> str:
         return str(path)
 
 
+def _resolve_optional_repo_path(repo_root: Path, configured: str | None) -> Path | None:
+    if configured in (None, ""):
+        return None
+    path = Path(str(configured))
+    return path if path.is_absolute() else repo_root / path
+
+
+def _resolve_wolfboot_private_key_path(
+    *,
+    repo_root: Path,
+    source_dir: Path,
+    profile: dict[str, Any],
+) -> Path | None:
+    configured = _optional_profile_path(profile, "build.wolfboot_private_key")
+    if configured is not None:
+        return _resolve_optional_repo_path(repo_root, configured)
+    if _optional_profile_path(profile, "build.signing_key") is not None:
+        return source_dir / DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH
+    return None
+
+
+def _sha256_if_file(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    return calculate_file_sha256(path)
+
+
+def _coordinate_wolfboot_signing_key_before_build(
+    *,
+    signing_key_path: Path | None,
+    wolfboot_private_key_path: Path | None,
+) -> str | None:
+    if signing_key_path is None or wolfboot_private_key_path is None:
+        return "No canonical signing key coordination was configured for this wolfBoot build profile."
+    if signing_key_path.is_file() and wolfboot_private_key_path.is_file():
+        wolfboot_private_key_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(signing_key_path, wolfboot_private_key_path)
+        return "Copied the configured canonical signing key over the existing wolfBoot private key before build."
+    if signing_key_path.is_file():
+        return "Configured canonical signing key exists, but wolfBoot private key is absent; wolfBoot will regenerate key/keystore material and the canonical key will be synchronized after a successful build."
+    return "Configured canonical signing key was absent before build; wolfBoot may generate local key material, which will be copied back to the canonical path after a successful build if present."
+
+
+def _coordinate_wolfboot_signing_key_after_build(
+    *,
+    signing_key_path: Path | None,
+    wolfboot_private_key_path: Path | None,
+    return_code: int,
+) -> str | None:
+    if signing_key_path is None or wolfboot_private_key_path is None:
+        return None
+    if return_code != 0:
+        return "wolfBoot build did not pass; canonical signing key was not updated from wolfBoot key material."
+    if not wolfboot_private_key_path.is_file():
+        return "wolfBoot private key was not found after build; canonical signing key could not be synchronized."
+    signing_key_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(wolfboot_private_key_path, signing_key_path)
+    return "Copied wolfBoot private key back to the configured canonical signing-key path after successful build."
+
+
+def _key_consistency_evidence(
+    *,
+    signing_key_path: Path | None,
+    wolfboot_private_key_path: Path | None,
+) -> tuple[str, str | None, str | None, str | None]:
+    signing_key_sha256 = _sha256_if_file(signing_key_path)
+    wolfboot_private_key_sha256 = _sha256_if_file(wolfboot_private_key_path)
+    if signing_key_path is None and wolfboot_private_key_path is None:
+        return "not_configured", "No signing-key coordination paths are configured.", signing_key_sha256, wolfboot_private_key_sha256
+    if signing_key_sha256 is None or wolfboot_private_key_sha256 is None:
+        return "unavailable", "One or both configured local signing-key files are unavailable.", signing_key_sha256, wolfboot_private_key_sha256
+    if signing_key_sha256 != wolfboot_private_key_sha256:
+        return "mismatch", "Configured canonical signing key and wolfBoot private key differ.", signing_key_sha256, wolfboot_private_key_sha256
+    return "matched", "Configured canonical signing key and wolfBoot private key match.", signing_key_sha256, wolfboot_private_key_sha256
+
+
 def _fingerprint_evidence(
     *,
     repo_root: Path,
@@ -688,6 +771,14 @@ def _write_log(
     execution: WolfBootCommandExecution | None,
     failure_reason: str | None,
     fingerprint_evidence: dict[str, Any] | None = None,
+    signing_key_path: Path | None = None,
+    wolfboot_private_key_path: Path | None = None,
+    signing_key_sha256: str | None = None,
+    wolfboot_private_key_sha256: str | None = None,
+    key_consistency_status: str = "not_configured",
+    key_consistency_message: str | None = None,
+    key_sync_before_build_message: str | None = None,
+    key_sync_after_build_message: str | None = None,
 ) -> None:
     lines = [
         "wolfBoot build log",
@@ -704,6 +795,15 @@ def _write_log(
         f"Artifact path: {artifact_path}",
         f"Artifact exists: {str(artifact_exists).lower()}",
         f"Artifact SHA-256: {artifact_sha256 if artifact_sha256 is not None else 'unavailable'}",
+        f"Canonical signing key path: {signing_key_path if signing_key_path is not None else 'not configured'}",
+        f"wolfBoot private key path: {wolfboot_private_key_path if wolfboot_private_key_path is not None else 'not configured'}",
+        f"Canonical signing key SHA-256: {signing_key_sha256 if signing_key_sha256 is not None else 'unavailable'}",
+        f"wolfBoot private key SHA-256: {wolfboot_private_key_sha256 if wolfboot_private_key_sha256 is not None else 'unavailable'}",
+        f"Signing key consistency status: {key_consistency_status}",
+        f"Signing key consistency message: {key_consistency_message if key_consistency_message is not None else 'none'}",
+        f"Signing key sync before build: {key_sync_before_build_message if key_sync_before_build_message is not None else 'none'}",
+        f"Signing key sync after build: {key_sync_after_build_message if key_sync_after_build_message is not None else 'none'}",
+        "Private signing keys are local-only evidence inputs and are not copied into the result directory.",
         f"Input fingerprint status: {fingerprint_evidence.get('status') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint algorithm: {fingerprint_evidence.get('fingerprint_algorithm') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint: {fingerprint_evidence.get('fingerprint') if fingerprint_evidence else 'unavailable'}",
@@ -842,6 +942,12 @@ def execute_wolfboot_build(
             boot_timing_image_path=None,
             boot_timing_hal_path=None,
             retained_artifact_path=None,
+            signing_key_path=None,
+            wolfboot_private_key_path=None,
+            signing_key_sha256=None,
+            wolfboot_private_key_sha256=None,
+            key_consistency_status="not_configured",
+            key_consistency_message=None,
             execution=None,
             failure_reason=failure_reason,
         )
@@ -869,6 +975,16 @@ def execute_wolfboot_build(
     working_directory = source_dir
     result_dir = create_wolfboot_build_result_dir(profile_id, results_root, timestamp)
     log_path = result_dir / DEFAULT_WOLFBOOT_LOG_NAME
+    signing_key_path = _resolve_optional_repo_path(
+        repo_root_path,
+        str(_optional_profile_path(profile, "build.signing_key") or ""),
+    )
+    wolfboot_private_key_path = _resolve_wolfboot_private_key_path(
+        repo_root=repo_root_path,
+        source_dir=source_dir,
+        profile=profile,
+    )
+    key_sync_before_build_message: str | None = None
 
     execution: WolfBootCommandExecution | None = None
     artifact_sha256: str | None = None
@@ -948,6 +1064,10 @@ def execute_wolfboot_build(
                             failure_reason = str(exc)
                         else:
                             try:
+                                key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
+                                    signing_key_path=signing_key_path,
+                                    wolfboot_private_key_path=wolfboot_private_key_path,
+                                )
                                 execution = runner(command, working_directory)
                                 return_code = execution.return_code
                             except FileNotFoundError as exc:
@@ -1003,6 +1123,21 @@ def execute_wolfboot_build(
         elif failure_reason is None:
             failure_reason = f"wolfBoot build command failed with return code {return_code}."
 
+    key_sync_after_build_message = _coordinate_wolfboot_signing_key_after_build(
+        signing_key_path=signing_key_path,
+        wolfboot_private_key_path=wolfboot_private_key_path,
+        return_code=return_code,
+    )
+    (
+        key_consistency_status,
+        key_consistency_message,
+        signing_key_sha256,
+        wolfboot_private_key_sha256,
+    ) = _key_consistency_evidence(
+        signing_key_path=signing_key_path,
+        wolfboot_private_key_path=wolfboot_private_key_path,
+    )
+
     duration_seconds = perf_counter() - start
     artifact_exists = artifact_path.is_file()
     _write_log(
@@ -1034,6 +1169,14 @@ def execute_wolfboot_build(
         execution=execution,
         failure_reason=failure_reason,
         fingerprint_evidence=fingerprint_evidence,
+        signing_key_path=signing_key_path,
+        wolfboot_private_key_path=wolfboot_private_key_path,
+        signing_key_sha256=signing_key_sha256,
+        wolfboot_private_key_sha256=wolfboot_private_key_sha256,
+        key_consistency_status=key_consistency_status,
+        key_consistency_message=key_consistency_message,
+        key_sync_before_build_message=key_sync_before_build_message,
+        key_sync_after_build_message=key_sync_after_build_message,
     )
 
     manifest = {
@@ -1055,6 +1198,15 @@ def execute_wolfboot_build(
             "duration_seconds": round(duration_seconds, 3),
             "log": DEFAULT_WOLFBOOT_LOG_NAME,
             "failure_reason": failure_reason,
+            "signing_key_path": None if signing_key_path is None else str(signing_key_path),
+            "wolfboot_private_key_path": None if wolfboot_private_key_path is None else str(wolfboot_private_key_path),
+            "signing_key_sha256": signing_key_sha256,
+            "wolfboot_private_key_sha256": wolfboot_private_key_sha256,
+            "key_consistency_status": key_consistency_status,
+            "key_consistency_message": key_consistency_message,
+            "key_sync_before_build_message": key_sync_before_build_message,
+            "key_sync_after_build_message": key_sync_after_build_message,
+            "key_material_copied_to_results": False,
             "fingerprint": fingerprint_evidence.get("fingerprint"),
             "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
             "fingerprint_inputs": fingerprint_evidence.get("fingerprint_inputs", []),
@@ -1112,6 +1264,12 @@ def execute_wolfboot_build(
         boot_timing_image_path=boot_timing_image_path,
         boot_timing_hal_path=boot_timing_hal_path,
         retained_artifact_path=retained_artifact_path,
+        signing_key_path=signing_key_path,
+        wolfboot_private_key_path=wolfboot_private_key_path,
+        signing_key_sha256=signing_key_sha256,
+        wolfboot_private_key_sha256=wolfboot_private_key_sha256,
+        key_consistency_status=key_consistency_status,
+        key_consistency_message=key_consistency_message,
         execution=execution,
         failure_reason=failure_reason,
     )

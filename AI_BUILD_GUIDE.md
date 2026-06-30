@@ -2209,3 +2209,9 @@ The wolfBoot build manifest records a secure-boot input fingerprint over the con
 
 These fingerprints are evidence fields in this phase; `flash-secure-boot` records `artifact_freshness_status: recorded_not_enforced` and does not yet refuse stale artifacts. The secure-boot hardware workflow test cleans generated secure-boot outputs before rebuilding so test results are not dependent on stale local `build/` or `tools/wolfboot/` artifacts.
 
+## Secure-boot signing-key consistency note
+
+The secure-boot ECDSA-P256 workflow now coordinates wolfBoot keystore generation and application signing through one canonical local private key path: `secrets/wolfboot/ecdsa_p256_private_key.der`. The wolfBoot build profile also records the submodule-local key path `tools/wolfboot/wolfboot_signing_private_key.der`. During `build-wolfboot`, the framework synchronizes these local key files so the generated wolfBoot keystore and the signed application are based on matching key material. The wolfBoot build and signing manifests record local key SHA-256 fingerprints as consistency evidence only and continue to record `key_material_copied_to_results: false`.
+
+`flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when both configured local key files exist and their fingerprints differ. This prevents a build/sign/flash sequence that appears successful but cannot boot because wolfBoot rejects an application signed by a different key than the keystore embedded in the bootloader. Private signing keys remain ignored local state and must not be committed or copied into results.
+

@@ -287,6 +287,50 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     }
 
 
+def test_execute_secure_boot_flash_refuses_mismatched_local_signing_keys_before_network(tmp_path):
+    secure_flash = load_secure_boot_flash_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
+    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    wolfboot_key = repo_root / "tools" / "wolfboot" / "wolfboot_signing_private_key.der"
+    wolfboot_artifact.parent.mkdir(parents=True)
+    signed_artifact.parent.mkdir(parents=True)
+    signing_key.parent.mkdir(parents=True)
+    wolfboot_key.parent.mkdir(parents=True, exist_ok=True)
+    write_minimal_elf32(wolfboot_artifact)
+    unsigned_artifact.write_bytes(b"unsigned app")
+    signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
+    signing_key.write_bytes(b"application signing key")
+    wolfboot_key.write_bytes(b"different wolfboot key")
+    write_manifest(result_dir)
+
+    bundle = sample_bundle()
+    bundle["experiment"]["secure_boot_flash"]["signing_private_key"] = "secrets/wolfboot/ecdsa_p256_private_key.der"
+    bundle["experiment"]["secure_boot_flash"]["wolfboot_private_key"] = "tools/wolfboot/wolfboot_signing_private_key.der"
+
+    def forbidden_runner(command, cwd):
+        raise AssertionError("network commands must not run when secure-boot key evidence mismatches")
+
+    result = secure_flash.execute_secure_boot_flash(
+        bundle,
+        repo_root,
+        result_dir,
+        forbidden_runner,
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    key_consistency = manifest["secure_boot_flash"]["key_consistency"]
+    assert result.return_code == secure_flash.SECURE_BOOT_KEY_MISMATCH_RETURN_CODE
+    assert result.failure_stage == "signing_key_consistency"
+    assert key_consistency["status"] == "mismatch_refused"
+    assert key_consistency["signing_private_key_sha256"] != key_consistency["wolfboot_private_key_sha256"]
+    assert key_consistency["key_material_copied_to_results"] is False
+    assert manifest["secure_boot_evidence"]["signing_evidence"]["key_consistency"]["status"] == "mismatch_refused"
+
+
 def test_execute_secure_boot_flash_refuses_missing_wolfboot_without_network(tmp_path):
     secure_flash = load_secure_boot_flash_module()
     repo_root = tmp_path / "repo"

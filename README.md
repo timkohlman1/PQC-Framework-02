@@ -330,7 +330,7 @@ The default profile expects local wolfBoot source at `tools/wolfboot`. If that d
 
 With upstream wolfBoot source present, the Phase 10f.1 profile now supplies the project CubeMX HAL/CMSIS include paths, target-only Cortex-M4/thumb flags, decimal image-header size, and STM32L4R5 MCU macro selection through the tracked `.config` template. On Windows/MSYS, it also applies temporary host-keytools Makefile compatibility patch for `__USE_MINGW_ANSI_STDIO` and a temporary wolfBoot STM32L4 HAL config patch that exposes PWR/PWREx declarations during the build command. A failed build should now be treated as diagnostic evidence from the real local wolfBoot source/toolchain and reviewed from `wolfboot_build.log` and `manifest.json`.
 
-This phase does not generate signing keys as durable project assets, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success.
+This phase does not copy private signing keys into results, sign the relocated application, flash wolfBoot or the application, capture UART, or claim secure-boot runtime success. The build workflow may coordinate local key material with the configured signing profile so wolfBoot keystore generation and application signing use matching key material.
 
 ## Tests
 
@@ -641,4 +641,10 @@ The Phase 11.4 secure-boot workflow now records evidence fingerprints for the se
 The wolfBoot build manifest records a secure-boot input fingerprint over the configured wolfBoot build profile, project-local wolfBoot config template, framework wolfBoot build helper, and available wolfBoot source inputs. The application-signing manifest records a secure-boot input fingerprint over the signing profile, signing helper, and relocated application build inputs. The secure-boot flash manifest records workflow/artifact freshness evidence over the flash workflow plus secure-boot artifact producer inputs, including the wolfBoot build helper/profile, signing helper/profile, project-local wolfBoot config template, relocated application build inputs, and selected wolfBoot source files where present. It also records the SHA-256 values of the wolfBoot and signed-application artifacts being flashed.
 
 These fingerprints are evidence fields in this phase; `flash-secure-boot` records `artifact_freshness_status: recorded_not_enforced` and does not yet refuse stale artifacts. The secure-boot hardware workflow test cleans generated secure-boot outputs before rebuilding so test results are not dependent on stale local `build/` or `tools/wolfboot/` artifacts.
+
+### Secure-boot signing-key consistency
+
+The ECDSA-P256 secure-boot workflow now treats `secrets/wolfboot/ecdsa_p256_private_key.der` as the canonical local signing key for the profile. During `build-wolfboot`, the framework coordinates this key with wolfBoot's submodule-local `tools/wolfboot/wolfboot_signing_private_key.der` so wolfBoot keystore generation and `sign-application` use matching key material. The wolfBoot build manifest, signing manifest, and secure-boot flash manifest record SHA-256 fingerprints of the local key files as evidence only. Private keys remain under ignored local paths and are not copied into `results/`.
+
+`flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when the configured local wolfBoot key and application-signing key both exist and their fingerprints differ. This prevents the known failure mode where flashing succeeds but wolfBoot rejects the signed application because the embedded keystore and application signature were produced from different private keys.
 

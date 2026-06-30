@@ -67,6 +67,7 @@ class ApplicationSigningResult:
     private_key_path: Path
     private_key_existed_before: bool
     private_key_present_after: bool
+    private_key_sha256: str | None
     keygen_enabled: bool
     binary_conversion_enabled: bool
     binary_conversion_execution: SigningCommandExecution | None
@@ -474,6 +475,7 @@ def _write_log(
     duration_seconds: float,
     failure_reason: str | None,
     fingerprint_evidence: dict[str, Any] | None = None,
+    private_key_sha256: str | None = None,
 ) -> None:
     lines = [
         "Application signing log",
@@ -498,6 +500,7 @@ def _write_log(
         f"Private key path: {private_key_path}",
         f"Private key existed before command: {str(private_key_existed_before).lower()}",
         f"Private key present after command: {str(private_key_present_after).lower()}",
+        f"Private key SHA-256: {private_key_sha256 if private_key_sha256 is not None else 'unavailable'}",
         f"Key generation enabled: {str(keygen_enabled).lower()}",
         f"Binary conversion enabled: {str(binary_conversion_enabled).lower()}",
         f"Binary conversion working directory: {binary_conversion_working_dir}",
@@ -561,6 +564,7 @@ def _profile_error_result(
         private_key_path=dummy_path,
         private_key_existed_before=False,
         private_key_present_after=False,
+        private_key_sha256=None,
         keygen_enabled=False,
         binary_conversion_enabled=False,
         binary_conversion_execution=None,
@@ -605,6 +609,7 @@ def _profile_error_result(
         private_key_path=dummy_path,
         private_key_existed_before=False,
         private_key_present_after=False,
+        private_key_sha256=None,
         keygen_enabled=False,
         binary_conversion_enabled=False,
         binary_conversion_execution=None,
@@ -783,6 +788,7 @@ def execute_application_signing(
 
     duration_seconds = perf_counter() - start
     private_key_present_after = private_key_path.is_file()
+    private_key_sha256 = calculate_file_sha256(private_key_path) if private_key_present_after else None
     if signed_image_path.is_file() and signed_image_sha256 is None:
         signed_image_sha256 = calculate_file_sha256(signed_image_path)
         signed_image_size_bytes = signed_image_path.stat().st_size
@@ -800,6 +806,7 @@ def execute_application_signing(
         private_key_path=private_key_path,
         private_key_existed_before=private_key_existed_before,
         private_key_present_after=private_key_present_after,
+        private_key_sha256=private_key_sha256,
         keygen_enabled=keygen_enabled,
         binary_conversion_enabled=binary_conversion_enabled,
         binary_conversion_execution=binary_conversion_execution,
@@ -857,6 +864,7 @@ def execute_application_signing(
                 "private_key_path": str(private_key_path),
                 "private_key_existed_before": private_key_existed_before,
                 "private_key_present_after": private_key_present_after,
+                "private_key_sha256": private_key_sha256,
                 "keygen_enabled": keygen_enabled,
                 "keygen_working_dir": str(keygen_working_dir),
                 "keygen_return_code": None if keygen_execution is None else keygen_execution.return_code,
@@ -878,6 +886,7 @@ def execute_application_signing(
         private_key_path=private_key_path,
         private_key_existed_before=private_key_existed_before,
         private_key_present_after=private_key_present_after,
+        private_key_sha256=private_key_sha256,
         keygen_enabled=keygen_enabled,
         binary_conversion_enabled=binary_conversion_enabled,
         binary_conversion_execution=binary_conversion_execution,

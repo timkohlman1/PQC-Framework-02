@@ -31,6 +31,7 @@ SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE = 40
 SECURE_BOOT_SCP_FAILED_RETURN_CODE = 41
 SECURE_BOOT_FLASH_FAILED_RETURN_CODE = 42
 SECURE_BOOT_PROFILE_ERROR_RETURN_CODE = 43
+SECURE_BOOT_KEY_MISMATCH_RETURN_CODE = 44
 
 DEFAULT_SECURE_BOOT_FLASH_LOG_NAME = "secure_boot_flash.log"
 
@@ -82,6 +83,12 @@ class SecureBootFlashResult:
     original_signed_application_sha256: str | None
     corrupted_signed_application_path: Path | None
     corrupted_signed_application_sha256: str | None
+    key_consistency_status: str
+    key_consistency_message: str | None
+    signing_private_key_path: Path | None
+    wolfboot_private_key_path: Path | None
+    signing_private_key_sha256: str | None
+    wolfboot_private_key_sha256: str | None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -375,6 +382,53 @@ def _artifact_sha256(path: Path | None) -> str | None:
     return calculate_file_sha256(path)
 
 
+def _resolve_optional_repo_path(repo_root: Path, configured: Any) -> Path | None:
+    if configured in (None, ""):
+        return None
+    path = Path(str(configured))
+    return path if path.is_absolute() else repo_root / path
+
+
+def _local_key_consistency_evidence(
+    *,
+    repo_root: Path,
+    secure_boot_config: dict[str, Any],
+) -> dict[str, Any]:
+    signing_private_key_path = _resolve_optional_repo_path(
+        repo_root,
+        secure_boot_config.get("signing_private_key"),
+    )
+    wolfboot_private_key_path = _resolve_optional_repo_path(
+        repo_root,
+        secure_boot_config.get("wolfboot_private_key"),
+    )
+    signing_private_key_sha256 = _artifact_sha256(signing_private_key_path)
+    wolfboot_private_key_sha256 = _artifact_sha256(wolfboot_private_key_path)
+
+    if signing_private_key_path is None and wolfboot_private_key_path is None:
+        status = "not_configured"
+        message = "No local secure-boot signing-key consistency paths are configured."
+    elif signing_private_key_sha256 is None or wolfboot_private_key_sha256 is None:
+        status = "unavailable"
+        message = "One or both configured local secure-boot signing-key files are unavailable."
+    elif signing_private_key_sha256 != wolfboot_private_key_sha256:
+        status = "mismatch_refused"
+        message = "Configured application signing key does not match the wolfBoot private key; refusing to flash artifacts that cannot verify together."
+    else:
+        status = "matched"
+        message = "Configured application signing key matches the wolfBoot private key."
+
+    return {
+        "status": status,
+        "message": message,
+        "signing_private_key_path": None if signing_private_key_path is None else str(signing_private_key_path),
+        "wolfboot_private_key_path": None if wolfboot_private_key_path is None else str(wolfboot_private_key_path),
+        "signing_private_key_sha256": signing_private_key_sha256,
+        "wolfboot_private_key_sha256": wolfboot_private_key_sha256,
+        "key_material_copied_to_results": False,
+    }
+
+
 def _static_resource_metrics_for_wolfboot(wolfboot_path: Path) -> tuple[dict[str, Any], list[str]]:
     if not wolfboot_path.is_file():
         return {}, [f"wolfBoot ELF artifact is not available for static section-size analysis: {wolfboot_path}"]
@@ -406,6 +460,13 @@ def _write_secure_boot_flash_log(
         f"Original signed application SHA-256: {result.original_signed_application_sha256 if result.original_signed_application_sha256 is not None else 'unavailable'}",
         f"Corrupted signed application path: {result.corrupted_signed_application_path if result.corrupted_signed_application_path is not None else 'not created'}",
         f"Corrupted signed application SHA-256: {result.corrupted_signed_application_sha256 if result.corrupted_signed_application_sha256 is not None else 'unavailable'}",
+        f"Signing key consistency status: {result.key_consistency_status}",
+        f"Signing key consistency message: {result.key_consistency_message if result.key_consistency_message is not None else 'none'}",
+        f"Application signing key path: {result.signing_private_key_path if result.signing_private_key_path is not None else 'not configured'}",
+        f"wolfBoot private key path: {result.wolfboot_private_key_path if result.wolfboot_private_key_path is not None else 'not configured'}",
+        f"Application signing key SHA-256: {result.signing_private_key_sha256 if result.signing_private_key_sha256 is not None else 'unavailable'}",
+        f"wolfBoot private key SHA-256: {result.wolfboot_private_key_sha256 if result.wolfboot_private_key_sha256 is not None else 'unavailable'}",
+        "Private signing keys are local-only evidence inputs and are not copied into the result directory.",
         f"Total duration seconds: {result.duration_seconds:.3f}",
         "",
     ]
@@ -587,12 +648,27 @@ def execute_secure_boot_flash(
             ),
         )
 
+    key_consistency = _local_key_consistency_evidence(
+        repo_root=repo_root_path,
+        secure_boot_config=secure_boot_config,
+    )
+
     start = perf_counter()
     return_code = 0
     failure_stage = "none"
     failure_reason: str | None = None
 
-    for artifact in [wolfboot, signed_application]:
+    if key_consistency["status"] == "mismatch_refused":
+        return_code = SECURE_BOOT_KEY_MISMATCH_RETURN_CODE
+        failure_stage = "signing_key_consistency"
+        failure_reason = str(key_consistency["message"])
+
+    if return_code == 0:
+        artifacts_to_flash = [wolfboot, signed_application]
+    else:
+        artifacts_to_flash = []
+
+    for artifact in artifacts_to_flash:
         if not artifact.artifact_exists:
             return_code = SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE
             failure_stage = f"{artifact.name}_artifact"
@@ -673,6 +749,12 @@ def execute_secure_boot_flash(
         original_signed_application_sha256=original_signed_application_sha256,
         corrupted_signed_application_path=corrupted_signed_application_path,
         corrupted_signed_application_sha256=corrupted_signed_application_sha256,
+        key_consistency_status=str(key_consistency["status"]),
+        key_consistency_message=str(key_consistency["message"]),
+        signing_private_key_path=None if key_consistency["signing_private_key_path"] is None else Path(str(key_consistency["signing_private_key_path"])),
+        wolfboot_private_key_path=None if key_consistency["wolfboot_private_key_path"] is None else Path(str(key_consistency["wolfboot_private_key_path"])),
+        signing_private_key_sha256=key_consistency["signing_private_key_sha256"],
+        wolfboot_private_key_sha256=key_consistency["wolfboot_private_key_sha256"],
     )
 
     _write_secure_boot_flash_log(log_path=log_path, repo_root=repo_root_path, result=result)
@@ -763,6 +845,7 @@ def execute_secure_boot_flash(
                     "secure_boot_flash_fingerprint": fingerprint_evidence.get("fingerprint"),
                     "original_signed_application_path": str(original_signed_application_path),
                     "original_signed_application_sha256": original_signed_application_sha256,
+                    "key_consistency": key_consistency,
                 },
                 "flash_evidence": {
                     "log": DEFAULT_SECURE_BOOT_FLASH_LOG_NAME,
@@ -806,6 +889,7 @@ def execute_secure_boot_flash(
                 "negative_test_enabled": negative_test_enabled,
                 "corruption_method": corruption_method,
                 "artifact_freshness": fingerprint_evidence,
+                "key_consistency": key_consistency,
                 "wolfboot": _artifact_result_to_manifest(wolfboot),
                 "signed_application": _artifact_result_to_manifest(signed_application),
                 "negative_test": {

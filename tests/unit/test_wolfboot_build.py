@@ -34,6 +34,9 @@ def sample_profile() -> dict[str, object]:
             "mingw_keytools_ansi_stdio_patch": True,
             "stm32l4_hal_conf_pwr_patch": True,
             "boot_timing_instrumentation_patch": True,
+            "signing_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
+            "wolfboot_private_key": "tools/wolfboot/wolfboot_signing_private_key.der",
+            "generated_keystore": "tools/wolfboot/src/keystore.c",
         },
     }
 
@@ -236,6 +239,47 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert "Input fingerprint status: available" in build_log
     assert f"Config template path: {config_template_path}" in build_log
     assert f"Generated config path: {source_dir / '.config'}" in build_log
+
+
+def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], cwd: Path):
+        wolfboot_key.write_bytes(b"wolfboot generated private key")
+        artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    expected_key_sha = hashlib.sha256(b"wolfboot generated private key").hexdigest()
+    assert result.return_code == 0
+    assert signing_key.read_bytes() == b"wolfboot generated private key"
+    assert manifest["wolfboot_build"]["signing_key_path"] == str(signing_key)
+    assert manifest["wolfboot_build"]["wolfboot_private_key_path"] == str(wolfboot_key)
+    assert manifest["wolfboot_build"]["signing_key_sha256"] == expected_key_sha
+    assert manifest["wolfboot_build"]["wolfboot_private_key_sha256"] == expected_key_sha
+    assert manifest["wolfboot_build"]["key_consistency_status"] == "matched"
+    assert manifest["wolfboot_build"]["key_material_copied_to_results"] is False
+    assert not (result.result_dir / "ecdsa_p256_private_key.der").exists()
 
 
 def test_execute_wolfboot_build_rejects_generated_config_outside_source_dir(tmp_path):

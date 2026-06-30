@@ -192,6 +192,7 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert manifest["signing"]["input_image_sha256"] == expected_input_sha
     assert manifest["signing"]["binary_conversion_enabled"] is True
     assert manifest["signing"]["binary_conversion_return_code"] == 0
+    assert manifest["signing"]["private_key_sha256"] == hashlib.sha256(b"local test private key").hexdigest()
     assert manifest["signing"]["fingerprint_status"] == "available"
     assert len(manifest["signing"]["fingerprint"]) == 64
     assert manifest["signing"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
