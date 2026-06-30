@@ -1,0 +1,82 @@
+id: classical_signing_profiles
+description: Phase 11.5a classical secure-boot signing benchmark profile model and minimum comparison scope.
+schema_version: 1
+model_phase: phase_11_5a_classical_profile_model
+benchmark_scope: secure_boot_classical_signing_algorithm
+minimum_comparison_scope:
+  ed25519:
+    algorithm: ED25519
+    wolfboot_sign: ED25519
+    signature_size_bytes: 64
+    status: planned_phase_11_5b_not_implemented
+    runnable: false
+    unsupported_reason: ED25519 is reserved in the minimum comparison scope but no runnable wolfBoot build, signing, or experiment profile is added until Phase 11.5b.
+  ecc256:
+    algorithm: ECC256
+    wolfboot_sign: ECC256
+    signature_algorithm: ecdsa_p256
+    curve: P-256
+    key_size_bits: 256
+    signature_size_bytes: 64
+    status: reference_existing_phase_10_11_profile
+    runnable: true
+  rsa2048:
+    algorithm: RSA2048
+    wolfboot_sign: RSA2048
+    key_size_bits: 2048
+    signature_size_bytes: 256
+    status: planned_phase_11_5c_not_implemented
+    runnable: false
+    unsupported_reason: RSA2048 is reserved in the minimum comparison scope but no runnable wolfBoot build, signing, or experiment profile is added until Phase 11.5c.
+profiles:
+  ecc256_reference:
+    id: ecc256_reference
+    algorithm: ECC256
+    wolfboot_sign: ECC256
+    signature_algorithm: ecdsa_p256
+    curve: P-256
+    key_size_bits: 256
+    signature_size_bytes: 64
+    image_version: 1
+    runnable: true
+    status: reference_existing_phase_10_11_profile
+    signing_profile: configs/signing/wolfboot_ecdsa_p256_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+    experiment_profile: configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+    boot_profile: configs/boot/wolfboot_ecdsa_p256.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: Existing ECC256 profile remains the known-good reference path for the minimum classical comparison scope.
+  ed25519_reserved:
+    id: ed25519_reserved
+    algorithm: ED25519
+    wolfboot_sign: ED25519
+    signature_size_bytes: 64
+    image_version: 1
+    runnable: false
+    status: planned_phase_11_5b_not_implemented
+    signing_profile: unavailable_until_phase_11_5b
+    wolfboot_build_profile: unavailable_until_phase_11_5b
+    experiment_profile: unavailable_until_phase_11_5b
+    boot_profile: configs/boot/wolfboot_ecdsa_p256.yaml
+    unsupported_reason: ED25519 runnable profile files are intentionally not added in Phase 11.5a.
+  rsa2048_reserved:
+    id: rsa2048_reserved
+    algorithm: RSA2048
+    wolfboot_sign: RSA2048
+    key_size_bits: 2048
+    signature_size_bytes: 256
+    image_version: 1
+    runnable: false
+    status: planned_phase_11_5c_not_implemented
+    signing_profile: unavailable_until_phase_11_5c
+    wolfboot_build_profile: unavailable_until_phase_11_5c
+    experiment_profile: unavailable_until_phase_11_5c
+    boot_profile: configs/boot/wolfboot_ecdsa_p256.yaml
+    unsupported_reason: RSA2048 runnable profile files are intentionally not added in Phase 11.5a.
+notes: Phase 11.5a defines the reusable profile schema and minimum comparison scope only. It does not add ED25519 or RSA2048 build profiles, signing profiles, experiment profiles, key-generation commands, flash workflows, or hardware claims.

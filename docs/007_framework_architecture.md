@@ -910,3 +910,30 @@ The secure-boot build/sign/flash chain now records and enforces local signing-ke
 
 This guard prevents a deterministic boot failure where wolfBoot embeds a keystore generated from one private key while the application image is signed with another. Key fingerprints are evidence only; private key files remain local ignored state and are not copied into result directories.
 
+
+
+## Phase 11.5a Classical Benchmark Profile Model
+
+Classical secure-boot signing benchmark metadata is defined separately from runnable build, signing, and flash workflows. The schema file is:
+
+```text
+configs/benchmarks/classical_signing_profiles.yaml
+```
+
+The minimum comparison scope is:
+
+```text
+ED25519
+ECC256
+RSA2048
+```
+
+For Phase 11.5a, `ECC256` is the only runnable reference member and maps to the existing wolfBoot build profile, application-signing profile, secure-boot experiment profile, and boot profile. `ED25519` and `RSA2048` are reserved in the model with `runnable: false` and explicit unsupported reasons. Their runnable profile files are not added until the later ED25519 and RSA2048 sub-phases.
+
+Generated secure-boot manifests include this profile metadata under:
+
+```text
+secure_boot_benchmark.classical_profile_metadata
+```
+
+This keeps algorithm-comparison assumptions visible beside timing, cycle, static-resource, runtime-stack, repeated-run, and aggregate benchmark evidence.

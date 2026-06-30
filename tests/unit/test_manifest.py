@@ -575,3 +575,44 @@ def test_build_secure_boot_benchmark_model_records_phase_11_4_runtime_stack_metr
     assert memory["static_ram_bytes"] == 120
     assert memory["estimated_total_ram_pressure_bytes"] == 2168
     assert "Runtime stack and heap metrics require explicit firmware-side measurement evidence" not in "\n".join(benchmark["limitations"])
+
+
+def test_build_secure_boot_benchmark_model_records_phase_11_5a_classical_profile_metadata():
+    manifest = load_manifest_module()
+
+    benchmark = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+        bootloader_text_bytes=300,
+        bootloader_data_bytes=40,
+        bootloader_bss_bytes=80,
+        bootloader_flash_bytes=340,
+        bootloader_static_ram_bytes=120,
+        static_metrics_source="wolfboot_elf_section_headers",
+        classical_profile_metadata={
+            "model_phase": "phase_11_5a_classical_profile_model",
+            "profile_id": "ecc256_reference",
+            "algorithm": "ECC256",
+            "signature_algorithm": "ecdsa_p256",
+            "minimum_comparison_scope": {
+                "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
+                "implemented_reference_algorithm": "ECC256",
+                "planned_non_runnable_algorithms": ["ED25519", "RSA2048"],
+            },
+            "capability_status": {
+                "ed25519": {"runnable": False, "status": "planned_phase_11_5b_not_implemented"},
+                "rsa2048": {"runnable": False, "status": "planned_phase_11_5c_not_implemented"},
+            },
+        },
+    )
+
+    assert benchmark["model_phase"] == "phase_11_5a_classical_profile_model"
+    profile = benchmark["classical_profile_metadata"]
+    assert profile["profile_id"] == "ecc256_reference"
+    assert profile["algorithm"] == "ECC256"
+    assert profile["minimum_comparison_scope"]["required_algorithms"] == ["ED25519", "ECC256", "RSA2048"]
+    assert profile["capability_status"]["ed25519"]["runnable"] is False
+    assert profile["capability_status"]["rsa2048"]["runnable"] is False

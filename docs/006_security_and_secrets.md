@@ -160,3 +160,10 @@ The framework may record SHA-256 fingerprints of local signing-key files in gene
 
 Before hardware flashing, `flash-secure-boot` checks configured local key fingerprints when both key files are available. If the wolfBoot private key and application-signing private key differ, the command fails before SCP, SSH, or flash-helper execution.
 
+
+
+## Phase 11.5a Profile Model and Keys
+
+The Phase 11.5a classical profile model is metadata only. It records the ECC256 reference profile and reserves ED25519 and RSA2048 for later sub-phases, but it does not add new private keys, new signing commands, or new runnable non-ECC256 profiles.
+
+Private signing keys remain local generated state and must not be committed or copied into result artifacts. ED25519 and RSA2048 key material must not be introduced until the corresponding implementation sub-phase defines the local-only key-generation and signing workflow.

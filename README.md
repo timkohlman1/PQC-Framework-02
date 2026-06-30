@@ -648,3 +648,18 @@ The ECDSA-P256 secure-boot workflow now treats `secrets/wolfboot/ecdsa_p256_priv
 
 `flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when the configured local wolfBoot key and application-signing key both exist and their fingerprints differ. This prevents the known failure mode where flashing succeeds but wolfBoot rejects the signed application because the embedded keystore and application signature were produced from different private keys.
 
+
+
+## Phase 11.5a Classical Signing Benchmark Profile Model
+
+Phase 11.5a defines the reusable classical signing benchmark profile model before adding new runnable signing algorithms. The minimum practical comparison scope is reserved as `ED25519`, `ECC256`, and `RSA2048`, but only the existing ECC256 path is runnable in this sub-phase.
+
+The profile model is recorded in:
+
+```text
+configs/benchmarks/classical_signing_profiles.yaml
+```
+
+The existing ECC256 secure-boot experiment records `secure_boot_benchmark_profile` metadata and mirrors it into `secure_boot_benchmark.classical_profile_metadata` in generated manifests. ED25519 and RSA2048 are explicitly represented as planned non-runnable capabilities until Phase 11.5b and Phase 11.5c add their build, signing, and experiment profiles.
+
+Phase 11.5a does not loosen the existing ECC256-only build or signing validators, does not add ED25519 or RSA2048 runnable profiles, does not change signing-key handling, and does not claim new hardware evidence.

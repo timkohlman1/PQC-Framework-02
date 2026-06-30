@@ -26,6 +26,7 @@ SECURE_BOOT_BENCHMARK_MODEL_PHASE = "phase_11_1_schema_only"
 SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE = "phase_11_2_repeated_run_support"
 SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE = "phase_11_3_static_build_resource_metrics"
 SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE = "phase_11_4_runtime_memory_metrics"
+SECURE_BOOT_BENCHMARK_CLASSICAL_PROFILE_MODEL_PHASE = "phase_11_5a_classical_profile_model"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
 
@@ -76,6 +77,7 @@ def build_secure_boot_benchmark_model(
     heap_used_bytes: int | None = None,
     heap_metric_source: str = UNAVAILABLE_METRIC_SOURCE,
     runtime_memory_limitations: str | list[str] | None = None,
+    classical_profile_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the Phase 11.1 secure-boot benchmark evidence schema.
 
@@ -199,12 +201,27 @@ def build_secure_boot_benchmark_model(
     else:
         runtime_memory_limitations_final = [unavailable_runtime_memory_reason] + runtime_memory_limitations_list
 
-    if runtime_memory_available:
+    if classical_profile_metadata:
+        model_phase = SECURE_BOOT_BENCHMARK_CLASSICAL_PROFILE_MODEL_PHASE
+    elif runtime_memory_available:
         model_phase = SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE
     elif static_metrics_available:
         model_phase = SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE
     else:
         model_phase = SECURE_BOOT_BENCHMARK_MODEL_PHASE
+
+    profile_metadata = dict(classical_profile_metadata or {})
+    if not profile_metadata:
+        profile_metadata = {
+            "status": "unavailable",
+            "unavailable": _unavailable_reason(
+                "Phase 11.5a classical signing profile metadata was not configured for this run."
+            ),
+            "minimum_comparison_scope": {
+                "status": "unavailable",
+                "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
+            },
+        }
 
     return {
         "schema_version": SECURE_BOOT_BENCHMARK_SCHEMA_VERSION,
@@ -216,6 +233,7 @@ def build_secure_boot_benchmark_model(
         "signature_algorithm": signature_algorithm,
         "signature_size_bytes": signature_size_bytes,
         "image_version": image_version,
+        "classical_profile_metadata": profile_metadata,
         "build_time_metrics": {
             "status": build_time_status,
             "unavailable": build_time_unavailable,
@@ -336,6 +354,7 @@ def build_secure_boot_benchmark_model(
             + [unavailable_repeated_reason, unavailable_aggregate_reason]
             + static_limitations_list
             + runtime_memory_limitations_list
+            + ([] if classical_profile_metadata else ["Phase 11.5a classical signing profile metadata was not configured for this run."])
         ),
     }
 

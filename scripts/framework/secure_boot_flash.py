@@ -324,6 +324,79 @@ def _corrupt_signed_application_copy(
     return corrupted_path
 
 
+
+def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | None:
+    """Return Phase 11.5a classical benchmark profile metadata from the experiment config."""
+
+    profile = experiment.get("secure_boot_benchmark_profile")
+    if not isinstance(profile, dict):
+        return None
+
+    minimum_scope = {
+        "status": str(profile.get("minimum_scope_status", "defined_phase_11_5a_minimum_classical_scope")),
+        "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
+        "implemented_reference_algorithm": "ECC256",
+        "planned_non_runnable_algorithms": ["ED25519", "RSA2048"],
+        "scope_limitations": str(
+            profile.get(
+                "scope_limitations",
+                "Phase 11.5a defines the profile model only; ED25519 and RSA2048 runnable profiles are added in later sub-phases.",
+            )
+        ),
+    }
+
+    capability_status = {
+        "ed25519": {
+            "status": str(profile.get("ed25519_status", "planned_phase_11_5b_not_implemented")),
+            "runnable": False,
+            "unavailable": {
+                "status": "unavailable",
+                "source": "profile_model",
+                "reason": "ED25519 benchmark profile is reserved in the Phase 11.5a minimum scope but is not runnable until Phase 11.5b.",
+            },
+        },
+        "rsa2048": {
+            "status": str(profile.get("rsa2048_status", "planned_phase_11_5c_not_implemented")),
+            "runnable": False,
+            "unavailable": {
+                "status": "unavailable",
+                "source": "profile_model",
+                "reason": "RSA2048 benchmark profile is reserved in the Phase 11.5a minimum scope but is not runnable until Phase 11.5c.",
+            },
+        },
+    }
+
+    return {
+        "schema_version": int(profile.get("schema_version", 1)),
+        "model_phase": "phase_11_5a_classical_profile_model",
+        "profile_model": str(profile.get("profile_model", "configs/benchmarks/classical_signing_profiles.yaml")),
+        "profile_id": str(profile.get("profile_id", experiment.get("id", "unknown"))),
+        "algorithm": str(profile.get("algorithm", "ECC256")),
+        "wolfboot_sign": str(profile.get("wolfboot_sign", "ECC256")),
+        "signature_algorithm": str(profile.get("signature_algorithm", "ecdsa_p256")),
+        "curve": profile.get("curve"),
+        "key_size_bits": profile.get("key_size_bits"),
+        "signature_size_bytes": profile.get("signature_size_bytes"),
+        "image_version": profile.get("image_version"),
+        "signing_profile": profile.get("signing_profile"),
+        "wolfboot_build_profile": profile.get("wolfboot_build_profile"),
+        "experiment_profile": profile.get("experiment_profile"),
+        "boot_profile": profile.get("boot_profile"),
+        "runnable": profile.get("runnable") is True,
+        "status": str(profile.get("status", "reference_existing_phase_10_11_profile")),
+        "benchmark_assumptions": {
+            "application_payload": str(profile.get("application_payload", "same_relocated_hal_application_payload")),
+            "board": str(profile.get("board", experiment.get("board", "unknown"))),
+            "cpu_hz": profile.get("cpu_hz"),
+            "measurement_method": str(profile.get("measurement_method", "uart_explicit_wolfboot_mailbox_markers")),
+            "repeated_run_model": str(profile.get("repeated_run_model", "phase_11_2_repeat_count_samples")),
+            "static_metrics_model": str(profile.get("static_metrics_model", "phase_11_3_elf_and_artifact_metrics")),
+            "runtime_memory_model": str(profile.get("runtime_memory_model", "phase_11_4_firmware_side_stack_high_water_marker")),
+        },
+        "minimum_comparison_scope": minimum_scope,
+        "capability_status": capability_status,
+    }
+
 def _signature_size_bytes(experiment: dict[str, Any]) -> int | None:
     secure_boot_config = experiment.get("secure_boot_flash", {})
     if not isinstance(secure_boot_config, dict):
@@ -813,6 +886,7 @@ def execute_secure_boot_flash(
         verification_cycles_source="unavailable",
         runtime_measurement_method="UART capture has not run at the secure-boot flash stage.",
         runtime_limitations="No runtime verification timing evidence is available until post-flash UART capture runs.",
+        classical_profile_metadata=_classical_profile_metadata(experiment),
     )
 
     update_manifest(

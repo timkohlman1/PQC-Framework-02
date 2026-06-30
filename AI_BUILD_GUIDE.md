@@ -180,6 +180,8 @@ configs/
     wolfboot_stm32l4_ecdsa_p256.yaml
   signing/
     wolfboot_ecdsa_p256_app.yaml
+  benchmarks/
+    classical_signing_profiles.yaml
   experiments/
     baseline_direct_uart.yaml
     wolfboot_ecdsa_p256_uart.yaml
@@ -1161,7 +1163,9 @@ Current framework skeleton completed items:
 55. Add Phase 11.1 secure-boot benchmark result model. Secure-boot run manifests now record `secure_boot_benchmark` as a schema-first evidence object that distinguishes build-time metrics, signed-artifact metrics, runtime verification metrics, runtime memory metrics, repeated-run samples, aggregate statistics, and limitations. Existing secure-boot timing fields remain compatible. Metrics not implemented until later Phase 11 steps are recorded explicitly as unavailable rather than omitted. Phase 11.1 does not add new signing profiles, repeated-run execution, aggregation commands, or runtime stack/heap instrumentation.
 56. Add Phase 11.2 repeated-run measurement support. The secure-boot flash workflow supports `--repeat-count <N>` for repeated post-flash reset/UART verification samples of the same profile. Each sample records run index, timestamp, explicit timing/cycle/CPU/result-code evidence, UART marker verdict, pass/fail sample verdict, and referenced wolfBoot/signed-application artifact identity. Aggregates record sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and cycles. Median values are the primary headline metrics. The CLI summary prints the aggregate counts and timing/cycle statistics at the end of the repeated-run workflow. Phase 11.2 does not add new signing profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output.
 57. Add Phase 11.3 static build and resource metrics. Secure-boot benchmark manifests now record wolfBoot ELF section/resource metrics when the configured ELF is available, including `.text`, `.data`, `.bss`, flash-relevant size, and static RAM estimate. They also record wolfBoot ELF size, retained wolfBoot artifact size, unsigned application size when configured and present, signed application size, signed-image overhead bytes, and signed-image overhead percentage. Runtime stack and heap metrics remain explicitly unavailable because Phase 11.3 does not add firmware-side runtime memory instrumentation.
+
 58. Add Phase 11.4 runtime stack and memory metrics. The wolfBoot timing instrumentation now also paints and scans firmware-side stack sentinel evidence around `wolfBoot_verify_authenticity()`, writes the maximum stack high-water value into the RAM2 mailbox, and the relocated application emits `wolfBoot verification max stack used: <N> bytes` over UART. Secure-boot manifests record runtime stack evidence only from explicit firmware/UART markers under `uart`, `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`. Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted. Runtime memory is not inferred from host timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone.
+59. Add Phase 11.5a classical signing benchmark profile model. The framework now records `configs/benchmarks/classical_signing_profiles.yaml` as the metadata-only model for the minimum classical comparison scope: `ED25519`, `ECC256`, and `RSA2048`. Existing ECC256 behaviour remains the known-good reference path and is linked to the current wolfBoot build profile, signing profile, secure-boot experiment profile, and boot profile. ED25519 and RSA2048 are explicitly reserved as non-runnable planned capabilities until Phase 11.5b and Phase 11.5c add their implementation files. Secure-boot benchmark manifests can record this model under `secure_boot_benchmark.classical_profile_metadata`. Phase 11.5a does not add ED25519/RSA2048 build profiles, signing profiles, experiment profiles, keys, flash workflows, aggregation output, or hardware success claims.
 Current CLI commands are:
 
 ```powershell
@@ -2215,3 +2219,33 @@ The secure-boot ECDSA-P256 workflow now coordinates wolfBoot keystore generation
 
 `flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when both configured local key files exist and their fingerprints differ. This prevents a build/sign/flash sequence that appears successful but cannot boot because wolfBoot rejects an application signed by a different key than the keystore embedded in the bootloader. Private signing keys remain ignored local state and must not be committed or copied into results.
 
+
+
+## Phase 11.5a Classical Signing Benchmark Profile Model
+
+Implemented scope:
+
+- Added `configs/benchmarks/classical_signing_profiles.yaml` as a metadata-only profile model for the minimum classical secure-boot benchmark comparison scope.
+- The reserved minimum scope is `ED25519`, `ECC256`, and `RSA2048`.
+- Existing `ECC256` behaviour remains the known-good reference path and points to `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`, `configs/signing/wolfboot_ecdsa_p256_app.yaml`, `configs/experiments/wolfboot_ecdsa_p256_uart.yaml`, and `configs/boot/wolfboot_ecdsa_p256.yaml`.
+- The ECC256 secure-boot experiment records `secure_boot_benchmark_profile` metadata. Generated manifests mirror that evidence into `secure_boot_benchmark.classical_profile_metadata`.
+- `ED25519` and `RSA2048` are explicitly represented as planned non-runnable capabilities with unavailable reasons.
+- Unit tests validate the profile-model config loader, validator, manifest metadata, and secure-boot benchmark manifest population without hardware.
+
+Not implemented in Phase 11.5a:
+
+- ED25519 runnable wolfBoot build, signing, or experiment profiles.
+- RSA2048 runnable wolfBoot build, signing, or experiment profiles.
+- New key-generation flows or new local private-key paths.
+- Cross-profile benchmark aggregation output.
+- Hardware success claims beyond user-provided logs.
+
+Manual Phase 11.5a verification commands:
+
+```powershell
+python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_manifest.py tests/unit/test_secure_boot_flash.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Secure-boot benchmark manifests include `secure_boot_benchmark.classical_profile_metadata` for the ECC256 reference profile and explicitly show ED25519/RSA2048 as non-runnable planned capabilities. Hardware success and timing values must still only be claimed from explicit user-provided evidence.

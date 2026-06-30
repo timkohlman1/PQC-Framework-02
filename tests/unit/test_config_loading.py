@@ -328,3 +328,62 @@ def test_application_signing_profile_is_loadable(tmp_path):
     assert config["keygen"]["working_dir"] == "tools/wolfboot"
     assert config["sign"]["working_dir"] == "tools/wolfboot"
     assert config["sign"]["command"] == "tools/keytools/sign"
+
+
+def test_classical_signing_profile_model_is_loadable(tmp_path):
+    experiment_cli = load_experiment_module()
+
+    config_path = tmp_path / "classical_signing_profiles.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "id: classical_signing_profiles",
+                "description: Phase 11.5a model.",
+                "schema_version: 1",
+                "model_phase: phase_11_5a_classical_profile_model",
+                "benchmark_scope: secure_boot_classical_signing_algorithm",
+                "minimum_comparison_scope:",
+                "  ed25519:",
+                "    algorithm: ED25519",
+                "    signature_size_bytes: 64",
+                "    runnable: false",
+                "  ecc256:",
+                "    algorithm: ECC256",
+                "    signature_size_bytes: 64",
+                "    runnable: true",
+                "  rsa2048:",
+                "    algorithm: RSA2048",
+                "    signature_size_bytes: 256",
+                "    runnable: false",
+                "profiles:",
+                "  ecc256_reference:",
+                "    algorithm: ECC256",
+                "    signature_algorithm: ecdsa_p256",
+                "    signature_size_bytes: 64",
+                "    signing_profile: configs/signing/wolfboot_ecdsa_p256_app.yaml",
+                "    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
+                "    experiment_profile: configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
+                "    runnable: true",
+                "  ed25519_reserved:",
+                "    algorithm: ED25519",
+                "    runnable: false",
+                "    unsupported_reason: Not implemented in Phase 11.5a.",
+                "  rsa2048_reserved:",
+                "    algorithm: RSA2048",
+                "    runnable: false",
+                "    unsupported_reason: Not implemented in Phase 11.5a.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = experiment_cli.load_config(config_path)
+    experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+    assert config["minimum_comparison_scope"]["ed25519"]["algorithm"] == "ED25519"
+    assert config["minimum_comparison_scope"]["ecc256"]["algorithm"] == "ECC256"
+    assert config["minimum_comparison_scope"]["rsa2048"]["algorithm"] == "RSA2048"
+    assert config["profiles"]["ecc256_reference"]["runnable"] is True
+    assert config["profiles"]["ed25519_reserved"]["runnable"] is False
+    assert config["profiles"]["rsa2048_reserved"]["runnable"] is False

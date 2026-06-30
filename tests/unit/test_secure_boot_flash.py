@@ -82,6 +82,33 @@ def sample_bundle():
                 "expected_tick_message": "tick",
                 "expected_secure_boot_message": "stm32-basic_hal1 secure-boot app v0.1.0",
             },
+            "secure_boot_benchmark_profile": {
+                "profile_model": "configs/benchmarks/classical_signing_profiles.yaml",
+                "profile_id": "ecc256_reference",
+                "algorithm": "ECC256",
+                "wolfboot_sign": "ECC256",
+                "signature_algorithm": "ecdsa_p256",
+                "curve": "P-256",
+                "key_size_bits": 256,
+                "signature_size_bytes": 64,
+                "image_version": 1,
+                "runnable": True,
+                "status": "reference_existing_phase_10_11_profile",
+                "signing_profile": "configs/signing/wolfboot_ecdsa_p256_app.yaml",
+                "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
+                "experiment_profile": "configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
+                "boot_profile": "configs/boot/wolfboot_ecdsa_p256.yaml",
+                "minimum_scope_status": "defined_phase_11_5a_minimum_classical_scope",
+                "ed25519_status": "planned_phase_11_5b_not_implemented",
+                "rsa2048_status": "planned_phase_11_5c_not_implemented",
+                "application_payload": "same_relocated_hal_application_payload",
+                "board": "board_a",
+                "cpu_hz": 80000000,
+                "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
+                "repeated_run_model": "phase_11_2_repeat_count_samples",
+                "static_metrics_model": "phase_11_3_elf_and_artifact_metrics",
+                "runtime_memory_model": "phase_11_4_firmware_side_stack_high_water_marker",
+            },
             "secure_boot_flash": {
                 "signature_algorithm": "ecdsa_p256",
                 "signature_size_bytes": 64,
@@ -256,11 +283,15 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert evidence["boot_timing"]["verification_time_ms"] is None
     benchmark = manifest["secure_boot_benchmark"]
     assert benchmark["schema_version"] == 1
-    assert benchmark["model_phase"] == "phase_11_3_static_build_resource_metrics"
+    assert benchmark["model_phase"] == "phase_11_5a_classical_profile_model"
     assert benchmark["benchmark_scope"] == "secure_boot_classical_signing_algorithm"
     assert benchmark["profile_id"] == "wolfboot_ecdsa_p256_uart"
     assert benchmark["signature_algorithm"] == "ecdsa_p256"
     assert benchmark["signature_size_bytes"] == 64
+    assert benchmark["classical_profile_metadata"]["profile_id"] == "ecc256_reference"
+    assert benchmark["classical_profile_metadata"]["minimum_comparison_scope"]["required_algorithms"] == ["ED25519", "ECC256", "RSA2048"]
+    assert benchmark["classical_profile_metadata"]["capability_status"]["ed25519"]["runnable"] is False
+    assert benchmark["classical_profile_metadata"]["capability_status"]["rsa2048"]["runnable"] is False
     assert benchmark["build_time_metrics"]["status"] == "available"
     assert benchmark["build_time_metrics"]["bootloader_text_bytes"] == 11
     assert benchmark["build_time_metrics"]["bootloader_data_bytes"] == 7

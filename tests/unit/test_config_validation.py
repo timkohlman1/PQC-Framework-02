@@ -433,3 +433,63 @@ def test_validate_application_signing_profile_requires_binary_conversion_command
 
     with pytest.raises(experiment_cli.ConfigError, match="binary_conversion.command"):
         experiment_cli.validate_application_signing_profile_config(config)
+
+
+def _valid_classical_profile_model():
+    return {
+        "id": "classical_signing_profiles",
+        "description": "Phase 11.5a model.",
+        "schema_version": 1,
+        "model_phase": "phase_11_5a_classical_profile_model",
+        "benchmark_scope": "secure_boot_classical_signing_algorithm",
+        "minimum_comparison_scope": {
+            "ed25519": {"algorithm": "ED25519", "runnable": False},
+            "ecc256": {"algorithm": "ECC256", "runnable": True},
+            "rsa2048": {"algorithm": "RSA2048", "runnable": False},
+        },
+        "profiles": {
+            "ecc256_reference": {
+                "algorithm": "ECC256",
+                "signature_algorithm": "ecdsa_p256",
+                "signature_size_bytes": 64,
+                "signing_profile": "configs/signing/wolfboot_ecdsa_p256_app.yaml",
+                "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
+                "experiment_profile": "configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
+                "runnable": True,
+            },
+            "ed25519_reserved": {
+                "algorithm": "ED25519",
+                "runnable": False,
+                "unsupported_reason": "Not implemented in Phase 11.5a.",
+            },
+            "rsa2048_reserved": {
+                "algorithm": "RSA2048",
+                "runnable": False,
+                "unsupported_reason": "Not implemented in Phase 11.5a.",
+            },
+        },
+    }
+
+
+def test_validate_classical_profile_model_accepts_minimum_scope():
+    experiment_cli = load_experiment_module()
+
+    experiment_cli.validate_classical_benchmark_profile_model_config(_valid_classical_profile_model())
+
+
+def test_validate_classical_profile_model_rejects_missing_rsa2048_scope():
+    experiment_cli = load_experiment_module()
+    config = _valid_classical_profile_model()
+    del config["minimum_comparison_scope"]["rsa2048"]
+
+    with pytest.raises(experiment_cli.ConfigError, match="exactly ED25519, ECC256, and RSA2048"):
+        experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+
+def test_validate_classical_profile_model_rejects_runnable_reserved_profile():
+    experiment_cli = load_experiment_module()
+    config = _valid_classical_profile_model()
+    config["profiles"]["ed25519_reserved"]["runnable"] = True
+
+    with pytest.raises(experiment_cli.ConfigError, match="ed25519_reserved.*runnable must remain false"):
+        experiment_cli.validate_classical_benchmark_profile_model_config(config)

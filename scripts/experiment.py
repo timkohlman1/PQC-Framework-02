@@ -65,6 +65,7 @@ from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
+    _classical_profile_metadata,
     execute_secure_boot_flash,
 )
 
@@ -223,6 +224,68 @@ def validate_host_config(config: dict[str, Any]) -> None:
         require_field(config, field, "host config")
 
 
+
+
+CLASSICAL_BENCHMARK_REQUIRED_ALGORITHMS = {"ED25519", "ECC256", "RSA2048"}
+
+
+def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) -> None:
+    """Validate the Phase 11.5a classical signing benchmark profile model."""
+
+    required_fields = [
+        "id",
+        "description",
+        "schema_version",
+        "model_phase",
+        "benchmark_scope",
+        "minimum_comparison_scope",
+        "profiles.ecc256_reference.algorithm",
+        "profiles.ecc256_reference.signature_algorithm",
+        "profiles.ecc256_reference.signature_size_bytes",
+        "profiles.ecc256_reference.signing_profile",
+        "profiles.ecc256_reference.wolfboot_build_profile",
+        "profiles.ecc256_reference.experiment_profile",
+        "profiles.ed25519_reserved.algorithm",
+        "profiles.rsa2048_reserved.algorithm",
+    ]
+
+    for field in required_fields:
+        require_field(config, field, "classical benchmark profile model")
+
+    if require_field(config, "model_phase", "classical benchmark profile model") != "phase_11_5a_classical_profile_model":
+        raise ConfigError("classical benchmark profile model must use model_phase: phase_11_5a_classical_profile_model")
+
+    scope = config.get("minimum_comparison_scope")
+    if not isinstance(scope, dict):
+        raise ConfigError("classical benchmark profile model minimum_comparison_scope field must be a mapping")
+
+    algorithms = {str(value.get("algorithm")) for value in scope.values() if isinstance(value, dict)}
+    if algorithms != CLASSICAL_BENCHMARK_REQUIRED_ALGORITHMS:
+        raise ConfigError(
+            "classical benchmark profile model minimum comparison scope must contain exactly ED25519, ECC256, and RSA2048"
+        )
+
+    profiles = config.get("profiles")
+    if not isinstance(profiles, dict):
+        raise ConfigError("classical benchmark profile model profiles field must be a mapping")
+
+    ecc256 = profiles.get("ecc256_reference")
+    if not isinstance(ecc256, dict):
+        raise ConfigError("classical benchmark profile model missing profiles.ecc256_reference")
+    if ecc256.get("algorithm") != "ECC256":
+        raise ConfigError("profiles.ecc256_reference.algorithm must be ECC256")
+    if ecc256.get("runnable") is not True:
+        raise ConfigError("profiles.ecc256_reference.runnable must remain true for the known-good reference path")
+
+    for reserved_profile_id, expected_algorithm in (("ed25519_reserved", "ED25519"), ("rsa2048_reserved", "RSA2048")):
+        reserved = profiles.get(reserved_profile_id)
+        if not isinstance(reserved, dict):
+            raise ConfigError(f"classical benchmark profile model missing profiles.{reserved_profile_id}")
+        if reserved.get("algorithm") != expected_algorithm:
+            raise ConfigError(f"profiles.{reserved_profile_id}.algorithm must be {expected_algorithm}")
+        if reserved.get("runnable") is not False:
+            raise ConfigError(f"profiles.{reserved_profile_id}.runnable must remain false until its implementation sub-phase")
+        require_field(reserved, "unsupported_reason", f"profiles.{reserved_profile_id}")
 
 
 def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
@@ -1896,6 +1959,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         heap_used_bytes=heap_used_bytes,
         heap_metric_source=heap_metric_source,
         runtime_memory_limitations=runtime_memory_limitations,
+        classical_profile_metadata=_classical_profile_metadata(bundle["experiment"]),
     )
     if samples:
         benchmark_evidence = apply_repeated_run_samples_to_benchmark_model(
