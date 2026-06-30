@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import statistics
+import struct
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ DEFAULT_NETWORK_PROFILE = "none"
 SECURE_BOOT_BENCHMARK_SCHEMA_VERSION = 1
 SECURE_BOOT_BENCHMARK_MODEL_PHASE = "phase_11_1_schema_only"
 SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE = "phase_11_2_repeated_run_support"
+SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE = "phase_11_3_static_build_resource_metrics"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
 
@@ -48,6 +50,18 @@ def build_secure_boot_benchmark_model(
     signed_application_artifact_path: str | None = None,
     signed_application_sha256: str | None = None,
     signed_application_size_bytes: int | None = None,
+    unsigned_application_artifact_path: str | None = None,
+    unsigned_application_sha256: str | None = None,
+    unsigned_application_size_bytes: int | None = None,
+    bootloader_text_bytes: int | None = None,
+    bootloader_data_bytes: int | None = None,
+    bootloader_bss_bytes: int | None = None,
+    bootloader_flash_bytes: int | None = None,
+    bootloader_static_ram_bytes: int | None = None,
+    retained_wolfboot_artifact_path: str | None = None,
+    retained_wolfboot_artifact_size_bytes: int | None = None,
+    static_metrics_source: str = UNAVAILABLE_METRIC_SOURCE,
+    static_metrics_limitations: str | list[str] | None = None,
     verification_time_ms: int | None = None,
     verification_cycles: int | None = None,
     verification_cpu_hz: int | None = None,
@@ -96,12 +110,66 @@ def build_secure_boot_benchmark_model(
     else:
         runtime_limitations_list = [str(runtime_limitations)]
 
+    if static_metrics_limitations is None:
+        static_limitations_list: list[str] = []
+    elif isinstance(static_metrics_limitations, list):
+        static_limitations_list = [str(item) for item in static_metrics_limitations]
+    else:
+        static_limitations_list = [str(static_metrics_limitations)]
+
+    static_metric_values = [
+        bootloader_text_bytes,
+        bootloader_data_bytes,
+        bootloader_bss_bytes,
+        bootloader_flash_bytes,
+        bootloader_static_ram_bytes,
+    ]
+    static_metrics_available = all(value is not None for value in static_metric_values)
+    if static_metrics_available:
+        build_time_status = "available"
+        build_time_unavailable = None
+        build_time_limitations = static_limitations_list
+    else:
+        build_time_status = "unavailable"
+        build_time_unavailable = _unavailable_reason(unavailable_build_reason)
+        build_time_limitations = [unavailable_build_reason] + static_limitations_list
+
+    signed_overhead_bytes = None
+    signed_overhead_percent = None
+    if signed_application_size_bytes is not None and unsigned_application_size_bytes is not None:
+        signed_overhead_bytes = signed_application_size_bytes - unsigned_application_size_bytes
+        signed_overhead_percent = (
+            None
+            if unsigned_application_size_bytes == 0
+            else (signed_overhead_bytes / unsigned_application_size_bytes) * 100
+        )
+
+    signed_artifact_status = (
+        "available"
+        if signed_application_size_bytes is not None
+        and wolfboot_elf_size_bytes is not None
+        and unsigned_application_size_bytes is not None
+        and signed_overhead_bytes is not None
+        else "partial"
+        if signed_application_size_bytes is not None or wolfboot_elf_size_bytes is not None or unsigned_application_size_bytes is not None
+        else "unavailable"
+    )
+    signed_artifact_limitations: list[str] = []
+    unsigned_unavailable = None
+    overhead_unavailable = None
+    if unsigned_application_size_bytes is None:
+        unsigned_unavailable = _unavailable_reason(unavailable_unsigned_reason)
+        signed_artifact_limitations.append(unavailable_unsigned_reason)
+    if signed_overhead_bytes is None:
+        overhead_unavailable = _unavailable_reason(unavailable_overhead_reason)
+        signed_artifact_limitations.append(unavailable_overhead_reason)
+
     runtime_status = "available" if verification_time_ms is not None else "unavailable"
     cycles_status = "available" if verification_cycles is not None else "unavailable"
 
     return {
         "schema_version": SECURE_BOOT_BENCHMARK_SCHEMA_VERSION,
-        "model_phase": SECURE_BOOT_BENCHMARK_MODEL_PHASE,
+        "model_phase": SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE if static_metrics_available else SECURE_BOOT_BENCHMARK_MODEL_PHASE,
         "benchmark_scope": "secure_boot_classical_signing_algorithm",
         "profile_id": experiment_id,
         "boot_mode": boot_mode,
@@ -110,31 +178,36 @@ def build_secure_boot_benchmark_model(
         "signature_size_bytes": signature_size_bytes,
         "image_version": image_version,
         "build_time_metrics": {
-            "status": "unavailable",
-            "unavailable": _unavailable_reason(unavailable_build_reason),
-            "bootloader_text_bytes": None,
-            "bootloader_data_bytes": None,
-            "bootloader_bss_bytes": None,
-            "bootloader_flash_bytes": None,
-            "bootloader_static_ram_bytes": None,
-            "static_ram_bytes": None,
-            "limitations": [unavailable_build_reason],
+            "status": build_time_status,
+            "unavailable": build_time_unavailable,
+            "source": static_metrics_source,
+            "bootloader_text_bytes": bootloader_text_bytes,
+            "bootloader_data_bytes": bootloader_data_bytes,
+            "bootloader_bss_bytes": bootloader_bss_bytes,
+            "bootloader_flash_bytes": bootloader_flash_bytes,
+            "bootloader_static_ram_bytes": bootloader_static_ram_bytes,
+            "static_ram_bytes": bootloader_static_ram_bytes,
+            "limitations": build_time_limitations,
         },
         "signed_artifact_metrics": {
-            "status": "partial" if signed_application_size_bytes is not None or wolfboot_elf_size_bytes is not None else "unavailable",
+            "status": signed_artifact_status,
             "wolfboot_artifact_path": wolfboot_artifact_path,
             "wolfboot_sha256": wolfboot_sha256,
             "wolfboot_elf_size_bytes": wolfboot_elf_size_bytes,
+            "retained_wolfboot_artifact_path": retained_wolfboot_artifact_path,
+            "retained_wolfboot_artifact_size_bytes": retained_wolfboot_artifact_size_bytes,
             "signed_application_artifact_path": signed_application_artifact_path,
             "signed_application_sha256": signed_application_sha256,
             "signed_application_size_bytes": signed_application_size_bytes,
             "signature_size_bytes": signature_size_bytes,
-            "unsigned_application_size_bytes": None,
-            "unsigned_application_size_unavailable": _unavailable_reason(unavailable_unsigned_reason),
-            "signed_image_overhead_bytes": None,
-            "signed_image_overhead_percent": None,
-            "signed_image_overhead_unavailable": _unavailable_reason(unavailable_overhead_reason),
-            "limitations": [unavailable_unsigned_reason, unavailable_overhead_reason],
+            "unsigned_application_artifact_path": unsigned_application_artifact_path,
+            "unsigned_application_sha256": unsigned_application_sha256,
+            "unsigned_application_size_bytes": unsigned_application_size_bytes,
+            "unsigned_application_size_unavailable": unsigned_unavailable,
+            "signed_image_overhead_bytes": signed_overhead_bytes,
+            "signed_image_overhead_percent": signed_overhead_percent,
+            "signed_image_overhead_unavailable": overhead_unavailable,
+            "limitations": signed_artifact_limitations,
         },
         "runtime_verification_metrics": {
             "status": runtime_status,
@@ -204,12 +277,105 @@ def build_secure_boot_benchmark_model(
             },
             "limitations": [unavailable_aggregate_reason],
         },
-        "limitations": [
-            unavailable_build_reason,
-            unavailable_runtime_memory_reason,
-            unavailable_repeated_reason,
-            unavailable_aggregate_reason,
-        ],
+        "limitations": (
+            ([] if static_metrics_available else [unavailable_build_reason])
+            + [unavailable_runtime_memory_reason, unavailable_repeated_reason, unavailable_aggregate_reason]
+            + static_limitations_list
+        ),
+    }
+
+
+
+def _read_c_string(blob: bytes, offset: int) -> str:
+    end = blob.find(b"\x00", offset)
+    if end < 0:
+        end = len(blob)
+    return blob[offset:end].decode("utf-8", errors="replace")
+
+
+
+def read_elf_alloc_section_metrics(elf_path: Path | str) -> dict[str, Any]:
+    """Read static section-size metrics from an ELF file without target execution.
+
+    The flash-relevant size is calculated as the sum of SHF_ALLOC sections
+    that occupy bytes in the ELF image. NOBITS sections such as `.bss` count
+    toward static RAM but not flash bytes.
+    """
+
+    path = Path(elf_path)
+    data = path.read_bytes()
+    if len(data) < 52 or data[:4] != b"\x7fELF":
+        raise ValueError(f"not an ELF file: {path}")
+
+    elf_class = data[4]
+    endian_id = data[5]
+    if elf_class not in {1, 2}:
+        raise ValueError(f"unsupported ELF class in {path}: {elf_class}")
+    if endian_id == 1:
+        endian = "<"
+    elif endian_id == 2:
+        endian = ">"
+    else:
+        raise ValueError(f"unsupported ELF endianness in {path}: {endian_id}")
+
+    if elf_class == 1:
+        header_format = endian + "16sHHIIIIIHHHHHH"
+        section_format = endian + "IIIIIIIIII"
+        sh_type_index = 1
+        sh_flags_index = 2
+        sh_offset_index = 4
+        sh_size_index = 5
+        _, _, _, _, _, _, e_shoff, _, _, _, _, e_shentsize, e_shnum, e_shstrndx = struct.unpack_from(header_format, data, 0)
+    else:
+        header_format = endian + "16sHHIQQQIHHHHHH"
+        section_format = endian + "IIQQQQIIQQ"
+        sh_type_index = 1
+        sh_flags_index = 2
+        sh_offset_index = 4
+        sh_size_index = 5
+        _, _, _, _, _, _, e_shoff, _, _, _, _, e_shentsize, e_shnum, e_shstrndx = struct.unpack_from(header_format, data, 0)
+
+    if e_shoff == 0 or e_shnum == 0:
+        raise ValueError(f"ELF file has no section table: {path}")
+    if e_shstrndx >= e_shnum:
+        raise ValueError(f"ELF file has invalid section string table index: {path}")
+
+    section_headers = []
+    section_header_size = struct.calcsize(section_format)
+    for index in range(e_shnum):
+        offset = e_shoff + index * e_shentsize
+        if offset + section_header_size > len(data):
+            raise ValueError(f"ELF section header extends past end of file: {path}")
+        section_headers.append(struct.unpack_from(section_format, data, offset))
+
+    string_header = section_headers[e_shstrndx]
+    string_offset = int(string_header[sh_offset_index])
+    string_size = int(string_header[sh_size_index])
+    string_table = data[string_offset:string_offset + string_size]
+
+    SHF_ALLOC = 0x2
+    SHT_NOBITS = 8
+    named_sizes = {".text": 0, ".data": 0, ".bss": 0}
+    flash_bytes = 0
+
+    for header in section_headers:
+        name = _read_c_string(string_table, int(header[0]))
+        section_type = int(header[sh_type_index])
+        flags = int(header[sh_flags_index])
+        size = int(header[sh_size_index])
+        if name in named_sizes:
+            named_sizes[name] += size
+        if flags & SHF_ALLOC and section_type != SHT_NOBITS:
+            flash_bytes += size
+
+    static_ram_bytes = named_sizes[".data"] + named_sizes[".bss"]
+    return {
+        "bootloader_text_bytes": named_sizes[".text"],
+        "bootloader_data_bytes": named_sizes[".data"],
+        "bootloader_bss_bytes": named_sizes[".bss"],
+        "bootloader_flash_bytes": flash_bytes,
+        "bootloader_static_ram_bytes": static_ram_bytes,
+        "static_ram_bytes": static_ram_bytes,
     }
 
 
@@ -328,10 +494,24 @@ def apply_repeated_run_samples_to_benchmark_model(
     benchmark: dict[str, Any],
     samples: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Return a benchmark model updated with Phase 11.2 samples and aggregates."""
+    """Return a benchmark model updated with repeated-run samples and aggregates.
+
+    Repeated-run evidence is additive. Do not downgrade a benchmark model that
+    already contains Phase 11.3 static build/resource metrics back to the Phase
+    11.2 model phase when samples are attached.
+    """
 
     updated = dict(benchmark)
-    updated["model_phase"] = SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE
+    build_time_metrics = updated.get("build_time_metrics", {})
+    static_metrics_available = (
+        isinstance(build_time_metrics, dict)
+        and build_time_metrics.get("status") == "available"
+    )
+    updated["model_phase"] = (
+        SECURE_BOOT_BENCHMARK_STATIC_METRICS_MODEL_PHASE
+        if static_metrics_available
+        else SECURE_BOOT_BENCHMARK_REPEATED_MODEL_PHASE
+    )
     updated["repeated_run_samples"] = {
         "status": "completed" if samples else "not_configured",
         "samples": samples,

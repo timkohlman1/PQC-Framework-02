@@ -3,8 +3,52 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import struct
 import sys
 from pathlib import Path
+
+
+def write_minimal_elf32(path: Path) -> None:
+    shstrtab = b"\x00.text\x00.data\x00.bss\x00.rodata\x00.shstrtab\x00"
+    name_offsets = {
+        ".text": shstrtab.index(b".text"),
+        ".data": shstrtab.index(b".data"),
+        ".bss": shstrtab.index(b".bss"),
+        ".rodata": shstrtab.index(b".rodata"),
+        ".shstrtab": shstrtab.index(b".shstrtab"),
+    }
+    text = b"T" * 11
+    data = b"D" * 7
+    rodata = b"R" * 3
+    header_size = 52
+    text_offset = header_size
+    data_offset = text_offset + len(text)
+    rodata_offset = data_offset + len(data)
+    shstrtab_offset = rodata_offset + len(rodata)
+    section_header_offset = shstrtab_offset + len(shstrtab)
+    elf_ident = b"\x7fELF" + bytes([1, 1, 1]) + b"\x00" * 9
+    header = struct.pack("<16sHHIIIIIHHHHHH", elf_ident, 2, 40, 1, 0, 0, section_header_offset, 0, header_size, 0, 0, 40, 6, 5)
+
+    def section_header(name: str, section_type: int, flags: int, offset: int, size: int) -> bytes:
+        return struct.pack("<IIIIIIIIII", name_offsets.get(name, 0), section_type, flags, 0, offset, size, 0, 0, 4, 0)
+
+    path.write_bytes(
+        header
+        + text
+        + data
+        + rodata
+        + shstrtab
+        + b"".join(
+            [
+                section_header("", 0, 0, 0, 0),
+                section_header(".text", 1, 0x6, text_offset, len(text)),
+                section_header(".data", 1, 0x3, data_offset, len(data)),
+                section_header(".bss", 8, 0x3, 0, 5),
+                section_header(".rodata", 1, 0x2, rodata_offset, len(rodata)),
+                section_header(".shstrtab", 3, 0, shstrtab_offset, len(shstrtab)),
+            ]
+        )
+    )
 
 
 def load_secure_boot_flash_module():
@@ -45,6 +89,7 @@ def sample_bundle():
                 "wolfboot_artifact": "tools/wolfboot/wolfboot.elf",
                 "wolfboot_offset": "0x08000000",
                 "wolfboot_pass_offset_to_helper": False,
+                "unsigned_application_artifact": "build/RelocatedDebug/stm32_basic_hal1.bin",
                 "signed_application_artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
                 "signed_application_offset": "0x08020000",
                 "signed_application_pass_offset_to_helper": True,
@@ -118,11 +163,13 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "2026-06-29_001_wolfboot_ecdsa_p256_uart"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
+    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
     signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
-    wolfboot_artifact.write_bytes(b"wolfboot elf")
-    signed_artifact.write_bytes(b"signed application")
+    write_minimal_elf32(wolfboot_artifact)
+    unsigned_artifact.write_bytes(b"unsigned app")
+    signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
     write_manifest(result_dir)
 
     calls = []
@@ -147,8 +194,8 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
         fake_git_runner,
     )
 
-    wolfboot_sha = hashlib.sha256(b"wolfboot elf").hexdigest()
-    signed_sha = hashlib.sha256(b"signed application").hexdigest()
+    wolfboot_sha = hashlib.sha256(wolfboot_artifact.read_bytes()).hexdigest()
+    signed_sha = hashlib.sha256(b"unsigned app" + b"S" * 64).hexdigest()
 
     assert result.return_code == 0
     assert result.failure_stage == "none"
@@ -198,17 +245,23 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert evidence["boot_timing"]["verification_time_ms"] is None
     benchmark = manifest["secure_boot_benchmark"]
     assert benchmark["schema_version"] == 1
-    assert benchmark["model_phase"] == "phase_11_1_schema_only"
+    assert benchmark["model_phase"] == "phase_11_3_static_build_resource_metrics"
     assert benchmark["benchmark_scope"] == "secure_boot_classical_signing_algorithm"
     assert benchmark["profile_id"] == "wolfboot_ecdsa_p256_uart"
     assert benchmark["signature_algorithm"] == "ecdsa_p256"
     assert benchmark["signature_size_bytes"] == 64
-    assert benchmark["build_time_metrics"]["status"] == "unavailable"
-    assert benchmark["build_time_metrics"]["bootloader_text_bytes"] is None
-    assert benchmark["signed_artifact_metrics"]["status"] == "partial"
-    assert benchmark["signed_artifact_metrics"]["wolfboot_elf_size_bytes"] == len(b"wolfboot elf")
-    assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == len(b"signed application")
-    assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"]["status"] == "unavailable"
+    assert benchmark["build_time_metrics"]["status"] == "available"
+    assert benchmark["build_time_metrics"]["bootloader_text_bytes"] == 11
+    assert benchmark["build_time_metrics"]["bootloader_data_bytes"] == 7
+    assert benchmark["build_time_metrics"]["bootloader_bss_bytes"] == 5
+    assert benchmark["build_time_metrics"]["bootloader_flash_bytes"] == 21
+    assert benchmark["build_time_metrics"]["bootloader_static_ram_bytes"] == 12
+    assert benchmark["signed_artifact_metrics"]["status"] == "available"
+    assert benchmark["signed_artifact_metrics"]["wolfboot_elf_size_bytes"] == wolfboot_artifact.stat().st_size
+    assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == len(b"unsigned app" + b"S" * 64)
+    assert benchmark["signed_artifact_metrics"]["unsigned_application_size_bytes"] == len(b"unsigned app")
+    assert benchmark["signed_artifact_metrics"]["signed_image_overhead_bytes"] == 64
+    assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"] is None
     assert benchmark["runtime_verification_metrics"]["status"] == "unavailable"
     assert benchmark["runtime_verification_metrics"]["verification_time_ms"] is None
     assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
@@ -228,8 +281,10 @@ def test_execute_secure_boot_flash_refuses_missing_wolfboot_without_network(tmp_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "run"
     signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
     signed_artifact.parent.mkdir(parents=True)
-    signed_artifact.write_bytes(b"signed application")
+    unsigned_artifact.write_bytes(b"unsigned app")
+    signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
     write_manifest(result_dir)
 
     def forbidden_runner(command, cwd):
@@ -256,11 +311,13 @@ def test_execute_secure_boot_flash_stops_before_application_when_wolfboot_flash_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "run"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
+    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
     signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
-    wolfboot_artifact.write_bytes(b"wolfboot elf")
-    signed_artifact.write_bytes(b"signed application")
+    write_minimal_elf32(wolfboot_artifact)
+    unsigned_artifact.write_bytes(b"unsigned app")
+    signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
     write_manifest(result_dir)
     calls = []
 
@@ -289,11 +346,13 @@ def test_execute_secure_boot_flash_negative_test_flashes_corrupted_copy_without_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "2026-06-30_001_wolfboot_ecdsa_p256_uart"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
+    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
     signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
-    wolfboot_artifact.write_bytes(b"wolfboot elf")
-    signed_artifact.write_bytes(b"signed application")
+    write_minimal_elf32(wolfboot_artifact)
+    unsigned_artifact.write_bytes(b"unsigned app")
+    signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
     original_signed_bytes = signed_artifact.read_bytes()
     write_manifest(result_dir)
 

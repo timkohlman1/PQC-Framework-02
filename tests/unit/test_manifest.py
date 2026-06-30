@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,74 @@ def load_manifest_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def write_minimal_elf32(path: Path) -> None:
+    shstrtab = b"\x00.text\x00.data\x00.bss\x00.rodata\x00.shstrtab\x00"
+    name_offsets = {
+        ".text": shstrtab.index(b".text"),
+        ".data": shstrtab.index(b".data"),
+        ".bss": shstrtab.index(b".bss"),
+        ".rodata": shstrtab.index(b".rodata"),
+        ".shstrtab": shstrtab.index(b".shstrtab"),
+    }
+
+    text = b"T" * 11
+    data = b"D" * 7
+    rodata = b"R" * 3
+    header_size = 52
+    text_offset = header_size
+    data_offset = text_offset + len(text)
+    rodata_offset = data_offset + len(data)
+    shstrtab_offset = rodata_offset + len(rodata)
+    section_header_offset = shstrtab_offset + len(shstrtab)
+    section_header_size = 40
+
+    elf_ident = b"\x7fELF" + bytes([1, 1, 1]) + b"\x00" * 9
+    header = struct.pack(
+        "<16sHHIIIIIHHHHHH",
+        elf_ident,
+        2,
+        40,
+        1,
+        0,
+        0,
+        section_header_offset,
+        0,
+        header_size,
+        0,
+        0,
+        section_header_size,
+        6,
+        5,
+    )
+
+    def section_header(name: str, section_type: int, flags: int, offset: int, size: int) -> bytes:
+        return struct.pack(
+            "<IIIIIIIIII",
+            name_offsets.get(name, 0),
+            section_type,
+            flags,
+            0,
+            offset,
+            size,
+            0,
+            0,
+            4,
+            0,
+        )
+
+    section_headers = b"".join(
+        [
+            section_header("", 0, 0, 0, 0),
+            section_header(".text", 1, 0x6, text_offset, len(text)),
+            section_header(".data", 1, 0x3, data_offset, len(data)),
+            section_header(".bss", 8, 0x3, 0, 5),
+            section_header(".rodata", 1, 0x2, rodata_offset, len(rodata)),
+            section_header(".shstrtab", 3, 0, shstrtab_offset, len(shstrtab)),
+        ]
+    )
+    path.write_bytes(header + text + data + rodata + shstrtab + section_headers)
 
 
 def load_experiment_module():
@@ -367,3 +436,109 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         "Aggregate statistics require repeated-run samples; no repeated samples are available for this run."
         not in updated["limitations"]
     )
+
+
+def test_read_elf_alloc_section_metrics_reads_static_resource_sizes(tmp_path):
+    manifest = load_manifest_module()
+    elf_path = tmp_path / "wolfboot.elf"
+    write_minimal_elf32(elf_path)
+
+    metrics = manifest.read_elf_alloc_section_metrics(elf_path)
+
+    assert metrics["bootloader_text_bytes"] == 11
+    assert metrics["bootloader_data_bytes"] == 7
+    assert metrics["bootloader_bss_bytes"] == 5
+    assert metrics["bootloader_flash_bytes"] == 21
+    assert metrics["bootloader_static_ram_bytes"] == 12
+    assert metrics["static_ram_bytes"] == 12
+
+
+def test_build_secure_boot_benchmark_model_records_phase_11_3_static_metrics_and_overhead():
+    manifest = load_manifest_module()
+
+    benchmark = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+        wolfboot_artifact_path="tools/wolfboot/wolfboot.elf",
+        wolfboot_elf_size_bytes=1000,
+        retained_wolfboot_artifact_path="tools/wolfboot/wolfboot.elf",
+        retained_wolfboot_artifact_size_bytes=1000,
+        unsigned_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1.bin",
+        unsigned_application_size_bytes=500,
+        signed_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        signed_application_size_bytes=564,
+        bootloader_text_bytes=300,
+        bootloader_data_bytes=40,
+        bootloader_bss_bytes=80,
+        bootloader_flash_bytes=340,
+        bootloader_static_ram_bytes=120,
+        static_metrics_source="wolfboot_elf_section_headers",
+    )
+
+    assert benchmark["model_phase"] == "phase_11_3_static_build_resource_metrics"
+    assert benchmark["build_time_metrics"]["status"] == "available"
+    assert benchmark["build_time_metrics"]["bootloader_text_bytes"] == 300
+    assert benchmark["build_time_metrics"]["bootloader_data_bytes"] == 40
+    assert benchmark["build_time_metrics"]["bootloader_bss_bytes"] == 80
+    assert benchmark["build_time_metrics"]["bootloader_flash_bytes"] == 340
+    assert benchmark["build_time_metrics"]["bootloader_static_ram_bytes"] == 120
+    assert benchmark["build_time_metrics"]["static_ram_bytes"] == 120
+    signed_metrics = benchmark["signed_artifact_metrics"]
+    assert signed_metrics["status"] == "available"
+    assert signed_metrics["retained_wolfboot_artifact_size_bytes"] == 1000
+    assert signed_metrics["unsigned_application_size_bytes"] == 500
+    assert signed_metrics["signed_application_size_bytes"] == 564
+    assert signed_metrics["signed_image_overhead_bytes"] == 64
+    assert signed_metrics["signed_image_overhead_percent"] == 12.8
+    assert signed_metrics["unsigned_application_size_unavailable"] is None
+    assert signed_metrics["signed_image_overhead_unavailable"] is None
+    assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
+    assert benchmark["runtime_memory_metrics"]["max_stack_used_bytes"] is None
+
+
+def test_apply_repeated_run_samples_preserves_phase_11_3_static_metrics():
+    manifest = load_manifest_module()
+    base = manifest.build_secure_boot_benchmark_model(
+        experiment_id="wolfboot_ecdsa_p256_uart",
+        boot_mode="wolfboot_ecdsa_p256",
+        boot_crypto="ecdsa_p256",
+        signature_algorithm="ecdsa_p256",
+        signature_size_bytes=64,
+        wolfboot_artifact_path="tools/wolfboot/wolfboot.elf",
+        wolfboot_elf_size_bytes=1000,
+        unsigned_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1.bin",
+        unsigned_application_size_bytes=500,
+        signed_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        signed_application_size_bytes=564,
+        bootloader_text_bytes=300,
+        bootloader_data_bytes=40,
+        bootloader_bss_bytes=80,
+        bootloader_flash_bytes=340,
+        bootloader_static_ram_bytes=120,
+        static_metrics_source="wolfboot_elf_section_headers",
+    )
+    sample = manifest.build_secure_boot_benchmark_sample(
+        run_index=1,
+        timestamp="2026-06-30T00:00:00+10:00",
+        verification_time_ms=41,
+        verification_cycles=3253764,
+        verification_cpu_hz=80000000,
+        verification_result_code=0,
+        verification_time_source="uart_explicit_verification_time_marker",
+        verification_cycles_source="uart_explicit_verification_cycles_marker",
+        uart_marker_detection_result={"secure_boot_marker_present": True},
+        sample_verdict="passed",
+        referenced_artifact_identity={"wolfboot_sha256": "abc", "signed_application_sha256": "def"},
+    )
+
+    updated = manifest.apply_repeated_run_samples_to_benchmark_model(base, [sample])
+
+    assert updated["model_phase"] == "phase_11_3_static_build_resource_metrics"
+    assert updated["build_time_metrics"]["status"] == "available"
+    assert updated["build_time_metrics"]["bootloader_text_bytes"] == 300
+    assert updated["signed_artifact_metrics"]["unsigned_application_size_bytes"] == 500
+    assert updated["signed_artifact_metrics"]["signed_image_overhead_bytes"] == 64
+    assert updated["aggregate_statistics"]["sample_count"] == 1

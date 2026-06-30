@@ -878,3 +878,13 @@ The workflow records each sample in `secure_boot_benchmark.repeated_run_samples.
 
 Repeated-run support does not add signing-algorithm profiles or aggregation output files. It also does not infer timing from SSH duration, UART capture duration, reset delay, marker ordering, or any host-side elapsed time.
 
+## Phase 11.3 — Static Build and Resource Metrics
+
+Phase 11.3 extends `secure_boot_benchmark` with build-level metrics that can be collected from existing local artifacts. It does not add runtime stack or heap measurement.
+
+`secure_boot_benchmark.build_time_metrics` records the wolfBoot bootloader `.text`, `.data`, and `.bss` sizes, total flash-relevant size, and static RAM estimate. The flash-relevant size is derived from allocatable ELF sections that occupy bytes in the image. Static RAM is `.data + .bss`.
+
+`secure_boot_benchmark.signed_artifact_metrics` records wolfBoot ELF size, retained wolfBoot artifact size, unsigned application artifact size when configured and present, signed application size, signed-image overhead bytes, and signed-image overhead percentage. If the unsigned application artifact is absent, the metric remains explicit and unavailable instead of being inferred from the signed image.
+
+`secure_boot_benchmark.runtime_memory_metrics` remains unavailable until a later phase adds explicit firmware-side stack or heap evidence. Static RAM metrics are not treated as maximum stack usage or total runtime RAM pressure.
+

@@ -1810,6 +1810,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     prior_signed_artifact_metrics = prior_benchmark_evidence.get("signed_artifact_metrics", {})
     if not isinstance(prior_signed_artifact_metrics, dict):
         prior_signed_artifact_metrics = {}
+    prior_build_time_metrics = prior_benchmark_evidence.get("build_time_metrics", {})
+    if not isinstance(prior_build_time_metrics, dict):
+        prior_build_time_metrics = {}
     benchmark_evidence = build_secure_boot_benchmark_model(
         experiment_id=str(bundle["experiment"]["id"]),
         boot_mode=str(bundle.get("boot", {}).get("mode", bundle["experiment"].get("firmware", {}).get("mode", "unknown"))),
@@ -1820,9 +1823,21 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         wolfboot_artifact_path=wolfboot_evidence.get("artifact_path"),
         wolfboot_sha256=wolfboot_evidence.get("sha256"),
         wolfboot_elf_size_bytes=prior_signed_artifact_metrics.get("wolfboot_elf_size_bytes"),
+        retained_wolfboot_artifact_path=prior_signed_artifact_metrics.get("retained_wolfboot_artifact_path"),
+        retained_wolfboot_artifact_size_bytes=prior_signed_artifact_metrics.get("retained_wolfboot_artifact_size_bytes"),
         signed_application_artifact_path=signed_application_evidence.get("artifact_path"),
         signed_application_sha256=signed_application_evidence.get("sha256"),
         signed_application_size_bytes=prior_signed_artifact_metrics.get("signed_application_size_bytes"),
+        unsigned_application_artifact_path=prior_signed_artifact_metrics.get("unsigned_application_artifact_path"),
+        unsigned_application_sha256=prior_signed_artifact_metrics.get("unsigned_application_sha256"),
+        unsigned_application_size_bytes=prior_signed_artifact_metrics.get("unsigned_application_size_bytes"),
+        bootloader_text_bytes=prior_build_time_metrics.get("bootloader_text_bytes"),
+        bootloader_data_bytes=prior_build_time_metrics.get("bootloader_data_bytes"),
+        bootloader_bss_bytes=prior_build_time_metrics.get("bootloader_bss_bytes"),
+        bootloader_flash_bytes=prior_build_time_metrics.get("bootloader_flash_bytes"),
+        bootloader_static_ram_bytes=prior_build_time_metrics.get("bootloader_static_ram_bytes"),
+        static_metrics_source=prior_build_time_metrics.get("source", "unavailable"),
+        static_metrics_limitations=prior_build_time_metrics.get("limitations"),
         verification_time_ms=verification_time_ms,
         verification_cycles=verification_cycles,
         verification_cpu_hz=verification_cpu_hz,

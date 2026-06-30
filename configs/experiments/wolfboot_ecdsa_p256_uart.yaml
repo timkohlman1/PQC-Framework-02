@@ -12,13 +12,14 @@ uart:
   expected_tick_message: tick
   expected_secure_boot_message: stm32-basic_hal1 secure-boot app v0.1.0
 secure_boot_flash:
-  evidence_phase: phase_11_1_benchmark_result_model
+  evidence_phase: phase_11_3_static_build_resource_metrics
   signature_algorithm: ecdsa_p256
   signature_size_bytes: 64
   image_version: 1
   wolfboot_artifact: tools/wolfboot/wolfboot.elf
   wolfboot_offset: 0x08000000
   wolfboot_pass_offset_to_helper: false
+  unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1.bin
   signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
   signed_application_offset: 0x08020000
   signed_application_pass_offset_to_helper: true
@@ -28,4 +29,4 @@ secure_boot_flash:
   boot_timing_unavailable_behavior: record_null_verification_time_ms
   corruption_method: flip_first_byte
   corrupted_application_artifact: corrupted_application_signed.bin
-  notes: Phase 10i requires the secure-boot application UART marker in addition to the normal boot and tick markers. Phase 10j can be run with --negative-corrupt-application to flash a result-local corrupted copy of the signed image without modifying the original signed image or private signing key. Phase 10k records verification_time_ms only when an explicit wolfBoot verification-time UART line is captured; otherwise the manifest records null timing with the unavailable source and limitations. Phase 10l records consolidated secure_boot_evidence linking flash, signing, UART, timing, result, and negative-test evidence. Phase 11.1 adds the secure_boot_benchmark result schema as a stable evidence model with explicit unavailable placeholders for later static-resource, runtime-memory, repeated-run, and aggregate metrics.
+  notes: Phase 10i requires the secure-boot application UART marker in addition to the normal boot and tick markers. Phase 10j can be run with --negative-corrupt-application to flash a result-local corrupted copy of the signed image without modifying the original signed image or private signing key. Phase 10k records verification_time_ms only when an explicit wolfBoot verification-time UART line is captured; otherwise the manifest records null timing with the unavailable source and limitations. Phase 10l records consolidated secure_boot_evidence linking flash, signing, UART, timing, result, and negative-test evidence. Phase 11.3 records static wolfBoot section/resource metrics and signed-image overhead where artifacts are available, while runtime stack and heap metrics remain unavailable until explicit firmware-side evidence is added.

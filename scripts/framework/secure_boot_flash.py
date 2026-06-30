@@ -19,7 +19,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
-from framework.manifest import build_secure_boot_benchmark_model, read_manifest, update_manifest
+from framework.manifest import build_secure_boot_benchmark_model, read_elf_alloc_section_metrics, read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE = 40
@@ -277,6 +277,33 @@ def _artifact_result_to_manifest(result: SecureBootFlashArtifactResult) -> dict[
 
 def _artifact_size_bytes(path: Path) -> int | None:
     return path.stat().st_size if path.is_file() else None
+
+
+def _optional_secure_boot_artifact_path(
+    *,
+    repo_root: Path,
+    secure_boot_config: dict[str, Any],
+    key: str,
+) -> Path | None:
+    configured = secure_boot_config.get(key)
+    if configured in (None, ""):
+        return None
+    return repo_root / str(configured)
+
+
+def _artifact_sha256(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    return calculate_file_sha256(path)
+
+
+def _static_resource_metrics_for_wolfboot(wolfboot_path: Path) -> tuple[dict[str, Any], list[str]]:
+    if not wolfboot_path.is_file():
+        return {}, [f"wolfBoot ELF artifact is not available for static section-size analysis: {wolfboot_path}"]
+    try:
+        return read_elf_alloc_section_metrics(wolfboot_path), []
+    except (OSError, ValueError) as exc:
+        return {}, [f"wolfBoot ELF static section-size analysis unavailable: {exc}"]
 
 
 def _write_secure_boot_flash_log(
@@ -584,6 +611,12 @@ def execute_secure_boot_flash(
     signature_size = boot_signature["signature_size"]
     flash_result_status = "secure_boot_flash_passed" if return_code == 0 else "secure_boot_flash_failed"
     boot_mode = str(bundle.get("boot", {}).get("mode", experiment.get("firmware", {}).get("mode", "unknown")))
+    unsigned_application_path = _optional_secure_boot_artifact_path(
+        repo_root=repo_root_path,
+        secure_boot_config=secure_boot_config,
+        key="unsigned_application_artifact",
+    )
+    static_resource_metrics, static_resource_limitations = _static_resource_metrics_for_wolfboot(wolfboot.artifact_path)
     benchmark_evidence = build_secure_boot_benchmark_model(
         experiment_id=str(experiment["id"]),
         boot_mode=boot_mode,
@@ -594,9 +627,21 @@ def execute_secure_boot_flash(
         wolfboot_artifact_path=str(wolfboot.artifact_path),
         wolfboot_sha256=wolfboot.artifact_sha256,
         wolfboot_elf_size_bytes=_artifact_size_bytes(wolfboot.artifact_path),
+        retained_wolfboot_artifact_path=str(wolfboot.artifact_path),
+        retained_wolfboot_artifact_size_bytes=_artifact_size_bytes(wolfboot.artifact_path),
         signed_application_artifact_path=str(signed_application.artifact_path),
         signed_application_sha256=signed_application.artifact_sha256,
         signed_application_size_bytes=_artifact_size_bytes(signed_application.artifact_path),
+        unsigned_application_artifact_path=None if unsigned_application_path is None else str(unsigned_application_path),
+        unsigned_application_sha256=_artifact_sha256(unsigned_application_path),
+        unsigned_application_size_bytes=_artifact_size_bytes(unsigned_application_path) if unsigned_application_path is not None else None,
+        bootloader_text_bytes=static_resource_metrics.get("bootloader_text_bytes"),
+        bootloader_data_bytes=static_resource_metrics.get("bootloader_data_bytes"),
+        bootloader_bss_bytes=static_resource_metrics.get("bootloader_bss_bytes"),
+        bootloader_flash_bytes=static_resource_metrics.get("bootloader_flash_bytes"),
+        bootloader_static_ram_bytes=static_resource_metrics.get("bootloader_static_ram_bytes"),
+        static_metrics_source="wolfboot_elf_section_headers" if static_resource_metrics else "unavailable",
+        static_metrics_limitations=static_resource_limitations,
         verification_time_source="unavailable",
         verification_cycles_source="unavailable",
         runtime_measurement_method="UART capture has not run at the secure-boot flash stage.",

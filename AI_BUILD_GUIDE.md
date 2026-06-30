@@ -1160,6 +1160,7 @@ Current framework skeleton completed items:
 54. Add Phase 10l secure-boot manifest and documentation consolidation. Secure-boot run manifests now record the required consolidated fields `boot_mode`, `boot_crypto`, `signature_size`, `boot_signature.signature_size`, `boot_signature.signature_size_bytes`, and `boot_timing.verification_time_ms`. They also record `secure_boot_evidence` to link wolfBoot build-artifact evidence, signed-application evidence, flash evidence, UART marker evidence, timing evidence, final result, and negative-test evidence in one object. The signing manifest also records `signing.signature_size` alongside `signing.signature_size_bytes`.
 55. Add Phase 11.1 secure-boot benchmark result model. Secure-boot run manifests now record `secure_boot_benchmark` as a schema-first evidence object that distinguishes build-time metrics, signed-artifact metrics, runtime verification metrics, runtime memory metrics, repeated-run samples, aggregate statistics, and limitations. Existing secure-boot timing fields remain compatible. Metrics not implemented until later Phase 11 steps are recorded explicitly as unavailable rather than omitted. Phase 11.1 does not add new signing profiles, repeated-run execution, aggregation commands, or runtime stack/heap instrumentation.
 56. Add Phase 11.2 repeated-run measurement support. The secure-boot flash workflow supports `--repeat-count <N>` for repeated post-flash reset/UART verification samples of the same profile. Each sample records run index, timestamp, explicit timing/cycle/CPU/result-code evidence, UART marker verdict, pass/fail sample verdict, and referenced wolfBoot/signed-application artifact identity. Aggregates record sample count, valid sample count, failed sample count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation for verification time and cycles. Median values are the primary headline metrics. The CLI summary prints the aggregate counts and timing/cycle statistics at the end of the repeated-run workflow. Phase 11.2 does not add new signing profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output.
+57. Add Phase 11.3 static build and resource metrics. Secure-boot benchmark manifests now record wolfBoot ELF section/resource metrics when the configured ELF is available, including `.text`, `.data`, `.bss`, flash-relevant size, and static RAM estimate. They also record wolfBoot ELF size, retained wolfBoot artifact size, unsigned application size when configured and present, signed application size, signed-image overhead bytes, and signed-image overhead percentage. Runtime stack and heap metrics remain explicitly unavailable because Phase 11.3 does not add firmware-side runtime memory instrumentation.
 Current CLI commands are:
 
 ```powershell
@@ -1548,6 +1549,36 @@ python -m pytest
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When hardware is intentionally available, repeated secure-boot runs record one sample per reset/UART capture and aggregate only valid explicit timing/cycle samples. Hardware success and timing values must still only be claimed from user-provided logs.
+
+## Phase 11.3 Static Build and Resource Metrics
+
+Implemented scope:
+
+- Secure-boot benchmark manifests now populate `secure_boot_benchmark.build_time_metrics` for the configured wolfBoot ELF when the artifact exists and has readable ELF section headers.
+- The recorded static metrics include `bootloader_text_bytes`, `bootloader_data_bytes`, `bootloader_bss_bytes`, `bootloader_flash_bytes`, `bootloader_static_ram_bytes`, and `static_ram_bytes`.
+- `bootloader_flash_bytes` is calculated from allocatable ELF sections that occupy bytes in the image. `.bss` contributes to static RAM but not flash bytes.
+- `bootloader_static_ram_bytes` and `static_ram_bytes` are calculated as `.data + .bss`.
+- Secure-boot benchmark manifests now populate `secure_boot_benchmark.signed_artifact_metrics` with wolfBoot ELF size, retained wolfBoot artifact size, unsigned application size when the configured unsigned artifact exists, signed application size, signed-image overhead bytes, and signed-image overhead percentage.
+- `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` records the unsigned relocated application artifact path so overhead can be calculated when `build/RelocatedDebug/stm32_basic_hal1.bin` exists.
+- Missing or unreadable static metrics remain explicit and unavailable with a limitation note rather than being inferred.
+- Runtime stack and heap metrics remain explicitly unavailable because Phase 11.3 does not add firmware-side runtime memory instrumentation.
+- Phase 11.3 does not add new signing profiles, runtime stack/heap instrumentation, or cross-profile aggregation output.
+
+Manual Phase 11.3 command:
+
+```powershell
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.3 verification commands:
+
+```powershell
+python -m pytest tests/unit/test_manifest.py tests/unit/test_secure_boot_flash.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. When the configured wolfBoot ELF, unsigned application BIN, and signed application BIN exist, secure-boot benchmark manifests record static build/resource metrics and signed-image overhead. Hardware success, timing values, and runtime memory values must still only be claimed from explicit evidence.
 
 ## 13. Common Manual Commands
 

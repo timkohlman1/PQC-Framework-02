@@ -605,3 +605,20 @@ Aggregate statistics are recorded under `secure_boot_benchmark.aggregate_statist
 
 Phase 11.2 still does not add new classical signing-algorithm profiles, static build/resource metrics, runtime stack/heap instrumentation, or cross-profile aggregation output. Verification timing is still taken only from explicit firmware/UART markers. Host-side SSH duration, UART capture duration, reset delay, and marker ordering are not used as timing evidence.
 
+## Phase 11.3 — Static Build and Resource Metrics
+
+Phase 11.3 populates static build/resource evidence for the existing secure-boot benchmark profile without adding target-side runtime memory instrumentation. The secure-boot workflow records wolfBoot ELF section metrics from the local ELF section table when the configured wolfBoot artifact is available:
+
+```text
+secure_boot_benchmark.build_time_metrics.bootloader_text_bytes
+secure_boot_benchmark.build_time_metrics.bootloader_data_bytes
+secure_boot_benchmark.build_time_metrics.bootloader_bss_bytes
+secure_boot_benchmark.build_time_metrics.bootloader_flash_bytes
+secure_boot_benchmark.build_time_metrics.bootloader_static_ram_bytes
+secure_boot_benchmark.build_time_metrics.static_ram_bytes
+```
+
+The flash-relevant bootloader size is calculated from allocatable ELF sections that occupy bytes in the image. Static RAM is calculated as `.data + .bss`. The signed-artifact metrics record the wolfBoot ELF file size, retained wolfBoot artifact size, unsigned application size when the configured unsigned application artifact exists, signed application size, signed-image overhead bytes, and signed-image overhead percentage.
+
+Runtime stack and heap metrics remain explicitly unavailable in Phase 11.3. The framework does not infer runtime memory use from ELF sections, host timing, UART capture duration, reset delay, or build output.
+

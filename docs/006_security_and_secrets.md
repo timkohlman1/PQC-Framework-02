@@ -145,3 +145,9 @@ A consolidated manifest is not sufficient by itself to claim hardware success. S
 The Phase 11.1 benchmark result model records artifact paths, hashes, sizes when available, runtime verification evidence, unavailable-metric reasons, and future repeated-run or aggregate placeholders. It must not copy private signing keys, private certificates, passwords, SSH private keys, or other local credentials into result manifests or replacement artifacts.
 
 Private wolfBoot signing keys remain local under ignored paths such as `secrets/wolfboot/`. Benchmark manifests may identify the signing algorithm and signature size, but they must not embed private key material.
+
+## Phase 11.3 Static Metrics and Secret Handling
+
+Phase 11.3 records static build/resource metrics from local wolfBoot and application artifacts only. It must not copy private signing keys, private certificates, credentials, or other secret material into result directories. The unsigned and signed application size metrics are file-size evidence only; they do not require exposing or retaining signing keys.
+
+Runtime stack and heap metrics remain unavailable unless a later phase adds explicit firmware-side measurement evidence. Host-side timing, UART capture duration, reset delay, build logs, and ELF section sizes must not be used to claim runtime stack or heap usage.
