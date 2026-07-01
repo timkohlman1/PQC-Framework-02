@@ -409,3 +409,14 @@ def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm(
     profile["build"]["signing_key"] = "secrets/wolfboot/ecc384_private_key.der"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
+
+
+def test_validate_wolfboot_build_profile_accepts_mldsa44():
+    wolfboot_build = load_wolfboot_build_module()
+    profile = sample_profile()
+    profile["id"] = "wolfboot_stm32l4_mldsa44"
+    profile["signature_algorithm"] = "mldsa44"
+    profile["boot_profile"] = "wolfboot_mldsa44"
+    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_mldsa44.config"
+
+    wolfboot_build.validate_wolfboot_build_profile(profile)

@@ -336,6 +336,8 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
 
     minimum_required = ["ED25519", "ECC256", "RSA2048"]
     expanded_required = ["ECC384", "ECC521", "ED448", "RSA3072", "RSA4096"]
+    mldsa_supported = ["ML-DSA-44", "ML-DSA-65"]
+    mldsa_unavailable = ["ML-DSA-87"]
     algorithm_to_status_field = {
         "ED25519": "ed25519_status",
         "RSA2048": "rsa2048_status",
@@ -344,9 +346,13 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "ED448": "ed448_status",
         "RSA3072": "rsa3072_status",
         "RSA4096": "rsa4096_status",
+        "ML-DSA-44": "mldsa44_status",
+        "ML-DSA-65": "mldsa65_status",
+        "ML-DSA-87": "mldsa87_status",
     }
 
     implemented_algorithms = [*minimum_required, *expanded_required]
+    implemented_mldsa_algorithms = mldsa_supported
 
     planned_non_runnable_algorithms: list[str] = []
 
@@ -359,7 +365,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "scope_limitations": str(
             profile.get(
                 "scope_limitations",
-                "Phase 11.5d adds optional expanded classical profiles while cross-profile aggregation remains Phase 11.6 scope.",
+                "Phase 11.5d adds optional expanded classical profiles; ML-DSA profiles are tracked separately as post-quantum secure-boot profiles.",
             )
         ),
     }
@@ -368,15 +374,35 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "status": str(profile.get("expanded_scope_status", "phase_11_5d_expanded_classical_scope")),
         "optional_algorithms": expanded_required,
         "active_algorithm": algorithm if algorithm in expanded_required else None,
-        "cross_profile_aggregation_status": "phase_11_6_out_of_scope",
+        "cross_profile_aggregation_status": "phase_11_6_available",
+    }
+
+    mldsa_scope = {
+        "status": str(profile.get("mldsa_scope_status", "post_phase_11_mldsa_profiles")),
+        "supported_algorithms": mldsa_supported,
+        "unavailable_algorithms": mldsa_unavailable,
+        "active_algorithm": algorithm if algorithm in [*mldsa_supported, *mldsa_unavailable] else None,
+        "image_header_size_bytes": profile.get("image_header_size_bytes"),
+        "scope_limitations": str(
+            profile.get(
+                "mldsa_scope_limitations",
+                "ML-DSA-44 and ML-DSA-65 fit the current 8192-byte image-header reserve. ML-DSA-87 is not configured because wolfBoot's ML-DSA example requires a 12288-byte header for that signature size.",
+            )
+        ),
     }
 
     capability_status: dict[str, dict[str, Any]] = {}
-    for candidate in ["ED25519", "RSA2048", *expanded_required]:
-        key = candidate.lower()
-        candidate_runnable = candidate in implemented_algorithms or (runnable and algorithm == candidate)
+    for candidate in ["ED25519", "RSA2048", *expanded_required, *mldsa_supported, *mldsa_unavailable]:
+        key = candidate.lower().replace("-", "").replace("_", "")
+        candidate_runnable = candidate in implemented_algorithms or candidate in implemented_mldsa_algorithms or (runnable and algorithm == candidate)
+        if candidate in mldsa_unavailable:
+            candidate_runnable = False
         default_status = (
-            "configured_phase_11_5d_expanded_classical_profile_not_hardware_validated"
+            "configured_post_phase_11_mldsa_profile_not_hardware_validated"
+            if candidate in mldsa_supported and candidate_runnable
+            else "unsupported_current_8192_byte_header_layout"
+            if candidate in mldsa_unavailable
+            else "configured_phase_11_5d_expanded_classical_profile_not_hardware_validated"
             if candidate in expanded_required and candidate_runnable
             else "configured_runnable_profile_not_hardware_validated"
             if candidate_runnable
@@ -390,22 +416,32 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
             else {
                 "status": "unavailable",
                 "source": "profile_model",
-                "reason": f"{candidate} is not the active configured benchmark profile for this experiment.",
+                "reason": "ML-DSA-87 requires an image header larger than the current 8192-byte reserve."
+                if candidate in mldsa_unavailable
+                else f"{candidate} is not the active configured benchmark profile for this experiment.",
             },
         }
 
-    if algorithm in expanded_required and runnable:
+    if algorithm in mldsa_supported and runnable:
+        model_phase = "post_phase_11_mldsa_profiles"
+        benchmark_scope = "secure_boot_mldsa_signing_algorithm"
+    elif algorithm in expanded_required and runnable:
         model_phase = "phase_11_5d_expanded_classical_profiles"
+        benchmark_scope = "secure_boot_classical_signing_algorithm"
     elif algorithm == "RSA2048" and runnable:
         model_phase = "phase_11_5c_rsa2048_profile"
+        benchmark_scope = "secure_boot_classical_signing_algorithm"
     elif algorithm == "ED25519" and runnable:
         model_phase = "phase_11_5b_ed25519_profile"
+        benchmark_scope = "secure_boot_classical_signing_algorithm"
     else:
         model_phase = "phase_11_5a_classical_profile_model"
+        benchmark_scope = "secure_boot_classical_signing_algorithm"
 
     return {
         "schema_version": int(profile.get("schema_version", 1)),
         "model_phase": model_phase,
+        "benchmark_scope": benchmark_scope,
         "profile_model": str(profile.get("profile_model", "configs/benchmarks/classical_signing_profiles.yaml")),
         "profile_id": str(profile.get("profile_id", experiment.get("id", "unknown"))),
         "algorithm": algorithm,
@@ -413,6 +449,8 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "signature_algorithm": str(profile.get("signature_algorithm", experiment.get("boot_crypto", "ecdsa_p256"))),
         "curve": profile.get("curve"),
         "key_size_bits": profile.get("key_size_bits"),
+        "security_category": profile.get("security_category"),
+        "mldsa_level": profile.get("mldsa_level"),
         "signature_size_bytes": profile.get("signature_size_bytes"),
         "image_version": profile.get("image_version"),
         "signing_profile": profile.get("signing_profile"),
@@ -432,6 +470,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         },
         "minimum_comparison_scope": minimum_scope,
         "expanded_classical_scope": expanded_scope,
+        "mldsa_scope": mldsa_scope,
         "capability_status": capability_status,
     }
 

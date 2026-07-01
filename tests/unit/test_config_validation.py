@@ -504,13 +504,16 @@ def test_validate_application_signing_profile_rejects_unsupported_algorithm():
         "description": "Invalid signing profile.",
         "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
         "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
-        "signature_algorithm": "mldsa44",
+        "signature_algorithm": "sphincsplus",
         "image_version": 1,
-        "private_key": "secrets/wolfboot/mldsa44_private_key.der",
+        "private_key": "secrets/wolfboot/sphincsplus_private_key.der",
         "sign": {"command": "tools/wolfboot/tools/keytools/sign"},
     }
 
-    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096"):
+    with pytest.raises(
+        experiment_cli.ConfigError,
+        match="ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65",
+    ):
         experiment_cli.validate_application_signing_profile_config(config)
 
 
@@ -632,3 +635,45 @@ def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm(
     }
 
     experiment_cli.validate_wolfboot_build_profile_config(config)
+
+
+def test_validate_wolfboot_build_profile_accepts_mldsa_header_fit_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_stm32l4_mldsa65",
+        "description": "ML-DSA-65 build profile.",
+        "source_dir": "tools/wolfboot",
+        "output_dir": "tools/wolfboot",
+        "artifact": "tools/wolfboot/wolfboot.elf",
+        "target": "stm32l4r5_project_local",
+        "signature_algorithm": "mldsa65",
+        "boot_profile": "wolfboot_mldsa65",
+        "build": {
+            "command": "make",
+            "config_template": "configs/wolfboot/stm32l4r5_mldsa65.config",
+            "generated_config": "tools/wolfboot/.config",
+        },
+    }
+
+    experiment_cli.validate_wolfboot_build_profile_config(config)
+
+
+def test_validate_application_signing_profile_accepts_mldsa_header_fit_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_mldsa65_app",
+        "description": "ML-DSA-65 signing profile.",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+        "signature_algorithm": "mldsa65",
+        "private_key": "secrets/wolfboot/mldsa65_private_key.der",
+        "image_version": 1,
+        "sign": {
+            "command": "tools/keytools/sign",
+            "args": "--ml_dsa {input_image} {private_key} {image_version}",
+        },
+    }
+
+    experiment_cli.validate_application_signing_profile_config(config)

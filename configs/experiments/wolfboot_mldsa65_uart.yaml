@@ -1,0 +1,67 @@
+id: wolfboot_mldsa65_uart
+description: Flash wolfBoot and the signed ML-DSA-65 application image, then capture UART benchmark evidence.
+board: board_a
+host: gateway
+boot: wolfboot_mldsa65
+boot_crypto: mldsa65
+firmware:
+  mode: wolfboot_mldsa65
+  artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin
+uart:
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_message: tick
+  expected_secure_boot_message: stm32-basic_hal1 secure-boot app v0.1.0
+secure_boot_benchmark_profile:
+  schema_version: 1
+  profile_model: configs/benchmarks/classical_signing_profiles.yaml
+  profile_id: mldsa65_benchmark
+  algorithm: ML-DSA-65
+  wolfboot_sign: ML_DSA
+  signature_algorithm: mldsa65
+  mldsa_level: 3
+  security_category: 3
+  public_key_size_bytes: 1952
+  private_key_size_bytes: 4032
+  signature_size_bytes: 3309
+  image_version: 1
+  image_header_size_bytes: 8192
+  runnable: true
+  status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+  signing_profile: configs/signing/wolfboot_mldsa65_app.yaml
+  wolfboot_build_profile: configs/builds/wolfboot_stm32l4_mldsa65.yaml
+  experiment_profile: configs/experiments/wolfboot_mldsa65_uart.yaml
+  boot_profile: configs/boot/wolfboot_mldsa65.yaml
+  mldsa_scope_status: post_phase_11_mldsa_profiles
+  mldsa44_status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+  mldsa65_status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+  mldsa87_status: unsupported_current_8192_byte_header_layout
+  application_payload: same_relocated_hal_application_payload
+  board: board_a
+  cpu_hz: 80000000
+  measurement_method: uart_explicit_wolfboot_mailbox_markers
+  repeated_run_model: phase_11_2_repeat_count_samples
+  static_metrics_model: phase_11_3_elf_and_artifact_metrics
+  runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+  mldsa_scope_limitations: ML-DSA-44 and ML-DSA-65 are configured because wolfBoot's ML-DSA examples use the current 8192-byte image-header reserve for those signature sizes. ML-DSA-87 is not configured because the example requires IMAGE_HEADER_SIZE=12288.
+secure_boot_flash:
+  evidence_phase: post_phase_11_mldsa_benchmark_profile
+  signature_algorithm: mldsa65
+  signature_size_bytes: 3309
+  image_version: 1
+  image_header_size_bytes: 8192
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 0x08000000
+  wolfboot_pass_offset_to_helper: false
+  unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin
+  signed_application_offset: 0x08020000
+  signed_application_pass_offset_to_helper: true
+  signing_private_key: secrets/wolfboot/mldsa65_private_key.der
+  wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
+  negative_test_corrupt_application: false
+  boot_timing_source: uart_explicit_verification_time_marker
+  boot_timing_expected_uart_pattern: "wolfBoot verification time: <milliseconds> ms"
+  boot_timing_unavailable_behavior: record_null_verification_time_ms
+  corruption_method: flip_first_byte
+  corrupted_application_artifact: corrupted_application_signed.bin
+  notes: This ML-DSA secure-boot benchmark profile uses the same relocated application payload, 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the classical profiles. Hardware success must only be claimed from user-provided flash and UART logs.

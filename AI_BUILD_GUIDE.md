@@ -8,7 +8,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 ## 2. Project Purpose
 
-This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
+This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
 Longer-term areas remain planned unless implemented by later phases: wolfSSL MQTT/TLS experiments, PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
@@ -32,13 +32,15 @@ Implemented framework scope as of Phase 11.7:
 - explicit direct-flash boot config under `configs/boot/direct_flash.yaml`
 - relocated HAL application build preset `RelocatedDebug`
 - wolfBoot build profiles using the local submodule at `tools/wolfboot`
-- application-signing profiles for classical wolfBoot algorithms
+- application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
 - secure-boot two-artifact flash workflow with positive UART evidence
 - corrupted-application negative secure-boot test workflow
 - secure-boot timing, cycle, result-code, and stack high-water evidence from explicit firmware/UART markers
 - repeated secure-boot measurement samples and aggregate statistics
 - static wolfBoot ELF/resource metrics and signed-artifact overhead metrics
 - classical signing benchmark profiles: ECC256, ED25519, RSA2048, ECC384, ECC521, ED448, RSA3072, RSA4096
+- ML-DSA secure-boot signing benchmark profiles: ML-DSA-44 and ML-DSA-65
+- ML-DSA-87 is recorded as unavailable under the current 8192-byte image-header reserve
 - read-only benchmark aggregation output to JSON and CSV
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 
@@ -47,7 +49,7 @@ Important status constraints:
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- MQTT, TLS, PQC/hybrid profiles, and network impairment are not implemented.
+- MQTT, TLS, hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -233,6 +235,8 @@ ed448
 rsa2048
 rsa3072
 rsa4096
+mldsa44
+mldsa65
 ```
 
 ECC256 uses the historical file stem `wolfboot_stm32l4_ecdsa_p256.yaml` and signing stem `wolfboot_ecdsa_p256_app.yaml`; benchmark metadata identifies it as `ECC256` / `ecc256_reference`.
@@ -270,6 +274,16 @@ The aggregation command is read-only with respect to benchmark evidence. It scan
 - `aggregate-benchmarks`: reads existing secure-boot manifests and writes JSON/CSV summaries; no build, signing, flashing, SSH, UART, or hardware access.
 
 ## 8. Secure-Boot Benchmark Profiles
+
+Post-Phase 11 ML-DSA scope:
+
+```text
+ML-DSA-44 configs/experiments/wolfboot_mldsa44_uart.yaml
+ML-DSA-65 configs/experiments/wolfboot_mldsa65_uart.yaml
+ML-DSA-87 unavailable under the current 8192-byte image-header reserve
+```
+
+ML-DSA-44 and ML-DSA-65 use wolfBoot `SIGN=ML_DSA`, the same board, relocated HAL payload, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as the classical profiles. ML-DSA-87 is not configured because wolfBoot's ML-DSA example requires `IMAGE_HEADER_SIZE=12288` for that variant.
 
 Minimum classical comparison scope:
 

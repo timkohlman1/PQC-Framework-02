@@ -150,9 +150,9 @@ def validate_application_signing_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}:
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
         raise ApplicationSigningProfileError(
-            "application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096"
+            "application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65"
         )
 
     sign_config = profile.get("sign")

@@ -11,11 +11,11 @@ The repository currently contains:
 - first-class build records and source/build fingerprinting
 - a relocated HAL application build for wolfBoot launch
 - wolfBoot build profiles using the local `tools/wolfboot` submodule
-- application-signing profiles for classical wolfBoot algorithms
+- application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 
-Not implemented yet: MQTT, TLS, PQC/hybrid algorithm profiles, network-degradation automation, and production release packaging.
+Not implemented yet: MQTT, TLS, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -102,9 +102,11 @@ ed448
 rsa2048
 rsa3072
 rsa4096
+mldsa44    # ML-DSA-44, wolfBoot SIGN=ML_DSA level 2
+mldsa65    # ML-DSA-65, wolfBoot SIGN=ML_DSA level 3
 ```
 
-The ECC256 reference uses historical file names containing `ecdsa_p256`, while benchmark metadata identifies the algorithm as `ECC256`.
+The ECC256 reference uses historical file names containing `ecdsa_p256`, while benchmark metadata identifies the algorithm as `ECC256`. ML-DSA-44 and ML-DSA-65 keep the existing 8192-byte image-header reserve. ML-DSA-87 is not configured because wolfBoot's ML-DSA example requires a 12288-byte header for that variant.
 
 Diagnostic secure-boot commands:
 

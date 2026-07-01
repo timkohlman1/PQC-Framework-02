@@ -626,3 +626,45 @@ def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable(
     assert metadata["capability_status"]["rsa4096"]["runnable"] is True
     assert metadata["capability_status"]["rsa4096"]["unavailable"] is None
     assert metadata["expanded_classical_scope"]["active_algorithm"] == "RSA4096"
+
+
+def test_classical_profile_metadata_marks_mldsa65_runnable_and_mldsa87_unavailable():
+    secure_flash = load_secure_boot_flash_module()
+    bundle = sample_bundle()
+    experiment = bundle["experiment"]
+    experiment["id"] = "wolfboot_mldsa65_uart"
+    experiment["boot"] = "wolfboot_mldsa65"
+    experiment["boot_crypto"] = "mldsa65"
+    experiment["firmware"]["mode"] = "wolfboot_mldsa65"
+    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
+    experiment["secure_boot_benchmark_profile"].update(
+        {
+            "profile_id": "mldsa65_benchmark",
+            "algorithm": "ML-DSA-65",
+            "wolfboot_sign": "ML_DSA",
+            "signature_algorithm": "mldsa65",
+            "mldsa_level": 3,
+            "security_category": 3,
+            "signature_size_bytes": 3309,
+            "status": "configured_post_phase_11_mldsa_profile_not_hardware_validated",
+            "signing_profile": "configs/signing/wolfboot_mldsa65_app.yaml",
+            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_mldsa65.yaml",
+            "experiment_profile": "configs/experiments/wolfboot_mldsa65_uart.yaml",
+            "boot_profile": "configs/boot/wolfboot_mldsa65.yaml",
+        }
+    )
+
+    metadata = secure_flash._classical_profile_metadata(experiment)
+
+    assert metadata["model_phase"] == "post_phase_11_mldsa_profiles"
+    assert metadata["benchmark_scope"] == "secure_boot_mldsa_signing_algorithm"
+    assert metadata["algorithm"] == "ML-DSA-65"
+    assert metadata["signature_algorithm"] == "mldsa65"
+    assert metadata["mldsa_level"] == 3
+    assert metadata["security_category"] == 3
+    assert metadata["signature_size_bytes"] == 3309
+    assert metadata["capability_status"]["mldsa65"]["runnable"] is True
+    assert metadata["capability_status"]["mldsa65"]["unavailable"] is None
+    assert metadata["capability_status"]["mldsa87"]["runnable"] is False
+    assert metadata["capability_status"]["mldsa87"]["unavailable"]["status"] == "unavailable"
+    assert metadata["mldsa_scope"]["active_algorithm"] == "ML-DSA-65"

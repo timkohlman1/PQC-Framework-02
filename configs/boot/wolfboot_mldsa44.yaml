@@ -1,0 +1,99 @@
+id: wolfboot_mldsa44
+mode: wolfboot_mldsa44
+description: Planned wolfBoot ML-DSA-44 secure-boot profile. Generic direct-flash execution remains blocked; Phase 10h provides an explicit two-artifact flash workflow.
+runnable: false
+status: phase_10l_secure_boot_manifest_and_documentation_consolidated
+implementation_state: positive_negative_timing_and_consolidated_manifest_evidence_defined
+intended_signature_algorithm: mldsa44
+mldsa_benchmark_profile:
+  model: configs/benchmarks/classical_signing_profiles.yaml
+  profile_id: mldsa44_benchmark
+  algorithm: ML-DSA-44
+  current_header_fit: true
+  reference_path: false
+application_slot_concept: planned_signed_application_primary_slot
+flash_layout_status: defined_phase_10d_used_by_phase_10h_flash_workflow
+secure_boot_layout:
+  status: planned_layout_used_by_phase_10h_flash_workflow
+  decision_record: docs/decisions/0003_secure_boot_flash_layout.md
+  internal_flash_base: 0x08000000
+  internal_flash_size: 0x00200000
+  internal_flash_end: 0x081FFFFF
+  wolfboot_base: 0x08000000
+  wolfboot_size: 0x00020000
+  primary_slot_base: 0x08020000
+  primary_slot_size: 0x000E0000
+  primary_slot_entry: 0x08022000
+  image_header_size: 0x00002000
+  update_slot_base: 0x08100000
+  update_slot_size: 0x000E0000
+  swap_metadata_base: 0x081E0000
+  swap_metadata_size: 0x00020000
+  sector_size_assumption: 0x00004000
+  physical_flash_page_assumption: 0x00001000
+  wolfboot_partition_boot_address: 0x08020000
+  wolfboot_partition_size: 0x000E0000
+  wolfboot_partition_update_address: 0x08100000
+  wolfboot_partition_swap_address: 0x081E0000
+relocated_application_build:
+  status: defined_phase_10e_build_only_not_boot_validated
+  cmake_configure_preset: RelocatedDebug
+  cmake_build_preset: RelocatedDebug
+  linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
+  vector_table_offset: 0x00022000
+  linked_application_start: 0x08022000
+  runtime_boot_validated: false
+target_support_assessment:
+  status: assessed_phase_10c
+  decision_record: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+  upstream_closest_target: stm32l4
+  project_target_strategy: project_local_stm32l4r5_target_configuration_or_adaptation
+  runnable: false
+  notes: Existing upstream STM32L4 wolfBoot support is the closest starting point, but STM32L4R5 / NUCLEO-L4R5ZI-P requires a project-local flash layout and target configuration before wolfBoot build, signing, flashing, or UART evidence can be claimed.
+wolfboot_build_profile:
+  status: defined_phase_10f1_project_local_target_adaptation_build_only_not_boot_validated
+  profile: configs/builds/wolfboot_stm32l4_mldsa44.yaml
+  dependency_strategy: git_submodule
+  config_template: configs/wolfboot/stm32l4r5_mldsa44.config
+  generated_config: tools/wolfboot/.config
+  command: python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_mldsa44.yaml
+  output_evidence: results/wolfboot-builds
+  runtime_boot_validated: false
+
+application_signing_profile:
+  status: defined_phase_10g_signing_only_not_flashing_or_boot_validated
+  profile: configs/signing/wolfboot_mldsa44_app.yaml
+  input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+  input_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44.bin
+  signed_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+  private_key: secrets/wolfboot/mldsa44_private_key.der
+  command: python scripts/experiment.py sign-application --profile configs/signing/wolfboot_mldsa44_app.yaml
+  output_evidence: results/signing
+  runtime_boot_validated: false
+secure_boot_flash_profile:
+  status: defined_phase_10l_consolidated_manifest_evidence
+  experiment: configs/experiments/wolfboot_mldsa44_uart.yaml
+  command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_mldsa44_uart.yaml
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 0x08000000
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+  signed_application_offset: 0x08020000
+  output_evidence: results
+  runtime_boot_path_validated: requires_user_hardware_log_evidence
+  expected_secure_boot_uart_marker: stm32-basic_hal1 secure-boot app v0.1.0
+  positive_boot_evidence_status: defined_phase_10i
+  negative_corrupted_application_test_status: defined_phase_10j
+  boot_timing_status: defined_phase_10k
+  manifest_consolidation_status: defined_phase_10l
+
+notes: Placeholder only. The HAL relocated build profile, wolfBoot build-profile evidence capture, and project-local STM32L4R5 wolfBoot build adaptation exist for local build verification. A local-only application signing workflow exists and can convert the relocated ELF to a BIN before signing. Phase 10i defines a distinct secure-boot application UART marker for positive boot evidence, Phase 10j defines a corrupted-application negative test, Phase 10k records explicit verification timing evidence, and Phase 10l consolidates secure-boot manifest evidence. Hardware success must still only be claimed from user-provided flash and UART logs. This post-Phase 11 ML-DSA boot profile uses the existing secure-boot layout and benchmark evidence model. Hardware success must still only be claimed from user-provided flash and UART logs.
+
+post_phase_11_mldsa_profile:
+  algorithm: ML-DSA-44
+  wolfboot_sign: ML_DSA
+  signature_algorithm: mldsa44
+  mldsa_level: 2
+  signature_size_bytes: 2420
+  image_header_size_bytes: 8192
+  current_header_fit: true
+  unsupported_variant_note: ML-DSA-87 is not configured under the current 8192-byte image-header reserve.

@@ -375,8 +375,8 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "wolfBoot build profile")
 
     algorithm = require_field(config, "signature_algorithm", "wolfBoot build profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}:
-        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096")
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
+        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65")
 
     build_config = config.get("build")
     if not isinstance(build_config, dict):
@@ -409,8 +409,8 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "application signing profile")
 
     algorithm = require_field(config, "signature_algorithm", "application signing profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}:
-        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096")
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
+        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65")
 
     sign_config = config.get("sign")
     if not isinstance(sign_config, dict):

@@ -455,3 +455,22 @@ def test_construct_phase_11_5d_expanded_signing_commands_expand_profile_placehol
         str(repo_root / "secrets" / "wolfboot" / "rsa4096_private_key.der"),
         "1",
     ]
+
+
+def test_validate_application_signing_profile_accepts_mldsa65():
+    signing = load_signing_module()
+    profile = sample_profile()
+    profile["id"] = "wolfboot_mldsa65_app"
+    profile["signature_algorithm"] = "mldsa65"
+    profile["private_key"] = "secrets/wolfboot/mldsa65_private_key.der"
+    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin"
+    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
+    profile["keygen"]["args"] = "--ml_dsa -g {private_key}"
+    profile["sign"]["args"] = "--ml_dsa {input_image} {private_key} {image_version}"
+
+    signing.validate_application_signing_profile(profile)
+
+    keygen_command = signing.construct_keygen_command(profile, Path("/repo"))
+
+    assert keygen_command[-3:-1] == ["--ml_dsa", "-g"]
+    assert Path(keygen_command[-1]).as_posix() == "/repo/secrets/wolfboot/mldsa65_private_key.der"

@@ -16,13 +16,14 @@ Implemented:
 6. wolfBoot secure-boot build/sign/flash workflow.
 7. Secure-boot benchmark evidence model.
 8. Classical signing-algorithm benchmark profiles.
-9. Cross-profile benchmark aggregation output.
+9. ML-DSA-44 and ML-DSA-65 secure-boot benchmark profiles using the existing 8192-byte image-header reserve.
+10. Cross-profile benchmark aggregation output.
 
 Planned but not implemented:
 
 1. MQTT transport experiments.
 2. TLS/wolfSSL transport experiments.
-3. PQC or hybrid signing profiles.
+3. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
 4. Network degradation automation.
 5. Production release packaging.
 
@@ -163,3 +164,10 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 ## Result ownership
 
 Build records identify produced firmware binaries. Experiment run records identify one execution and its hardware-facing evidence. Secure-boot build/sign/flash evidence remains explicit and profile-specific. Aggregated benchmark summaries are derived outputs from existing manifests.
+
+
+## ML-DSA secure-boot profiles
+
+The framework includes post-Phase 11 ML-DSA benchmark profiles for `mldsa44` and `mldsa65`. Both use wolfBoot `SIGN=ML_DSA`, the existing relocated HAL payload, the same UART marker model, and the Phase 11 repeated-run/statistics manifest schema. `mldsa44` sets `ML_DSA_LEVEL=2` and `IMAGE_SIGNATURE_SIZE=2420`; `mldsa65` sets `ML_DSA_LEVEL=3` and `IMAGE_SIGNATURE_SIZE=3309`.
+
+`mldsa87` is intentionally not configured as a runnable profile in this change because wolfBoot's ML-DSA example documents `IMAGE_HEADER_SIZE=12288` for the level-5 signature, while the current framework layout reserves 8192 bytes for the image header.

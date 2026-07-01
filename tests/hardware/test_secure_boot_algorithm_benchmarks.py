@@ -126,6 +126,30 @@ BENCHMARK_PROFILES = (
         experiment_profile="configs/experiments/wolfboot_rsa4096_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin",
     ),
+    SecureBootBenchmarkProfile(
+        name="mldsa44",
+        profile_id="mldsa44_benchmark",
+        algorithm="ML-DSA-44",
+        signature_algorithm="mldsa44",
+        boot_mode="wolfboot_mldsa44",
+        boot_crypto="mldsa44",
+        build_profile="configs/builds/wolfboot_stm32l4_mldsa44.yaml",
+        signing_profile="configs/signing/wolfboot_mldsa44_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_mldsa44_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin",
+    ),
+    SecureBootBenchmarkProfile(
+        name="mldsa65",
+        profile_id="mldsa65_benchmark",
+        algorithm="ML-DSA-65",
+        signature_algorithm="mldsa65",
+        boot_mode="wolfboot_mldsa65",
+        boot_crypto="mldsa65",
+        build_profile="configs/builds/wolfboot_stm32l4_mldsa65.yaml",
+        signing_profile="configs/signing/wolfboot_mldsa65_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_mldsa65_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+    ),
 )
 
 

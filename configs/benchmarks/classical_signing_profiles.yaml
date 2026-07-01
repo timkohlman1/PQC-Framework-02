@@ -208,6 +208,73 @@ profiles:
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
     runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
     assumptions: RSA4096 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+  mldsa44_benchmark:
+    id: mldsa44_benchmark
+    algorithm: ML-DSA-44
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa44
+    mldsa_level: 2
+    security_category: 2
+    public_key_size_bytes: 1312
+    private_key_size_bytes: 2560
+    signature_size_bytes: 2420
+    image_version: 1
+    image_header_size_bytes: 8192
+    runnable: true
+    status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_mldsa44_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_mldsa44.yaml
+    experiment_profile: configs/experiments/wolfboot_mldsa44_uart.yaml
+    boot_profile: configs/boot/wolfboot_mldsa44.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: ML-DSA-44 uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=2, IMAGE_SIGNATURE_SIZE=2420, and the current 8192-byte image-header reserve.
+  mldsa65_benchmark:
+    id: mldsa65_benchmark
+    algorithm: ML-DSA-65
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa65
+    mldsa_level: 3
+    security_category: 3
+    public_key_size_bytes: 1952
+    private_key_size_bytes: 4032
+    signature_size_bytes: 3309
+    image_version: 1
+    image_header_size_bytes: 8192
+    runnable: true
+    status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_mldsa65_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_mldsa65.yaml
+    experiment_profile: configs/experiments/wolfboot_mldsa65_uart.yaml
+    boot_profile: configs/boot/wolfboot_mldsa65.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: ML-DSA-65 uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=3, IMAGE_SIGNATURE_SIZE=3309, and the current 8192-byte image-header reserve.
+  mldsa87_unavailable:
+    id: mldsa87_unavailable
+    algorithm: ML-DSA-87
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa87
+    mldsa_level: 5
+    security_category: 5
+    public_key_size_bytes: 2592
+    private_key_size_bytes: 4896
+    signature_size_bytes: 4627
+    required_image_header_size_bytes: 12288
+    current_image_header_size_bytes: 8192
+    runnable: false
+    status: unsupported_current_8192_byte_header_layout
+    unsupported_reason: wolfBoot's ML-DSA example requires IMAGE_HEADER_SIZE=12288 for ML-DSA-87, which is outside the current 8192-byte Phase 11 header reserve.
 notes: Phase 11.5d adds ECC384, ECC521, ED448, RSA3072, and RSA4096 build, signing, boot, and secure-boot experiment profiles while retaining ECC256, ED25519, and RSA2048. Cross-profile aggregation remains Phase 11.6 scope. Hardware success and benchmark values must only be claimed from explicit user-provided logs.
 expanded_classical_scope:
   ecc384:
@@ -253,3 +320,42 @@ expanded_classical_scope:
     signature_size_bytes: 512
     status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
     runnable: true
+post_phase_11_mldsa_scope:
+  mldsa44:
+    algorithm: ML-DSA-44
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa44
+    mldsa_level: 2
+    security_category: 2
+    public_key_size_bytes: 1312
+    private_key_size_bytes: 2560
+    signature_size_bytes: 2420
+    image_header_size_bytes: 8192
+    status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+    runnable: true
+  mldsa65:
+    algorithm: ML-DSA-65
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa65
+    mldsa_level: 3
+    security_category: 3
+    public_key_size_bytes: 1952
+    private_key_size_bytes: 4032
+    signature_size_bytes: 3309
+    image_header_size_bytes: 8192
+    status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+    runnable: true
+  mldsa87:
+    algorithm: ML-DSA-87
+    wolfboot_sign: ML_DSA
+    signature_algorithm: mldsa87
+    mldsa_level: 5
+    security_category: 5
+    public_key_size_bytes: 2592
+    private_key_size_bytes: 4896
+    signature_size_bytes: 4627
+    required_image_header_size_bytes: 12288
+    current_image_header_size_bytes: 8192
+    status: unsupported_current_8192_byte_header_layout
+    runnable: false
+    unsupported_reason: wolfBoot's ML-DSA example requires IMAGE_HEADER_SIZE=12288 for ML-DSA-87, which is outside the current 8192-byte Phase 11 header reserve.
