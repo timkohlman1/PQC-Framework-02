@@ -7,7 +7,7 @@
 **  Author		: STM32CubeMX
 **
 **  Abstract    : Linker script for STM32L4R5ZITxP series
-**                relocated app at 0x08020100 within a 896 KB signed-app slot
+**                relocated app at 0x08022000 within a 896 KB signed-app slot
 **
 **                Set heap size, stack size and stack location according
 **                to application requirements.
@@ -54,9 +54,9 @@ ENTRY(Reset_Handler)
 
 /* Specify the memory areas.
  *
- * Phase 10e relocated application layout:
- * - wolfBoot image header is expected at 0x08020000..0x080200FF.
- * - the application vector table and Reset_Handler are linked at 0x08020100.
+ * Phase 11 shared secure-boot relocated application layout:
+ * - wolfBoot image header is reserved at 0x08020000..0x08021FFF.
+ * - the application vector table and Reset_Handler are linked at 0x08022000.
  * - the usable application region ends at 0x080FFFFF.
  */
 MEMORY
@@ -64,7 +64,7 @@ MEMORY
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 192K
 RAM2 (xrw)      : ORIGIN = 0x10000000, LENGTH = 64K
 RAM3 (xrw)      : ORIGIN = 0x20040000, LENGTH = 384K
-FLASH (rx)      : ORIGIN = 0x08020100, LENGTH = 0x000DFF00
+FLASH (rx)      : ORIGIN = 0x08022000, LENGTH = 0x000DE000
 }
 
 /* Highest address of the user mode stack */

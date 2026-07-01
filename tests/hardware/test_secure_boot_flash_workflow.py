@@ -43,8 +43,27 @@ def _clean_secure_boot_generated_outputs(repo_root: Path) -> None:
 
     The secure-boot hardware test validates a build/sign/flash chain from a
     zero-generated-artifact state. Cleaning these outputs avoids timestamp-based
-    stale artifacts after ZIP extraction or local source edits.
+    stale artifacts after ZIP extraction, local source edits, or a previous
+    algorithm benchmark profile that generated wolfBoot key/keystore state for a
+    different signing algorithm.
     """
+
+    wolfboot_dir = repo_root / "tools" / "wolfboot"
+    _skip_if_missing(wolfboot_dir, "wolfBoot source tree is missing")
+    if shutil.which("make") is None:
+        pytest.skip("make is unavailable; wolfBoot keysclean cannot run")
+
+    keysclean_completed = subprocess.run(
+        ["make", "WOLFBOOT_ROOT=.", "keysclean"],
+        cwd=wolfboot_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert keysclean_completed.returncode == 0, (
+        f"wolfBoot keysclean stdout:\n{keysclean_completed.stdout}\n"
+        f"wolfBoot keysclean stderr:\n{keysclean_completed.stderr}"
+    )
 
     shutil.rmtree(repo_root / "build", ignore_errors=True)
     for relative_path in (

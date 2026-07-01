@@ -269,7 +269,7 @@ Decision summary:
 
 - Internal flash is treated as a 2 MB range from `0x08000000` through `0x081FFFFF` for the planned layout.
 - wolfBoot is planned at `0x08000000` with a 128 KB reserved bootloader region.
-- The signed application primary slot is planned at `0x08020000` with a `0x08020100` relocated application entry address after the wolfBoot image header.
+- The signed application primary slot is planned at `0x08020000` with a `0x08022000` relocated application entry address after the wolfBoot image header.
 - A same-size update slot is planned at `0x08100000`.
 - A swap / metadata reserve is planned at `0x081E0000`.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` records this planned layout metadata, but remains `runnable: false`.
@@ -284,8 +284,8 @@ Phase 10e adds a build-only relocated HAL application profile for the planned wo
 CMake configure preset: RelocatedDebug
 CMake build preset: RelocatedDebug
 Linker script: STM32L4R5XX_FLASH_RELOCATED.ld
-Application vector table / reset entry: 0x08020100
-Vector table offset from FLASH_BASE: 0x00020100
+Application vector table / reset entry: 0x08022000
+Vector table offset from FLASH_BASE: 0x00022000
 ```
 
 Manual build verification command:
@@ -312,7 +312,7 @@ The profile is invoked through the framework with:
 python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
-The Phase 10f.1 profile uses the local Git submodule at `tools/wolfboot` and the tracked project-local config template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The command copies that template to `tools/wolfboot/.config`, invokes `make` inside the submodule, and records evidence under `results/wolfboot-builds/`. The generated `.config`, wolfBoot build outputs, and possible local signing-key by-products remain ignored. The project-local template also undefines upstream wolfBoot's default `STM32L4A6xx` target macro before defining `STM32L4R5xx`, because the project CubeMX CMSIS tree is for STM32L4R5 and does not provide `stm32l4a6xx.h`. The template uses decimal `IMAGE_HEADER_SIZE=256` because wolfBoot shell tests compare that value as an integer. On Windows/MSYS builds, the framework can temporarily patch wolfBoot's host keytools Makefile during the build command so MinGW accepts C99 `%j` printf format checking without leaving the submodule dirty.
+The Phase 10f.1 profile uses the local Git submodule at `tools/wolfboot` and the tracked project-local config template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The command copies that template to `tools/wolfboot/.config`, invokes `make` inside the submodule, and records evidence under `results/wolfboot-builds/`. The generated `.config`, wolfBoot build outputs, and possible local signing-key by-products remain ignored. The project-local template also undefines upstream wolfBoot's default `STM32L4A6xx` target macro before defining `STM32L4R5xx`, because the project CubeMX CMSIS tree is for STM32L4R5 and does not provide `stm32l4a6xx.h`. The template uses decimal `IMAGE_HEADER_SIZE=8192` because wolfBoot shell tests compare that value as an integer. On Windows/MSYS builds, the framework can temporarily patch wolfBoot's host keytools Makefile during the build command so MinGW accepts C99 `%j` printf format checking without leaving the submodule dirty.
 
 
 The command creates a wolfBoot build evidence directory under:
@@ -438,7 +438,7 @@ python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_st
 
 The profile copies `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` and invokes `make WOLFBOOT_ROOT=. wolfboot.elf`. The target-specific invocation is intentional: plain `make` can successfully link `wolfboot.elf` and then continue into upstream `test-app/image.bin`, which is outside Phase 10f.1 and can fail independently.
 
-The project-local adaptation also preserves the STM32L4R5-specific fixes discovered during local builds: STM32L4R5 MCU macro selection, decimal `IMAGE_HEADER_SIZE=256`, target-only Cortex-M4/thumb flags, temporary Windows/MinGW host-keytools compatibility patching, and temporary STM32L4 PWR/PWREx HAL config patching. These temporary patches are restored after the build so the wolfBoot submodule is not intentionally left dirty.
+The project-local adaptation also preserves the STM32L4R5-specific fixes discovered during local builds: STM32L4R5 MCU macro selection, decimal `IMAGE_HEADER_SIZE=8192`, target-only Cortex-M4/thumb flags, temporary Windows/MinGW host-keytools compatibility patching, and temporary STM32L4 PWR/PWREx HAL config patching. These temporary patches are restored after the build so the wolfBoot submodule is not intentionally left dirty.
 
 This remains build-only evidence. Producing and hashing `wolfboot.elf` does not generate durable signing keys, sign an application image, flash hardware, capture UART, or prove secure-boot runtime behaviour.
 
@@ -692,3 +692,8 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 
 Expected result: when the local toolchain, wolfBoot source and keytools, gateway, flash helper, ST-LINK UART device, and board are available, the test runs ECC256 and ED25519 sequentially with `--repeat-count 2`, verifies two valid benchmark samples for each profile, and checks positive secure-boot UART marker and explicit timing/cycle evidence. If required hardware capabilities are not available and strict hardware mode is not requested, the test skips cleanly. Hardware success and benchmark values must still be based on the generated result manifests and UART logs.
 
+
+
+## Phase 11 shared secure-boot image-header reserve
+
+Phase 11 secure-boot benchmark profiles use one shared 8192-byte wolfBoot image-header reserve for ECC256, ED25519, and RSA2048. The matching wolfBoot logical sector size is 0x4000 / 16 KB because wolfBoot requires `WOLFBOOT_SECTOR_SIZE` to be larger than `IMAGE_HEADER_SIZE`. The signed image slot still starts at `0x08020000`, but the relocated HAL application is linked at `0x08022000` with `STM32_APP_VECTOR_OFFSET=0x00022000`. The signing profiles set `IMAGE_HEADER_SIZE=8192` for wolfBoot keytools so the signed image header and application vector address remain aligned. The wolfBoot config templates set `WOLFBOOT_SECTOR_SIZE=0x4000`; this is a wolfBoot logical sector choice for the benchmark layout, while the STM32L4R5 flash page assumption remains documented separately as 4 KB. This intentionally wastes a small amount of flash for smaller classical signatures to keep the benchmark layout stable before later PQC/hybrid profiles are added. If a future profile requires a larger header, apply the larger value globally before collecting final experiment runs.

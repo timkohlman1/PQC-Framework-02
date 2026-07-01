@@ -1,7 +1,7 @@
 id: classical_signing_profiles
-description: Phase 11.5b classical secure-boot signing benchmark profile model and minimum comparison scope with ED25519 runnable profile.
+description: Phase 11.5c classical secure-boot signing benchmark profile model and minimum comparison scope with ECC256, ED25519, and RSA2048 runnable profile metadata.
 schema_version: 1
-model_phase: phase_11_5b_ed25519_profile
+model_phase: phase_11_5c_rsa2048_profile
 benchmark_scope: secure_boot_classical_signing_algorithm
 minimum_comparison_scope:
   ed25519:
@@ -23,11 +23,11 @@ minimum_comparison_scope:
   rsa2048:
     algorithm: RSA2048
     wolfboot_sign: RSA2048
+    signature_algorithm: rsa2048
     key_size_bits: 2048
     signature_size_bytes: 256
-    status: planned_phase_11_5c_not_implemented
-    runnable: false
-    unsupported_reason: RSA2048 is reserved in the minimum comparison scope but no runnable wolfBoot build, signing, or experiment profile is added until Phase 11.5c.
+    status: configured_phase_11_5c_runnable_profile_not_hardware_validated
+    runnable: true
 profiles:
   ecc256_reference:
     id: ecc256_reference
@@ -73,18 +73,26 @@ profiles:
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
     runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
     assumptions: ED25519 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, and manifest schema as the ECC256 reference path.
-  rsa2048_reserved:
-    id: rsa2048_reserved
+  rsa2048_benchmark:
+    id: rsa2048_benchmark
     algorithm: RSA2048
     wolfboot_sign: RSA2048
+    signature_algorithm: rsa2048
     key_size_bits: 2048
     signature_size_bytes: 256
     image_version: 1
-    runnable: false
-    status: planned_phase_11_5c_not_implemented
-    signing_profile: unavailable_until_phase_11_5c
-    wolfboot_build_profile: unavailable_until_phase_11_5c
-    experiment_profile: unavailable_until_phase_11_5c
-    boot_profile: configs/boot/wolfboot_ecdsa_p256.yaml
-    unsupported_reason: RSA2048 runnable profile files are intentionally not added in Phase 11.5a.
-notes: Phase 11.5b adds the ED25519 build, signing, boot, and secure-boot experiment profiles while retaining ECC256 as the known-good reference path. RSA2048 remains reserved until Phase 11.5c. Cross-profile aggregation remains Phase 11.6 scope. Hardware success and benchmark values must only be claimed from explicit user-provided logs.
+    runnable: true
+    status: configured_phase_11_5c_runnable_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_rsa2048_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_rsa2048.yaml
+    experiment_profile: configs/experiments/wolfboot_rsa2048_uart.yaml
+    boot_profile: configs/boot/wolfboot_rsa2048.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: RSA2048 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, and manifest schema as the ECC256 reference path.
+notes: Phase 11.5c adds the RSA2048 build, signing, boot, and secure-boot experiment profiles while retaining ECC256 as the known-good reference path and ED25519 as the first added runnable benchmark profile. Cross-profile aggregation remains Phase 11.6 scope. Hardware success and benchmark values must only be claimed from explicit user-provided logs.

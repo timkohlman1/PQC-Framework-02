@@ -32,7 +32,7 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 #
 # The default Debug/Release presets keep the CubeMX direct-flash layout at
 # 0x08000000. The RelocatedDebug preset overrides these cache variables to build
-# the HAL application for wolfBoot handoff at 0x08020100.
+# the HAL application for wolfBoot handoff at 0x08022000 using the shared Phase 11 8 KB image-header reserve.
 set(STM32_LINKER_SCRIPT
     "${CMAKE_SOURCE_DIR}/STM32L4R5XX_FLASH.ld"
     CACHE FILEPATH

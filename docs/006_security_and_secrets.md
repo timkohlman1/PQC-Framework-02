@@ -175,3 +175,8 @@ The ED25519 benchmark profile uses a canonical local private key at `secrets/wol
 The framework records non-secret SHA-256 key fingerprints as consistency evidence in build, signing, and secure-boot flash manifests. It does not copy private key material into result directories. `flash-secure-boot` refuses to run SCP, SSH, or hardware flashing when both configured key files exist and their SHA-256 fingerprints differ.
 
 The ECC256 key path remains `secrets/wolfboot/ecdsa_p256_private_key.der`. RSA2048 key handling is not implemented in Phase 11.5b.
+
+
+## Phase 11 shared secure-boot image-header reserve
+
+Phase 11 secure-boot benchmark profiles use one shared 8192-byte wolfBoot image-header reserve for ECC256, ED25519, and RSA2048. The matching wolfBoot logical sector size is 0x4000 / 16 KB because wolfBoot requires `WOLFBOOT_SECTOR_SIZE` to be larger than `IMAGE_HEADER_SIZE`. The signed image slot still starts at `0x08020000`, but the relocated HAL application is linked at `0x08022000` with `STM32_APP_VECTOR_OFFSET=0x00022000`. The signing profiles set `IMAGE_HEADER_SIZE=8192` for wolfBoot keytools so the signed image header and application vector address remain aligned. The wolfBoot config templates set `WOLFBOOT_SECTOR_SIZE=0x4000`; this is a wolfBoot logical sector choice for the benchmark layout, while the STM32L4R5 flash page assumption remains documented separately as 4 KB. This intentionally wastes a small amount of flash for smaller classical signatures to keep the benchmark layout stable before later PQC/hybrid profiles are added. If a future profile requires a larger header, apply the larger value globally before collecting final experiment runs.

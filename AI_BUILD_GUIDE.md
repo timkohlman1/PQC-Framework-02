@@ -50,7 +50,7 @@ tick
 tick
 ```
 
-The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08020100` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. Phase 10g adds a local-only application signing workflow. Phase 10h adds an explicit two-artifact wolfBoot flash workflow and post-flash UART capture using `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This records wolfBoot and signed-application flash evidence. Phase 10i adds the distinct secure-boot application UART marker required for positive boot evidence, Phase 10j adds the corrupted-application negative-test workflow, and Phase 10k adds secure-boot timing instrumentation that temporarily patches the local STM32L4R5 wolfBoot build to measure verification time, pass the result to the relocated HAL application through a RAM2 mailbox, and record the application-emitted timing line in the manifest.
+The current app is a direct-flash baseline. The baseline experiment now references the explicit runnable boot config `configs/boot/direct_flash.yaml`. A planned wolfBoot placeholder exists at `configs/boot/wolfboot_ecdsa_p256.yaml`, but it is marked non-runnable and must not be treated as implemented wolfBoot support. The baseline does not yet use wolfBoot, MQTT, TLS, PQC, or network-degradation automation. Phase 10d defines a planned STM32L4R5 secure-boot flash layout for the non-runnable wolfBoot profile. Phase 10e adds a build-only relocated HAL application profile for the selected `0x08022000` application entry address. Phase 10f adds a configurable wolfBoot build profile and build-evidence capture. Phase 10f.1 adds a project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot` and the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The framework copies that template to `tools/wolfboot/.config`, applies temporary MinGW host-keytools stdio and STM32L4 HAL PWR-include compatibility patches when enabled, invokes `make`, and records wolfBoot build evidence. Phase 10g adds a local-only application signing workflow. Phase 10h adds an explicit two-artifact wolfBoot flash workflow and post-flash UART capture using `configs/experiments/wolfboot_ecdsa_p256_uart.yaml` and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This records wolfBoot and signed-application flash evidence. Phase 10i adds the distinct secure-boot application UART marker required for positive boot evidence, Phase 10j adds the corrupted-application negative-test workflow, and Phase 10k adds secure-boot timing instrumentation that temporarily patches the local STM32L4R5 wolfBoot build to measure verification time, pass the result to the relocated HAL application through a RAM2 mailbox, and record the application-emitted timing line in the manifest.
 
 ## 4. Hardware and Host Context
 
@@ -1151,9 +1151,9 @@ Current framework skeleton completed items:
 42. Add Phase 10b planned wolfBoot boot config placeholder at `configs/boot/wolfboot_ecdsa_p256.yaml`; it is loadable for inspection but marked `runnable: false` and rejected by execution-oriented workflows.
 43. Add Phase 10c wolfBoot STM32L4 target support assessment in `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md`; upstream STM32L4 support is the closest starting point, but STM32L4R5 requires a project-local target configuration or adaptation before wolfBoot is built or treated as runnable.
 44. Add Phase 10d secure-boot flash layout decision in `docs/decisions/0003_secure_boot_flash_layout.md`; `configs/boot/wolfboot_ecdsa_p256.yaml` now records the planned STM32L4R5 layout metadata while remaining non-runnable.
-45. Add Phase 10e relocated HAL application build profile using `RelocatedDebug`, `STM32L4R5XX_FLASH_RELOCATED.ld`, and vector offset `0x00020100` while preserving the direct-flash `Debug` baseline.
+45. Add Phase 10e relocated HAL application build profile using `RelocatedDebug`, `STM32L4R5XX_FLASH_RELOCATED.ld`, and vector offset `0x00022000` while preserving the direct-flash `Debug` baseline.
 46. Add Phase 10f configurable wolfBoot build profile support with `configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`, `scripts/framework/wolfboot_build.py`, and `python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml`. This captures wolfBoot build evidence only and does not sign images, flash hardware, capture UART, or claim secure-boot runtime success.
-47. Add Phase 10f.1 project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot`, the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`, generated local copy `tools/wolfboot/.config`, `STM32CUBE=../..`, Phase 10d partition values, target-only Cortex-M4/thumb/HAL/CMSIS compile settings, and STM32L4R5 MCU macro selection that undefines upstream `STM32L4A6xx` before defining `STM32L4R5xx`, decimal `IMAGE_HEADER_SIZE=256`, and a temporary MinGW host-keytools stdio compatibility patch and temporary STM32L4 HAL config PWR/PWREx include patch. The command can retain `wolfboot.elf` and record SHA-256 when the submodule and required toolchain are available.
+47. Add Phase 10f.1 project-local STM32L4R5 wolfBoot build adaptation using the local Git submodule at `tools/wolfboot`, the tracked config template `configs/wolfboot/stm32l4r5_ecdsa_p256.config`, generated local copy `tools/wolfboot/.config`, `STM32CUBE=../..`, Phase 10d partition values, target-only Cortex-M4/thumb/HAL/CMSIS compile settings, and STM32L4R5 MCU macro selection that undefines upstream `STM32L4A6xx` before defining `STM32L4R5xx`, decimal `IMAGE_HEADER_SIZE=8192`, and a temporary MinGW host-keytools stdio compatibility patch and temporary STM32L4 HAL config PWR/PWREx include patch. The command can retain `wolfboot.elf` and record SHA-256 when the submodule and required toolchain are available.
 49. Add Phase 10g local-only ECDSA-P256 application signing workflow with `configs/signing/wolfboot_ecdsa_p256_app.yaml`, `scripts/framework/signing.py`, and `python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml`. This can generate or use a local private signing key under `secrets/wolfboot/`, converts the relocated ELF to a BIN when needed, signs the relocated application BIN, records signing evidence under `results/signing/`, and does not copy private keys into results, flash hardware, capture UART, or claim secure-boot runtime success.
 50. Add Phase 10h explicit wolfBoot secure-boot flash workflow with `configs/experiments/wolfboot_ecdsa_p256_uart.yaml`, `scripts/framework/secure_boot_flash.py`, and `python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml`. This flashes the configured `wolfboot.elf` and signed application image in sequence, records both artifact hashes, offsets, remote paths, return codes, and logs, and captures UART by default after successful flashing.
 51. Add Phase 10i positive wolfBoot boot evidence by compiling a distinct relocated secure-boot application UART marker, requiring it in the wolfBoot UART experiment, and recording `secure_boot_run.boot_path_distinguished`, `secure_boot_run.secure_boot_marker_present`, and signature metadata in the manifest.
@@ -1166,6 +1166,8 @@ Current framework skeleton completed items:
 
 58. Add Phase 11.4 runtime stack and memory metrics. The wolfBoot timing instrumentation now also paints and scans firmware-side stack sentinel evidence around `wolfBoot_verify_authenticity()`, writes the maximum stack high-water value into the RAM2 mailbox, and the relocated application emits `wolfBoot verification max stack used: <N> bytes` over UART. Secure-boot manifests record runtime stack evidence only from explicit firmware/UART markers under `uart`, `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`. Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted. Runtime memory is not inferred from host timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone.
 59. Add Phase 11.5a classical signing benchmark profile model. The framework now records `configs/benchmarks/classical_signing_profiles.yaml` as the metadata-only model for the minimum classical comparison scope: `ED25519`, `ECC256`, and `RSA2048`. Existing ECC256 behaviour remains the known-good reference path and is linked to the current wolfBoot build profile, signing profile, secure-boot experiment profile, and boot profile. ED25519 and RSA2048 are explicitly reserved as non-runnable planned capabilities until Phase 11.5b and Phase 11.5c add their implementation files. Secure-boot benchmark manifests can record this model under `secure_boot_benchmark.classical_profile_metadata`. Phase 11.5a does not add ED25519/RSA2048 build profiles, signing profiles, experiment profiles, keys, flash workflows, aggregation output, or hardware success claims.
+
+60. Add Phase 11.5c RSA2048 benchmark profile. The framework now records RSA2048 as a runnable member of the minimum classical secure-boot benchmark comparison scope, alongside the ECC256 reference path and ED25519 profile. Added RSA2048 wolfBoot build, application-signing, boot, secure-boot experiment, and wolfBoot config profiles. RSA2048 uses key size 2048 bits and signature size 256 bytes, the same relocated HAL application payload, board, CPU-Hz assumption, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as ECC256 and ED25519. RSA3072, RSA4096, ED448, ECC384, ECC521, and cross-profile aggregation remain out of scope. Hardware success and benchmark values must still only be claimed from explicit user-provided logs.
 Current CLI commands are:
 
 ```powershell
@@ -1984,7 +1986,7 @@ Not implemented in Phase 10c:
 
 Next intended Phase 10 step:
 
-- Phase 10e should relocate the HAL application build to the selected signed-image entry address `0x08020100` while preserving the direct-flash baseline.
+- Phase 10e should relocate the HAL application build to the selected signed-image entry address `0x08022000` while preserving the direct-flash baseline.
 
 Hardware success must still only be claimed from user-provided logs.
 
@@ -1996,10 +1998,10 @@ Implemented scope:
 - The selected initial planned layout uses the STM32L4R5 2 MB internal flash range from `0x08000000` through `0x081FFFFF`.
 - The planned wolfBoot region is `0x08000000..0x0801FFFF` with size `0x00020000` / 128 KB.
 - The planned signed application primary slot is `0x08020000..0x080FFFFF` with size `0x000E0000` / 896 KB.
-- The planned relocated application entry address is `0x08020100`, accounting for the intended `0x100` wolfBoot image header.
+- The planned relocated application entry address is `0x08022000`, accounting for the intended `0x100` wolfBoot image header.
 - The planned signed application update slot is `0x08100000..0x081DFFFF` with size `0x000E0000` / 896 KB.
 - The planned swap / metadata reserve is `0x081E0000..0x081FFFFF` with size `0x00020000` / 128 KB.
-- The planned wolfBoot target values are recorded as `WOLFBOOT_SECTOR_SIZE 0x1000`, `WOLFBOOT_PARTITION_BOOT_ADDRESS 0x08020000`, `WOLFBOOT_PARTITION_SIZE 0x000E0000`, `WOLFBOOT_PARTITION_UPDATE_ADDRESS 0x08100000`, and `WOLFBOOT_PARTITION_SWAP_ADDRESS 0x081E0000`.
+- The planned wolfBoot target values are recorded as `WOLFBOOT_SECTOR_SIZE 0x4000`, `WOLFBOOT_PARTITION_BOOT_ADDRESS 0x08020000`, `WOLFBOOT_PARTITION_SIZE 0x000E0000`, `WOLFBOOT_PARTITION_UPDATE_ADDRESS 0x08100000`, and `WOLFBOOT_PARTITION_SWAP_ADDRESS 0x081E0000`.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` records the layout under `secure_boot_layout` and remains `runnable: false`.
 - Unit tests cover loading and inspection validation for the planned layout metadata and confirm the planned profile remains rejected for execution.
 - The direct-flash baseline remains the only runnable boot mode.
@@ -2024,8 +2026,8 @@ Implemented scope:
 
 - Added the opt-in CMake configure/build preset `RelocatedDebug`.
 - Added `STM32L4R5XX_FLASH_RELOCATED.ld` for the relocated HAL application build.
-- The relocated linker script places the application vector table and reset entry at `0x08020100`, leaving the planned `0x100` wolfBoot image header at `0x08020000..0x080200FF`.
-- The relocated preset sets `STM32_APP_VECTOR_OFFSET` to `0x00020100`, which is passed into the existing `system_stm32l4xx.c` vector-table configuration path through `VECT_TAB_OFFSET`.
+- The relocated linker script places the application vector table and reset entry at `0x08022000`, leaving the planned `0x100` wolfBoot image header at `0x08020000..0x080200FF`.
+- The relocated preset sets `STM32_APP_VECTOR_OFFSET` to `0x00022000`, which is passed into the existing `system_stm32l4xx.c` vector-table configuration path through `VECT_TAB_OFFSET`.
 - The default direct-flash `Debug` preset remains available and uses `STM32L4R5XX_FLASH.ld` with vector offset `0x00000000`.
 - `configs/boot/wolfboot_ecdsa_p256.yaml` records the relocated build metadata but remains `runnable: false`.
 - Unit tests cover the relocated CMake preset and linker-script address selection.
@@ -2111,7 +2113,7 @@ Implemented scope:
 - The config preserves `SIGN=ECC256`, records the Phase 10d partition values, sets `STM32CUBE=../..` so wolfBoot can find the CubeMX-generated `Drivers/` tree from `tools/wolfboot`, and adds the required STM32L4R5 HAL/CMSIS include paths.
 - The config applies Cortex-M4/thumb settings through wolfBoot target CFLAGS rather than through global host-tool compiler flags.
 - The config undefines upstream wolfBoot's default `STM32L4A6xx` macro before defining `STM32L4R5xx`, because the project CubeMX CMSIS tree is for STM32L4R5 and does not provide `stm32l4a6xx.h`.
-- The config uses decimal `IMAGE_HEADER_SIZE=256` because wolfBoot shell tests compare that value as an integer.
+- The config uses decimal `IMAGE_HEADER_SIZE=8192` because wolfBoot shell tests compare that value as an integer.
 - The config keeps the Phase 10d layout assumptions and does not revise bootloader, primary slot, update slot, swap/metadata, or image-header addresses.
 - The build profile invokes `make WOLFBOOT_ROOT=. wolfboot.elf` so wolfBoot builds the retained bootloader ELF without continuing into upstream `test-app/image.bin`, which is outside Phase 10f.1 scope.
 - On Windows/MSYS, the build helper temporarily patches wolfBoot's host keytools Makefile to add `-D__USE_MINGW_ANSI_STDIO=1`, then restores the original Makefile so the submodule is not left dirty.
@@ -2154,7 +2156,7 @@ These observed failures and fixes should be preserved for future AI-assisted cha
 
 1. **Missing STM32L4 HAL/CMSIS integration** — upstream `TARGET=stm32l4` did not directly find the repository-local CubeMX HAL/CMSIS layout until `STM32CUBE=../..` and project-local include paths were supplied.
 2. **Wrong STM32L4 device macro** — upstream `TARGET=stm32l4` defined `STM32L4A6xx`; the STM32L4R5 CubeMX tree requires undefining that macro and defining `STM32L4R5xx`.
-3. **Hex image-header size rejected by shell tests** — `IMAGE_HEADER_SIZE=0x100` caused integer-test errors in the observed Windows/MSYS environment. Use decimal `IMAGE_HEADER_SIZE=256` while preserving the same 256-byte header.
+3. **Hex image-header size rejected by shell tests** — `IMAGE_HEADER_SIZE=0x100` caused integer-test errors in the observed Windows/MSYS environment. Use decimal `IMAGE_HEADER_SIZE=8192` for the shared Phase 11 header layout.
 4. **Host keytools are not ARM target objects** — Cortex-M4/thumb flags must remain target-only. Host keytools may need the temporary MinGW ANSI stdio patch, but they must not receive ARM compiler flags.
 5. **Incorrect wolfBoot root path** — plain `make` produced `/tools/keytools/keygen` in the observed Windows/MSYS environment. The build profile passes `WOLFBOOT_ROOT=.` so generated keytool paths resolve relative to `tools/wolfboot`.
 6. **PWR/PWREx visibility for flash-extension HAL** — `stm32l4xx_hal_flash_ex.c` requires PWR/PWREx declarations and objects. A broad force-include of the CubeMX HAL config exposed HAL type-order errors, so the framework instead temporarily patches wolfBoot's local STM32L4 HAL config and adds PWR/PWREx objects.
@@ -2284,3 +2286,44 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 ```
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. ED25519 hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided flash and UART logs.
+
+
+## Phase 11.5c RSA2048 Benchmark Profile
+
+Implemented scope:
+
+- Added RSA2048 wolfBoot build, signing, boot, and secure-boot experiment profiles.
+- RSA2048 uses the same relocated HAL application payload, board, CPU-Hz assumption, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as the ECC256 reference profile and ED25519 benchmark profile.
+- RSA2048 records `key_size_bits: 2048`, `signature_size_bytes: 256`, `signature_algorithm: rsa2048`, and `wolfboot_sign: RSA2048` in benchmark profile metadata and generated manifests.
+- The RSA2048 canonical local private key is `secrets/wolfboot/rsa2048_private_key.der`.
+- The wolfBoot working-tree private-key path remains `tools/wolfboot/wolfboot_signing_private_key.der` for the active wolfBoot build profile.
+- Build, signing, and secure-boot flash workflows record non-secret SHA-256 key fingerprints and do not copy private key material into results.
+- `flash-secure-boot` refuses SCP, SSH, and hardware flashing when both configured key files exist and their fingerprints differ.
+- RSA3072, RSA4096, ED448, ECC384, ECC521, and cross-profile aggregation remain out of scope.
+- `tests/hardware/test_secure_boot_algorithm_benchmarks.py` now covers ECC256, ED25519, and RSA2048 side-by-side when strict hardware capabilities are available.
+
+Manual Phase 11.5c commands:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_rsa2048.yaml
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_rsa2048_app.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.5c verification commands:
+
+```powershell
+python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_wolfboot_build.py tests/unit/test_signing.py tests/unit/test_secure_boot_flash.py tests/unit/test_manifest.py
+python -m pytest tests/unit
+python -m pytest
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. RSA2048 hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided flash and UART logs.
+
+
+## Phase 11 shared secure-boot image-header reserve
+
+Phase 11 secure-boot benchmark profiles use one shared 8192-byte wolfBoot image-header reserve for ECC256, ED25519, and RSA2048. The matching wolfBoot logical sector size is 0x4000 / 16 KB because wolfBoot requires `WOLFBOOT_SECTOR_SIZE` to be larger than `IMAGE_HEADER_SIZE`. The signed image slot still starts at `0x08020000`, but the relocated HAL application is linked at `0x08022000` with `STM32_APP_VECTOR_OFFSET=0x00022000`. The signing profiles set `IMAGE_HEADER_SIZE=8192` for wolfBoot keytools so the signed image header and application vector address remain aligned. The wolfBoot config templates set `WOLFBOOT_SECTOR_SIZE=0x4000`; this is a wolfBoot logical sector choice for the benchmark layout, while the STM32L4R5 flash page assumption remains documented separately as 4 KB. This intentionally wastes a small amount of flash for smaller classical signatures to keep the benchmark layout stable before later PQC/hybrid profiles are added. If a future profile requires a larger header, apply the larger value globally before collecting final experiment runs.

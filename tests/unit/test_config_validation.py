@@ -329,13 +329,14 @@ def test_validate_boot_config_for_inspection_accepts_planned_flash_layout_metada
             "wolfboot_size": "0x00020000",
             "primary_slot_base": "0x08020000",
             "primary_slot_size": "0x000E0000",
-            "primary_slot_entry": "0x08020100",
-            "image_header_size": "0x00000100",
+            "primary_slot_entry": "0x08022000",
+            "image_header_size": "0x00002000",
             "update_slot_base": "0x08100000",
             "update_slot_size": "0x000E0000",
             "swap_metadata_base": "0x081E0000",
             "swap_metadata_size": "0x00020000",
-            "sector_size_assumption": "0x00001000",
+            "sector_size_assumption": "0x00004000",
+            "physical_flash_page_assumption": "0x00001000",
             "wolfboot_partition_boot_address": "0x08020000",
             "wolfboot_partition_size": "0x000E0000",
             "wolfboot_partition_update_address": "0x08100000",
@@ -359,7 +360,7 @@ def test_validate_boot_config_still_rejects_planned_flash_layout_for_execution()
         "flash_layout_status": "defined_phase_10d_planned_not_implemented",
         "secure_boot_layout": {
             "primary_slot_base": "0x08020000",
-            "primary_slot_entry": "0x08020100",
+            "primary_slot_entry": "0x08022000",
         },
     }
 
@@ -503,13 +504,13 @@ def test_validate_application_signing_profile_rejects_unsupported_algorithm():
         "description": "Invalid signing profile.",
         "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
         "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
-        "signature_algorithm": "rsa2048",
+        "signature_algorithm": "rsa3072",
         "image_version": 1,
-        "private_key": "secrets/wolfboot/rsa2048_private_key.der",
+        "private_key": "secrets/wolfboot/rsa3072_private_key.der",
         "sign": {"command": "tools/wolfboot/tools/keytools/sign"},
     }
 
-    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256 or ed25519"):
+    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256, ed25519, or rsa2048"):
         experiment_cli.validate_application_signing_profile_config(config)
 
 

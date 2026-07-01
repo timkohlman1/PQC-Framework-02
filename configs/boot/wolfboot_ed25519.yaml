@@ -23,19 +23,20 @@ secure_boot_layout:
   wolfboot_size: 0x00020000
   primary_slot_base: 0x08020000
   primary_slot_size: 0x000E0000
-  primary_slot_entry: 0x08020100
-  image_header_size: 0x00000100
+  primary_slot_entry: 0x08022000
+  image_header_size: 0x00002000
   update_slot_base: 0x08100000
   update_slot_size: 0x000E0000
   swap_metadata_base: 0x081E0000
   swap_metadata_size: 0x00020000
-  wolfboot_sector_size: 0x1000
+  wolfboot_sector_size: 0x4000
+  physical_flash_page_assumption: 0x1000
   runtime_boot_validated: false
 relocated_application:
   build_preset: RelocatedDebug
   linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
-  vector_offset: 0x00020100
-  application_start: 0x08020100
+  vector_offset: 0x00022000
+  application_start: 0x08022000
   runtime_boot_validated: false
 wolfboot_build_profile:
   status: defined_phase_11_5b_build_only_not_boot_validated
@@ -71,4 +72,4 @@ secure_boot_flash_profile:
   negative_corrupted_application_test_status: uses_existing_phase_10j_negative_test_model
   boot_timing_status: uses_existing_phase_10k_timing_model
   manifest_consolidation_status: uses_existing_phase_10l_and_phase_11_benchmark_schema
-notes: This ED25519 profile reuses the Phase 10d layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines ED25519 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.
+notes: This ED25519 profile reuses the Phase 11 shared 8 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines ED25519 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.

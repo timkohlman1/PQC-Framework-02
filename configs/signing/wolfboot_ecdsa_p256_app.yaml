@@ -20,6 +20,7 @@ classical_benchmark_profile:
   reference_path: true
   minimum_scope_member: true
 image_version: 1
+image_header_size_bytes: 8192
 private_key: secrets/wolfboot/ecdsa_p256_private_key.der
 key_policy: local_private_key_never_commit
 binary_conversion:
@@ -34,6 +35,8 @@ keygen:
   stdin: "Yes\n"
 sign:
   working_dir: tools/wolfboot
+  environment:
+    IMAGE_HEADER_SIZE: "8192"
   command: tools/keytools/sign
   args: "--ecc256 {input_image} {private_key} {image_version}"
 notes: This profile is signing-only and is the ECC256 reference signing profile for the Phase 11.5a minimum classical comparison scope. The private key path is intentionally under secrets/ and must remain local. The framework may generate the local key if it is absent, converts the relocated ELF to the configured BIN image when needed, runs wolfBoot keytools from the tools/wolfboot working directory, sends explicit keygen overwrite confirmation only when configured, signs the BIN image, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.

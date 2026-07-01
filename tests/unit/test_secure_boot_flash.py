@@ -543,3 +543,42 @@ def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
     assert metadata["signature_algorithm"] == "ed25519"
     assert metadata["capability_status"]["ed25519"]["runnable"] is True
     assert metadata["capability_status"]["rsa2048"]["runnable"] is False
+
+
+def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
+    secure_flash = load_secure_boot_flash_module()
+    bundle = sample_bundle()
+    experiment = bundle["experiment"]
+    experiment["id"] = "wolfboot_rsa2048_uart"
+    experiment["boot"] = "wolfboot_rsa2048"
+    experiment["boot_crypto"] = "rsa2048"
+    experiment["firmware"]["mode"] = "wolfboot_rsa2048"
+    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin"
+    experiment["secure_boot_benchmark_profile"].update(
+        {
+            "profile_id": "rsa2048_benchmark",
+            "algorithm": "RSA2048",
+            "wolfboot_sign": "RSA2048",
+            "signature_algorithm": "rsa2048",
+            "key_size_bits": 2048,
+            "signature_size_bytes": 256,
+            "status": "configured_phase_11_5c_rsa2048_profile",
+            "signing_profile": "configs/signing/wolfboot_rsa2048_app.yaml",
+            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa2048.yaml",
+            "experiment_profile": "configs/experiments/wolfboot_rsa2048_uart.yaml",
+            "boot_profile": "configs/boot/wolfboot_rsa2048.yaml",
+            "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
+            "rsa2048_status": "configured_phase_11_5c_rsa2048_profile_not_hardware_validated",
+        }
+    )
+
+    metadata = secure_flash._classical_profile_metadata(experiment)
+
+    assert metadata["model_phase"] == "phase_11_5c_rsa2048_profile"
+    assert metadata["algorithm"] == "RSA2048"
+    assert metadata["signature_algorithm"] == "rsa2048"
+    assert metadata["key_size_bits"] == 2048
+    assert metadata["signature_size_bytes"] == 256
+    assert metadata["capability_status"]["ed25519"]["runnable"] is True
+    assert metadata["capability_status"]["rsa2048"]["runnable"] is True
+    assert metadata["capability_status"]["rsa2048"]["unavailable"] is None

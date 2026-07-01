@@ -333,27 +333,40 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
     algorithm = str(profile.get("algorithm", "ECC256"))
     profile_status = str(profile.get("status", "reference_existing_phase_10_11_profile"))
     ed25519_runnable = algorithm == "ED25519" and profile.get("runnable") is True
+    rsa2048_runnable = algorithm == "RSA2048" and profile.get("runnable") is True
+
+    implemented_algorithms = ["ECC256"]
+    if ed25519_runnable or rsa2048_runnable:
+        implemented_algorithms.append("ED25519")
+    if rsa2048_runnable:
+        implemented_algorithms.append("RSA2048")
+
+    planned_non_runnable_algorithms: list[str] = []
+    if not ed25519_runnable and not rsa2048_runnable:
+        planned_non_runnable_algorithms.append("ED25519")
+    if not rsa2048_runnable:
+        planned_non_runnable_algorithms.append("RSA2048")
 
     minimum_scope = {
         "status": str(profile.get("minimum_scope_status", "defined_phase_11_5a_minimum_classical_scope")),
         "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
         "implemented_reference_algorithm": "ECC256",
-        "implemented_algorithms": ["ECC256"] + (["ED25519"] if ed25519_runnable else []),
-        "planned_non_runnable_algorithms": ["RSA2048"] if ed25519_runnable else ["ED25519", "RSA2048"],
+        "implemented_algorithms": implemented_algorithms,
+        "planned_non_runnable_algorithms": planned_non_runnable_algorithms,
         "scope_limitations": str(
             profile.get(
                 "scope_limitations",
-                "Phase 11.5b adds ED25519 while RSA2048 remains reserved for Phase 11.5c.",
+                "Phase 11.5c adds RSA2048 after ED25519 while cross-profile aggregation remains Phase 11.6 scope.",
             )
         ),
     }
 
     capability_status = {
         "ed25519": {
-            "status": str(profile.get("ed25519_status", "configured_phase_11_5b_runnable_profile_not_hardware_validated" if ed25519_runnable else "planned_phase_11_5b_not_implemented")),
-            "runnable": ed25519_runnable,
+            "status": str(profile.get("ed25519_status", "configured_phase_11_5b_runnable_profile_not_hardware_validated" if (ed25519_runnable or rsa2048_runnable) else "planned_phase_11_5b_not_implemented")),
+            "runnable": ed25519_runnable or rsa2048_runnable,
             "unavailable": None
-            if ed25519_runnable
+            if (ed25519_runnable or rsa2048_runnable)
             else {
                 "status": "unavailable",
                 "source": "profile_model",
@@ -361,19 +374,28 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
             },
         },
         "rsa2048": {
-            "status": str(profile.get("rsa2048_status", "planned_phase_11_5c_not_implemented")),
-            "runnable": False,
-            "unavailable": {
+            "status": str(profile.get("rsa2048_status", "configured_phase_11_5c_rsa2048_profile_not_hardware_validated" if rsa2048_runnable else "planned_phase_11_5c_not_implemented")),
+            "runnable": rsa2048_runnable,
+            "unavailable": None
+            if rsa2048_runnable
+            else {
                 "status": "unavailable",
                 "source": "profile_model",
-                "reason": "RSA2048 benchmark profile is reserved in the minimum comparison scope but is not runnable until Phase 11.5c.",
+                "reason": "RSA2048 benchmark profile is reserved in the minimum comparison scope but this experiment is not the Phase 11.5c RSA2048 profile.",
             },
         },
     }
 
+    if rsa2048_runnable:
+        model_phase = "phase_11_5c_rsa2048_profile"
+    elif ed25519_runnable:
+        model_phase = "phase_11_5b_ed25519_profile"
+    else:
+        model_phase = "phase_11_5a_classical_profile_model"
+
     return {
         "schema_version": int(profile.get("schema_version", 1)),
-        "model_phase": "phase_11_5b_ed25519_profile" if ed25519_runnable else "phase_11_5a_classical_profile_model",
+        "model_phase": model_phase,
         "profile_model": str(profile.get("profile_model", "configs/benchmarks/classical_signing_profiles.yaml")),
         "profile_id": str(profile.get("profile_id", experiment.get("id", "unknown"))),
         "algorithm": algorithm,

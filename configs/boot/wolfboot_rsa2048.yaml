@@ -1,0 +1,75 @@
+id: wolfboot_rsa2048
+mode: wolfboot_rsa2048
+description: Planned wolfBoot RSA2048 secure-boot benchmark profile. Generic direct-flash execution remains blocked; Phase 10h secure-boot flashing uses explicit two-artifact profiles.
+runnable: false
+status: configured_phase_11_5c_rsa2048_profile_not_hardware_validated
+implementation_state: rsa2048_build_sign_flash_profiles_defined_runtime_validation_requires_user_logs
+intended_signature_algorithm: rsa2048
+classical_benchmark_profile:
+  model: configs/benchmarks/classical_signing_profiles.yaml
+  profile_id: rsa2048_benchmark
+  algorithm: RSA2048
+  minimum_scope_member: true
+  reference_path: false
+application_slot_concept: planned_signed_application_primary_slot
+flash_layout_status: defined_phase_10d_reused_by_phase_11_5c_rsa2048_flash_workflow
+secure_boot_layout:
+  status: planned_layout_used_by_secure_boot_flash_workflow
+  decision_record: docs/decisions/0003_secure_boot_flash_layout.md
+  internal_flash_base: 0x08000000
+  internal_flash_size: 0x00200000
+  internal_flash_end: 0x081FFFFF
+  wolfboot_base: 0x08000000
+  wolfboot_size: 0x00020000
+  primary_slot_base: 0x08020000
+  primary_slot_size: 0x000E0000
+  primary_slot_entry: 0x08022000
+  image_header_size: 0x00002000
+  update_slot_base: 0x08100000
+  update_slot_size: 0x000E0000
+  swap_metadata_base: 0x081E0000
+  swap_metadata_size: 0x00020000
+  wolfboot_sector_size: 0x4000
+  physical_flash_page_assumption: 0x1000
+  runtime_boot_validated: false
+relocated_application:
+  build_preset: RelocatedDebug
+  linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
+  vector_offset: 0x00022000
+  application_start: 0x08022000
+  runtime_boot_validated: false
+wolfboot_build_profile:
+  status: defined_phase_11_5c_build_only_not_boot_validated
+  profile: configs/builds/wolfboot_stm32l4_rsa2048.yaml
+  dependency_strategy: git_submodule
+  config_template: configs/wolfboot/stm32l4r5_rsa2048.config
+  generated_config: tools/wolfboot/.config
+  command: python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_rsa2048.yaml
+  output_evidence: results/wolfboot-builds
+  runtime_boot_validated: false
+application_signing_profile:
+  status: defined_phase_11_5c_signing_only_not_flashing_or_boot_validated
+  profile: configs/signing/wolfboot_rsa2048_app.yaml
+  input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+  input_image: build/RelocatedDebug/stm32_basic_hal1_rsa2048.bin
+  signed_image: build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin
+  private_key: secrets/wolfboot/rsa2048_private_key.der
+  command: python scripts/experiment.py sign-application --profile configs/signing/wolfboot_rsa2048_app.yaml
+  output_evidence: results/signing
+  runtime_boot_validated: false
+secure_boot_flash_profile:
+  status: defined_phase_11_5c_flash_profile_not_hardware_validated
+  experiment: configs/experiments/wolfboot_rsa2048_uart.yaml
+  command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 0x08000000
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin
+  signed_application_offset: 0x08020000
+  output_evidence: results
+  runtime_boot_path_validated: requires_user_hardware_log_evidence
+  expected_secure_boot_uart_marker: stm32-basic_hal1 secure-boot app v0.1.0
+  positive_boot_evidence_status: uses_existing_phase_10i_marker_model
+  negative_corrupted_application_test_status: uses_existing_phase_10j_negative_test_model
+  boot_timing_status: uses_existing_phase_10k_timing_model
+  manifest_consolidation_status: uses_existing_phase_10l_and_phase_11_benchmark_schema
+notes: This RSA2048 profile reuses the Phase 11 shared 8 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines RSA2048 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.

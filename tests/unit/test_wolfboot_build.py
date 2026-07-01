@@ -331,8 +331,8 @@ def test_project_local_wolfboot_config_selects_stm32l4r5_header():
 
     assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
     assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
-    assert "IMAGE_HEADER_SIZE=256" in config_text
-    assert "IMAGE_HEADER_SIZE=0x100" not in config_text
+    assert "IMAGE_HEADER_SIZE=8192" in config_text
+    assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
     assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
     assert "CFLAGS_EXTRA+=-include" not in config_text
     assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
@@ -386,14 +386,13 @@ def test_construct_ed25519_wolfboot_build_command_accepts_profile():
     assert command == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]
 
 
-def test_validate_wolfboot_build_profile_rejects_rsa2048_until_phase_11_5c():
+def test_validate_wolfboot_build_profile_accepts_rsa2048_algorithm():
     wolfboot_build = load_wolfboot_build_module()
     profile = sample_profile()
+    profile["id"] = "wolfboot_stm32l4_rsa2048"
     profile["signature_algorithm"] = "rsa2048"
+    profile["boot_profile"] = "wolfboot_rsa2048"
+    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_rsa2048.config"
+    profile["build"]["signing_key"] = "secrets/wolfboot/rsa2048_private_key.der"
 
-    try:
-        wolfboot_build.validate_wolfboot_build_profile(profile)
-    except wolfboot_build.WolfBootBuildProfileError as exc:
-        assert "ecdsa_p256 or ed25519" in str(exc)
-    else:
-        raise AssertionError("rsa2048 wolfBoot build profile should not validate in Phase 11.5b")
+    wolfboot_build.validate_wolfboot_build_profile(profile)

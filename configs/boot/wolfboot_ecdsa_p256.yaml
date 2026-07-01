@@ -23,13 +23,14 @@ secure_boot_layout:
   wolfboot_size: 0x00020000
   primary_slot_base: 0x08020000
   primary_slot_size: 0x000E0000
-  primary_slot_entry: 0x08020100
-  image_header_size: 0x00000100
+  primary_slot_entry: 0x08022000
+  image_header_size: 0x00002000
   update_slot_base: 0x08100000
   update_slot_size: 0x000E0000
   swap_metadata_base: 0x081E0000
   swap_metadata_size: 0x00020000
-  sector_size_assumption: 0x00001000
+  sector_size_assumption: 0x00004000
+  physical_flash_page_assumption: 0x00001000
   wolfboot_partition_boot_address: 0x08020000
   wolfboot_partition_size: 0x000E0000
   wolfboot_partition_update_address: 0x08100000
@@ -39,8 +40,8 @@ relocated_application_build:
   cmake_configure_preset: RelocatedDebug
   cmake_build_preset: RelocatedDebug
   linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
-  vector_table_offset: 0x00020100
-  linked_application_start: 0x08020100
+  vector_table_offset: 0x00022000
+  linked_application_start: 0x08022000
   runtime_boot_validated: false
 target_support_assessment:
   status: assessed_phase_10c

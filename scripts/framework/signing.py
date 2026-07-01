@@ -150,14 +150,15 @@ def validate_application_signing_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm not in {"ecdsa_p256", "ed25519"}:
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048"}:
         raise ApplicationSigningProfileError(
-            "application signing profile signature_algorithm must be ecdsa_p256 or ed25519"
+            "application signing profile signature_algorithm must be ecdsa_p256, ed25519, or rsa2048"
         )
 
     sign_config = profile.get("sign")
     if not isinstance(sign_config, dict):
         raise ApplicationSigningProfileError("application signing profile sign field must be a mapping")
+    _section_environment(profile, "sign")
 
     keygen_config = profile.get("keygen", {})
     if keygen_config is not None and not isinstance(keygen_config, dict):
@@ -270,6 +271,46 @@ def _section_stdin(profile: dict[str, Any], section: str) -> str | None:
     if configured is None:
         return None
     return configured.replace("\\n", "\n")
+
+
+def _section_environment(profile: dict[str, Any], section: str) -> dict[str, str]:
+    """Return configured environment overrides for one signing-related command."""
+
+    current = profile.get(section)
+    if not isinstance(current, dict):
+        return {}
+    environment = current.get("environment", {})
+    if environment in (None, ""):
+        return {}
+    if not isinstance(environment, dict):
+        raise ApplicationSigningProfileError(
+            f"application signing profile {section}.environment field must be a mapping"
+        )
+    return {str(key): str(value) for key, value in environment.items()}
+
+
+def _run_with_environment(
+    runner: SigningRunner,
+    command: list[str],
+    cwd: Path,
+    stdin_text: str | None,
+    environment: dict[str, str],
+) -> SigningCommandExecution:
+    """Run a configured command with temporary environment overrides."""
+
+    if not environment:
+        return runner(command, cwd, stdin_text)
+
+    previous_values = {key: os.environ.get(key) for key in environment}
+    try:
+        os.environ.update(environment)
+        return runner(command, cwd, stdin_text)
+    finally:
+        for key, previous_value in previous_values.items():
+            if previous_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous_value
 
 
 def _executable_extensions() -> list[str]:
@@ -647,10 +688,13 @@ def execute_application_signing(
         signing_command = construct_signing_command(profile, repo_root_path)
         keygen_working_dir = _section_working_dir(profile, "keygen", repo_root_path)
         keygen_stdin = _section_stdin(profile, "keygen")
+        keygen_environment = _section_environment(profile, "keygen")
         binary_conversion_working_dir = _section_working_dir(profile, "binary_conversion", repo_root_path)
         binary_conversion_stdin = _section_stdin(profile, "binary_conversion")
+        binary_conversion_environment = _section_environment(profile, "binary_conversion")
         sign_working_dir = _section_working_dir(profile, "sign", repo_root_path)
         sign_stdin = _section_stdin(profile, "sign")
+        sign_environment = _section_environment(profile, "sign")
     except ApplicationSigningProfileError as exc:
         return _profile_error_result(
             profile=profile,
@@ -685,7 +729,7 @@ def execute_application_signing(
     if binary_conversion_enabled and input_elf_path is not None and input_elf_path.is_file():
         input_image_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            binary_conversion_execution = runner(binary_conversion_command or [], binary_conversion_working_dir, binary_conversion_stdin)
+            binary_conversion_execution = _run_with_environment(runner, binary_conversion_command or [], binary_conversion_working_dir, binary_conversion_stdin, binary_conversion_environment)
             return_code = binary_conversion_execution.return_code
         except FileNotFoundError as exc:
             missing_executable = binary_conversion_command[0] if binary_conversion_command else "configured binary-conversion tool"
@@ -721,7 +765,7 @@ def execute_application_signing(
         if keygen_enabled:
             private_key_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                keygen_execution = runner(keygen_command or [], keygen_working_dir, keygen_stdin)
+                keygen_execution = _run_with_environment(runner, keygen_command or [], keygen_working_dir, keygen_stdin, keygen_environment)
                 return_code = keygen_execution.return_code
             except FileNotFoundError as exc:
                 missing_executable = keygen_command[0] if keygen_command else "configured key-generation tool"
@@ -750,7 +794,7 @@ def execute_application_signing(
     if return_code == 0:
         signed_image_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            sign_execution = runner(signing_command, sign_working_dir, sign_stdin)
+            sign_execution = _run_with_environment(runner, signing_command, sign_working_dir, sign_stdin, sign_environment)
             return_code = sign_execution.return_code
         except FileNotFoundError as exc:
             missing_executable = signing_command[0] if signing_command else "configured signing tool"
@@ -869,6 +913,7 @@ def execute_application_signing(
                 "keygen_working_dir": str(keygen_working_dir),
                 "keygen_return_code": None if keygen_execution is None else keygen_execution.return_code,
                 "sign_working_dir": str(sign_working_dir),
+                "sign_environment": sign_environment,
                 "sign_return_code": None if sign_execution is None else sign_execution.return_code,
                 "key_material_copied_to_results": False,
             },

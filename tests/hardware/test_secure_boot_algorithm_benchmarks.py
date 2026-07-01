@@ -54,6 +54,18 @@ BENCHMARK_PROFILES = (
         experiment_profile="configs/experiments/wolfboot_ed25519_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin",
     ),
+    SecureBootBenchmarkProfile(
+        name="rsa2048",
+        profile_id="rsa2048_benchmark",
+        algorithm="RSA2048",
+        signature_algorithm="rsa2048",
+        boot_mode="wolfboot_rsa2048",
+        boot_crypto="rsa2048",
+        build_profile="configs/builds/wolfboot_stm32l4_rsa2048.yaml",
+        signing_profile="configs/signing/wolfboot_rsa2048_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_rsa2048_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin",
+    ),
 )
 
 
@@ -310,6 +322,7 @@ def test_secure_boot_classical_algorithm_benchmark_profiles_side_by_side(pqc_req
         result_dir = _run_profile_benchmark(repo_root, profile)
         manifests[profile.name] = _assert_profile_benchmark_manifest(repo_root, result_dir, profile)
 
-    assert set(manifests) == {"ecc256", "ed25519"}
+    assert set(manifests) == {"ecc256", "ed25519", "rsa2048"}
     assert manifests["ecc256"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "ecc256_reference"
     assert manifests["ed25519"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "ed25519_benchmark"
+    assert manifests["rsa2048"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "rsa2048_benchmark"

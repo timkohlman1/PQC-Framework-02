@@ -20,6 +20,7 @@ secure_boot_benchmark_profile:
   signature_algorithm: ed25519
   signature_size_bytes: 64
   image_version: 1
+  image_header_size_bytes: 8192
   runnable: true
   status: configured_phase_11_5b_ed25519_profile
   signing_profile: configs/signing/wolfboot_ed25519_app.yaml
@@ -42,6 +43,7 @@ secure_boot_flash:
   signature_algorithm: ed25519
   signature_size_bytes: 64
   image_version: 1
+  image_header_size_bytes: 8192
   wolfboot_artifact: tools/wolfboot/wolfboot.elf
   wolfboot_offset: 0x08000000
   wolfboot_pass_offset_to_helper: false
@@ -53,8 +55,8 @@ secure_boot_flash:
   wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
   negative_test_corrupt_application: false
   boot_timing_source: uart_explicit_verification_time_marker
-  boot_timing_expected_uart_pattern: wolfBoot verification time: <milliseconds> ms
+  boot_timing_expected_uart_pattern: "wolfBoot verification time: <milliseconds> ms"
   boot_timing_unavailable_behavior: record_null_verification_time_ms
   corruption_method: flip_first_byte
   corrupted_application_artifact: corrupted_application_signed.bin
-  notes: Phase 11.5b uses the same relocated application payload, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256 reference profile. The secure-boot flash workflow refuses to flash when available ED25519 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
+  notes: Phase 11.5b uses the same relocated application payload and shared 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256 reference profile. The secure-boot flash workflow refuses to flash when available ED25519 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.

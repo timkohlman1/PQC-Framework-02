@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ def sample_profile() -> dict[str, object]:
         },
         "sign": {
             "working_dir": "tools/wolfboot",
+            "environment": {"IMAGE_HEADER_SIZE": "8192"},
             "command": "tools/keytools/sign",
             "args": "--ecc256 {input_image} {private_key} {image_version}",
         },
@@ -125,6 +127,28 @@ def test_keygen_stdin_confirmation_is_expanded_from_profile():
     assert signing._section_stdin(profile, "sign") is None
 
 
+def test_signing_environment_overrides_are_temporary(monkeypatch, tmp_path):
+    signing = load_signing_module()
+    monkeypatch.setenv("IMAGE_HEADER_SIZE", "256")
+    observed: dict[str, str | None] = {}
+
+    def fake_runner(command: list[str], cwd: Path, stdin_text: str | None = None):
+        observed["during"] = os.environ.get("IMAGE_HEADER_SIZE")
+        return signing.SigningCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = signing._run_with_environment(
+        fake_runner,
+        ["sign"],
+        tmp_path,
+        None,
+        {"IMAGE_HEADER_SIZE": "8192"},
+    )
+
+    assert result.return_code == 0
+    assert observed["during"] == "8192"
+    assert os.environ.get("IMAGE_HEADER_SIZE") == "256"
+
+
 def test_execute_application_signing_generates_key_signs_and_records_metadata(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"
@@ -154,6 +178,7 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
             return signing.SigningCommandExecution(command, 0, "key generated", "", 0.1)
         if command[0].endswith("sign"):
             assert cwd == repo_root / "tools" / "wolfboot"
+            assert os.environ.get("IMAGE_HEADER_SIZE") == "8192"
             assert private_key.is_file()
             signed_image.write_bytes(b"signed image bytes")
             return signing.SigningCommandExecution(command, 0, "image signed", "", 0.2)
@@ -198,6 +223,7 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert manifest["signing"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
     assert "scripts/framework/signing.py" in manifest["signing"]["requested_fingerprint_inputs"]
     assert manifest["signing"]["signed_image_sha256"] == expected_signed_sha
+    assert manifest["signing"]["sign_environment"] == {"IMAGE_HEADER_SIZE": "8192"}
     assert manifest["signing"]["key_material_copied_to_results"] is False
     assert not (result.result_dir / "ecdsa_p256_private_key.der").exists()
     assert "Private signing keys are local-only evidence inputs" in log_text
@@ -370,14 +396,31 @@ def test_construct_ed25519_signing_commands_expand_profile_placeholders(tmp_path
     ]
 
 
-def test_validate_application_signing_profile_rejects_rsa2048_until_phase_11_5c():
+def test_construct_rsa2048_signing_commands_expand_profile_placeholders(tmp_path):
     signing = load_signing_module()
+    repo_root = tmp_path
     profile = sample_profile()
+    profile["id"] = "wolfboot_rsa2048_app"
+    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048.bin"
+    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin"
     profile["signature_algorithm"] = "rsa2048"
+    profile["private_key"] = "secrets/wolfboot/rsa2048_private_key.der"
+    profile["keygen"]["args"] = "--rsa2048 -g {private_key}"
+    profile["sign"]["args"] = "--rsa2048 {input_image} {private_key} {image_version}"
 
-    try:
-        signing.validate_application_signing_profile(profile)
-    except signing.ApplicationSigningProfileError as exc:
-        assert "ecdsa_p256 or ed25519" in str(exc)
-    else:
-        raise AssertionError("rsa2048 signing profile should not validate in Phase 11.5b")
+    keygen_command = signing.construct_keygen_command(profile, repo_root)
+    sign_command = signing.construct_signing_command(profile, repo_root)
+
+    assert keygen_command == [
+        "tools/keytools/keygen",
+        "--rsa2048",
+        "-g",
+        str(repo_root / "secrets" / "wolfboot" / "rsa2048_private_key.der"),
+    ]
+    assert sign_command == [
+        "tools/keytools/sign",
+        "--rsa2048",
+        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_rsa2048.bin"),
+        str(repo_root / "secrets" / "wolfboot" / "rsa2048_private_key.der"),
+        "1",
+    ]
