@@ -998,3 +998,41 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Expanded classical profile hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided evidence.
 
+
+## Phase 11.6 benchmark aggregation architecture
+
+The Phase 11.6 aggregation layer is implemented as a read-only framework utility. It consumes completed secure-boot run manifests and produces cross-profile summary files without invoking build tools, key-generation tools, SSH, flashing helpers, UART capture, or hardware-dependent operations.
+
+The CLI entry point is:
+
+```powershell
+python scripts/experiment.py aggregate-benchmarks
+```
+
+Input handling supports two modes:
+
+- If no explicit input is supplied, scan `results/*/manifest.json` and include only manifests containing a `secure_boot_benchmark` object.
+- If explicit inputs are supplied, include each `--manifest <path>` or `--run-dir <path>` entry after resolving run directories to `manifest.json`.
+
+The aggregation helper writes:
+
+```text
+benchmark_summary.json
+benchmark_summary.csv
+```
+
+The JSON summary records schema version, model phase, generation timestamp, input counts, skipped manifests, and one structured profile row per source manifest. The CSV summary uses stable flat column names so it can be imported by spreadsheet tools, plotting scripts, or later analysis notebooks.
+
+Each profile row is derived from the existing benchmark manifest schema:
+
+- profile metadata from `secure_boot_benchmark.classical_profile_metadata`
+- repeated-run counts and aggregate timing/cycle statistics from `secure_boot_benchmark.aggregate_statistics`
+- static flash/RAM metrics from `secure_boot_benchmark.build_time_metrics`
+- stack evidence from `secure_boot_benchmark.runtime_memory_metrics`
+- signed-image and signature-size evidence from `secure_boot_benchmark.signed_artifact_metrics`
+- verdict evidence from the manifest result field
+- limitations from the benchmark, aggregate, build, signed-artifact, runtime-memory, and profile metadata objects
+
+Derived `cycles_per_kb` and `time_ms_per_kb` use median verification cycles/time divided by signed application image size in KiB when those values are not already present in the manifest. Missing values remain explicit `null` values in JSON and blank cells in CSV.
+
+The aggregation command is not benchmark collection. It does not make hardware-success claims and does not reinterpret missing runtime evidence.

@@ -731,3 +731,33 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Expanded classical profile hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided evidence.
 
+
+## Phase 11.6 Benchmark aggregation output
+
+Phase 11.6 adds a read-only aggregation command for secure-boot benchmark result manifests. The command does not build firmware, sign images, flash hardware, open UART devices, or use SSH. It reads existing result manifests that contain `secure_boot_benchmark` evidence and writes machine-readable cross-profile summaries.
+
+Default aggregation command:
+
+```powershell
+python scripts/experiment.py aggregate-benchmarks
+```
+
+By default, the command scans top-level result manifests under `results/*/manifest.json` and writes:
+
+```text
+results/benchmark-aggregation/benchmark_summary.json
+results/benchmark-aggregation/benchmark_summary.csv
+```
+
+To aggregate an explicit set of manifests or run directories:
+
+```powershell
+python scripts/experiment.py aggregate-benchmarks --manifest results/<run_id>/manifest.json --manifest results/<run_id>/manifest.json
+python scripts/experiment.py aggregate-benchmarks --run-dir results/<run_id> --run-dir results/<run_id>
+```
+
+The JSON output preserves one structured row per profile plus source-manifest and limitation evidence. The CSV output flattens the same profile rows for charts and external analysis. Summary fields include profile ID, signing algorithm, curve or key size, sample counts, timing and cycle statistics, cycles per KB, time per KB, bootloader flash size, static RAM size, maximum stack usage where available, signed-image size, signature size, image-overhead metrics, final verdict, limitations, and the source manifest path.
+
+`cycles_per_kb` and `time_ms_per_kb` are calculated from median cycle/time values and the signed application image size when the manifest does not already provide those derived metrics. Missing metrics remain blank in CSV and `null` in JSON; they are not inferred from unrelated host-side timings or logs.
+
+Hardware success and benchmark values must still only be claimed from explicit generated manifests, flash logs, and UART logs.

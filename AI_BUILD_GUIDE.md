@@ -2361,3 +2361,49 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 
 Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Expanded classical profile hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided evidence.
 
+
+## Phase 11.6 Benchmark Aggregation Output
+
+Implemented scope:
+
+- Added a read-only secure-boot benchmark aggregation command:
+
+```powershell
+python scripts/experiment.py aggregate-benchmarks
+```
+
+- The command scans `results/*/manifest.json` by default and includes only manifests containing `secure_boot_benchmark` evidence.
+- Explicit aggregation inputs are supported with repeated `--manifest <path>` and `--run-dir <path>` arguments.
+- The command writes machine-readable cross-profile summaries:
+
+```text
+results/benchmark-aggregation/benchmark_summary.json
+results/benchmark-aggregation/benchmark_summary.csv
+```
+
+- The JSON summary preserves schema version, model phase, generation timestamp, input/skipped counts, skipped-manifest reasons, source manifest paths, limitations, and one structured row per aggregated secure-boot benchmark profile.
+- The CSV summary flattens the same rows for charting and spreadsheet analysis.
+- Summary fields include profile ID, signing algorithm, curve or key size, sample count, valid sample count, failed sample count, median/mean/minimum/maximum/standard-deviation timing, median/mean/minimum/maximum/standard-deviation cycles, cycles per KB, time per KB, bootloader flash size, static RAM size, maximum stack usage when available, signed-image size, signature size, signed-image overhead bytes, signed-image overhead percentage, final profile verdict, limitations, and source manifest path.
+- Derived `cycles_per_kb` and `time_ms_per_kb` are calculated from median verification cycles/time and signed application image size when not already present in the manifest.
+- Missing metrics remain `null` in JSON and blank in CSV. Runtime memory values are not inferred from host timing, UART capture duration, reset delay, linker output alone, or build output alone.
+- Unit tests cover row construction, manifest discovery, JSON output, CSV output, and the CLI path without hardware.
+- The command does not build firmware, sign images, flash hardware, open UART devices, use SSH, or require physical hardware.
+- Hardware success and benchmark values must still only be claimed from explicit user-provided build, flash, UART, and manifest evidence.
+
+Manual Phase 11.6 commands:
+
+```powershell
+python scripts/experiment.py aggregate-benchmarks
+python scripts/experiment.py aggregate-benchmarks --manifest results/<run_id>/manifest.json --manifest results/<run_id>/manifest.json
+python scripts/experiment.py aggregate-benchmarks --run-dir results/<run_id> --run-dir results/<run_id>
+```
+
+Manual Phase 11.6 verification commands:
+
+```powershell
+python -m pytest tests/unit/test_benchmark_aggregation.py
+python -m pytest tests/unit
+python -m pytest
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Aggregation output is produced only from existing manifests and does not claim new runtime or hardware evidence.
