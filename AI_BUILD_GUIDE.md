@@ -2327,3 +2327,37 @@ Expected result: unit tests pass without hardware. Integration and hardware test
 ## Phase 11 shared secure-boot image-header reserve
 
 Phase 11 secure-boot benchmark profiles use one shared 8192-byte wolfBoot image-header reserve for ECC256, ED25519, and RSA2048. The matching wolfBoot logical sector size is 0x4000 / 16 KB because wolfBoot requires `WOLFBOOT_SECTOR_SIZE` to be larger than `IMAGE_HEADER_SIZE`. The signed image slot still starts at `0x08020000`, but the relocated HAL application is linked at `0x08022000` with `STM32_APP_VECTOR_OFFSET=0x00022000`. The signing profiles set `IMAGE_HEADER_SIZE=8192` for wolfBoot keytools so the signed image header and application vector address remain aligned. The wolfBoot config templates set `WOLFBOOT_SECTOR_SIZE=0x4000`; this is a wolfBoot logical sector choice for the benchmark layout, while the STM32L4R5 flash page assumption remains documented separately as 4 KB. This intentionally wastes a small amount of flash for smaller classical signatures to keep the benchmark layout stable before later PQC/hybrid profiles are added. If a future profile requires a larger header, apply the larger value globally before collecting final experiment runs.
+
+## Phase 11.5d Optional Expanded Classical Profile Set
+
+Implemented scope:
+
+- Added optional expanded classical secure-boot benchmark profiles for ECC384, ECC521, ED448, RSA3072, and RSA4096.
+- Each expanded profile has a matching wolfBoot build profile, application signing profile, boot profile, secure-boot experiment profile, and project-local wolfBoot config template.
+- Expanded profiles use the same relocated HAL application payload, board, 80 MHz CPU-Hz assumption, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as ECC256, ED25519, and RSA2048.
+- All classical benchmark profiles continue to use the shared Phase 11 8192-byte image-header reserve and the 0x08022000 relocated application entry address.
+- Private keys remain local under secrets/wolfboot/ and are not copied into results.
+- Cross-profile aggregation remains Phase 11.6 scope.
+- Hardware success and benchmark values must only be claimed from explicit user-provided build, flash, UART, and manifest evidence.
+
+Manual Phase 11.5d command pattern, replacing <profile> with ecc384, ecc521, ed448, rsa3072, or rsa4096:
+
+```powershell
+python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
+cmake --preset RelocatedDebug
+cmake --build --preset RelocatedDebug
+python scripts/experiment.py sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
+python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
+```
+
+Manual Phase 11.5d verification commands:
+
+```powershell
+python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_wolfboot_build.py tests/unit/test_signing.py tests/unit/test_secure_boot_flash.py tests/unit/test_manifest.py
+python -m pytest tests/unit
+python -m pytest
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+```
+
+Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Expanded classical profile hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided evidence.
+

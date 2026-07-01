@@ -424,3 +424,34 @@ def test_construct_rsa2048_signing_commands_expand_profile_placeholders(tmp_path
         str(repo_root / "secrets" / "wolfboot" / "rsa2048_private_key.der"),
         "1",
     ]
+
+
+
+def test_construct_phase_11_5d_expanded_signing_commands_expand_profile_placeholders(tmp_path):
+    signing = load_signing_module()
+    repo_root = tmp_path
+    profile = sample_profile()
+    profile["id"] = "wolfboot_rsa4096_app"
+    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096.bin"
+    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin"
+    profile["signature_algorithm"] = "rsa4096"
+    profile["private_key"] = "secrets/wolfboot/rsa4096_private_key.der"
+    profile["keygen"]["args"] = "--rsa4096 -g {private_key}"
+    profile["sign"]["args"] = "--rsa4096 {input_image} {private_key} {image_version}"
+
+    keygen_command = signing.construct_keygen_command(profile, repo_root)
+    sign_command = signing.construct_signing_command(profile, repo_root)
+
+    assert keygen_command == [
+        "tools/keytools/keygen",
+        "--rsa4096",
+        "-g",
+        str(repo_root / "secrets" / "wolfboot" / "rsa4096_private_key.der"),
+    ]
+    assert sign_command == [
+        "tools/keytools/sign",
+        "--rsa4096",
+        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_rsa4096.bin"),
+        str(repo_root / "secrets" / "wolfboot" / "rsa4096_private_key.der"),
+        "1",
+    ]

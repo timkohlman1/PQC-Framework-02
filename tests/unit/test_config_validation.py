@@ -504,13 +504,13 @@ def test_validate_application_signing_profile_rejects_unsupported_algorithm():
         "description": "Invalid signing profile.",
         "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
         "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
-        "signature_algorithm": "rsa3072",
+        "signature_algorithm": "mldsa44",
         "image_version": 1,
-        "private_key": "secrets/wolfboot/rsa3072_private_key.der",
+        "private_key": "secrets/wolfboot/mldsa44_private_key.der",
         "sign": {"command": "tools/wolfboot/tools/keytools/sign"},
     }
 
-    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256, ed25519, or rsa2048"):
+    with pytest.raises(experiment_cli.ConfigError, match="ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096"):
         experiment_cli.validate_application_signing_profile_config(config)
 
 
@@ -555,3 +555,80 @@ def test_validate_classical_profile_model_accepts_phase_11_5b_ed25519_profile():
     }
 
     experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+
+
+def test_validate_classical_profile_model_accepts_phase_11_5d_expanded_profiles():
+    experiment_cli = load_experiment_module()
+    config = _valid_classical_profile_model()
+    config["model_phase"] = "phase_11_5d_expanded_classical_profiles"
+    config["minimum_comparison_scope"]["ed25519"]["runnable"] = True
+    config["minimum_comparison_scope"]["ed25519"]["signature_algorithm"] = "ed25519"
+    config["minimum_comparison_scope"]["rsa2048"]["runnable"] = True
+    config["minimum_comparison_scope"]["rsa2048"]["signature_algorithm"] = "rsa2048"
+    del config["profiles"]["ed25519_reserved"]
+    del config["profiles"]["rsa2048_reserved"]
+    config["profiles"]["ed25519_benchmark"] = {
+        "algorithm": "ED25519",
+        "signature_algorithm": "ed25519",
+        "signature_size_bytes": 64,
+        "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
+        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
+        "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
+        "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
+        "runnable": True,
+    }
+    config["profiles"]["rsa2048_benchmark"] = {
+        "algorithm": "RSA2048",
+        "signature_algorithm": "rsa2048",
+        "key_size_bits": 2048,
+        "signature_size_bytes": 256,
+        "signing_profile": "configs/signing/wolfboot_rsa2048_app.yaml",
+        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa2048.yaml",
+        "experiment_profile": "configs/experiments/wolfboot_rsa2048_uart.yaml",
+        "boot_profile": "configs/boot/wolfboot_rsa2048.yaml",
+        "runnable": True,
+    }
+    for name, algorithm, sig_alg, key_bits, sig_size in (
+        ("ecc384_benchmark", "ECC384", "ecc384", 384, 96),
+        ("ecc521_benchmark", "ECC521", "ecc521", 521, 132),
+        ("ed448_benchmark", "ED448", "ed448", 448, 114),
+        ("rsa3072_benchmark", "RSA3072", "rsa3072", 3072, 384),
+        ("rsa4096_benchmark", "RSA4096", "rsa4096", 4096, 512),
+    ):
+        suffix = sig_alg
+        config["profiles"][name] = {
+            "algorithm": algorithm,
+            "signature_algorithm": sig_alg,
+            "key_size_bits": key_bits,
+            "signature_size_bytes": sig_size,
+            "signing_profile": f"configs/signing/wolfboot_{suffix}_app.yaml",
+            "wolfboot_build_profile": f"configs/builds/wolfboot_stm32l4_{suffix}.yaml",
+            "experiment_profile": f"configs/experiments/wolfboot_{suffix}_uart.yaml",
+            "boot_profile": f"configs/boot/wolfboot_{suffix}.yaml",
+            "runnable": True,
+        }
+
+    experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+
+def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm():
+    experiment_cli = load_experiment_module()
+
+    config = {
+        "id": "wolfboot_stm32l4_rsa4096",
+        "description": "RSA4096 build profile.",
+        "source_dir": "tools/wolfboot",
+        "output_dir": "tools/wolfboot",
+        "artifact": "tools/wolfboot/wolfboot.elf",
+        "target": "stm32l4r5_project_local",
+        "signature_algorithm": "rsa4096",
+        "boot_profile": "wolfboot_rsa4096",
+        "build": {
+            "command": "make",
+            "config_template": "configs/wolfboot/stm32l4r5_rsa4096.config",
+            "generated_config": "tools/wolfboot/.config",
+        },
+    }
+
+    experiment_cli.validate_wolfboot_build_profile_config(config)

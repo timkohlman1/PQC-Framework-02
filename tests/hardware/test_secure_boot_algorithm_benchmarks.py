@@ -66,6 +66,66 @@ BENCHMARK_PROFILES = (
         experiment_profile="configs/experiments/wolfboot_rsa2048_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin",
     ),
+    SecureBootBenchmarkProfile(
+        name="ecc384",
+        profile_id="ecc384_benchmark",
+        algorithm="ECC384",
+        signature_algorithm="ecc384",
+        boot_mode="wolfboot_ecc384",
+        boot_crypto="ecc384",
+        build_profile="configs/builds/wolfboot_stm32l4_ecc384.yaml",
+        signing_profile="configs/signing/wolfboot_ecc384_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_ecc384_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin",
+    ),
+    SecureBootBenchmarkProfile(
+        name="ecc521",
+        profile_id="ecc521_benchmark",
+        algorithm="ECC521",
+        signature_algorithm="ecc521",
+        boot_mode="wolfboot_ecc521",
+        boot_crypto="ecc521",
+        build_profile="configs/builds/wolfboot_stm32l4_ecc521.yaml",
+        signing_profile="configs/signing/wolfboot_ecc521_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_ecc521_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc521_v1_signed.bin",
+    ),
+    SecureBootBenchmarkProfile(
+        name="ed448",
+        profile_id="ed448_benchmark",
+        algorithm="ED448",
+        signature_algorithm="ed448",
+        boot_mode="wolfboot_ed448",
+        boot_crypto="ed448",
+        build_profile="configs/builds/wolfboot_stm32l4_ed448.yaml",
+        signing_profile="configs/signing/wolfboot_ed448_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_ed448_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin",
+    ),
+    SecureBootBenchmarkProfile(
+        name="rsa3072",
+        profile_id="rsa3072_benchmark",
+        algorithm="RSA3072",
+        signature_algorithm="rsa3072",
+        boot_mode="wolfboot_rsa3072",
+        boot_crypto="rsa3072",
+        build_profile="configs/builds/wolfboot_stm32l4_rsa3072.yaml",
+        signing_profile="configs/signing/wolfboot_rsa3072_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_rsa3072_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin",
+    ),
+    SecureBootBenchmarkProfile(
+        name="rsa4096",
+        profile_id="rsa4096_benchmark",
+        algorithm="RSA4096",
+        signature_algorithm="rsa4096",
+        boot_mode="wolfboot_rsa4096",
+        boot_crypto="rsa4096",
+        build_profile="configs/builds/wolfboot_stm32l4_rsa4096.yaml",
+        signing_profile="configs/signing/wolfboot_rsa4096_app.yaml",
+        experiment_profile="configs/experiments/wolfboot_rsa4096_uart.yaml",
+        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin",
+    ),
 )
 
 
@@ -295,15 +355,21 @@ def _assert_profile_benchmark_manifest(
 
 
 @pytest.mark.hardware
-def test_secure_boot_classical_algorithm_benchmark_profiles_side_by_side(pqc_require_capabilities):
-    """Run clean ECC256 and ED25519 secure-boot benchmark workflows.
+@pytest.mark.parametrize(
+    "profile",
+    BENCHMARK_PROFILES,
+    ids=[profile.name for profile in BENCHMARK_PROFILES],
+)
+def test_secure_boot_classical_algorithm_benchmark_profile(
+    profile: SecureBootBenchmarkProfile,
+    pqc_require_capabilities,
+):
+    """Run one clean classical secure-boot benchmark workflow per profile.
 
-    This hardware test automates the manual side-by-side command sequences used
-    for Phase 11.5b. Each profile starts from a cleaned generated wolfBoot/app
-    build state, then builds wolfBoot, rebuilds the relocated HAL app, signs the
-    matching application image, flashes wolfBoot plus the signed app, and records
-    two UART benchmark samples. Result artifacts are intentionally left under
-    the repository results/ directory as benchmark evidence.
+    Pytest reports each Phase 11.5d profile as a separate hardware test case
+    while preserving the existing clean build/sign/flash/UART sequence for every
+    algorithm. Result artifacts are intentionally left under results/ as
+    benchmark evidence.
     """
 
     pqc_require_capabilities(
@@ -315,14 +381,8 @@ def test_secure_boot_classical_algorithm_benchmark_profiles_side_by_side(pqc_req
     )
 
     repo_root = _repo_root()
-    manifests: dict[str, dict] = {}
+    _prepare_profile_artifacts(repo_root, profile)
+    result_dir = _run_profile_benchmark(repo_root, profile)
+    manifest = _assert_profile_benchmark_manifest(repo_root, result_dir, profile)
 
-    for profile in BENCHMARK_PROFILES:
-        _prepare_profile_artifacts(repo_root, profile)
-        result_dir = _run_profile_benchmark(repo_root, profile)
-        manifests[profile.name] = _assert_profile_benchmark_manifest(repo_root, result_dir, profile)
-
-    assert set(manifests) == {"ecc256", "ed25519", "rsa2048"}
-    assert manifests["ecc256"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "ecc256_reference"
-    assert manifests["ed25519"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "ed25519_benchmark"
-    assert manifests["rsa2048"]["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == "rsa2048_benchmark"
+    assert manifest["secure_boot_benchmark"]["classical_profile_metadata"]["profile_id"] == profile.profile_id

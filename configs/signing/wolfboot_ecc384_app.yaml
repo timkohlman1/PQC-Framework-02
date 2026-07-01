@@ -1,0 +1,44 @@
+id: wolfboot_ecc384_app
+description: Sign the relocated STM32 HAL application image for the wolfBoot ECC384 benchmark profile.
+status: configured_phase_11_5d_signing_only_not_flashing_or_boot_validated
+boot_profile: wolfboot_ecc384
+relocated_build_preset: RelocatedDebug
+input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+input_image: build/RelocatedDebug/stm32_basic_hal1_ecc384.bin
+signed_image: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+retained_signed_image: application_signed.bin
+signature_algorithm: ecc384
+signature_size_bytes: 96
+classical_benchmark_profile:
+  model: configs/benchmarks/classical_signing_profiles.yaml
+  profile_id: ecc384_benchmark
+  algorithm: ECC384
+  wolfboot_sign: ECC384
+  key_size_bits: 384
+  signature_size_bytes: 96
+  reference_path: false
+  minimum_scope_member: false
+  signature_algorithm: ecc384
+  expanded_scope_member: true
+  curve: P-384
+image_version: 1
+image_header_size_bytes: 8192
+private_key: secrets/wolfboot/ecc384_private_key.der
+key_policy: local_private_key_never_commit
+binary_conversion:
+  enabled: true
+  command: arm-none-eabi-objcopy
+  args: -O binary {input_elf} {input_image}
+keygen:
+  enabled: true
+  working_dir: tools/wolfboot
+  command: tools/keytools/keygen
+  args: --ecc384 -g {private_key}
+  stdin: "Yes\n"
+sign:
+  working_dir: tools/wolfboot
+  environment:
+    IMAGE_HEADER_SIZE: '8192'
+  command: tools/keytools/sign
+  args: --ecc384 {input_image} {private_key} {image_version}
+notes: This profile is signing-only for the Phase 11.5d ECC384 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The framework may generate the local ECC384 key when absent, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.

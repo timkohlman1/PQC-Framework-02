@@ -259,6 +259,7 @@ def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) ->
         "phase_11_5a_classical_profile_model",
         "phase_11_5b_ed25519_profile",
         "phase_11_5c_rsa2048_profile",
+        "phase_11_5d_expanded_classical_profiles",
     }
     if model_phase not in allowed_model_phases:
         raise ConfigError(
@@ -307,7 +308,7 @@ def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) ->
         for field in ("signature_algorithm", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
             require_field(ed25519, field, "profiles.ed25519_benchmark")
 
-    if model_phase == "phase_11_5c_rsa2048_profile":
+    if model_phase in {"phase_11_5c_rsa2048_profile", "phase_11_5d_expanded_classical_profiles"}:
         rsa2048 = profiles.get("rsa2048_benchmark")
         if not isinstance(rsa2048, dict):
             raise ConfigError("classical benchmark profile model missing profiles.rsa2048_benchmark")
@@ -326,6 +327,25 @@ def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) ->
         if rsa2048.get("runnable") is not False:
             raise ConfigError("profiles.rsa2048_reserved.runnable must remain false until Phase 11.5c")
         require_field(rsa2048, "unsupported_reason", "profiles.rsa2048_reserved")
+
+    if model_phase == "phase_11_5d_expanded_classical_profiles":
+        expanded_required = {
+            "ecc384_benchmark": "ECC384",
+            "ecc521_benchmark": "ECC521",
+            "ed448_benchmark": "ED448",
+            "rsa3072_benchmark": "RSA3072",
+            "rsa4096_benchmark": "RSA4096",
+        }
+        for profile_name, algorithm_name in expanded_required.items():
+            expanded_profile = profiles.get(profile_name)
+            if not isinstance(expanded_profile, dict):
+                raise ConfigError(f"classical benchmark profile model missing profiles.{profile_name}")
+            if expanded_profile.get("algorithm") != algorithm_name:
+                raise ConfigError(f"profiles.{profile_name}.algorithm must be {algorithm_name}")
+            if expanded_profile.get("runnable") is not True:
+                raise ConfigError(f"profiles.{profile_name}.runnable must be true for Phase 11.5d")
+            for field in ("signature_algorithm", "key_size_bits", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
+                require_field(expanded_profile, field, f"profiles.{profile_name}")
 
 
 def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
@@ -347,8 +367,8 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "wolfBoot build profile")
 
     algorithm = require_field(config, "signature_algorithm", "wolfBoot build profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048"}:
-        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, or rsa2048")
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}:
+        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096")
 
     build_config = config.get("build")
     if not isinstance(build_config, dict):
@@ -381,8 +401,8 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "application signing profile")
 
     algorithm = require_field(config, "signature_algorithm", "application signing profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048"}:
-        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256, ed25519, or rsa2048")
+    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}:
+        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, or rsa4096")
 
     sign_config = config.get("sign")
     if not isinstance(sign_config, dict):

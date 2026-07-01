@@ -290,8 +290,13 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert benchmark["signature_size_bytes"] == 64
     assert benchmark["classical_profile_metadata"]["profile_id"] == "ecc256_reference"
     assert benchmark["classical_profile_metadata"]["minimum_comparison_scope"]["required_algorithms"] == ["ED25519", "ECC256", "RSA2048"]
-    assert benchmark["classical_profile_metadata"]["capability_status"]["ed25519"]["runnable"] is False
-    assert benchmark["classical_profile_metadata"]["capability_status"]["rsa2048"]["runnable"] is False
+    assert benchmark["classical_profile_metadata"]["capability_status"]["ed25519"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["rsa2048"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["ecc384"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["ecc521"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["ed448"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["rsa3072"]["runnable"] is True
+    assert benchmark["classical_profile_metadata"]["capability_status"]["rsa4096"]["runnable"] is True
     assert benchmark["build_time_metrics"]["status"] == "available"
     assert benchmark["build_time_metrics"]["bootloader_text_bytes"] == 11
     assert benchmark["build_time_metrics"]["bootloader_data_bytes"] == 7
@@ -542,7 +547,7 @@ def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
     assert metadata["algorithm"] == "ED25519"
     assert metadata["signature_algorithm"] == "ed25519"
     assert metadata["capability_status"]["ed25519"]["runnable"] is True
-    assert metadata["capability_status"]["rsa2048"]["runnable"] is False
+    assert metadata["capability_status"]["rsa2048"]["runnable"] is True
 
 
 def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
@@ -582,3 +587,42 @@ def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
     assert metadata["capability_status"]["ed25519"]["runnable"] is True
     assert metadata["capability_status"]["rsa2048"]["runnable"] is True
     assert metadata["capability_status"]["rsa2048"]["unavailable"] is None
+
+
+
+def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable():
+    secure_flash = load_secure_boot_flash_module()
+    bundle = sample_bundle()
+    experiment = bundle["experiment"]
+    experiment["id"] = "wolfboot_rsa4096_uart"
+    experiment["boot"] = "wolfboot_rsa4096"
+    experiment["boot_crypto"] = "rsa4096"
+    experiment["firmware"]["mode"] = "wolfboot_rsa4096"
+    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin"
+    experiment["secure_boot_benchmark_profile"].update(
+        {
+            "profile_id": "rsa4096_benchmark",
+            "algorithm": "RSA4096",
+            "wolfboot_sign": "RSA4096",
+            "signature_algorithm": "rsa4096",
+            "key_size_bits": 4096,
+            "signature_size_bytes": 512,
+            "status": "configured_phase_11_5d_expanded_classical_profile",
+            "signing_profile": "configs/signing/wolfboot_rsa4096_app.yaml",
+            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa4096.yaml",
+            "experiment_profile": "configs/experiments/wolfboot_rsa4096_uart.yaml",
+            "boot_profile": "configs/boot/wolfboot_rsa4096.yaml",
+            "expanded_scope_status": "phase_11_5d_expanded_classical_profile_added",
+        }
+    )
+
+    metadata = secure_flash._classical_profile_metadata(experiment)
+
+    assert metadata["model_phase"] == "phase_11_5d_expanded_classical_profiles"
+    assert metadata["algorithm"] == "RSA4096"
+    assert metadata["signature_algorithm"] == "rsa4096"
+    assert metadata["key_size_bits"] == 4096
+    assert metadata["signature_size_bytes"] == 512
+    assert metadata["capability_status"]["rsa4096"]["runnable"] is True
+    assert metadata["capability_status"]["rsa4096"]["unavailable"] is None
+    assert metadata["expanded_classical_scope"]["active_algorithm"] == "RSA4096"

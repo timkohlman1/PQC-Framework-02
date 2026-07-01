@@ -396,3 +396,16 @@ def test_validate_wolfboot_build_profile_accepts_rsa2048_algorithm():
     profile["build"]["signing_key"] = "secrets/wolfboot/rsa2048_private_key.der"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
+
+
+
+def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm():
+    wolfboot_build = load_wolfboot_build_module()
+    profile = sample_profile()
+    profile["id"] = "wolfboot_stm32l4_ecc384"
+    profile["signature_algorithm"] = "ecc384"
+    profile["boot_profile"] = "wolfboot_ecc384"
+    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_ecc384.config"
+    profile["build"]["signing_key"] = "secrets/wolfboot/ecc384_private_key.der"
+
+    wolfboot_build.validate_wolfboot_build_profile(profile)

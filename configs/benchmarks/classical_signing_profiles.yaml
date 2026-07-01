@@ -1,7 +1,7 @@
 id: classical_signing_profiles
-description: Phase 11.5c classical secure-boot signing benchmark profile model and minimum comparison scope with ECC256, ED25519, and RSA2048 runnable profile metadata.
+description: Phase 11.5d classical secure-boot signing benchmark profile model with minimum and optional expanded classical comparison profiles.
 schema_version: 1
-model_phase: phase_11_5c_rsa2048_profile
+model_phase: phase_11_5d_expanded_classical_profiles
 benchmark_scope: secure_boot_classical_signing_algorithm
 minimum_comparison_scope:
   ed25519:
@@ -95,4 +95,161 @@ profiles:
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
     runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
     assumptions: RSA2048 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, and manifest schema as the ECC256 reference path.
-notes: Phase 11.5c adds the RSA2048 build, signing, boot, and secure-boot experiment profiles while retaining ECC256 as the known-good reference path and ED25519 as the first added runnable benchmark profile. Cross-profile aggregation remains Phase 11.6 scope. Hardware success and benchmark values must only be claimed from explicit user-provided logs.
+  ecc384_benchmark:
+    id: ecc384_benchmark
+    algorithm: ECC384
+    wolfboot_sign: ECC384
+    signature_algorithm: ecc384
+    curve: P-384
+    key_size_bits: 384
+    signature_size_bytes: 96
+    image_version: 1
+    runnable: true
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_ecc384_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ecc384.yaml
+    experiment_profile: configs/experiments/wolfboot_ecc384_uart.yaml
+    boot_profile: configs/boot/wolfboot_ecc384.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: ECC384 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+  ecc521_benchmark:
+    id: ecc521_benchmark
+    algorithm: ECC521
+    wolfboot_sign: ECC521
+    signature_algorithm: ecc521
+    curve: P-521
+    key_size_bits: 521
+    signature_size_bytes: 132
+    image_version: 1
+    runnable: true
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_ecc521_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ecc521.yaml
+    experiment_profile: configs/experiments/wolfboot_ecc521_uart.yaml
+    boot_profile: configs/boot/wolfboot_ecc521.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: ECC521 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+  ed448_benchmark:
+    id: ed448_benchmark
+    algorithm: ED448
+    wolfboot_sign: ED448
+    signature_algorithm: ed448
+    curve: Ed448
+    key_size_bits: 448
+    signature_size_bytes: 114
+    image_version: 1
+    runnable: true
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_ed448_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ed448.yaml
+    experiment_profile: configs/experiments/wolfboot_ed448_uart.yaml
+    boot_profile: configs/boot/wolfboot_ed448.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: ED448 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+  rsa3072_benchmark:
+    id: rsa3072_benchmark
+    algorithm: RSA3072
+    wolfboot_sign: RSA3072
+    signature_algorithm: rsa3072
+    key_size_bits: 3072
+    signature_size_bytes: 384
+    image_version: 1
+    runnable: true
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_rsa3072_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_rsa3072.yaml
+    experiment_profile: configs/experiments/wolfboot_rsa3072_uart.yaml
+    boot_profile: configs/boot/wolfboot_rsa3072.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: RSA3072 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+  rsa4096_benchmark:
+    id: rsa4096_benchmark
+    algorithm: RSA4096
+    wolfboot_sign: RSA4096
+    signature_algorithm: rsa4096
+    key_size_bits: 4096
+    signature_size_bytes: 512
+    image_version: 1
+    runnable: true
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    signing_profile: configs/signing/wolfboot_rsa4096_app.yaml
+    wolfboot_build_profile: configs/builds/wolfboot_stm32l4_rsa4096.yaml
+    experiment_profile: configs/experiments/wolfboot_rsa4096_uart.yaml
+    boot_profile: configs/boot/wolfboot_rsa4096.yaml
+    application_payload: same_relocated_hal_application_payload
+    board: board_a
+    cpu_hz: 80000000
+    measurement_method: uart_explicit_wolfboot_mailbox_markers
+    repeated_run_model: phase_11_2_repeat_count_samples
+    static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+    assumptions: RSA4096 uses the same payload, board, clock, measurement method, repeated-run model, static metrics model, runtime memory model, shared 8192-byte image-header layout, and manifest schema as the ECC256 reference path.
+notes: Phase 11.5d adds ECC384, ECC521, ED448, RSA3072, and RSA4096 build, signing, boot, and secure-boot experiment profiles while retaining ECC256, ED25519, and RSA2048. Cross-profile aggregation remains Phase 11.6 scope. Hardware success and benchmark values must only be claimed from explicit user-provided logs.
+expanded_classical_scope:
+  ecc384:
+    algorithm: ECC384
+    wolfboot_sign: ECC384
+    signature_algorithm: ecc384
+    curve: P-384
+    key_size_bits: 384
+    signature_size_bytes: 96
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    runnable: true
+  ecc521:
+    algorithm: ECC521
+    wolfboot_sign: ECC521
+    signature_algorithm: ecc521
+    curve: P-521
+    key_size_bits: 521
+    signature_size_bytes: 132
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    runnable: true
+  ed448:
+    algorithm: ED448
+    wolfboot_sign: ED448
+    signature_algorithm: ed448
+    curve: Ed448
+    key_size_bits: 448
+    signature_size_bytes: 114
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    runnable: true
+  rsa3072:
+    algorithm: RSA3072
+    wolfboot_sign: RSA3072
+    signature_algorithm: rsa3072
+    key_size_bits: 3072
+    signature_size_bytes: 384
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    runnable: true
+  rsa4096:
+    algorithm: RSA4096
+    wolfboot_sign: RSA4096
+    signature_algorithm: rsa4096
+    key_size_bits: 4096
+    signature_size_bytes: 512
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    runnable: true

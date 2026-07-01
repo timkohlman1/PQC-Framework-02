@@ -332,63 +332,73 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
 
     algorithm = str(profile.get("algorithm", "ECC256"))
     profile_status = str(profile.get("status", "reference_existing_phase_10_11_profile"))
-    ed25519_runnable = algorithm == "ED25519" and profile.get("runnable") is True
-    rsa2048_runnable = algorithm == "RSA2048" and profile.get("runnable") is True
+    runnable = profile.get("runnable") is True
 
-    implemented_algorithms = ["ECC256"]
-    if ed25519_runnable or rsa2048_runnable:
-        implemented_algorithms.append("ED25519")
-    if rsa2048_runnable:
-        implemented_algorithms.append("RSA2048")
+    minimum_required = ["ED25519", "ECC256", "RSA2048"]
+    expanded_required = ["ECC384", "ECC521", "ED448", "RSA3072", "RSA4096"]
+    algorithm_to_status_field = {
+        "ED25519": "ed25519_status",
+        "RSA2048": "rsa2048_status",
+        "ECC384": "ecc384_status",
+        "ECC521": "ecc521_status",
+        "ED448": "ed448_status",
+        "RSA3072": "rsa3072_status",
+        "RSA4096": "rsa4096_status",
+    }
+
+    implemented_algorithms = [*minimum_required, *expanded_required]
 
     planned_non_runnable_algorithms: list[str] = []
-    if not ed25519_runnable and not rsa2048_runnable:
-        planned_non_runnable_algorithms.append("ED25519")
-    if not rsa2048_runnable:
-        planned_non_runnable_algorithms.append("RSA2048")
 
     minimum_scope = {
         "status": str(profile.get("minimum_scope_status", "defined_phase_11_5a_minimum_classical_scope")),
-        "required_algorithms": ["ED25519", "ECC256", "RSA2048"],
+        "required_algorithms": minimum_required,
         "implemented_reference_algorithm": "ECC256",
         "implemented_algorithms": implemented_algorithms,
         "planned_non_runnable_algorithms": planned_non_runnable_algorithms,
         "scope_limitations": str(
             profile.get(
                 "scope_limitations",
-                "Phase 11.5c adds RSA2048 after ED25519 while cross-profile aggregation remains Phase 11.6 scope.",
+                "Phase 11.5d adds optional expanded classical profiles while cross-profile aggregation remains Phase 11.6 scope.",
             )
         ),
     }
 
-    capability_status = {
-        "ed25519": {
-            "status": str(profile.get("ed25519_status", "configured_phase_11_5b_runnable_profile_not_hardware_validated" if (ed25519_runnable or rsa2048_runnable) else "planned_phase_11_5b_not_implemented")),
-            "runnable": ed25519_runnable or rsa2048_runnable,
-            "unavailable": None
-            if (ed25519_runnable or rsa2048_runnable)
-            else {
-                "status": "unavailable",
-                "source": "profile_model",
-                "reason": "ED25519 benchmark profile is reserved in the minimum scope but this experiment is not the Phase 11.5b ED25519 profile.",
-            },
-        },
-        "rsa2048": {
-            "status": str(profile.get("rsa2048_status", "configured_phase_11_5c_rsa2048_profile_not_hardware_validated" if rsa2048_runnable else "planned_phase_11_5c_not_implemented")),
-            "runnable": rsa2048_runnable,
-            "unavailable": None
-            if rsa2048_runnable
-            else {
-                "status": "unavailable",
-                "source": "profile_model",
-                "reason": "RSA2048 benchmark profile is reserved in the minimum comparison scope but this experiment is not the Phase 11.5c RSA2048 profile.",
-            },
-        },
+    expanded_scope = {
+        "status": str(profile.get("expanded_scope_status", "phase_11_5d_expanded_classical_scope")),
+        "optional_algorithms": expanded_required,
+        "active_algorithm": algorithm if algorithm in expanded_required else None,
+        "cross_profile_aggregation_status": "phase_11_6_out_of_scope",
     }
 
-    if rsa2048_runnable:
+    capability_status: dict[str, dict[str, Any]] = {}
+    for candidate in ["ED25519", "RSA2048", *expanded_required]:
+        key = candidate.lower()
+        candidate_runnable = candidate in implemented_algorithms or (runnable and algorithm == candidate)
+        default_status = (
+            "configured_phase_11_5d_expanded_classical_profile_not_hardware_validated"
+            if candidate in expanded_required and candidate_runnable
+            else "configured_runnable_profile_not_hardware_validated"
+            if candidate_runnable
+            else "planned_not_active_for_this_experiment"
+        )
+        capability_status[key] = {
+            "status": str(profile.get(algorithm_to_status_field.get(candidate, f"{key}_status"), default_status)),
+            "runnable": candidate_runnable,
+            "unavailable": None
+            if candidate_runnable
+            else {
+                "status": "unavailable",
+                "source": "profile_model",
+                "reason": f"{candidate} is not the active configured benchmark profile for this experiment.",
+            },
+        }
+
+    if algorithm in expanded_required and runnable:
+        model_phase = "phase_11_5d_expanded_classical_profiles"
+    elif algorithm == "RSA2048" and runnable:
         model_phase = "phase_11_5c_rsa2048_profile"
-    elif ed25519_runnable:
+    elif algorithm == "ED25519" and runnable:
         model_phase = "phase_11_5b_ed25519_profile"
     else:
         model_phase = "phase_11_5a_classical_profile_model"
@@ -409,7 +419,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "wolfboot_build_profile": profile.get("wolfboot_build_profile"),
         "experiment_profile": profile.get("experiment_profile"),
         "boot_profile": profile.get("boot_profile"),
-        "runnable": profile.get("runnable") is True,
+        "runnable": runnable,
         "status": profile_status,
         "benchmark_assumptions": {
             "application_payload": str(profile.get("application_payload", "same_relocated_hal_application_payload")),
@@ -421,6 +431,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
             "runtime_memory_model": str(profile.get("runtime_memory_model", "phase_11_4_firmware_side_stack_high_water_marker")),
         },
         "minimum_comparison_scope": minimum_scope,
+        "expanded_classical_scope": expanded_scope,
         "capability_status": capability_status,
     }
 

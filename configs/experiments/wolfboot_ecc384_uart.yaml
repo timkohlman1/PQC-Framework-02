@@ -1,0 +1,65 @@
+id: wolfboot_ecc384_uart
+description: Flash wolfBoot and the signed ECC384 application image, then capture UART benchmark evidence.
+board: board_a
+host: gateway
+boot: wolfboot_ecc384
+boot_crypto: ecc384
+firmware:
+  mode: wolfboot_ecc384
+  artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+uart:
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_message: tick
+  expected_secure_boot_message: stm32-basic_hal1 secure-boot app v0.1.0
+secure_boot_benchmark_profile:
+  schema_version: 1
+  profile_model: configs/benchmarks/classical_signing_profiles.yaml
+  profile_id: ecc384_benchmark
+  algorithm: ECC384
+  wolfboot_sign: ECC384
+  signature_algorithm: ecc384
+  key_size_bits: 384
+  signature_size_bytes: 96
+  image_version: 1
+  image_header_size_bytes: 8192
+  runnable: true
+  status: configured_phase_11_5d_expanded_classical_profile
+  signing_profile: configs/signing/wolfboot_ecc384_app.yaml
+  wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ecc384.yaml
+  experiment_profile: configs/experiments/wolfboot_ecc384_uart.yaml
+  boot_profile: configs/boot/wolfboot_ecc384.yaml
+  minimum_scope_status: phase_11_5d_expanded_classical_set_added_minimum_scope_retained
+  ed25519_status: configured_phase_11_5b_runnable_profile_not_hardware_validated
+  rsa2048_status: configured_phase_11_5c_rsa2048_profile_not_hardware_validated
+  application_payload: same_relocated_hal_application_payload
+  board: board_a
+  cpu_hz: 80000000
+  measurement_method: uart_explicit_wolfboot_mailbox_markers
+  repeated_run_model: phase_11_2_repeat_count_samples
+  static_metrics_model: phase_11_3_elf_and_artifact_metrics
+  runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+  scope_limitations: Phase 11.5d adds ECC384, ECC521, ED448, RSA3072, and RSA4096 as optional expanded classical profiles. Cross-profile aggregation remains Phase 11.6 scope.
+  expanded_scope_status: phase_11_5d_expanded_classical_profile_added
+  curve: P-384
+secure_boot_flash:
+  evidence_phase: phase_11_5d_expanded_classical_profile
+  signature_algorithm: ecc384
+  signature_size_bytes: 96
+  image_version: 1
+  image_header_size_bytes: 8192
+  wolfboot_artifact: tools/wolfboot/wolfboot.elf
+  wolfboot_offset: 134217728
+  wolfboot_pass_offset_to_helper: false
+  unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384.bin
+  signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+  signed_application_offset: 134348800
+  signed_application_pass_offset_to_helper: true
+  signing_private_key: secrets/wolfboot/ecc384_private_key.der
+  wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
+  negative_test_corrupt_application: false
+  boot_timing_source: uart_explicit_verification_time_marker
+  boot_timing_expected_uart_pattern: 'wolfBoot verification time: <milliseconds> ms'
+  boot_timing_unavailable_behavior: record_null_verification_time_ms
+  corruption_method: flip_first_byte
+  corrupted_application_artifact: corrupted_application_signed.bin
+  notes: Phase 11.5d uses the same relocated application payload and shared 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256, ED25519, and RSA2048 profiles. The secure-boot flash workflow refuses to flash when available ECC384 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
