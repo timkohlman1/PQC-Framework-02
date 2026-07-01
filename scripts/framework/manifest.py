@@ -305,6 +305,8 @@ def build_secure_boot_benchmark_model(
                 "verification_cycles": None,
                 "verification_cpu_hz": None,
                 "verification_result_code": None,
+                "verification_time_source": None,
+                "verification_cycles_source": None,
                 "uart_marker_detection_result": None,
                 "sample_verdict": None,
                 "referenced_artifact_identity": None,

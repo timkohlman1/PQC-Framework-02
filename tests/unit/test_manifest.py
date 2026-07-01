@@ -345,6 +345,8 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["runtime_memory_metrics"]["max_stack_used_bytes"] is None
     assert benchmark["repeated_run_samples"]["status"] == "not_configured"
     assert benchmark["repeated_run_samples"]["samples"] == []
+    assert benchmark["repeated_run_samples"]["sample_schema"]["verification_time_source"] is None
+    assert benchmark["repeated_run_samples"]["sample_schema"]["verification_cycles_source"] is None
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
     assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
 
@@ -436,6 +438,31 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         "Aggregate statistics require repeated-run samples; no repeated samples are available for this run."
         not in updated["limitations"]
     )
+
+
+def test_secure_boot_benchmark_sample_records_metric_sources_and_unavailable_memory():
+    manifest = load_manifest_module()
+
+    sample = manifest.build_secure_boot_benchmark_sample(
+        run_index=1,
+        timestamp="2026-07-01T10:00:00+10:00",
+        verification_time_ms=12,
+        verification_cycles=960000,
+        verification_cpu_hz=80000000,
+        verification_result_code=0,
+        verification_time_source="uart_explicit_verification_time_marker",
+        verification_cycles_source="uart_explicit_verification_cycles_marker",
+        uart_marker_detection_result={"secure_boot_marker_present": True},
+        sample_verdict="passed",
+        referenced_artifact_identity={"signed_application_sha256": "abc"},
+    )
+
+    assert sample["verification_time_source"] == "uart_explicit_verification_time_marker"
+    assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"
+    assert sample["valid_for_statistics"] is True
+    assert sample["runtime_memory_metrics"]["max_stack_used_bytes"] is None
+    assert sample["runtime_memory_metrics"]["stack_metric_source"] == "unavailable"
+    assert sample["runtime_memory_metrics"]["heap_metric_source"] == "unavailable"
 
 
 def test_read_elf_alloc_section_metrics_reads_static_resource_sizes(tmp_path):

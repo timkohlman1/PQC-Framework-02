@@ -24,7 +24,7 @@ Secure-boot app UART marker: stm32-basic_hal1 secure-boot app v0.1.0
 Tick marker: tick
 ```
 
-Implemented framework scope as of Phase 11.6:
+Implemented framework scope as of Phase 11.7:
 
 - direct-flash baseline build, flash, UART capture, and run workflows
 - first-class build records under `results/builds/<build_number>/`
@@ -40,6 +40,7 @@ Implemented framework scope as of Phase 11.6:
 - static wolfBoot ELF/resource metrics and signed-artifact overhead metrics
 - classical signing benchmark profiles: ECC256, ED25519, RSA2048, ECC384, ECC521, ED448, RSA3072, RSA4096
 - read-only benchmark aggregation output to JSON and CSV
+- consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 
 Important status constraints:
 
@@ -320,7 +321,16 @@ The manifest is the source of truth for what was run. Secure-boot benchmark mani
 - aggregate statistics
 - explicit limitations/unavailable metrics
 
-Runtime timing, cycle counts, result codes, and stack high-water values must come from explicit firmware/UART markers. Do not infer these values from host timing, UART capture duration, reset delay, linker output alone, ELF output alone, or build logs alone.
+Benchmark comparison rules:
+
+- Use median verification time and median verification cycles as primary headline metrics.
+- Use mean, minimum, maximum, standard deviation, range, and coefficient of variation to review repeatability and outliers.
+- Treat build metrics as static bootloader/resource evidence, not runtime memory evidence.
+- Treat `.data + .bss` as the static RAM estimate.
+- Treat signed-image overhead separately from verification timing because signature and header overhead affect storage pressure.
+- Preserve unavailable-metric records and limitation notes in manifests and summaries.
+
+Runtime timing, cycle counts, result codes, stack high-water values, and heap values must come from explicit firmware/UART markers. Do not infer these values from host timing, UART capture duration, reset delay, linker output alone, ELF output alone, or build logs alone.
 
 ## 10. Testing Model
 
@@ -333,7 +343,7 @@ python -m pytest tests/hardware -m hardware
 python -m pytest
 ```
 
-Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling.
+Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output.
 
 Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied.
 

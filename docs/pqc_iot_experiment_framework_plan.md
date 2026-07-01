@@ -18,7 +18,6 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 7 — Add Full Baseline Run Command
 
-
 ## Phase 8 — Add Build Numbers and Artifact Tracking
 
 ## Phase 9 — Add Source-Hash Rebuild Skipping
@@ -26,8 +25,6 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 ## Phase 10 — Start Boot-Security Experiments
 
 ## Phase 11 — Secure-Boot Benchmark Metrics and Repeated-Run Support
-
-
 
 ## Phase 12 — Add MQTT Plain Baseline
 

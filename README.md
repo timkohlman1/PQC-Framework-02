@@ -138,6 +138,28 @@ results/benchmark-aggregation/benchmark_summary.csv
 
 The aggregation command reads existing evidence only. It does not build firmware, sign images, flash hardware, open UART devices, use SSH, or create new measurement evidence.
 
+## Secure-boot benchmark metrics
+
+Secure-boot benchmark runs compare classical wolfBoot signing profiles using evidence stored in each run manifest under `secure_boot_benchmark`. The manifest is the source of truth for what was measured. Summary CSV/JSON files are derived outputs and should not replace the original run manifests.
+
+Supported metric groups:
+
+- runtime verification metrics: verification time, verification cycles, CPU-Hz assumption, result code, source markers, and sample verdict
+- repeated-run metrics: one sample per secure-boot reset/capture, with aggregate count, valid count, failed count, minimum, mean, median, maximum, standard deviation, range, and coefficient of variation
+- build/resource metrics: wolfBoot `.text`, `.data`, `.bss`, flash-relevant size, and static RAM estimate
+- runtime memory metrics: stack high-water evidence when explicit firmware/UART evidence is present; heap remains unavailable unless explicit heap evidence is added
+- signed-artifact metrics: signed image size, unsigned image size where available, signature size, size overhead bytes, and size overhead percentage
+- derived metrics: cycles per KB and time per KB where image size and median verification data are available
+
+Interpretation rules:
+
+- Use median verification time and median verification cycles as the primary timing comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation are supporting values for repeatability and outlier checks.
+- Compare algorithms across the same board, relocated HAL payload, CPU-Hz assumption, UART marker model, repeated-run count, and image-header reserve.
+- Treat build metrics as static properties of the bootloader image, not runtime memory evidence. `.data + .bss` is the static RAM estimate.
+- Treat stack and heap metrics as runtime metrics only when they come from explicit firmware-side evidence emitted over UART. Do not infer stack, heap, timing, or success from host-side capture duration, SSH duration, reset delay, ELF output alone, or build logs alone.
+- Treat `unavailable` fields and limitation notes as benchmark evidence. They identify measurements that were not collected or cannot be safely interpreted.
+- Compare signed-image overhead separately from verification latency. Large signatures can affect storage pressure even when verification time is acceptable.
+
 ## Test categories
 
 ```powershell

@@ -128,6 +128,66 @@ def test_build_benchmark_summary_row_flattens_required_phase_11_6_fields(tmp_pat
     assert "heap evidence unavailable" in row["limitations"]
 
 
+
+def test_build_benchmark_summary_row_preserves_unavailable_metric_limitations(tmp_path):
+    aggregation = load_benchmark_aggregation_module()
+    manifest = sample_benchmark_manifest()
+    benchmark = manifest["secure_boot_benchmark"]
+    manifest["result"] = "secure_boot_benchmark_repeated_run_failed"
+    benchmark["aggregate_statistics"] = {
+        "status": "available",
+        "sample_count": 2,
+        "valid_sample_count": 0,
+        "failed_sample_count": 2,
+        "verification_time_ms": {
+            "minimum": None,
+            "mean": None,
+            "median": None,
+            "maximum": None,
+            "standard_deviation": None,
+        },
+        "verification_cycles": {
+            "minimum": None,
+            "mean": None,
+            "median": None,
+            "maximum": None,
+            "standard_deviation": None,
+        },
+        "derived_metrics": {},
+        "limitations": ["No valid samples were available for statistics."],
+    }
+    benchmark["build_time_metrics"] = {
+        "status": "unavailable",
+        "bootloader_flash_bytes": None,
+        "static_ram_bytes": None,
+        "limitations": ["Static build metrics were unavailable."],
+    }
+    benchmark["runtime_memory_metrics"] = {
+        "status": "unavailable",
+        "max_stack_used_bytes": None,
+        "runtime_memory_limitations": ["Stack high-water evidence was unavailable."],
+    }
+    benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] = None
+    benchmark["signed_artifact_metrics"]["signed_image_overhead_bytes"] = None
+    benchmark["signed_artifact_metrics"]["signed_image_overhead_percent"] = None
+    benchmark["signed_artifact_metrics"]["limitations"] = ["Signed-image overhead was unavailable."]
+
+    row = aggregation.build_benchmark_summary_row(manifest, source_manifest=tmp_path / "manifest.json")
+
+    assert row["valid_sample_count"] == 0
+    assert row["failed_sample_count"] == 2
+    assert row["median_verification_time_ms"] is None
+    assert row["cycles_per_kb"] is None
+    assert row["bootloader_flash_size_bytes"] is None
+    assert row["maximum_stack_usage_bytes"] is None
+    assert row["signed_image_size_bytes"] is None
+    assert row["size_overhead_bytes"] is None
+    assert row["final_profile_verdict"] == "failed"
+    assert "No valid samples were available for statistics." in row["limitations"]
+    assert "Static build metrics were unavailable." in row["limitations"]
+    assert "Stack high-water evidence was unavailable." in row["limitations"]
+    assert "Signed-image overhead was unavailable." in row["limitations"]
+
 def test_aggregate_benchmark_manifests_writes_json_and_csv_outputs(tmp_path):
     aggregation = load_benchmark_aggregation_module()
     ecc_dir = tmp_path / "results" / "2026-07-01_001_ecc"
