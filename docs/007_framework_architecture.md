@@ -2,1037 +2,151 @@
 
 ## Purpose
 
-This document describes the planned architecture of the PQC IoT experiment framework.
+This document maps the current repository architecture to implemented framework behaviour.
 
-## Planned Layers
+## Current layers
 
-The framework is expected to cover:
+Implemented:
 
-1. firmware builds
-2. remote flashing
-3. UART and log capture
-4. result manifests
-5. boot-security variants
-6. MQTT transport variants
-7. TLS/classical crypto variants
-8. PQC/hybrid crypto variants
-9. network degradation profiles
-10. benchmark aggregation and analysis
+1. CubeMX STM32 HAL firmware project at repository root.
+2. Direct-flash baseline experiment workflow.
+3. Local build automation and build records.
+4. Remote gateway flash workflow.
+5. UART capture and marker evaluation.
+6. wolfBoot secure-boot build/sign/flash workflow.
+7. Secure-boot benchmark evidence model.
+8. Classical signing-algorithm benchmark profiles.
+9. Cross-profile benchmark aggregation output.
 
-## Current Status
+Planned but not implemented:
 
-The repository contains the known-good STM32 HAL baseline firmware project.
+1. MQTT transport experiments.
+2. TLS/wolfSSL transport experiments.
+3. PQC or hybrid signing profiles.
+4. Network degradation automation.
+5. Production release packaging.
 
-The first minimal framework skeleton now exists.
-
-Current implemented framework pieces:
-
-```text
-configs/
-  boards/
-    board_a.yaml
-  hosts/
-    gateway.yaml
-  boot/
-    direct_flash.yaml
-    wolfboot_ecdsa_p256.yaml  # planned, non-runnable placeholder
-  experiments/
-    baseline_direct_uart.yaml
-scripts/
-  experiment.py
-  framework/
-    artifacts.py
-    build.py
-    build_records.py
-    build_state.py
-    fingerprint.py
-    flash.py
-    manifest.py
-    source.py
-    uart.py
-tests/
-  unit/
-    test_artifacts.py
-    test_build.py
-    test_build_state.py
-    test_fingerprint.py
-    test_flash.py
-    test_uart.py
-    test_config_loading.py
-    test_config_validation.py
-    test_manifest.py
-    test_source.py
-  integration/
-    test_gateway_flash_helper.py
-    test_local_build.py
-  hardware/
-    test_baseline_uart.py
-results/
-tools/
-pytest.ini
-```
-
-## Result Manifest Support
-
-The framework can create a local result run folder for an experiment without building firmware, flashing hardware, opening UART devices, using SSH, or touching network resources.
-
-Command:
-
-```powershell
-python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
-```
-
-The command creates:
+## Source and configuration map
 
 ```text
-results/<run_id>/
-  manifest.json
-  notes.md
-```
-
-Run IDs use this format:
-
-```text
-YYYY-MM-DD_NNN_experiment_id
-```
-
-Example:
-
-```text
-2026-06-25_001_baseline_direct_uart
-```
-
-The initial manifest contains:
-
-```text
-run_id
-timestamp
-experiment
-board
-gateway
-boot_mode
-transport_mode
-network_profile
-result
-```
-
-The initial baseline values are derived from the resolved experiment, board, host, and boot configs. Until dedicated transport and network config files are implemented, `transport_mode` defaults to `direct_uart` and `network_profile` defaults to `none`. The boot mode is resolved from `configs/boot/direct_flash.yaml`, not inferred only from `firmware.mode`.
-
-## Build and Experiment Run Record Model
-
-Phase 10b implements first-class build records while preserving the existing `results/<run_id>/` compatibility layout. Successful build-producing workflows now create or refresh a build-record directory under `results/builds/<build_number>/`. Existing run workflows may continue to use `results/<run_id>/manifest.json` where needed so the build-record split does not unnecessarily break current commands.
-
-The purpose of the separation is to make provenance explicit for PQC research. A firmware build answers "what firmware binary was produced from which source and build inputs?" An experiment run answers "what experiment used which firmware build, what happened on the board or gateway, and did the run pass?"
-
-### Build record
-
-A build record is the durable identity of a produced or safely reused firmware build. It should be sufficient to decide whether a later flash or experiment run used the intended firmware.
-
-A build record should contain:
-
-```text
-build_number
-source/build fingerprint
-fingerprint algorithm
-fingerprint input list
-firmware SHA-256
-build.log reference
-copied firmware artifact metadata
-build metadata
-source-control provenance
-```
-
-Build metadata includes configure preset, build preset, return code, duration, rebuild-skip status, skip reason, skip detail, and forced-build status where applicable. Copied firmware artifact metadata includes the retained ELF and any optional HEX/BIN artifacts that were generated and copied. Source-control provenance includes Git commit, dirty state, and whether Git status was available.
-
-The implemented build-record directory is keyed by the decimal build number:
-
-```text
-results/builds/<build_number>/
-  manifest.json
-  build.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-The build-record manifest uses `record_type: build`, records the build number, source/build fingerprint, firmware SHA-256, build metadata, copied artifact metadata, source-control provenance, and a compatibility back-reference to the run-result directory that created or refreshed the record. The build number remains the primary build-record identifier.
-
-### Experiment run record
-
-An experiment run record is the durable identity of one execution of an experiment profile. It should describe the experiment configuration, the build it used, the hardware-facing evidence, and the final verdict.
-
-An experiment run record should contain:
-
-```text
-experiment config identity
-referenced build number or build record
-flash evidence
-UART evidence
-pass/fail verdict
-notes
-```
-
-Flash evidence includes the flashed firmware hash, provenance verification status, gateway helper return codes, remote artifact path, ST-LINK serial, flash log reference, and flash-time source-control provenance where applicable. UART evidence includes the UART log reference, device, baud rate, capture return code, marker-detection booleans, data-captured status, reset command, capture duration, and boot timing evidence. Secure-boot verification timing is recorded only when explicit UART timing markers are captured; otherwise `verification_time_ms` and related raw timing fields are recorded as `null` with an unavailable source and limitations. Host-side capture duration is not used as verification time.
-
-The run record should not be treated as the owner of the build when it merely references an existing build. Conversely, a build failure should not be confused with a hardware or UART experiment failure.
-
-Phase 10c allows the `run` command to reference an existing first-class build record by build number:
-
-```powershell
-python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number 7
-```
-
-When a build number is supplied, the run command validates `results/builds/<build_number>/manifest.json` before any hardware-facing stage. The validation requires a first-class build record with the requested build number, a successful or safely skipped build result, matching experiment and board identity, a retained `firmware.elf`, matching firmware SHA-256, and a matching current source/build fingerprint. If the manifest is missing, malformed, incomplete, points to a missing artifact, records a mismatched artifact hash, or records a mismatched build fingerprint, the run is refused before flash or UART capture.
-
-A run that reuses an existing build copies the verified build-record artifact into its own run directory as `firmware.elf`, flashes that run-scoped copy, captures UART, and records the referenced build number and artifact hash under `build_reference`, `run.referenced_build_number`, and `run.referenced_build_artifact_sha256`.
-
-### Boot timing evidence
-
-Phase 10k records secure-boot timing evidence under `boot_timing` in the run manifest. The wolfBoot build profile enables temporary local instrumentation that wraps `wolfBoot_verify_authenticity()` with a Cortex-M DWT cycle-counter measurement and writes the measured millisecond value, elapsed cycle count, configured CPU frequency, and verification return code into a RAM2 mailbox at `0x10000000`. The relocated HAL application reads that mailbox after UART initialization and emits lines such as `wolfBoot verification time: 17 ms`, `wolfBoot verification cycles: 1360000 cycles`, `wolfBoot verification cpu_hz: 80000000`, and `wolfBoot verification result: 0`. The patch is applied only while `build-wolfboot` runs and the local wolfBoot submodule files are restored afterward.
-
-The UART capture parser accepts explicit lines such as `wolfBoot verification time: 17 ms`, `verification_time_ms=17`, `wolfBoot verification cycles: 1360000 cycles`, `verification_cycles=1360000`, `wolfBoot verification cpu_hz: 80000000`, and `verification_result_code=0`. When the time line is present, `verification_time_ms` contains the parsed value and `verification_time_source` is `uart_explicit_verification_time_marker`. Cycle, CPU-Hz, and result-code fields are recorded when their explicit markers are present. When timing is absent, `verification_time_ms` is `null`, `verification_time_source` is `unavailable`, and the manifest records the measurement method and limitations.
-
-Flash/RAM used, signed image size, retained artifact sizes, stack high-water marks, and heap usage are also useful metrics, but they belong to separate build-metrics or runtime-instrumentation paths. Linker flash/RAM usage should be parsed from CMake/linker output or the map file; stack and heap usage require firmware-side runtime measurement and must not be inferred from host-side UART capture duration.
-
-This model avoids inventing verification timing from SSH command duration, UART capture duration, reset delay, or marker ordering. Direct-flash UART captures can therefore be compared at the evidence-record level without pretending that host-side timing is a secure-boot verification measurement. The secure-boot hardware workflow test is end-to-end: it builds the instrumented wolfBoot artifact, builds and signs the relocated application, flashes both artifacts, captures UART, and validates parsed timing evidence instead of skipping solely because generated artifacts are absent.
-
-### Current layout compatibility
-
-The compatibility run-result layout remains valid for this phase:
-
-```text
-results/<run_id>/
-  manifest.json
-  notes.md
-  build.log
-  flash.log
-  uart.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-Under the Phase 10b model, this layout is a compatibility storage location that may still contain copied build evidence. The compatibility manifest links to the first-class build record through `build.record_path` and `build.record_manifest` when a build record exists. Later phases can move flash/run provenance to build-number-only references without changing the conceptual ownership of the fields defined here.
-
-
-## Build Automation Support
-
-The framework can now create a local result run folder and run the current CMake/STM32 firmware build without flashing hardware, opening UART devices, using SSH, or touching network resources.
-
-Command:
-
-```powershell
-python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-```
-
-The command preserves a compatibility run-result directory and creates a first-class build-record directory.
-
-Compatibility run-result directory:
-
-```text
-results/<run_id>/
-  manifest.json
-  notes.md
-  build.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-First-class build-record directory:
-
-```text
-results/builds/<build_number>/
-  manifest.json
-  build.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-The build command currently uses the CMake `Debug` configure and build presets by default:
-
-```text
-cmake --preset Debug
-cmake --build --preset Debug
-```
-
-The command captures:
-
-```text
-stdout
-stderr
-return code
-build duration
-output ELF path
-build log path
-```
-
-Build metadata is written back into `manifest.json`. A successful local firmware build sets the manifest `result` field to `build_passed`. A failed configure, failed build, or missing expected ELF artifact sets it to `build_failed`.
-
-When a build-producing workflow starts, the framework increments the local repository-root `.build_number` file and records the assigned value as `build_number` in `manifest.json` and `build.log`. The file is local generated state and is not intended for Git. If `.build_number` is malformed, the build fails before CMake is invoked and records the error clearly.
-
-After a successful build and expected-artifact check, the framework calculates the ELF SHA-256 and records it as `firmware.sha256` in the compatibility run manifest, in the build-record manifest, and as `Output ELF SHA-256` in `build.log`. It copies the ELF into the compatibility result directory and the build-record directory as `firmware.elf`, and records copied artifact metadata under `firmware.result_artifacts`. If sibling `.hex` or `.bin` outputs exist, they are copied as `firmware.hex` and `firmware.bin`; if they do not exist, the manifests record them as absent optional artifacts. This gives the built firmware artifact a stable identity even though the build output path stays the same across builds.
-
-The build command also records a deterministic build input fingerprint in `manifest.json` under `build.fingerprint`, `build.fingerprint_inputs`, and `build.fingerprint_algorithm`. The current algorithm is `sha256-build-inputs-v1`. It hashes a sorted list of repository-relative input paths and each file's content SHA-256. The build input fingerprint remains unchanged in Phase 10e because the relocated build is verified through an explicit local CMake preset rather than through the experiment build workflow.
-
-The fingerprint intentionally excludes generated result folders, generated build outputs, virtual environments, Git internals, documentation-only files, and unrelated generated artifacts. If a required fingerprint input is missing, the build fails before CMake runs and records the fingerprint error in `build.log` and `manifest.json`.
-
-After a successful build, the framework updates the generated repository-root `.last_successful_build.json` state file. This local state records the latest successful build fingerprint, fingerprint algorithm and inputs, successful return code, build number, run ID, configured firmware artifact path, firmware SHA-256, and copied result-artifact metadata. It is local generated state and is not intended for Git. The build workflow uses this state to skip CMake configure/build only when the current fingerprint and algorithm match the local last-successful-build state, the expected ELF exists, the prior state records success, and `--force` is not supplied. Missing state, invalid state, changed hash, missing ELF, failed prior-build state, or `--force` cause the normal CMake configure/build path to run.
-
-When CMake configure/build is skipped, the compatibility result manifest uses `result: build_skipped`, records `build.skipped: true`, records the skip reason and detail, copies the existing ELF into the result directory as `firmware.elf`, and still records the current fingerprint and firmware SHA-256. When local state provides a build number, the framework also creates or refreshes `results/builds/<build_number>/` so the skipped build has a first-class build-record directory under the current results root.
-
-The build command also records source-control provenance in the compatibility run manifest and build-record manifest under `source`. The currently recorded fields are `source.git_commit`, `source.git_dirty`, and `source.git_status_available`. This records which Git commit was present and whether the working tree was dirty when the build command ran. If Git is unavailable or the repository state cannot be read, the command does not fail solely for that reason; it records an explicit unavailable state.
-
-The unit tests cover command construction, deterministic fingerprinting, fingerprint change detection, excluded-file behaviour, missing fingerprint input handling, rebuild-skip decisions, and build-result handling without invoking CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
-
-
-
-## wolfBoot STM32L4 Target Support Assessment
-
-Phase 10c adds a documented target-support decision without changing runtime behaviour:
-
-```text
-docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
-```
-
-The decision is:
-
-- Use wolfBoot's existing STM32L4 support as the closest upstream starting point.
-- Do not treat the upstream STM32L4 example as directly runnable on the NUCLEO-L4R5ZI-P / STM32L4R5 board.
-- Create a project-local STM32L4R5 target configuration or adaptation before attempting a wolfBoot build.
-- Define the STM32L4R5 secure-boot flash layout in Phase 10d before linker relocation.
-- Relocate the HAL application build in Phase 10e before adding wolfBoot build, signing, or two-artifact flashing.
-
-Compatibility concerns recorded by the decision include flash size, flash page/sector layout, vector-table and image-header offset expectations, bootloader location, application offset, ECDSA-P256 signing support, and wolfBoot build/toolchain assumptions.
-
-No linker relocation, wolfBoot build profile, signing workflow, flashing workflow, UART evidence, or secure-boot runtime claim is implemented by Phase 10c.
-
-## Secure-Boot Flash Layout
-
-Phase 10d adds a documented planned STM32L4R5 secure-boot flash layout without changing runtime behaviour:
-
-```text
-docs/decisions/0003_secure_boot_flash_layout.md
-```
-
-The planned layout uses the STM32L4R5 internal flash range as a 2 MB map:
-
-```text
-0x08000000..0x0801FFFF  wolfBoot region                 128 KB
-0x08020000..0x080FFFFF  signed application primary slot  896 KB
-0x08100000..0x081DFFFF  signed application update slot   896 KB
-0x081E0000..0x081FFFFF  swap / metadata reserve          128 KB
-```
-
-The planned wolfBoot target values are:
-
-```text
-WOLFBOOT_SECTOR_SIZE                 0x4000
-WOLFBOOT_PARTITION_BOOT_ADDRESS      0x08020000
-WOLFBOOT_PARTITION_SIZE              0x000E0000
-WOLFBOOT_PARTITION_UPDATE_ADDRESS    0x08100000
-WOLFBOOT_PARTITION_SWAP_ADDRESS      0x081E0000
-```
-
-The selected primary signed application slot starts at `0x08020000`. The later relocated HAL application entry address is `0x08022000` because the first `0x2000` bytes of the slot are reserved for the shared Phase 11 wolfBoot image header.
-
-The planned wolfBoot boot config records this metadata under `secure_boot_layout`, but remains non-runnable. Execution-oriented workflows still reject it before build, flash, UART, SSH, or hardware-facing actions.
-
-No linker script relocation, vector-table update, wolfBoot source, wolfBoot build, signing workflow, wolfBoot flashing, or secure-boot UART evidence is implemented by Phase 10d.
-
-### Phase 10e relocated HAL application build profile
-
-Phase 10e adds a build-only relocated HAL application profile while preserving the direct-flash baseline. The default `Debug` preset continues to use `STM32L4R5XX_FLASH.ld` and vector offset `0x00000000`. The opt-in `RelocatedDebug` preset uses `STM32L4R5XX_FLASH_RELOCATED.ld` and vector offset `0x00022000`, placing the application vector table and reset entry at `0x08022000` inside the planned primary signed-application slot.
-
-Verification is local-build-only at this phase:
-
-```powershell
-cmake --preset RelocatedDebug
-cmake --build --preset RelocatedDebug
-Test-Path .\build\RelocatedDebug\stm32_basic_hal1.elf
-```
-
-This does not implement wolfBoot source, image signing, signed-image flashing, or UART boot evidence. The planned wolfBoot profile remains `runnable: false`.
-
-### Phase 10f wolfBoot build profile
-
-Phase 10f adds framework support for a local, configurable wolfBoot build profile without changing the direct-flash baseline. The build profile lives at:
-
-```text
-configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
-```
-
-The profile records the intended STM32L4R5/project-local target identity, ECDSA-P256 signature algorithm, configured wolfBoot source directory, output directory, expected artifact path, and command scalar used by the framework build helper. The current command is intentionally profile-driven rather than hard-coded into the Python helper so the project-local wolfBoot target adaptation can refine the exact upstream invocation later without changing unrelated framework behaviour.
-
-The framework command is:
-
-```powershell
-python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
-```
-
-The command creates evidence under:
-
-```text
-results/wolfboot-builds/<timestamp>_wolfboot_stm32l4_ecdsa_p256/
-  manifest.json
-  wolfboot_build.log
-  wolfboot.elf  # copied only when the configured build emits the expected artifact
-```
-
-The manifest records `record_type: wolfboot_build`, the profile ID, result, target, `signature_algorithm: ecdsa_p256`, source directory, output directory, command, working directory, return code, duration, log name, expected artifact path, artifact existence, artifact SHA-256 when available, and retained artifact path when copied.
-
-The helper fails before invoking build tooling when the configured source directory is absent and records a controlled missing-tool result when the configured executable cannot be started. This allows the repository to carry the profile and tests without vendoring wolfBoot source or claiming a successful wolfBoot build. Unit tests use injected command runners and do not invoke wolfBoot, CMake, Ninja, STM32 tooling, SSH, UART, or hardware.
-
-Phase 10f.1 adds the project-local STM32L4R5 wolfBoot build adaptation while keeping the planned boot profile `runnable: false`. The project dependency strategy is a Git submodule at `tools/wolfboot`. The tracked template `configs/wolfboot/stm32l4r5_ecdsa_p256.config` records the STM32L4R5 flash layout, `SIGN=ECC256`, `STM32CUBE=../..`, CubeMX HAL/CMSIS include paths, target-only Cortex-M4/thumb compile flags, and STM32L4R5 MCU macro selection that undefines upstream `STM32L4A6xx` before defining `STM32L4R5xx`, and decimal `IMAGE_HEADER_SIZE=8192`. The framework copies this template to `tools/wolfboot/.config`, temporarily patches wolfBoot's host keytools Makefile on Windows/MSYS when enabled, invokes `make` in the submodule, restores the Makefile, then records the generated config path, keytools patch status, return code, artifact path, retained `wolfboot.elf`, and SHA-256 when produced.
-
-Phase 10f.1 still does not implement application image signing, wolfBoot flashing, signed-application flashing, UART boot evidence, or secure-boot runtime success claims. The build workflow may coordinate local signing-key material for keystore consistency, but private keys remain ignored local state and are not copied into results. The generated `tools/wolfboot/.config`, wolfBoot build outputs, and local signing-key by-products remain ignored. The temporary keytools patch is restored after the build command so the submodule is not intentionally left dirty.
-
-## Integration Test Support
-
-The framework has pytest capability probes in:
-
-```text
-tests/conftest.py
-```
-
-The full suite can be run from the repository root:
-
-```powershell
-python -m pytest
-```
-
-Unit tests remain isolated from CubeMX, CMake, Ninja, STM32 tooling, SSH, UART, and hardware by using injected or mocked command runners.
-
-Integration and hardware tests remain marked separately, but they now auto-skip when their required capabilities are unavailable instead of using environment-variable gates. The local build integration test checks the `local_toolchain` capability before invoking the real CLI build command through a subprocess:
-
-```powershell
-python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml --results-dir <temporary-results-dir>
-```
-
-The local toolchain probe checks `cmake --version`, `ninja --version`, and `cmake --list-presets` from the repository root. If those checks pass, the test validates the local build automation against the real STM32/CMake/Ninja toolchain. It checks the command return code, generated result directory, `manifest.json`, `build.log`, expected CMake configure/build commands, and expected ELF artifact state. It must not flash hardware, open UART devices, use SSH, or touch network resources.
-
-Strict mode is available when missing capabilities should fail rather than skip:
-
-```powershell
-python -m pytest --pqc-require-local-build
-python -m pytest --pqc-require-gateway
-python -m pytest --pqc-require-hardware
-```
-
-
-## Remote Flash Automation Support
-
-The framework can create a result run and remotely flash the existing configured ELF only when the artifact matches a recorded build run:
-
-```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart
-```
-
-The command calculates the local ELF SHA-256 before SCP, records Git source-control provenance at flash time, calculates the current expected build fingerprint, reads the requested build-run manifest, and compares both the flash-time ELF SHA-256 and current build fingerprint against the recorded build metadata. If the build record is missing, incomplete, or mismatched, the command writes `flash.log`, updates `manifest.json`, records a provenance failure status, and refuses to run SCP or SSH.
-
-Flash provenance intentionally continues to use the explicit build-run manifest supplied with `--build-run`, or the current run manifest during `build-flash` and `run`. It does not trust `.last_successful_build.json`; that file is only future rebuild-skip state.
-
-The flash manifest records:
-
-```text
-flash.source_build_run_id
-flash.source_build_fingerprint
-flash.source_build_firmware_sha256
-flash.source_build_artifact_path
-flash.current_build_fingerprint
-flash.current_build_fingerprint_algorithm
-flash.current_build_fingerprint_error
-flash.firmware_sha256
-flash.provenance_status
-flash.provenance_message
-flash.untracked_artifact_allowed
-```
-
-The supported provenance statuses are:
-
-```text
-verified_build_match
-untracked_artifact_allowed
-mismatch_refused
-missing_build_record
-```
-
-An explicit escape hatch exists for manual recovery or investigation:
-
-```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
-```
-
-When the escape hatch is used, the command records `flash.provenance_status` as `untracked_artifact_allowed`. This is intentionally visible in the manifest and should not be used for normal experiment runs. The SSH step is skipped if SCP fails, and no network command is executed if the local artifact is missing or provenance verification is refused.
-
-Unit tests validate command construction and result handling with an injected runner, so normal unit tests require neither SSH nor hardware. The real gateway flash test in `tests/integration/test_gateway_flash_helper.py` auto-skips unless the local build capability, SSH gateway, and configured gateway flash helper are available. Use `--pqc-require-gateway` to fail instead of skip when those capabilities are expected.
-
-
-## Combined Build and Flash Support
-
-The framework can build firmware and then remotely flash the resulting artifact in one result run:
-
-```powershell
-python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
-```
-
-This command creates a single result directory and runs the normal build helper first. If the build succeeds, it runs the normal remote flash helper using the same run ID as the source build record. The same manifest records the build metadata, flash metadata, provenance comparison, and a `build_flash` summary so the build and flash evidence remain tied to the same run ID.
-
-For provenance, `firmware.sha256` records the ELF hash from the successful build step. `flash.firmware_sha256` records the ELF hash immediately before SCP in the flash step. `flash.source_build_run_id`, `flash.source_build_fingerprint`, and `flash.source_build_firmware_sha256` identify the build record used for the flash decision. For a normal successful `build-flash` run, `flash.provenance_status` is `verified_build_match`. The flash helper also refreshes `source` metadata at flash time, so a combined manifest records the Git state that existed when flashing was attempted, not only the state observed during the build step.
-
-If the build fails, the flash step is skipped. This avoids flashing a stale ELF that may already exist in the build folder from a previous experiment. In that case the result directory contains `manifest.json`, `notes.md`, and `build.log`, but no `flash.log`.
-
-A successful combined run creates:
-
-```text
-results/<run_id>/
-  manifest.json
-  notes.md
-  build.log
-  flash.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-Unit tests cover the combined CLI flow with mocked build and flash helpers. They verify that both helpers receive the same result directory and that the flash helper is not called when the build fails. Artifact-hash unit tests use temporary files with known content and expected SHA-256 values. Fingerprint unit tests use temporary files to verify deterministic output, meaningful input-change detection, excluded-file behaviour, and clear missing-input failures. Source-provenance unit tests cover clean, dirty, and unavailable Git states with mocked command runners.
-
-
-## Full Automated Baseline Run
-
-The first-class known-good automated baseline command is:
-
-```powershell
-python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
-```
-
-The command creates one result directory and performs these stages in order when no build number is supplied:
-
-1. create the run directory and initial manifest
-2. build the configured firmware
-3. copy the exact built ELF into the run directory
-4. flash only when the build and artifact copy succeeded
-5. start bounded UART capture and reset the board after capture is active
-6. evaluate the configured boot and tick markers
-7. write the final manifest verdict
-
-When `--build-number <number>` is supplied, the build stage is replaced by build-record validation and artifact retention from `results/builds/<number>/`. Unsafe references fail at the `build_reference` stage before flash or UART capture.
-
-A successful run contains:
-
-```text
-results/<run_id>/
-  manifest.json
-  notes.md
-  build.log
-  flash.log
-  uart.log
-  firmware.elf
-  firmware.hex  # when generated by the build
-  firmware.bin  # when generated by the build
-```
-
-The final manifest uses `baseline_run_passed` or `baseline_run_failed` in `result`. The `run` object records the overall return code, individual stage return codes, copied artifact filename, failure stage, log filenames, and total duration. `firmware.result_artifact` and `firmware.result_artifact_path` identify the retained run-scoped ELF, and `firmware.result_artifacts` records copied ELF/HEX/BIN artifact metadata and hashes.
-
-The command stops at the first failed stage. A build failure prevents artifact copying, flashing, and UART capture. An artifact-copy failure prevents flashing and UART capture. A flash failure prevents UART capture. UART marker failure returns the UART failure code and records `uart` evidence in the same manifest.
-
-Unit tests mock the build, artifact-copy, flash, and UART boundaries. They verify successful orchestration in one result directory and failure short-circuiting at build, flash, and UART stages without invoking CMake, SCP, SSH, UART devices, or hardware. Build-number tests use temporary `.build_number` files and artifact-copy tests use temporary files with known SHA-256 values.
-
-## UART Monitor and Post-Flash Capture Support
-
-The framework separates UART handling into two workflows.
-
-### Ad hoc UART monitor
-
-The ad hoc monitor is intended for interactive diagnostics:
-
-```powershell
-python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
-```
-
-The command captures from the configured host UART device and baud rate:
-
-```text
-/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-115200
-```
-
-It writes timestamped logs under:
-
-```text
-results/adhoc/
-  uart_monitor_YYYYMMDD_HHMMSS.log
-```
-
-The monitor command does not create a run manifest. Its pass/fail result is based on connectivity and data capture rather than boot-marker validation. A bounded capture that returns through GNU `timeout` with return code 124 is accepted as a completed monitor window. The command passes when the monitor command completes normally or by timeout and captured stdout is non-empty. It fails when SSH/UART command execution fails or when no UART data is captured.
-
-The monitor command can optionally trigger a gateway reset helper during capture:
-
-```powershell
-python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
-```
-
-When `--restart` is used, the framework opens the UART capture command first and then runs the configured reset helper after a short delay. This ordering is intended to catch startup-only UART messages such as the boot banner.
-
-The configured gateway reset helper is:
-
-```text
-reset-stm32a
-```
-
-It can be overridden for a gateway-specific setup:
-
-```powershell
-python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart --restart-command "reset-stm32a"
-```
-
-### Post-flash UART capture
-
-The flash and build-flash commands can capture UART after a successful flash by starting UART capture and then triggering the configured reset helper after a short delay:
-
-```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run 2026-06-25_001_baseline_direct_uart --capture-uart
-```
-
-```powershell
-python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
-```
-
-Post-flash UART capture writes:
-
-```text
-results/<run_id>/
-  uart.log
-```
-
-Post-flash UART capture is experiment evidence. It passes only when captured stdout contains both configured baseline markers:
-
-```text
-stm32-basic_hal1 boot v0.1.0
-tick
-```
-
-If either marker is missing, the run result is failed. If flashing fails, post-flash UART capture is skipped and the manifest records the skip. This uses a second reset after flashing so the UART reader is active before the one-shot boot marker is emitted.
-
-The UART manifest records:
-
-```text
-uart.return_code
-uart.capture_return_code
-uart.duration_seconds
-uart.capture_duration_seconds
-uart.log
-uart.device
-uart.baud
-uart.requested_duration_seconds
-uart.expected_boot_message
-uart.expected_tick_message
-uart.boot_marker_present
-uart.tick_present
-uart.data_captured
-uart.restart_command
-uart.restart_during_capture
-uart.skipped
-```
-
-For `build-flash --capture-uart`, the combined manifest summary also records:
-
-```text
-build_flash.uart_return_code
-build_flash.uart_log
-build_flash.uart_skipped
-```
-
-Unit tests cover UART command construction, ad hoc monitor pass/fail behavior, optional restart command execution, post-flash marker detection, command-failure handling, log writing, manifest updates, and CLI wiring through injected runners. Normal unit tests do not invoke SSH, UART devices, gateways, or hardware.
-
-The real baseline UART hardware test is:
-
-```text
-tests/hardware/test_baseline_uart.py
-```
-
-It is marked with the `hardware` pytest marker and auto-skips unless the SSH gateway and configured ST-LINK VCP UART device are available:
-
-```powershell
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware
-```
-
-Use strict hardware mode when the gateway and board are expected to be present:
-
-```powershell
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
-```
-
-The hardware test uses the ad hoc monitor workflow and verifies that non-empty UART data can be captured from the configured ST-LINK VCP path.
-
-
-
-## Boot Configuration Support
-
-Phase 10a adds boot mode as a first-class configuration concept without changing runtime behaviour. The baseline experiment now contains:
-
-```yaml
-boot: direct_flash
-```
-
-The CLI resolves this to:
-
-```text
-configs/boot/direct_flash.yaml
-```
-
-The direct-flash boot config is runnable and records `mode: direct_flash`. The experiment still keeps `firmware.mode: direct_flash` during this transition so existing build, flash, UART, and manifest code paths remain compatible. Config validation rejects missing boot references, boot ID mismatches, non-runnable boot configs, and mismatches between `firmware.mode` and the resolved boot config mode.
-
-The manifest records the resolved boot config mode as:
-
-```text
-boot_mode: direct_flash
-```
-
-Phase 10b adds `configs/boot/wolfboot_ecdsa_p256.yaml` as a planned boot profile placeholder. It is intentionally marked `runnable: false` and `status: planned`. The placeholder records the intended boot mode name, intended ECDSA-P256 signature algorithm, a planned signed-application slot concept, and, after Phase 10d, `flash_layout_status: defined_phase_10d_planned_not_implemented`.
-
-The planned profile is loadable for inspection through the base boot-config schema, but execution-oriented experiment workflows still require `runnable: true` and therefore reject it before build, flash, UART, SSH, or hardware-facing actions. This keeps the direct-flash baseline unchanged while allowing later wolfBoot phases to build on an explicit config identity.
-
-Phase 10d defines the planned secure-boot flash layout for this profile. Phase 10f adds a configurable wolfBoot build-profile command and evidence capture, but no wolfBoot source vendoring, completed STM32L4R5 target adaptation, signing workflow, wolfBoot flashing, or wolfBoot runtime claim is implemented in Phase 10b through Phase 10f. Phase 10c adds only the documented decision that existing STM32L4 wolfBoot support is the closest starting point and that this project should create a project-local STM32L4R5 target configuration or adaptation before treating wolfBoot as buildable or runnable. Phase 10d adds only the documented memory map and planned config metadata. Phase 10e adds only the local relocated HAL build profile and related metadata.
-
-The Phase 10f.1 wolfBoot build profile passes `WOLFBOOT_ROOT=. wolfboot.elf` to make. This avoids Windows/MSYS cases where wolfBoot derives an empty root from `PWD` and tries to execute `/tools/keytools/keygen` rather than the submodule-local keygen tool.
-
-
-Phase 10f.1 PWR/PWREx adaptation note: the project-local wolfBoot config enables `HAL_PWR_MODULE_ENABLED` through target CFLAGS and adds the CubeMX PWR/PWREx HAL objects. This is required because the STM32L4 flash extension source references `HAL_PWREx_GetVoltageRange()` and `PWR_REGULATOR_VOLTAGE_SCALE2` while upstream wolfBoot's STM32L4 HAL config enables only the minimal modules required by its default target. The adaptation does not force-include the CubeMX HAL config because doing so before `stm32l4xx_hal_def.h` caused HAL type-order errors in the observed wolfBoot include flow.
-
-
-Phase 10f.1 additional local build observation: after adding PWR/PWREx target objects, the build still failed in `stm32l4xx_hal_flash_ex.c` because upstream wolfBoot's minimal STM32L4 HAL config did not include the PWR/PWREx headers. The build profile now applies a temporary STM32L4 HAL config patch inside the wolfBoot submodule during `build-wolfboot`, then restores the original file so the submodule is not intentionally left dirty.
-
-## Phase 10f.1 wolfBoot STM32L4R5 troubleshooting findings
-
-The Phase 10f.1 implementation preserves several build-adaptation findings that should guide future framework changes:
-
-- The selected dependency strategy is the Git submodule at `tools/wolfboot`; the framework does not vendor generated wolfBoot outputs or private signing material.
-- The framework copies `configs/wolfboot/stm32l4r5_ecdsa_p256.config` to `tools/wolfboot/.config` immediately before invoking the wolfBoot build.
-- The build command is `make WOLFBOOT_ROOT=. wolfboot.elf`. `WOLFBOOT_ROOT=.` avoids incorrect absolute `/tools/keytools/...` paths under the observed Windows/MSYS invocation, and `wolfboot.elf` prevents plain `make` from continuing into upstream `test-app/image.bin` after the bootloader ELF is linked.
-- The project-local config keeps `SIGN=ECC256`, `STM32CUBE=../..`, Phase 10d layout values, STM32L4R5 HAL/CMSIS include paths, target-only Cortex-M4/thumb flags, and STM32L4R5 MCU selection.
-- Upstream `TARGET=stm32l4` defaults to `STM32L4A6xx`; the project-local config must undefine `STM32L4A6xx` before defining `STM32L4R5xx`.
-- `IMAGE_HEADER_SIZE` is encoded as decimal `8192`, not hexadecimal `0x100`, because wolfBoot shell integer checks rejected the hexadecimal value in the observed Windows/MSYS environment.
-- Host keytools are built for the host, not for Cortex-M4. ARM target flags must not be applied globally. The framework applies a temporary MinGW ANSI stdio compatibility patch to host keytools when enabled, then restores the original file.
-- STM32L4 flash-extension HAL compilation needs PWR/PWREx declarations and target objects. The framework applies a temporary STM32L4 HAL config patch inside the wolfBoot submodule and restores it after the build; the project-local config also adds `stm32l4xx_hal_pwr.o` and `stm32l4xx_hal_pwr_ex.o`.
-- The `build-wolfboot` manifest and log should remain the source of truth for return code, patch status, retained artifact path, and `wolfboot.elf` SHA-256.
-
-Observed local verification for Phase 10f.1 was:
-
-```text
-python -m pytest: 101 passed, 1 skipped
-build-wolfboot return code: 0
-wolfboot.elf artifact exists: True
-wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b1edc83
-```
-
-This evidence is limited to local wolfBoot build production and artifact capture. It is not signing, flashing, UART, or secure-boot runtime evidence.
-
-
-## Phase 10g Application Image Signing Workflow
-
-Phase 10g adds a signing-only workflow for the relocated HAL application image. The signing profile lives at:
-
-```text
-configs/signing/wolfboot_ecdsa_p256_app.yaml
-```
-
-The CLI command is:
-
-```powershell
-python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
-```
-
-The command loads and validates the signing profile, verifies the configured relocated application BIN exists or derives it from the configured relocated ELF with `arm-none-eabi-objcopy -O binary`, optionally invokes the configured wolfBoot key-generation command from the configured `tools/wolfboot` working directory when the local private key is missing, invokes the configured wolfBoot signing command from its configured working directory, and records signing evidence under:
-
-```text
-results/signing/<timestamp>_wolfboot_ecdsa_p256_app/
-  manifest.json
-  signing.log
-  application_signed.bin
-```
-
-The signing manifest records the profile ID, input ELF path, input image path and SHA-256, binary-conversion working directory and return code, signed image path and SHA-256, signature algorithm, signature size, image version, private-key path, whether the private key existed before the command, whether it was present after the command, key-generation and signing working directories and return codes, and a retained signed-image path when signing succeeds.
-
-The workflow is local-only. It does not flash hardware, open UART devices, use SSH, or claim secure-boot runtime success. Private signing keys are never copied into result directories.
-
-
-## Phase 10h — Flash wolfBoot and Signed Application
-
-Phase 10h adds an explicit secure-boot flash workflow:
-
-```powershell
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
-```
-
-The workflow flashes `tools/wolfboot/wolfboot.elf` at the configured wolfBoot bootloader offset, then flashes `build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin` at the configured signed-application slot offset. It records both artifact hashes, offsets, SCP/helper return codes, remote staging paths, and `secure_boot_flash.log` in the result directory.
-
-After a successful two-artifact flash it captures UART by default and records marker evaluation in `uart.log` and `manifest.json`.
-
-## Phase 10i — wolfBoot Positive Boot Evidence
-
-Phase 10i adds an application-level UART marker for the relocated secure-boot application build:
-
-```text
-stm32-basic_hal1 secure-boot app v0.1.0
-```
-
-The marker is compiled into non-zero-vector-offset application builds through `SECURE_BOOT_APPLICATION`. The direct-flash `Debug` baseline continues to emit only the normal direct-flash marker. The wolfBoot experiment config records the expected secure-boot marker under `uart.expected_secure_boot_message`, and the UART capture helper records `uart.secure_boot_marker_present` in the manifest. Positive secure-boot evidence passes only when the secure-boot marker, normal boot marker, and tick marker are all present.
-
-The secure-boot run manifest records:
-
-```text
-boot_crypto
-boot_signature.algorithm
-signature_size
-boot_signature.signature_size
-boot_signature.signature_size_bytes
-boot_signature.image_version
-secure_boot_run.boot_confirmed_from_uart_log
-secure_boot_run.boot_path_distinguished
-secure_boot_run.secure_boot_marker_present
-secure_boot_run.positive_boot_evidence_passed
-```
-
-## Phase 10j — Negative Boot Test for Corrupted Application
-
-Phase 10j adds a controlled negative-test mode to the existing secure-boot flash command:
-
-```powershell
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
-```
-
-The command copies the signed application image into the result directory, corrupts the result-local copy by flipping the first byte, and flashes that corrupted copy instead of the original signed image. It records the original and corrupted image SHA-256 values and `source_image_modified: false` in the manifest. The negative test passes only when the UART capture completes and the secure-boot marker, normal boot marker, and tick marker are absent.
-
-## Phase 10l — Secure-Boot Manifest and Documentation Consolidation
-
-Phase 10l consolidates the secure-boot evidence model after the working wolfBoot build, signing, flash, UART, negative-test, and timing paths exist. It does not add a new hardware operation. It makes the manifest schema more explicit and easier to audit.
-
-A secure-boot run manifest records these required top-level or established fields:
-
-```text
-boot_mode
-boot_crypto
-signature_size
-boot_signature.algorithm
-boot_signature.signature_size
-boot_signature.signature_size_bytes
-boot_signature.image_version
-boot_timing.verification_time_ms
-```
-
-The run also records `secure_boot_evidence`, a consolidated evidence object that links:
-
-```text
-secure_boot_evidence.build_evidence.wolfboot_artifact_path
-secure_boot_evidence.build_evidence.wolfboot_sha256
-secure_boot_evidence.signing_evidence.signed_application_artifact_path
-secure_boot_evidence.signing_evidence.signed_application_sha256
-secure_boot_evidence.flash_evidence.log
-secure_boot_evidence.flash_evidence.return_code
-secure_boot_evidence.uart_evidence.log
-secure_boot_evidence.uart_evidence.secure_boot_marker_present
-secure_boot_evidence.uart_evidence.positive_boot_evidence_passed
-secure_boot_evidence.boot_timing.verification_time_ms
-secure_boot_evidence.negative_test.verdict
-```
-
-The signing workflow manifest records `signing.signature_size` and `signing.signature_size_bytes` with the same byte count. This keeps the signing evidence and secure-boot run evidence consistent while preserving the earlier explicit byte-named field.
-
-The direct-flash baseline remains the known-good runnable path. The planned wolfBoot boot profile remains `runnable: false` for generic direct-flash workflows; secure-boot execution still uses the explicit `flash-secure-boot` command. Generated outputs and private signing keys remain ignored and must not be committed.
-
-## Phase 11.1 — Secure-Boot Benchmark Result Model
-
-Phase 11.1 adds a first-class secure-boot benchmark schema without changing the secure-boot execution path. The existing `secure_boot_evidence`, `boot_timing`, and `secure_boot_run` fields remain compatible. New benchmark evidence is recorded under `secure_boot_benchmark`.
-
-The schema distinguishes:
-
-```text
-secure_boot_benchmark.build_time_metrics
-secure_boot_benchmark.signed_artifact_metrics
-secure_boot_benchmark.runtime_verification_metrics
-secure_boot_benchmark.runtime_memory_metrics
-secure_boot_benchmark.repeated_run_samples
-secure_boot_benchmark.aggregate_statistics
-secure_boot_benchmark.limitations
-```
-
-`runtime_verification_metrics` mirrors explicit UART timing evidence when available, including verification time, cycles, CPU frequency, result code, source, measurement method, and limitations. Host-side SSH duration, UART capture duration, reset delay, and marker ordering are still not used as verification time.
-
-`build_time_metrics`, runtime stack/heap fields, repeated-run samples, and aggregate statistics are present but marked unavailable in Phase 11.1. This makes missing evidence auditable instead of inferred from absent fields. Later Phase 11 steps may populate those sections after implementing repeated-run execution, static build/resource parsing, runtime stack/memory instrumentation, and cross-profile aggregation.
-
-Phase 11.1 intentionally does not add new signing-algorithm profiles, aggregation output commands, or runtime stack/heap instrumentation.
-
-## Phase 11.2 — Repeated-Run Measurement Support
-
-Phase 11.2 extends the secure-boot execution path with repeated post-flash verification samples for the same benchmark profile. The command remains the explicit secure-boot workflow:
-
-```powershell
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
-```
-
-The workflow records each sample in `secure_boot_benchmark.repeated_run_samples.samples`. A sample contains `run_index`, `timestamp`, explicit verification timing, cycles, CPU frequency, verification result code, UART marker detection evidence, sample verdict, validity-for-statistics flag, and referenced artifact identity for the wolfBoot and signed application artifacts.
-
-`secure_boot_benchmark.aggregate_statistics` records sample count, valid sample count, failed sample count, and minimum/mean/median/maximum/standard-deviation/range/coefficient-of-variation values for verification time and verification cycles. Median is the primary headline statistic and is also reflected in the secure-boot run summary. Failed samples and samples missing explicit timing or cycle evidence are retained but excluded from aggregate timing statistics. The CLI summary prints the same counts and timing/cycle statistics after repeated-run benchmark collection completes.
-
-Repeated-run support does not add signing-algorithm profiles or aggregation output files. It also does not infer timing from SSH duration, UART capture duration, reset delay, marker ordering, or any host-side elapsed time.
-
-## Phase 11.3 — Static Build and Resource Metrics
-
-Phase 11.3 extends `secure_boot_benchmark` with build-level metrics that can be collected from existing local artifacts. It does not add runtime stack or heap measurement.
-
-`secure_boot_benchmark.build_time_metrics` records the wolfBoot bootloader `.text`, `.data`, and `.bss` sizes, total flash-relevant size, and static RAM estimate. The flash-relevant size is derived from allocatable ELF sections that occupy bytes in the image. Static RAM is `.data + .bss`.
-
-`secure_boot_benchmark.signed_artifact_metrics` records wolfBoot ELF size, retained wolfBoot artifact size, unsigned application artifact size when configured and present, signed application size, signed-image overhead bytes, and signed-image overhead percentage. If the unsigned application artifact is absent, the metric remains explicit and unavailable instead of being inferred from the signed image.
-
-`secure_boot_benchmark.runtime_memory_metrics` remains unavailable until a later phase adds explicit firmware-side stack or heap evidence. Static RAM metrics are not treated as maximum stack usage or total runtime RAM pressure.
-
-## Phase 11.4 — Runtime Stack and Memory Metrics
-
-Phase 11.4 extends the secure-boot benchmark with explicit firmware-side runtime memory evidence. The temporary wolfBoot instrumentation used for local STM32L4R5 benchmark builds paints the available verification stack region before `wolfBoot_verify_authenticity()` runs, scans the sentinel after verification, and writes the measured maximum stack high-water value into the RAM2 mailbox. The relocated HAL application emits the parsed UART marker `wolfBoot verification max stack used: <bytes> bytes` after UART initialization.
-
-The manifest records available stack evidence under `uart`, top-level `runtime_memory`, `secure_boot_run`, and `secure_boot_benchmark.runtime_memory_metrics`. When static RAM metrics are available, `secure_boot_benchmark.runtime_memory_metrics.estimated_total_ram_pressure_bytes` is calculated as static RAM plus measured stack high-water usage. Heap metrics remain unavailable unless explicit firmware-side heap evidence is emitted and parsed.
-
-Runtime memory values are never inferred from host-side timing, UART capture duration, reset delay, linker output alone, ELF section output alone, or build output alone. If the explicit stack marker is absent, the runtime memory fields remain null/unavailable and include a limitation note.
-
-## Phase 11.4 secure-boot artifact freshness evidence
-
-The Phase 11.4 secure-boot workflow now records evidence fingerprints for the secure-boot build/sign/flash chain separately from the existing direct-flash firmware build fingerprint. The direct-flash fingerprint remains scoped to the framework-managed CMake build and rebuild-skip workflow. Secure boot uses additional generated artifacts and tools, including the wolfBoot make build, the relocated CMake preset, the application signing profile, and the two-artifact flash workflow.
-
-The wolfBoot build manifest records a secure-boot input fingerprint over the configured wolfBoot build profile, project-local wolfBoot config template, framework wolfBoot build helper, and available wolfBoot source inputs. The application-signing manifest records a secure-boot input fingerprint over the signing profile, signing helper, and relocated application build inputs. The secure-boot flash manifest records workflow/artifact freshness evidence over the flash workflow plus secure-boot artifact producer inputs, including the wolfBoot build helper/profile, signing helper/profile, project-local wolfBoot config template, relocated application build inputs, and selected wolfBoot source files where present. It also records the SHA-256 values of the wolfBoot and signed-application artifacts being flashed.
-
-These fingerprints are evidence fields in this phase; `flash-secure-boot` records `artifact_freshness_status: recorded_not_enforced` and does not yet refuse stale artifacts. The secure-boot hardware workflow test cleans generated secure-boot outputs before rebuilding so test results are not dependent on stale local `build/` or `tools/wolfboot/` artifacts.
-
-## Secure-Boot Signing-Key Consistency Guard
-
-The secure-boot build/sign/flash chain now records and enforces local signing-key consistency for the ECDSA-P256 profile. The framework coordinates `secrets/wolfboot/ecdsa_p256_private_key.der` with `tools/wolfboot/wolfboot_signing_private_key.der` during `build-wolfboot`, records key fingerprints in wolfBoot build and signing manifests, and refuses `flash-secure-boot` before network or hardware access when both configured key files exist but do not match.
-
-This guard prevents a deterministic boot failure where wolfBoot embeds a keystore generated from one private key while the application image is signed with another. Key fingerprints are evidence only; private key files remain local ignored state and are not copied into result directories.
-
-
-
-## Phase 11.5a Classical Benchmark Profile Model
-
-Classical secure-boot signing benchmark metadata is defined separately from runnable build, signing, and flash workflows. The schema file is:
-
-```text
+CMakeLists.txt                              Firmware build definition
+CMakePresets.json                           Debug and RelocatedDebug presets
+STM32L4R5XX_FLASH.ld                        Direct-flash linker script
+STM32L4R5XX_FLASH_RELOCATED.ld              Secure-boot relocated linker script
+Core/                                       CubeMX HAL application source
+Drivers/                                    CubeMX HAL/CMSIS drivers
+configs/boards/board_a.yaml                 Board metadata
+configs/hosts/gateway.yaml                  Gateway, flash helper, UART path
+configs/boot/direct_flash.yaml              Direct-flash boot profile
+configs/boot/wolfboot_*.yaml                Secure-boot profile metadata
+configs/builds/wolfboot_stm32l4_*.yaml      wolfBoot build profiles
+configs/signing/wolfboot_*_app.yaml         Application-signing profiles
+configs/experiments/baseline_direct_uart.yaml
+configs/experiments/wolfboot_*_uart.yaml    Experiment profiles
 configs/benchmarks/classical_signing_profiles.yaml
+configs/wolfboot/stm32l4r5_*.config         Project-local wolfBoot config templates
 ```
 
-The minimum comparison scope is:
+## Python implementation map
 
 ```text
-ED25519
-ECC256
-RSA2048
+scripts/experiment.py                       CLI entry point
+scripts/framework/artifacts.py              Result artifact helpers
+scripts/framework/benchmark_aggregation.py  Benchmark summary JSON/CSV generation
+scripts/framework/build.py                  Local CMake build workflow
+scripts/framework/build_number.py           Build number state handling
+scripts/framework/build_records.py          First-class build record validation/use
+scripts/framework/build_state.py            Last-successful-build state
+scripts/framework/fingerprint.py            Build and secure-boot input fingerprints
+scripts/framework/flash.py                  Direct-flash SCP/SSH workflow
+scripts/framework/manifest.py               Manifest construction and benchmark schema helpers
+scripts/framework/secure_boot_flash.py      wolfBoot two-artifact flash and UART benchmark workflow
+scripts/framework/signing.py                Application signing workflow
+scripts/framework/source.py                 Git provenance helpers
+scripts/framework/uart.py                   UART capture and marker parsing
+scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patch workflow
 ```
 
-For Phase 11.5a, `ECC256` is the only runnable reference member and maps to the existing wolfBoot build profile, application-signing profile, secure-boot experiment profile, and boot profile. `ED25519` and `RSA2048` are reserved in the model with `runnable: false` and explicit unsupported reasons. Their runnable profile files are not added until the later ED25519 and RSA2048 sub-phases.
-
-Generated secure-boot manifests include this profile metadata under:
+## Direct-flash data flow
 
 ```text
-secure_boot_benchmark.classical_profile_metadata
+experiment config
+  -> board/host/boot resolution
+  -> CMake build
+  -> build record under results/builds/<build_number>/
+  -> flash provenance check
+  -> gateway SCP/SSH flash helper
+  -> UART capture
+  -> manifest verdict
 ```
 
-This keeps algorithm-comparison assumptions visible beside timing, cycle, static-resource, runtime-stack, repeated-run, and aggregate benchmark evidence.
+The direct-flash baseline uses `configs/boot/direct_flash.yaml` and `configs/experiments/baseline_direct_uart.yaml`.
 
-## Phase 11.5b ED25519 benchmark profile architecture
+## Secure-boot data flow
 
-Phase 11.5b adds ED25519 as a runnable classical secure-boot benchmark profile beside the ECC256 reference path. The profile set is still intentionally small: ECC256 remains the known-good reference, ED25519 is the first new runnable comparison profile, and RSA2048 remains reserved for Phase 11.5c.
+```text
+wolfBoot build profile
+  -> project-local wolfBoot config template
+  -> temporary local wolfBoot patches during build
+  -> wolfBoot artifact evidence
 
-The ED25519 profile consists of:
+RelocatedDebug application build
+  -> profile-specific BIN
+  -> signing profile
+  -> signed application image evidence
 
-- `configs/wolfboot/stm32l4r5_ed25519.config`
-- `configs/builds/wolfboot_stm32l4_ed25519.yaml`
-- `configs/signing/wolfboot_ed25519_app.yaml`
-- `configs/boot/wolfboot_ed25519.yaml`
-- `configs/experiments/wolfboot_ed25519_uart.yaml`
-
-The ED25519 experiment reuses the existing relocated application payload and measurement model so profile comparisons remain comparable. The framework records key-fingerprint consistency evidence for the canonical local signing key and the wolfBoot working-tree key, and it refuses secure-boot flashing when available fingerprints differ.
-
-Cross-profile summary output remains Phase 11.6 scope.
-
-### Phase 11.5b side-by-side hardware benchmark test
-
-The hardware test `tests/hardware/test_secure_boot_algorithm_benchmarks.py` automates the clean side-by-side benchmark workflow for the ECC256 reference profile and the ED25519 Phase 11.5b profile. For each algorithm, the test runs wolfBoot `keysclean`, removes generated wolfBoot artifacts and the relocated app build directory, builds the selected wolfBoot profile, rebuilds the relocated HAL application, signs with the matching signing profile, and runs `flash-secure-boot --repeat-count 2` against the matching experiment profile.
-
-The test is marked `hardware`, uses the same capability gates as the existing secure-boot hardware workflows, and intentionally leaves result artifacts under `results/` so the manifests, flash logs, signing logs, wolfBoot build logs, and UART sample logs remain available as benchmark evidence. It validates positive secure-boot marker evidence, explicit timing and cycle evidence, repeated-run sample counts, valid-sample counts, failed-sample counts, and classical profile metadata for both ECC256 and ED25519.
-
-
-## Phase 11 shared secure-boot image-header reserve
-
-Phase 11 secure-boot benchmark profiles use one shared 8192-byte wolfBoot image-header reserve for ECC256, ED25519, and RSA2048. The matching wolfBoot logical sector size is 0x4000 / 16 KB because wolfBoot requires `WOLFBOOT_SECTOR_SIZE` to be larger than `IMAGE_HEADER_SIZE`. The signed image slot still starts at `0x08020000`, but the relocated HAL application is linked at `0x08022000` with `STM32_APP_VECTOR_OFFSET=0x00022000`. The signing profiles set `IMAGE_HEADER_SIZE=8192` for wolfBoot keytools so the signed image header and application vector address remain aligned. The wolfBoot config templates set `WOLFBOOT_SECTOR_SIZE=0x4000`; this is a wolfBoot logical sector choice for the benchmark layout, while the STM32L4R5 flash page assumption remains documented separately as 4 KB. This intentionally wastes a small amount of flash for smaller classical signatures to keep the benchmark layout stable before later PQC/hybrid profiles are added. If a future profile requires a larger header, apply the larger value globally before collecting final experiment runs.
-
-## Phase 11.5d Optional Expanded Classical Profile Set
-
-Implemented scope:
-
-- Added optional expanded classical secure-boot benchmark profiles for ECC384, ECC521, ED448, RSA3072, and RSA4096.
-- Each expanded profile has a matching wolfBoot build profile, application signing profile, boot profile, secure-boot experiment profile, and project-local wolfBoot config template.
-- Expanded profiles use the same relocated HAL application payload, board, 80 MHz CPU-Hz assumption, UART marker model, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema as ECC256, ED25519, and RSA2048.
-- All classical benchmark profiles continue to use the shared Phase 11 8192-byte image-header reserve and the 0x08022000 relocated application entry address.
-- Private keys remain local under secrets/wolfboot/ and are not copied into results.
-- Cross-profile aggregation remains Phase 11.6 scope.
-- Hardware success and benchmark values must only be claimed from explicit user-provided build, flash, UART, and manifest evidence.
-
-Manual Phase 11.5d command pattern, replacing <profile> with ecc384, ecc521, ed448, rsa3072, or rsa4096:
-
-```powershell
-python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
-cmake --preset RelocatedDebug
-cmake --build --preset RelocatedDebug
-python scripts/experiment.py sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
+secure-boot experiment profile
+  -> key-consistency check
+  -> flash wolfBoot artifact
+  -> flash signed application artifact
+  -> UART capture samples
+  -> secure_boot_benchmark manifest evidence
 ```
 
-Manual Phase 11.5d verification commands:
+The secure-boot workflow must not infer timing, stack, heap, or hardware success from host-side behaviour. Runtime metrics must come from explicit firmware/UART markers.
+
+## Benchmark model
+
+Secure-boot manifests include `secure_boot_benchmark`, which separates:
+
+- profile identity and algorithm metadata
+- build-time metrics
+- signed-artifact metrics
+- runtime verification metrics
+- runtime memory metrics
+- repeated-run samples
+- aggregate statistics
+- explicit limitations and unavailable metrics
+
+The aggregation command reads existing manifests and writes:
+
+```text
+results/benchmark-aggregation/benchmark_summary.json
+results/benchmark-aggregation/benchmark_summary.csv
+```
+
+It does not create new measurement evidence.
+
+## Test architecture
+
+```text
+tests/unit/          No hardware, SSH, UART, gateway, or real device requirements
+tests/integration/   Real local toolchain or gateway checks; skip when unavailable
+tests/hardware/      End-to-end board/gateway/UART workflows; capability gated
+```
+
+Run all tests that can run on the current machine:
 
 ```powershell
-python -m pytest tests/unit/test_config_loading.py tests/unit/test_config_validation.py tests/unit/test_wolfboot_build.py tests/unit/test_signing.py tests/unit/test_secure_boot_flash.py tests/unit/test_manifest.py
-python -m pytest tests/unit
 python -m pytest
+```
+
+Run strict hardware benchmark workflow only when hardware is intentionally available:
+
+```powershell
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
-Expected result: unit tests pass without hardware. Integration and hardware tests skip cleanly unless strict capability flags are supplied. Expanded classical profile hardware success, timing values, and runtime memory values must still only be claimed from explicit user-provided evidence.
+## Result ownership
 
-
-## Phase 11.6 benchmark aggregation architecture
-
-The Phase 11.6 aggregation layer is implemented as a read-only framework utility. It consumes completed secure-boot run manifests and produces cross-profile summary files without invoking build tools, key-generation tools, SSH, flashing helpers, UART capture, or hardware-dependent operations.
-
-The CLI entry point is:
-
-```powershell
-python scripts/experiment.py aggregate-benchmarks
-```
-
-Input handling supports two modes:
-
-- If no explicit input is supplied, scan `results/*/manifest.json` and include only manifests containing a `secure_boot_benchmark` object.
-- If explicit inputs are supplied, include each `--manifest <path>` or `--run-dir <path>` entry after resolving run directories to `manifest.json`.
-
-The aggregation helper writes:
-
-```text
-benchmark_summary.json
-benchmark_summary.csv
-```
-
-The JSON summary records schema version, model phase, generation timestamp, input counts, skipped manifests, and one structured profile row per source manifest. The CSV summary uses stable flat column names so it can be imported by spreadsheet tools, plotting scripts, or later analysis notebooks.
-
-Each profile row is derived from the existing benchmark manifest schema:
-
-- profile metadata from `secure_boot_benchmark.classical_profile_metadata`
-- repeated-run counts and aggregate timing/cycle statistics from `secure_boot_benchmark.aggregate_statistics`
-- static flash/RAM metrics from `secure_boot_benchmark.build_time_metrics`
-- stack evidence from `secure_boot_benchmark.runtime_memory_metrics`
-- signed-image and signature-size evidence from `secure_boot_benchmark.signed_artifact_metrics`
-- verdict evidence from the manifest result field
-- limitations from the benchmark, aggregate, build, signed-artifact, runtime-memory, and profile metadata objects
-
-Derived `cycles_per_kb` and `time_ms_per_kb` use median verification cycles/time divided by signed application image size in KiB when those values are not already present in the manifest. Missing values remain explicit `null` values in JSON and blank cells in CSV.
-
-The aggregation command is not benchmark collection. It does not make hardware-success claims and does not reinterpret missing runtime evidence.
+Build records identify produced firmware binaries. Experiment run records identify one execution and its hardware-facing evidence. Secure-boot build/sign/flash evidence remains explicit and profile-specific. Aggregated benchmark summaries are derived outputs from existing manifests.

@@ -2,29 +2,57 @@
 
 ## Purpose
 
-This project is an STM32-based embedded security experiment framework for evaluating boot security, MQTT communication, TLS, classical cryptography, PQC/hybrid cryptography, network degradation, and benchmark collection.
+This repository is an STM32-based embedded security experiment framework. It supports repeatable firmware, gateway, UART, secure-boot, and benchmark workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform.
 
-The project is broader than wolfBoot. wolfBoot and wolfSSL are expected to be major components, but the framework should remain general enough to support multiple experiment types.
+The project is broader than wolfBoot. wolfBoot is the current secure-boot component, but later phases may add wolfSSL MQTT/TLS, PQC/hybrid cryptographic profiles, network impairment, and broader analysis tooling.
 
-## Current Status
+## Current implementation
 
-The current known-good baseline is a CubeMX-generated STM32 HAL application for the NUCLEO-L4R5ZI-P / STM32L4R5 board.
+Implemented areas:
 
-The application builds, flashes through the experiment gateway, and prints a boot message plus repeated `tick` messages over ST-LINK VCP UART.
+- CubeMX-generated STM32 HAL direct-flash baseline
+- local CMake/Ninja build automation
+- remote gateway flashing
+- bounded UART capture
+- result manifests and first-class build records
+- source/build fingerprinting and rebuild-skip logic
+- relocated HAL application build for wolfBoot launch
+- wolfBoot build profiles using `tools/wolfboot`
+- application-signing profiles for classical wolfBoot algorithms
+- secure-boot two-artifact flash workflow
+- positive UART marker evidence
+- corrupted-application negative-test workflow
+- secure-boot verification timing, cycle, result-code, and stack high-water evidence from explicit firmware/UART markers
+- repeated secure-boot benchmark samples and aggregate statistics
+- static ELF/resource and signed-artifact metrics
+- benchmark aggregation output to JSON and CSV
 
-## Planned Major Areas
+Not implemented yet:
 
-- STM32 firmware build automation
-- Remote flashing
-- UART log capture
-- Result manifests
-- wolfBoot secure boot
-- wolfSSL MQTT over TLS
-- Classical crypto baselines
-- PQC/hybrid crypto experiments
-- Network degradation simulation
-- Benchmark aggregation and analysis
+- MQTT transport experiments
+- TLS/wolfSSL transport experiments
+- PQC or hybrid signing profiles
+- network degradation automation
+- production release packaging
 
-## Notes
+## Current benchmark scope
 
-This document should be updated whenever the project scope or current implementation phase changes.
+Minimum classical secure-boot benchmark profiles:
+
+```text
+ECC256
+ED25519
+RSA2048
+```
+
+Optional expanded classical profiles:
+
+```text
+ECC384
+ECC521
+ED448
+RSA3072
+RSA4096
+```
+
+Hardware and benchmark success must only be claimed from explicit user-provided logs or generated manifests.

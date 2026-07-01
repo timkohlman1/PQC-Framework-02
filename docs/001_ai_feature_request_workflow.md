@@ -2,152 +2,94 @@
 
 ## Purpose
 
-This document describes how AI-assisted feature requests should be handled for this repository.
+This document defines the AI-assisted development workflow for this repository.
 
-The goal is to reduce the amount of context that must be uploaded for each AI-assisted change while still keeping the AI agent grounded in the current repository structure, known-good baseline, implementation state, testing model, and documentation requirements.
+## Startup rule
+
+At the start of every fresh feature-request chat, if the latest `AI_BUILD_GUIDE.md` has not already been provided, the AI assistant must respond only with:
+
+```text
+Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, I’ll ask for the specific source, config, test, and documentation files needed for this feature request.
+```
 
 ## Workflow
 
-1. Start a new feature-request chat.
+1. Start a fresh feature-request chat.
+2. Provide the latest `AI_BUILD_GUIDE.md`.
+3. State the requested change or review scope.
+4. The AI reads `AI_BUILD_GUIDE.md` first and treats it as the source of truth for repository structure, current behaviour, tests, documentation expectations, and safety constraints.
+5. The AI asks only for relevant repository files. It must not request the whole repository by default.
+6. If multiple files are requested, the AI provides a copy-paste PowerShell `Compress-Archive` command using repository-relative paths.
+7. The user uploads the requested context archive.
+8. The AI inspects the files before proposing snippets, replacement content, or candidate edits.
+9. The AI provides a controlled implementation or review response using the required response sections in `AI_BUILD_GUIDE.md`.
+10. If files are changed, the AI provides complete replacement content and downloadable artifacts for every modified or created file.
+11. The user applies the changes and runs the requested verification commands.
+12. The user returns logs, test output, manifests, UART logs, or error output.
+13. The AI reviews evidence and gives the next step.
 
-2. Describe the requested change.
+## Context archive format
 
-3. Provide the latest `AI_BUILD_GUIDE.md`.
+When requesting more than one repository file, use this pattern:
 
-   If the user has not already provided it, the AI agent must ask for the latest `AI_BUILD_GUIDE.md` before proposing code changes.
+```powershell
+$files = @(
+  "path/to/first-file",
+  "path/to/second-file"
+)
 
-4. The AI agent reviews `AI_BUILD_GUIDE.md`.
+Compress-Archive -LiteralPath $files -DestinationPath "C:\Users\timko\Downloads\<descriptive-context-name>.zip" -Force
+```
 
-   The guide is the source of truth for:
-   - current repository structure
-   - known-good baseline
-   - development rules
-   - testing expectations
-   - documentation requirements
-   - hardware constraints
-   - safety and secret-handling rules
-   - current implementation phase
+Use exact repository-relative paths. Do not include generated build outputs, result folders, private keys, credentials, or unrelated files unless explicitly required and safe.
 
-5. The AI agent asks for relevant files only.
+## Implementation response requirements
 
-   The AI agent must not ask for the full repository by default.
+For implementation requests, include:
 
-   Relevant files may include:
-   - source files likely to change
-   - related headers or interfaces
-   - config files
-   - test files
-   - documentation files
-   - build files, only if needed
+1. Brief interpretation.
+2. Files inspected.
+3. Files likely to change.
+4. Proposed code changes.
+5. Proposed test changes.
+6. Proposed documentation updates.
+7. Exact commands to run.
+8. Expected output or pass/fail criteria.
+9. Assumptions, risks, or unresolved questions.
 
-   If more context is required later, the AI agent should ask for the specific missing file and explain why it is needed.
+## Review response requirements
 
-   When requesting more than one repository file, the AI agent must include a copy-paste PowerShell `Compress-Archive` command that zips exactly those requested files to `C:\Users\timko\Downloads\<descriptive-context-name>.zip`. The command should use a `$files = @(...)` list containing repository-relative paths and this form:
+For review requests, include:
 
-   ```powershell
-   $files = @(
-     "path/to/first-file",
-     "path/to/second-file"
-   )
+1. Brief interpretation.
+2. Files inspected.
+3. Compliance result.
+4. Issues found.
+5. Files likely needing changes.
+6. Proposed updates.
+7. Exact verification commands.
+8. Expected output or pass/fail criteria.
+9. Assumptions, risks, or unresolved questions.
 
-   Compress-Archive -LiteralPath $files -DestinationPath "$env:USERPROFILE\Downloads\<descriptive-context-name>.zip" -Force
-   ```
+## Replacement-artifact requirements
 
-   If the AI agent requests only one repository file, a ZIP command is optional.
+When files need to be modified or created:
 
-6. The AI agent proposes a small controlled change.
+- provide a downloadable replacement artifact using the exact target filename for every changed or created file
+- provide complete replacement content for every changed or created file
+- if multiple files are changed or created, provide a ZIP containing all replacement files at repository-relative paths
+- provide the exact PowerShell extraction command for the ZIP, assuming the downloaded archive is in `C:\Users\timko\Downloads\` and the command is run from the repository root
 
-   The proposal should cover:
-   - code changes
-   - tests to add or update
-   - documentation updates
-   - complete replacement content for every file that needs to be modified or created
-   - downloadable replacement artifacts using the exact target filenames for every modified or newly created file
-   - a downloadable `.zip` archive containing all replacement files at their repository-relative paths when multiple files are changed or created
-   - the exact PowerShell extraction command for that archive, using `C:\Users\timko\Downloads\<archive-name>.zip` as the source path and `.` as the destination so it can be run from the repository workspace root
-   - highlighted manual edits or diff-style notes for each modified or newly created file
-   - verification commands
-   - expected pass/fail criteria
-   - assumptions, risks, or unresolved questions
+Extraction command pattern:
 
-   For every file that needs to be modified or created, the AI agent must provide a downloadable replacement artifact using the exact target filename. This requirement applies to documentation, code, configuration, scripts, tests, and any other text file changed by the request.
+```powershell
+Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+```
 
-   For every file that needs to be modified or created, the AI agent must also provide the full replacement file content so the user can inspect, download, copy, or replace the file locally.
+## Safety rules
 
-   If more than one file needs to be modified or created, the AI agent must also provide a downloadable `.zip` archive containing all replacement files at their intended repository-relative paths. The archive must be suitable for unzip-and-overwrite use from the repository root.
-
-   Whenever a downloadable `.zip` archive is provided, the AI agent must also provide the exact PowerShell extraction command immediately after the archive link. The command must assume the user has downloaded the archive to `C:\Users\timko\Downloads\` and will run the command from the repository workspace root, such as a VS Code terminal opened at the project root. Use this form, replacing only the archive filename:
-
-   ```powershell
-   Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
-   ```
-
-   The AI agent must not require the user to copy or move the downloaded archive into the repository root before extracting it.
-
-   The AI agent must also highlight the specific changes separately. Highlighting may be a concise summary or focused diff-style notes.
-
-   Full-file replacement content must preserve unrelated content and must contain only the changes necessary to implement the requested change.
-
-7. The user applies the change locally.
-
-8. The user runs the requested verification commands.
-
-9. The user returns logs for review.
-
-   Relevant evidence may include:
-   - build logs
-   - compiler errors
-   - unit test output
-   - integration test output
-   - flashing logs
-   - UART logs
-   - runtime output
-   - screenshots, if useful
-
-10. The AI agent reviews the logs and updates the next step.
-
-    The next step may be:
-    - proceed to the next implementation step
-    - fix a build or runtime issue
-    - request one additional relevant file
-    - update or add tests
-    - update documentation
-    - revise the implementation plan
-    - mark the feature request as complete if verification passes
-
-11. Update documentation and `AI_BUILD_GUIDE.md` if repository behaviour, structure, workflow, commands, testing, or documentation expectations changed.
-
-## Rules for AI Agents
-
-AI agents must not assume repository structure beyond the provided files and the current `AI_BUILD_GUIDE.md`.
-
-AI agents must not implement future phases early.
-
-AI agents must ask for relevant files only and must not request the full repository by default.
-
-When asking the user to upload more than one repository file, AI agents must provide a copy-paste PowerShell `Compress-Archive` command that zips the requested files into a context archive under `C:\Users\timko\Downloads\`. The command must use repository-relative paths and must not require the user to manually collect files.
-
-AI agents must include tests and documentation updates where appropriate.
-
-AI agents must provide downloadable replacement artifacts using the exact target filename for every file that needs to be modified or created.
-
-AI agents must provide complete replacement content for every file that needs to be modified or created, in addition to highlighting the specific manual edits or diff-style changes.
-
-When multiple files need to be modified or created, AI agents must provide a downloadable `.zip` archive containing all replacement files at their repository-relative paths for unzip-and-overwrite use.
-
-Whenever a downloadable `.zip` archive is provided, AI agents must also provide the exact PowerShell extraction command for the user's local workflow. The command must use `C:\Users\timko\Downloads\<archive-name>.zip` as the archive path and `.` as the destination, and it must be suitable to run from the repository workspace root.
-
-AI agents must preserve unrelated file content when preparing full replacement files.
-
-AI agents must provide exact verification commands.
-
-AI agents must not claim hardware tests passed unless user-provided logs confirm it.
-
-AI agents must not claim a change is verified unless the user has returned evidence showing that the relevant checks passed.
-
-## Context Files
-
-The first required context file for an AI-assisted feature request is:
-
-```text
-AI_BUILD_GUIDE.md
+- Do not implement future phases early.
+- Do not move CubeMX-generated folders unless explicitly requested.
+- Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success without explicit logs/manifests.
+- Do not ask for or suggest committing secrets.
+- Do not request private SSH, VPN, TLS, MQTT, firmware-signing, wolfBoot-signing, certificate, `.env`, token, or production credential material.

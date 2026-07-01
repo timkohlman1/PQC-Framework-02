@@ -2,20 +2,19 @@
 
 ## Purpose
 
-This document describes the current known-good STM32 HAL firmware baseline.
+This document describes the current STM32 HAL firmware baseline and how it relates to the secure-boot benchmark workflows.
 
-## Behaviour
+## Direct-flash baseline behaviour
 
-The baseline application:
+The direct-flash baseline application:
 
-- initialises the STM32 HAL
-- configures GPIO
-- configures LPUART1
+- initializes the STM32 HAL
+- configures GPIO and LPUART1
 - toggles LD2
-- prints a boot message
+- prints a boot marker
 - prints repeated `tick` messages
 
-## Expected UART Output
+Expected UART output:
 
 ```text
 stm32-basic_hal1 boot v0.1.0
@@ -24,30 +23,39 @@ tick
 tick
 ```
 
-## Current Role
+The direct-flash experiment profile is:
 
-This is the direct-flash baseline. The experiment framework now represents that boot path with `configs/boot/direct_flash.yaml` and the baseline experiment references it with `boot: direct_flash`.
+```text
+configs/experiments/baseline_direct_uart.yaml
+```
 
-It does not yet use:
+The explicit direct-flash boot profile is:
 
-- wolfBoot
-- MQTT
-- TLS
-- PQC
-- network degradation
-- wolfBoot-mediated boot
-- image signing
-- relocated application launch
-- automated result manifests
+```text
+configs/boot/direct_flash.yaml
+```
 
-## Build Status
+## Relocated secure-boot application
 
-The baseline has been confirmed to build successfully from the current repository location.
+The secure-boot workflows use the same HAL application payload, built with the `RelocatedDebug` CMake preset and the relocated linker script:
 
-## Flash Status
+```text
+CMakePresets.json
+STM32L4R5XX_FLASH_RELOCATED.ld
+```
 
-The baseline has been confirmed to flash remotely through `pqc-gateway1` using ST-LINK/SWD.
+The relocated application entry address is `0x08022000`, leaving the shared Phase 11 wolfBoot image-header reserve at the signed image slot start.
 
-## Notes
+When compiled as the secure-boot application, the firmware emits an additional UART marker before the normal boot marker:
 
-This document should be updated when the baseline application is modified or when automated build/flash/log capture is added.
+```text
+stm32-basic_hal1 secure-boot app v0.1.0
+stm32-basic_hal1 boot v0.1.0
+tick
+```
+
+The secure-boot marker is required for positive secure-boot UART evidence. The framework must not infer wolfBoot-mediated boot identity from the normal baseline marker alone.
+
+## Out of scope for the current HAL app
+
+The current firmware does not implement MQTT, TLS, PQC/hybrid crypto, or network degradation logic.

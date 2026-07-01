@@ -13,8 +13,8 @@ After AI_BUILD_GUIDE.md is provided:
 6. Do not assume repository state beyond AI_BUILD_GUIDE.md and uploaded files.
 7. Do not implement future phases early.
 8. Do not move CubeMX-generated folders unless explicitly requested.
-9. Do not claim hardware, gateway, flashing, UART, or runtime success unless the user provides logs confirming it.
-10. Never ask for or suggest committing secrets such as SSH private keys, VPN private keys, TLS private keys, MQTT passwords, real .env files, private certificates, private signing keys, or production credentials.
+9. Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, benchmark, or end-to-end success unless the user provides logs, manifests, or equivalent evidence confirming it.
+10. Never ask for or suggest committing secrets such as SSH private keys, VPN private keys, TLS private keys, MQTT passwords, real .env files, private certificates, private signing keys, wolfBoot private signing keys, tokens, or production credentials.
 
 Do not provide proposed snippets, replacement content, or candidate edits before inspecting the relevant files.
 
