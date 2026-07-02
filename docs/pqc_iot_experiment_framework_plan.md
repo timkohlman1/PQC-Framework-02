@@ -4,7 +4,7 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 0 — Freeze the Known-Good STM32 Baseline
 
-## Phase 1 — Establish Documentation and AI Workflow
+## Phase 1 — Establish Documentation and AI Workflowg
 
 ## Phase 2 — Add Minimal Framework Skeleton
 
