@@ -158,20 +158,26 @@ tests/integration/   Real local toolchain or gateway checks; skip when unavailab
 tests/hardware/      End-to-end board/gateway/UART workflows; capability gated
 ```
 
-FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests should continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
+FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
 
-The secure-boot algorithm benchmark hardware test is intentionally profile-selective to keep routine runs short. ML-DSA-65 is the default always-on profile. Other algorithm profiles are collected but skipped unless named with `PQC_HARDWARE_SECURE_BOOT_PROFILES`, or unless the full matrix is enabled with `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1`.
+The suite uses `short` and `long` pytest markers for risk/cost selection. `short` is routine confidence coverage and includes unit/integration tests, the baseline UART smoke test, the positive secure-boot workflow, and the ML-DSA-65 algorithm benchmark profile. `long` is slow, destructive, comprehensive, or full-matrix coverage and includes the corrupted-application negative secure-boot workflow plus all non-ML-DSA-65 algorithm benchmark profiles. Marker selection deselects non-matching tests; capability gating only skips tests that were selected but cannot run on the current host.
+
+Run the short confidence suite:
+
+```powershell
+python -m pytest -m short
+```
+
+Run the long validation suite:
+
+```powershell
+python -m pytest -m long
+```
 
 Run all tests that can run on the current machine:
 
 ```powershell
 python -m pytest
-```
-
-Run strict hardware benchmark workflow only when hardware is intentionally available:
-
-```powershell
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 ## Result ownership

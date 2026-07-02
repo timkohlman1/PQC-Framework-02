@@ -31,6 +31,7 @@ def _single_adhoc_log(results_dir: Path) -> Path:
 
 
 @pytest.mark.hardware
+@pytest.mark.short
 def test_baseline_uart_monitor(tmp_path, pqc_require_capabilities):
     """Monitor real UART output from the currently running firmware.
 

@@ -148,21 +148,25 @@ results/benchmark-aggregation/benchmark_summary.csv
 
 The aggregation command reads existing evidence only. It does not build firmware, sign images, flash hardware, open UART devices, use SSH, or create new measurement evidence.
 
-Routine hardware test time is controlled by the secure-boot algorithm benchmark selection policy. `tests/hardware/test_secure_boot_algorithm_benchmarks.py` always runs ML-DSA-65 by default and skips the other profile cases. To add selected profiles, use a comma-separated environment variable before invoking pytest, for example:
+Routine hardware test time is controlled with pytest `short` and `long` markers. The secure-boot algorithm benchmark marks ML-DSA-65 as `short`; the rest of the algorithm matrix is `long`. Non-selected profile cases are deselected, not skipped.
+
+Routine short benchmark pass:
 
 ```powershell
-$env:PQC_HARDWARE_SECURE_BOOT_PROFILES="ecc256,ed25519"
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m short --pqc-require-hardware
 ```
 
-For an all-in algorithm benchmark pass:
+Long algorithm benchmark pass:
 
 ```powershell
-$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m long --pqc-require-hardware
 ```
 
-Clear those environment variables after the run if you want to return to the default ML-DSA-65-only benchmark pass.
+All-in algorithm benchmark pass:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py --pqc-require-hardware
+```
 
 
 ## Secure-boot benchmark metrics
@@ -189,23 +193,39 @@ Interpretation rules:
 
 ## Test categories
 
+The test suite has two independent forms of selection:
+
+- capability gating: selected integration and hardware tests skip when required local toolchain, gateway, flash helper, or UART capabilities are unavailable unless a strict `--pqc-require-*` flag is supplied.
+- short/long marker selection: `short` is routine confidence coverage; `long` is slow, destructive, comprehensive, or full-matrix coverage.
+
+Routine confidence run:
+
 ```powershell
-python -m pytest tests/unit
-python -m pytest tests/integration -m integration
-python -m pytest tests/hardware -m hardware
+python -m pytest -m short
+```
+
+Long-only validation run:
+
+```powershell
+python -m pytest -m long
+```
+
+All-in run:
+
+```powershell
 python -m pytest
 ```
 
 Strict capability checks:
 
 ```powershell
+python -m pytest -m short --pqc-require-hardware
+python -m pytest -m long --pqc-require-hardware
 python -m pytest tests/integration -m integration --pqc-require-local-build
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
-$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
+
+When `-m short` or `-m long` is used, non-matching tests are deselected by pytest. Missing hardware still appears as skipped only for tests that were selected and then failed capability checks.
 
 ## Generated files and secrets
 

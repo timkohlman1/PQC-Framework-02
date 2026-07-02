@@ -269,6 +269,7 @@ def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path) -
 
 
 @pytest.mark.hardware
+@pytest.mark.short
 def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabilities):
     """Build, sign, flash, and UART-check the Phase 10h secure-boot workflow.
 
@@ -360,6 +361,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
         assert "stack_metric_source: uart_explicit_stack_high_water_marker" in uart_log
 
 @pytest.mark.hardware
+@pytest.mark.long
 def test_secure_boot_negative_corrupted_application_then_restore_workflow(
     tmp_path, pqc_require_capabilities
 ):

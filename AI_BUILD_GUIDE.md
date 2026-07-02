@@ -359,20 +359,24 @@ Runtime timing, cycle counts, result codes, stack high-water values, and heap va
 
 ## 10. Testing Model
 
-Use three test categories:
+Use capability categories and short/long risk-cost markers:
 
 ```powershell
+python -m pytest -m short
+python -m pytest -m long
+python -m pytest
 python -m pytest tests/unit
 python -m pytest tests/integration -m integration
 python -m pytest tests/hardware -m hardware
-python -m pytest
 ```
+
+`short` is routine confidence coverage. `long` is slow, destructive, comprehensive, or full-matrix coverage. `python -m pytest` runs both. Marker selection deselects non-matching tests; capability gating skips only selected tests that cannot run on the current host.
 
 Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output.
 
 FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTOSConfig.h` settings, CubeMX `.ioc` timebase/task settings, and UART marker ordering. Local-build integration coverage should compile both `Debug` and `RelocatedDebug` presets after FreeRTOS generation. Hardware coverage should treat FreeRTOS scheduler/task success as valid only when explicit UART markers are captured.
 
-Routine secure-boot algorithm benchmark hardware runs should keep execution time bounded by running ML-DSA-65 by default and skipping the other profile matrix entries unless explicitly selected. Set `PQC_HARDWARE_SECURE_BOOT_PROFILES=<comma-separated profile names>` to add named profiles to the default ML-DSA-65 run, or set `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` for an all-in algorithm benchmark hardware pass.
+Secure-boot algorithm benchmark hardware profile selection is marker-based: ML-DSA-65 is marked `short`; all other algorithm benchmark profiles are marked `long`. Use `python -m pytest -m short` for routine ML-DSA-65 coverage, `python -m pytest -m long` for the full long-profile matrix plus other long tests, and `python -m pytest` for all-in validation.
 
 Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied.
 
@@ -383,10 +387,11 @@ Capability-gated strict checks:
 ```powershell
 python -m pytest tests/integration -m integration --pqc-require-local-build
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+python -m pytest -m short --pqc-require-hardware
+python -m pytest -m long --pqc-require-hardware
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
-$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 Primary verification command after documentation-only changes:

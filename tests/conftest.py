@@ -35,6 +35,7 @@ LOWER_TEST_PHASES = {
     ),
 }
 FAILED_TEST_PHASES_KEY = "pqc_failed_test_phases"
+DURATION_MARK_EXPR_KEY = "pqc_duration_mark_expr"
 
 
 def _normalised_nodeid(item: pytest.Item) -> str:
@@ -313,6 +314,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def pytest_cmdline_main(config: pytest.Config) -> None:
+    mark_expr = str(config.getoption("markexpr") or "").strip()
+    if mark_expr in {"short", "long"}:
+        setattr(config, DURATION_MARK_EXPR_KEY, mark_expr)
+        config.option.markexpr = ""
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
@@ -322,9 +330,63 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "hardware: tests that require physical STM32 hardware, gateway access, or UART capture; auto-skip when required capabilities are unavailable",
     )
+    config.addinivalue_line(
+        "markers",
+        "short: routine confidence tests intended for frequent execution",
+    )
+    config.addinivalue_line(
+        "markers",
+        "long: slow, destructive, comprehensive, or full-matrix tests intended for all-in validation",
+    )
+
+    mark_expr = str(config.getoption("markexpr") or "").strip()
+    if mark_expr in {"short", "long"}:
+        setattr(config, DURATION_MARK_EXPR_KEY, mark_expr)
+        config.option.markexpr = ""
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def _duration_mark_expr(config: pytest.Config) -> str | None:
+    return getattr(config, DURATION_MARK_EXPR_KEY, None)
+
+
+def _has_duration_marker(item: pytest.Item) -> bool:
+    return bool(item.get_closest_marker("short") or item.get_closest_marker("long"))
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Default unclassified tests to the short suite.
+
+    Hardware benchmark profile parameters and destructive hardware workflows mark
+    themselves explicitly as short or long. Existing unit and integration tests
+    are routine confidence coverage, so they are short unless a test module or
+    parameter says otherwise. Adding the marker during item collection ensures
+    `pytest -m short` can select these tests rather than relying on later
+    collection-modification ordering.
+    """
+
+    if not _has_duration_marker(item):
+        item.add_marker(pytest.mark.short)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    for item in items:
+        if not _has_duration_marker(item):
+            item.add_marker(pytest.mark.short)
+
+    duration_expr = _duration_mark_expr(config)
+    if duration_expr in {"short", "long"}:
+        selected: list[pytest.Item] = []
+        deselected: list[pytest.Item] = []
+        for item in items:
+            if item.get_closest_marker(duration_expr):
+                selected.append(item)
+            else:
+                deselected.append(item)
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            items[:] = selected
+
     items.sort(key=lambda item: (TEST_PHASE_ORDER[_test_phase(item)], item.nodeid))
 
 
