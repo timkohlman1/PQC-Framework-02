@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,6 +43,7 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef hlpuart1;
 
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -50,28 +52,14 @@ UART_HandleTypeDef hlpuart1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_LPUART1_UART_Init(void);
+void StartDefaultTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-#ifdef SECURE_BOOT_APPLICATION
-#define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
-#define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   1UL
-
-typedef struct
-{
-  uint32_t magic;
-  uint32_t version;
-  uint32_t verification_time_ms;
-  uint32_t elapsed_cycles;
-  uint32_t cpu_hz;
-  uint32_t verification_result;
-  uint32_t max_stack_used_bytes;
-} PQC_BootTimingMailbox;
 
 static void APP_UART_WriteString(const char *text)
 {
@@ -109,6 +97,31 @@ static void APP_UART_WriteUint32(uint32_t value)
     HAL_UART_Transmit(&hlpuart1, (uint8_t *)&digits[count], 1U, HAL_MAX_DELAY);
   }
 }
+
+static void APP_PrintFreeRTOSSchedulerStarting(void)
+{
+  APP_UART_WriteString("FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask tick_hz=");
+  APP_UART_WriteUint32((uint32_t)configTICK_RATE_HZ);
+  APP_UART_WriteString(" heap_bytes=");
+  APP_UART_WriteUint32((uint32_t)configTOTAL_HEAP_SIZE);
+  APP_UART_WriteString(" default_task_stack_words=512\r\n");
+}
+
+#ifdef SECURE_BOOT_APPLICATION
+#define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
+#define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   1UL
+
+typedef struct
+{
+  uint32_t magic;
+  uint32_t version;
+  uint32_t verification_time_ms;
+  uint32_t elapsed_cycles;
+  uint32_t cpu_hz;
+  uint32_t verification_result;
+  uint32_t max_stack_used_bytes;
+} PQC_BootTimingMailbox;
 
 static void APP_PrintWolfBootVerificationTiming(void)
 {
@@ -192,6 +205,42 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  if (defaultTaskHandle == NULL)
+  {
+    APP_UART_WriteString("FreeRTOS defaultTask create failed\r\n");
+    Error_Handler();
+  }
+  APP_UART_WriteString("FreeRTOS defaultTask created: name=defaultTask priority=osPriorityNormal stack_words=512\r\n");
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  APP_PrintFreeRTOSSchedulerStarting();
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -199,14 +248,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
-
-    const char tick_msg[] = "tick\r\n";
-    HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
-
-    HAL_Delay(1000);
-    /* USER CODE END 3 */
+    /* Scheduler should own normal application execution. */
   }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -562,6 +606,53 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  const char task_started_msg[] = "FreeRTOS defaultTask started: periodic tick task active\r\n";
+  const char tick_msg[] = "tick\r\n";
+
+  HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
+
+  /* Infinite loop */
+  for(;;)
+  {
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
+    HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
+    osDelay(1000);
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

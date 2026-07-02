@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,6 +14,14 @@ import pytest
 
 REPEAT_COUNT = 2
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
+DEFAULT_BENCHMARK_PROFILE_NAMES = frozenset({"mldsa65"})
+RUN_ALL_SECURE_BOOT_PROFILES_ENV = "PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES"
+SECURE_BOOT_PROFILES_ENV = "PQC_HARDWARE_SECURE_BOOT_PROFILES"
+FREERTOS_UART_MARKERS = (
+    "FreeRTOS defaultTask created: name=defaultTask",
+    "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask",
+    "FreeRTOS defaultTask started: periodic tick task active",
+)
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,92 @@ BENCHMARK_PROFILES = (
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
     ),
 )
+
+
+
+def _normalise_profile_token(value: str) -> str:
+    return (
+        value.strip()
+        .lower()
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
+    )
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "y", "on", "all"}
+
+
+def _selected_profile_names() -> frozenset[str]:
+    """Return hardware benchmark profiles selected for this pytest invocation.
+
+    ML-DSA-65 is the default always-on hardware benchmark profile because it is
+    the highest currently implemented ML-DSA secure-boot profile. Additional
+    profiles can be enabled with PQC_HARDWARE_SECURE_BOOT_PROFILES, or the full
+    matrix can be enabled with PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1.
+    """
+
+    if _truthy_env(RUN_ALL_SECURE_BOOT_PROFILES_ENV):
+        return frozenset(profile.name for profile in BENCHMARK_PROFILES)
+
+    selected = set(DEFAULT_BENCHMARK_PROFILE_NAMES)
+    requested = os.environ.get(SECURE_BOOT_PROFILES_ENV, "").strip()
+    if not requested:
+        return frozenset(selected)
+
+    lookup: dict[str, str] = {}
+    for profile in BENCHMARK_PROFILES:
+        for alias in (
+            profile.name,
+            profile.algorithm,
+            profile.signature_algorithm,
+            profile.profile_id,
+        ):
+            lookup[_normalise_profile_token(alias)] = profile.name
+
+    unknown_tokens: list[str] = []
+    for raw_token in requested.split(","):
+        token = raw_token.strip()
+        if not token:
+            continue
+        normalised = _normalise_profile_token(token)
+        if normalised in {"all", "*"}:
+            return frozenset(profile.name for profile in BENCHMARK_PROFILES)
+        profile_name = lookup.get(normalised)
+        if profile_name is None:
+            unknown_tokens.append(token)
+        else:
+            selected.add(profile_name)
+
+    if unknown_tokens:
+        known = ", ".join(profile.name for profile in BENCHMARK_PROFILES)
+        pytest.fail(
+            f"unknown secure-boot benchmark profile(s) in "
+            f"{SECURE_BOOT_PROFILES_ENV}: {', '.join(unknown_tokens)}. "
+            f"Known profile names: {known}"
+        )
+
+    return frozenset(selected)
+
+
+def _skip_if_profile_not_selected(profile: SecureBootBenchmarkProfile) -> None:
+    selected_profile_names = _selected_profile_names()
+    if profile.name in selected_profile_names:
+        return
+
+    pytest.skip(
+        f"secure-boot benchmark profile {profile.name!r} is not selected for "
+        f"the default hardware pass. ML-DSA-65 always runs by default. Set "
+        f"{RUN_ALL_SECURE_BOOT_PROFILES_ENV}=1 to run all profiles, or set "
+        f"{SECURE_BOOT_PROFILES_ENV}={profile.name} to include this profile."
+    )
+
+
+def _assert_freertos_uart_markers(uart_log: str) -> None:
+    for marker in FREERTOS_UART_MARKERS:
+        assert marker in uart_log
+    assert "tick" in uart_log
 
 
 def _repo_root() -> Path:
@@ -373,6 +468,7 @@ def _assert_profile_benchmark_manifest(
         assert "Tick marker present: true" in uart_log
         assert "Secure-boot marker present: true" in uart_log
         assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
+        _assert_freertos_uart_markers(uart_log)
 
     assert (result_dir / "secure_boot_flash.log").is_file()
     return manifest
@@ -384,17 +480,20 @@ def _assert_profile_benchmark_manifest(
     BENCHMARK_PROFILES,
     ids=[profile.name for profile in BENCHMARK_PROFILES],
 )
-def test_secure_boot_classical_algorithm_benchmark_profile(
+def test_secure_boot_algorithm_benchmark_profile(
     profile: SecureBootBenchmarkProfile,
     pqc_require_capabilities,
 ):
-    """Run one clean classical secure-boot benchmark workflow per profile.
+    """Run selected clean secure-boot benchmark workflows.
 
-    Pytest reports each Phase 11.5d profile as a separate hardware test case
-    while preserving the existing clean build/sign/flash/UART sequence for every
-    algorithm. Result artifacts are intentionally left under results/ as
-    benchmark evidence.
+    The default hardware pass runs only ML-DSA-65 to keep routine hardware test
+    time bounded. Other profiles are collected but skipped unless explicitly
+    selected with PQC_HARDWARE_SECURE_BOOT_PROFILES, or unless the full matrix is
+    enabled with PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1. Result artifacts are
+    intentionally left under results/ as benchmark evidence.
     """
+
+    _skip_if_profile_not_selected(profile)
 
     pqc_require_capabilities(
         "local_toolchain",

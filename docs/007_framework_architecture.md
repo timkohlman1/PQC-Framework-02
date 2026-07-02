@@ -8,7 +8,7 @@ This document maps the current repository architecture to implemented framework 
 
 Implemented:
 
-1. CubeMX STM32 HAL firmware project at repository root.
+1. CubeMX STM32 HAL/FreeRTOS firmware project at repository root.
 2. Direct-flash baseline experiment workflow.
 3. Local build automation and build records.
 4. Remote gateway flash workflow.
@@ -18,6 +18,7 @@ Implemented:
 8. Classical signing-algorithm benchmark profiles.
 9. ML-DSA-44 and ML-DSA-65 secure-boot benchmark profiles using the existing 8192-byte image-header reserve.
 10. Cross-profile benchmark aggregation output.
+11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 
 Planned but not implemented:
 
@@ -34,8 +35,9 @@ CMakeLists.txt                              Firmware build definition
 CMakePresets.json                           Debug and RelocatedDebug presets
 STM32L4R5XX_FLASH.ld                        Direct-flash linker script
 STM32L4R5XX_FLASH_RELOCATED.ld              Secure-boot relocated linker script
-Core/                                       CubeMX HAL application source
+Core/                                       CubeMX HAL/FreeRTOS application source
 Drivers/                                    CubeMX HAL/CMSIS drivers
+Middlewares/Third_Party/FreeRTOS/           CubeMX-generated FreeRTOS middleware
 configs/boards/board_a.yaml                 Board metadata
 configs/hosts/gateway.yaml                  Gateway, flash helper, UART path
 configs/boot/direct_flash.yaml              Direct-flash boot profile
@@ -67,6 +69,13 @@ scripts/framework/source.py                 Git provenance helpers
 scripts/framework/uart.py                   UART capture and marker parsing
 scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patch workflow
 ```
+
+
+## Firmware scheduler model
+
+The application firmware uses the CubeMX-generated CMSIS-RTOS v1 FreeRTOS template. `main()` performs HAL initialization, clock configuration, GPIO/UART initialization, and one-time UART evidence marker output before `osKernelStart()`. It also emits FreeRTOS scheduler markers for default task creation and scheduler start. `StartDefaultTask()` emits a task-start marker before it owns the recurring `tick` marker and LED toggle using `osDelay(1000)`. HAL timing is generated from TIM6 rather than SysTick so the FreeRTOS scheduler can own SysTick.
+
+The direct-flash and secure-boot application markers remain part of the UART evidence contract. FreeRTOS task-level stack APIs are enabled for future task instrumentation, but task-level runtime stack/heap values must still be treated as unavailable until explicit firmware markers and manifests record them.
 
 ## Direct-flash data flow
 
@@ -148,6 +157,10 @@ tests/unit/          No hardware, SSH, UART, gateway, or real device requirement
 tests/integration/   Real local toolchain or gateway checks; skip when unavailable
 tests/hardware/      End-to-end board/gateway/UART workflows; capability gated
 ```
+
+FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests should continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
+
+The secure-boot algorithm benchmark hardware test is intentionally profile-selective to keep routine runs short. ML-DSA-65 is the default always-on profile. Other algorithm profiles are collected but skipped unless named with `PQC_HARDWARE_SECURE_BOOT_PROFILES`, or unless the full matrix is enabled with `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1`.
 
 Run all tests that can run on the current machine:
 

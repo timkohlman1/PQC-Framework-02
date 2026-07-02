@@ -8,7 +8,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 ## 2. Project Purpose
 
-This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
+This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
 Longer-term areas remain planned unless implemented by later phases: wolfSSL MQTT/TLS experiments, PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
@@ -21,16 +21,19 @@ Board: NUCLEO-L4R5ZI-P / NUCLEO-L4R5ZI
 MCU: STM32L4R5 / STM32L4Rxxx
 Direct-flash UART marker: stm32-basic_hal1 boot v0.1.0
 Secure-boot app UART marker: stm32-basic_hal1 secure-boot app v0.1.0
+FreeRTOS scheduler marker: FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask ...
+FreeRTOS task marker: FreeRTOS defaultTask started: periodic tick task active
 Tick marker: tick
 ```
 
 Implemented framework scope as of Phase 11.7:
 
 - direct-flash baseline build, flash, UART capture, and run workflows
+- CubeMX-generated CMSIS-RTOS v1 FreeRTOS application template using TIM6 as the HAL timebase
 - first-class build records under `results/builds/<build_number>/`
 - source/build fingerprinting and safe rebuild skipping
 - explicit direct-flash boot config under `configs/boot/direct_flash.yaml`
-- relocated HAL application build preset `RelocatedDebug`
+- relocated HAL/FreeRTOS application build preset `RelocatedDebug`
 - wolfBoot build profiles using the local submodule at `tools/wolfboot`
 - application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
 - secure-boot two-artifact flash workflow with positive UART evidence
@@ -43,6 +46,7 @@ Implemented framework scope as of Phase 11.7:
 - ML-DSA-87 is recorded as unavailable under the current 8192-byte image-header reserve
 - read-only benchmark aggregation output to JSON and CSV
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
+- FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 
 Important status constraints:
 
@@ -88,6 +92,7 @@ CMakeLists.txt
 CMakePresets.json
 Core/
 Drivers/
+Middlewares/
 STM32L4R5XX_FLASH.ld
 STM32L4R5XX_FLASH_RELOCATED.ld
 startup_stm32l4r5xx.s
@@ -195,6 +200,12 @@ Historical plans and decision records may intentionally preserve phase history; 
 ## 6. CLI Commands
 
 All commands are run from the repository root.
+
+Firmware scheduler model:
+
+```text
+The application uses CubeMX-generated CMSIS-RTOS v1 FreeRTOS. main() emits one-time direct-flash and secure-boot UART markers before osKernelStart(), then emits default task creation and scheduler-start UART markers. StartDefaultTask() emits a task-start marker before emitting the recurring tick marker and toggling the LED with osDelay(1000). HAL timebase uses TIM6 so FreeRTOS owns SysTick.
+```
 
 Direct-flash baseline:
 
@@ -359,6 +370,10 @@ python -m pytest
 
 Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output.
 
+FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTOSConfig.h` settings, CubeMX `.ioc` timebase/task settings, and UART marker ordering. Local-build integration coverage should compile both `Debug` and `RelocatedDebug` presets after FreeRTOS generation. Hardware coverage should treat FreeRTOS scheduler/task success as valid only when explicit UART markers are captured.
+
+Routine secure-boot algorithm benchmark hardware runs should keep execution time bounded by running ML-DSA-65 by default and skipping the other profile matrix entries unless explicitly selected. Set `PQC_HARDWARE_SECURE_BOOT_PROFILES=<comma-separated profile names>` to add named profiles to the default ML-DSA-65 run, or set `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` for an all-in algorithm benchmark hardware pass.
+
 Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied.
 
 Hardware tests may flash the board, capture UART, and run end-to-end secure-boot workflows. They must be marked `hardware` and skip cleanly unless strict capability flags are supplied.
@@ -371,6 +386,7 @@ python -m pytest tests/integration/test_gateway_flash_helper.py -m integration -
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 Primary verification command after documentation-only changes:
