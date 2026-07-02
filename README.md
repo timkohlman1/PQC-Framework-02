@@ -6,10 +6,10 @@ STM32-based embedded security experiment framework for direct-flash baseline exp
 
 The repository currently contains:
 
-- a CubeMX-generated STM32 HAL firmware project for the NUCLEO-L4R5ZI-P / STM32L4R5 board
+- a CubeMX-generated STM32 HAL/FreeRTOS firmware project for the NUCLEO-L4R5ZI-P / STM32L4R5 board
 - direct-flash baseline build, flash, UART, and run workflows
 - first-class build records and source/build fingerprinting
-- a relocated HAL application build for wolfBoot launch
+- a relocated HAL/FreeRTOS application build for wolfBoot launch
 - wolfBoot build profiles using the local `tools/wolfboot` submodule
 - application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
@@ -30,6 +30,7 @@ configs/                                  Board, host, boot, build, signing, exp
 scripts/experiment.py                     CLI entry point
 scripts/framework/                        Framework implementation modules
 tests/                                    Unit, integration, and hardware tests
+Middlewares/                               CubeMX-generated FreeRTOS middleware
 results/                                  Generated experiment evidence; ignored except .gitkeep
 tools/wolfboot/                           Local wolfBoot submodule; generated outputs ignored
 ```
@@ -78,6 +79,13 @@ Monitor UART through the gateway:
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
 ```
+
+
+## Firmware scheduler model
+
+The STM32 application is CubeMX-generated HAL firmware with a CMSIS-RTOS v1 FreeRTOS template. Startup and secure-boot evidence markers are emitted after peripheral initialization and before `osKernelStart()`. The application also emits explicit FreeRTOS markers when `defaultTask` is created, when the scheduler is about to start, and when `defaultTask` starts running. The recurring `tick` marker and LED toggle run from the default FreeRTOS task using `osDelay(1000)`. The HAL timebase is generated on TIM6 so FreeRTOS can own SysTick.
+
+FreeRTOS regression coverage checks that generated CMake includes the middleware, `FreeRTOSConfig.h` preserves the baseline scheduler settings, the CubeMX `.ioc` keeps TIM6 as the HAL timebase, the scheduler-start marker is emitted before `osKernelStart()`, and the `tick` marker is owned by `StartDefaultTask()`. The local-build integration coverage also builds both `Debug` and `RelocatedDebug` presets so FreeRTOS source integration is checked for direct-flash and post-secureboot application builds.
 
 ## Secure-boot workflow
 
@@ -140,6 +148,27 @@ results/benchmark-aggregation/benchmark_summary.csv
 
 The aggregation command reads existing evidence only. It does not build firmware, sign images, flash hardware, open UART devices, use SSH, or create new measurement evidence.
 
+Routine hardware test time is controlled with pytest `short` and `long` markers. The secure-boot algorithm benchmark marks ML-DSA-65 as `short`; the rest of the algorithm matrix is `long`. Non-selected profile cases are deselected, not skipped.
+
+Routine short benchmark pass:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m short --pqc-require-hardware
+```
+
+Long algorithm benchmark pass:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m long --pqc-require-hardware
+```
+
+All-in algorithm benchmark pass:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py --pqc-require-hardware
+```
+
+
 ## Secure-boot benchmark metrics
 
 Secure-boot benchmark runs compare classical wolfBoot signing profiles using evidence stored in each run manifest under `secure_boot_benchmark`. The manifest is the source of truth for what was measured. Summary CSV/JSON files are derived outputs and should not replace the original run manifests.
@@ -164,22 +193,39 @@ Interpretation rules:
 
 ## Test categories
 
+The test suite has two independent forms of selection:
+
+- capability gating: selected integration and hardware tests skip when required local toolchain, gateway, flash helper, or UART capabilities are unavailable unless a strict `--pqc-require-*` flag is supplied.
+- short/long marker selection: `short` is routine confidence coverage; `long` is slow, destructive, comprehensive, or full-matrix coverage.
+
+Routine confidence run:
+
 ```powershell
-python -m pytest tests/unit
-python -m pytest tests/integration -m integration
-python -m pytest tests/hardware -m hardware
+python -m pytest -m short
+```
+
+Long-only validation run:
+
+```powershell
+python -m pytest -m long
+```
+
+All-in run:
+
+```powershell
 python -m pytest
 ```
 
 Strict capability checks:
 
 ```powershell
+python -m pytest -m short --pqc-require-hardware
+python -m pytest -m long --pqc-require-hardware
 python -m pytest tests/integration -m integration --pqc-require-local-build
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
+
+When `-m short` or `-m long` is used, non-matching tests are deselected by pytest. Missing hardware still appears as skipped only for tests that were selected and then failed capability checks.
 
 ## Generated files and secrets
 

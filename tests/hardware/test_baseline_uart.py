@@ -31,14 +31,17 @@ def _single_adhoc_log(results_dir: Path) -> Path:
 
 
 @pytest.mark.hardware
+@pytest.mark.short
 def test_baseline_uart_monitor(tmp_path, pqc_require_capabilities):
-    """Monitor real UART output from the currently running baseline firmware.
+    """Monitor real UART output from the currently running firmware.
 
-    This hardware-dependent test auto-skips unless the SSH gateway and
+    This hardware-dependent smoke test auto-skips unless the SSH gateway and
     configured ST-LINK VCP UART device are available. It verifies that the
     gateway can connect to the configured ST-LINK VCP path and capture non-empty
-    UART data. It does not require the one-shot boot marker to be present. Use
-    --pqc-require-hardware to turn missing capability skips into failures.
+    UART data. It intentionally does not require the one-shot boot marker or
+    FreeRTOS scheduler markers, because it does not flash a known image before
+    capture. Use --pqc-require-hardware to turn missing capability skips into
+    failures.
     """
 
     pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")

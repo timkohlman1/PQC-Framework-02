@@ -8,7 +8,7 @@ This document maps the current repository architecture to implemented framework 
 
 Implemented:
 
-1. CubeMX STM32 HAL firmware project at repository root.
+1. CubeMX STM32 HAL/FreeRTOS firmware project at repository root.
 2. Direct-flash baseline experiment workflow.
 3. Local build automation and build records.
 4. Remote gateway flash workflow.
@@ -18,6 +18,7 @@ Implemented:
 8. Classical signing-algorithm benchmark profiles.
 9. ML-DSA-44 and ML-DSA-65 secure-boot benchmark profiles using the existing 8192-byte image-header reserve.
 10. Cross-profile benchmark aggregation output.
+11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 
 Planned but not implemented:
 
@@ -34,8 +35,9 @@ CMakeLists.txt                              Firmware build definition
 CMakePresets.json                           Debug and RelocatedDebug presets
 STM32L4R5XX_FLASH.ld                        Direct-flash linker script
 STM32L4R5XX_FLASH_RELOCATED.ld              Secure-boot relocated linker script
-Core/                                       CubeMX HAL application source
+Core/                                       CubeMX HAL/FreeRTOS application source
 Drivers/                                    CubeMX HAL/CMSIS drivers
+Middlewares/Third_Party/FreeRTOS/           CubeMX-generated FreeRTOS middleware
 configs/boards/board_a.yaml                 Board metadata
 configs/hosts/gateway.yaml                  Gateway, flash helper, UART path
 configs/boot/direct_flash.yaml              Direct-flash boot profile
@@ -67,6 +69,13 @@ scripts/framework/source.py                 Git provenance helpers
 scripts/framework/uart.py                   UART capture and marker parsing
 scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patch workflow
 ```
+
+
+## Firmware scheduler model
+
+The application firmware uses the CubeMX-generated CMSIS-RTOS v1 FreeRTOS template. `main()` performs HAL initialization, clock configuration, GPIO/UART initialization, and one-time UART evidence marker output before `osKernelStart()`. It also emits FreeRTOS scheduler markers for default task creation and scheduler start. `StartDefaultTask()` emits a task-start marker before it owns the recurring `tick` marker and LED toggle using `osDelay(1000)`. HAL timing is generated from TIM6 rather than SysTick so the FreeRTOS scheduler can own SysTick.
+
+The direct-flash and secure-boot application markers remain part of the UART evidence contract. FreeRTOS task-level stack APIs are enabled for future task instrumentation, but task-level runtime stack/heap values must still be treated as unavailable until explicit firmware markers and manifests record them.
 
 ## Direct-flash data flow
 
@@ -149,16 +158,26 @@ tests/integration/   Real local toolchain or gateway checks; skip when unavailab
 tests/hardware/      End-to-end board/gateway/UART workflows; capability gated
 ```
 
+FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
+
+The suite uses `short` and `long` pytest markers for risk/cost selection. `short` is routine confidence coverage and includes unit/integration tests, the baseline UART smoke test, the positive secure-boot workflow, and the ML-DSA-65 algorithm benchmark profile. `long` is slow, destructive, comprehensive, or full-matrix coverage and includes the corrupted-application negative secure-boot workflow plus all non-ML-DSA-65 algorithm benchmark profiles. Marker selection deselects non-matching tests; capability gating only skips tests that were selected but cannot run on the current host.
+
+Run the short confidence suite:
+
+```powershell
+python -m pytest -m short
+```
+
+Run the long validation suite:
+
+```powershell
+python -m pytest -m long
+```
+
 Run all tests that can run on the current machine:
 
 ```powershell
 python -m pytest
-```
-
-Run strict hardware benchmark workflow only when hardware is intentionally available:
-
-```powershell
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 ## Result ownership

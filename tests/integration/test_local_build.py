@@ -147,3 +147,49 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     )
     assert build_record_manifest["compatibility"]["source_run_id"] == manifest["run_id"]
     assert build_record_manifest["compatibility"]["source_run_manifest"] == str(manifest_path)
+
+
+@pytest.mark.integration
+def test_debug_and_relocated_cmake_presets_build_with_freertos(
+    pqc_require_capabilities,
+):
+    """Build both application presets after FreeRTOS generation.
+
+    This test verifies that the generated FreeRTOS middleware and CMSIS-RTOS
+    sources compile in both the direct-flash Debug build and the relocated
+    post-secureboot application build. It does not flash hardware or access
+    UART/gateway resources.
+    """
+
+    pqc_require_capabilities("local_toolchain", strict_mode="local_build")
+
+    repo_root = _repo_root()
+
+    for preset in ("Debug", "RelocatedDebug"):
+        configure = subprocess.run(
+            ["cmake", "--preset", preset],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert configure.returncode == 0, (
+            f"Expected cmake configure preset {preset} to succeed.\n"
+            f"stdout:\n{configure.stdout}\n"
+            f"stderr:\n{configure.stderr}"
+        )
+
+        build = subprocess.run(
+            ["cmake", "--build", "--preset", preset],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert build.returncode == 0, (
+            f"Expected cmake build preset {preset} to succeed.\n"
+            f"stdout:\n{build.stdout}\n"
+            f"stderr:\n{build.stderr}"
+        )

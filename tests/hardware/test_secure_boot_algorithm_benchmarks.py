@@ -13,6 +13,11 @@ import pytest
 
 REPEAT_COUNT = 2
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
+FREERTOS_UART_MARKERS = (
+    "FreeRTOS defaultTask created: name=defaultTask",
+    "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask",
+    "FreeRTOS defaultTask started: periodic tick task active",
+)
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,31 @@ BENCHMARK_PROFILES = (
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
     ),
 )
+
+
+
+def _benchmark_profile_param(profile: SecureBootBenchmarkProfile):
+    """Return a pytest parameter marked for the short or long suite.
+
+    ML-DSA-65 is the short-suite secure-boot algorithm benchmark because it is
+    the highest currently implemented ML-DSA secure-boot profile and gives
+    routine PQC-path coverage. The rest of the benchmark matrix is long-suite
+    coverage for all-in validation.
+    """
+
+    if profile.name == "mldsa65":
+        return pytest.param(profile, id=profile.name, marks=pytest.mark.short)
+    return pytest.param(profile, id=profile.name, marks=pytest.mark.long)
+
+
+def _benchmark_profile_params() -> tuple[object, ...]:
+    return tuple(_benchmark_profile_param(profile) for profile in BENCHMARK_PROFILES)
+
+
+def _assert_freertos_uart_markers(uart_log: str) -> None:
+    for marker in FREERTOS_UART_MARKERS:
+        assert marker in uart_log
+    assert "tick" in uart_log
 
 
 def _repo_root() -> Path:
@@ -373,27 +403,25 @@ def _assert_profile_benchmark_manifest(
         assert "Tick marker present: true" in uart_log
         assert "Secure-boot marker present: true" in uart_log
         assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
+        _assert_freertos_uart_markers(uart_log)
 
     assert (result_dir / "secure_boot_flash.log").is_file()
     return manifest
 
 
 @pytest.mark.hardware
-@pytest.mark.parametrize(
-    "profile",
-    BENCHMARK_PROFILES,
-    ids=[profile.name for profile in BENCHMARK_PROFILES],
-)
-def test_secure_boot_classical_algorithm_benchmark_profile(
+@pytest.mark.parametrize("profile", _benchmark_profile_params())
+def test_secure_boot_algorithm_benchmark_profile(
     profile: SecureBootBenchmarkProfile,
     pqc_require_capabilities,
 ):
-    """Run one clean classical secure-boot benchmark workflow per profile.
+    """Run clean secure-boot benchmark workflows by short/long test suite.
 
-    Pytest reports each Phase 11.5d profile as a separate hardware test case
-    while preserving the existing clean build/sign/flash/UART sequence for every
-    algorithm. Result artifacts are intentionally left under results/ as
-    benchmark evidence.
+    The ML-DSA-65 profile is marked short for routine PQC secure-boot hardware
+    confidence. The remaining algorithm profiles are marked long for full-matrix
+    validation. Pytest marker selection deselects the non-requested profile set;
+    capability gating still skips selected cases when hardware is unavailable.
+    Result artifacts are intentionally left under results/ as benchmark evidence.
     """
 
     pqc_require_capabilities(
