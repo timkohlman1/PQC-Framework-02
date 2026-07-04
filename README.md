@@ -267,7 +267,15 @@ Stop it again:
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
-The OQS profile is experimental and depends on Open Quantum Safe's Mosquitto image. It is intended for PQC TLS protocol evaluation only, not production security claims.
+The OQS profile is experimental and depends on Open Quantum Safe's Mosquitto image. It provisions project-managed OQS mutual-TLS material on the gateway, using ML-DSA-65 for the CA, Falcon-512 for leaf certificates, and ML-KEM-768 for TLS validation. It is intended for PQC TLS protocol evaluation only, not production security claims.
+
+Provision and validate the OQS profile after deployment:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+```
 
 ### MQTT broker gateway validation
 
@@ -284,3 +292,6 @@ Run the gateway MQTT broker integration test when Docker is available on the gat
 ```powershell
 python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
 ```
+
+
+The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to keep gateway temporary deployments removable by the normal gateway user.

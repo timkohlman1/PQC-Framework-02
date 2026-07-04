@@ -7,7 +7,7 @@ The build server remains the orchestrator. Commands are run from the repository 
 ## Profiles
 
 - `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses generated local X.509 test material and mutual TLS client-certificate authentication.
-- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. This is experimental and depends on the `openquantumsafe/mosquitto` image.
+- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses gateway-generated OQS mutual-TLS material by default and depends on the `openquantumsafe/mosquitto` image.
 
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
@@ -38,6 +38,24 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --serve
 ```
 
 This creates a local development CA, server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed.
+
+## Provision remote OQS TLS material
+
+The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithms are `mldsa65` for the CA and `falcon512` for the leaf certificates. The validation group is `mlkem768`.
+
+Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+```
+
+Validate OQS mutual TLS after starting the profile:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+```
 
 ## Deploy to the gateway
 
@@ -120,7 +138,7 @@ openssl s_client `
 
 ## Gateway integration test
 
-The gateway integration test creates a temporary broker directory under the gateway, provisions temporary local TLS material, deploys the compose project, starts the classical profile on an alternate host port, performs an external TLS 1.3 mutual-auth handshake, stops Compose, and removes the temporary gateway directory.
+The gateway integration tests create temporary broker directories under the gateway, deploy the compose project, provision temporary TLS material, start the classical and OQS profiles on alternate host ports, perform TLS 1.3 mutual-auth validation, stop Compose, and remove the temporary gateway directories.
 
 It skips cleanly unless gateway access and Docker Compose are available:
 
@@ -133,3 +151,6 @@ To fail instead of skip when the gateway capability is unavailable:
 ```powershell
 python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
 ```
+
+
+OQS broker logs are emitted to Docker stdout only. The OQS profile disables Mosquitto file logging and persistence so temporary gateway deployments can be cleaned up without root-owned log or data files.

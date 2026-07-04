@@ -208,6 +208,15 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
+The OQS profile uses gateway-generated mutual-TLS material from the OQS-enabled OpenSSL provider in `openquantumsafe/mosquitto:latest`:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+```
+
 The deploy command uses the SSH alias from `configs/hosts/gateway.yaml`. It does not require private SSH key paths in repository files.
 
 ## Repository Gateway Network Address
@@ -227,8 +236,11 @@ The MQTT broker certificate provisioning command reads `network.address` and inc
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
-The gateway integration test deploys the broker into a temporary remote directory, starts it on an alternate host port, validates external TLS 1.3 mutual authentication against `network.address`, then stops and removes the temporary deployment:
+The gateway integration tests deploy the broker into temporary remote directories, start the classical and OQS profiles on alternate host ports, validate TLS 1.3 mutual authentication, then stop and remove the temporary deployments:
 
 ```powershell
 python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
 ```
+
+
+MQTT OQS profile note: the OQS profile logs to Docker stdout and disables Mosquitto persistence. Use `python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile oqs` for diagnostics.

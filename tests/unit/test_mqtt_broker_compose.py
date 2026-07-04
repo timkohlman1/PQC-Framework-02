@@ -131,7 +131,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
     broker_root = tmp_path / "experiment" / "mqtt-broker"
     (broker_root / "scripts" / "__pycache__").mkdir(parents=True)
-    (broker_root / "runtime").mkdir(parents=True)
+    (broker_root / "runtime" / "classical").mkdir(parents=True)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -145,15 +145,15 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
     assert "__pycache__" not in command_text
     assert "mqtt_broker_ctl.cpython" not in command_text
     assert any(command[0] == "scp" and command[1].endswith("mqtt_broker_ctl.py") for command in commands)
-    assert any(command[0:2] == ["scp", "-r"] and command[2].endswith("runtime") for command in commands)
+    assert any(command[0:2] == ["scp", "-r"] and command[2].replace("\\", "/").endswith("runtime/classical") for command in commands)
 
 
-def test_mqtt_deploy_sets_remote_config_and_runtime_read_permissions(tmp_path, monkeypatch):
+def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
     broker_root = tmp_path / "experiment" / "mqtt-broker"
-    (broker_root / "runtime").mkdir(parents=True)
+    (broker_root / "runtime" / "classical").mkdir(parents=True)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -169,8 +169,30 @@ def test_mqtt_deploy_sets_remote_config_and_runtime_read_permissions(tmp_path, m
         if command[:2] == ["ssh", "timk@pqc-gateway1"] and "chmod -R a+rX" in command[-1]
     ]
     assert permission_commands
-    assert "~/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
-    assert "~/pqc-framework-02/experiment/mqtt-broker/runtime" in permission_commands[-1][-1]
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical" in permission_commands[-1][-1]
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime/oqs" not in permission_commands[-1][-1]
+
+
+def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    broker_root = tmp_path / "experiment" / "mqtt-broker"
+    (broker_root / "runtime" / "classical").mkdir(parents=True)
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "broker_root", lambda: broker_root)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    args = module.build_parser().parse_args(["deploy", "--host-config", str(host_config), "--dry-run"])
+    module.deploy(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "runtime/classical" in command_text
+    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical" in command_text
+    assert "runtime/oqs" not in command_text
 
 
 def test_mqtt_start_supports_isolated_project_name_and_port_override(tmp_path, monkeypatch):
@@ -307,3 +329,113 @@ def test_mqtt_remote_cleanup_command_removes_root_owned_mosquitto_paths():
     assert "rm -rf /work/data /work/log" in command
     assert "rm -rf $HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test" in command
     assert "'~/" not in command
+
+
+def test_oqs_mosquitto_config_enforces_mutual_tls_with_project_certs():
+    config = _read(BROKER_ROOT / "config" / "oqs" / "mosquitto.conf")
+    acl = _read(BROKER_ROOT / "config" / "oqs" / "aclfile")
+
+    assert "listener 8883 0.0.0.0" in config
+    assert "tls_version tlsv1.3" in config
+    assert "allow_anonymous false" in config
+    assert "require_certificate true" in config
+    assert "use_identity_as_username true" in config
+    assert "cafile /mosquitto/config/certs/ca.crt" in config
+    assert "certfile /mosquitto/config/certs/server.crt" in config
+    assert "keyfile /mosquitto/config/certs/server.key" in config
+    assert "acl_file /mosquitto/config/aclfile" in config
+    assert "user pqc-mqtt-client" in acl
+    assert "user pqc-mqtt-server-healthcheck" in acl
+
+
+def test_oqs_compose_uses_project_managed_mutual_tls_mounts_and_healthcheck():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+
+    assert "./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in compose
+    assert "./config/oqs/aclfile:/mosquitto/config/aclfile:ro" in compose
+    assert "./runtime/oqs/certs:/mosquitto/config/certs:ro" in compose
+    assert "OPENSSL_CONF" in compose
+    assert "OPENSSL_MODULES" in compose
+    assert "-groups mlkem768" in compose
+    assert "healthcheck.crt" in compose
+    assert "healthcheck.key" in compose
+    assert "Verify return code: 0 (ok)" in compose
+
+
+def test_mqtt_control_script_has_oqs_provision_and_validation_subcommands():
+    module = _load_ctl_module()
+    parser = module.build_parser()
+
+    oqs = parser.parse_args(["provision-oqs-certs", "--dry-run"])
+    validate = parser.parse_args(["validate-oqs-tls", "--dry-run"])
+
+    assert oqs.command == "provision-oqs-certs"
+    assert oqs.ca_algorithm == "mldsa65"
+    assert oqs.leaf_algorithm == "falcon512"
+    assert validate.command == "validate-oqs-tls"
+    assert validate.oqs_group == "mlkem768"
+
+
+def test_mqtt_oqs_cert_provisioning_runs_on_gateway_with_oqs_provider_image(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text(
+        "id: gateway\nalias: pqc-gateway1\nuser: timk\nnetwork:\n  address: 10.1.1.18\n",
+        encoding="utf-8",
+    )
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(module, "run_command_with_input", lambda command, input_text, **kwargs: commands.append(command + [input_text]))
+
+    args = module.build_parser().parse_args([
+        "provision-oqs-certs",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--dry-run",
+    ])
+    module.provision_oqs_certs(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "timk@pqc-gateway1" in command_text
+    assert "openquantumsafe/mosquitto:latest" in command_text
+    assert "openssl genpkey -algorithm mldsa65 -out /certs/ca.key" in command_text
+    assert "openssl genpkey -algorithm falcon512 -out /certs/server.key" in command_text
+    assert "openssl genpkey -algorithm falcon512 -out /certs/client.key" in command_text
+    assert "IP.2 = 10.1.1.18" in command_text
+    assert "$HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs" in command_text
+
+
+def test_mqtt_oqs_tls_validation_uses_client_certificate_and_mlkem_group(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    args = module.build_parser().parse_args([
+        "validate-oqs-tls",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--oqs-port",
+        "28884",
+        "--dry-run",
+    ])
+    module.validate_oqs_tls(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "openquantumsafe/mosquitto:latest" in command_text
+    assert "--network host" in command_text
+    assert "-connect 127.0.0.1:28884" in command_text
+    assert "-groups mlkem768" in command_text
+    assert "-CAfile /certs/ca.crt" in command_text
+    assert "-cert /certs/client.crt" in command_text
+    assert "-key /certs/client.key" in command_text
+    assert "-verify_return_error" in command_text

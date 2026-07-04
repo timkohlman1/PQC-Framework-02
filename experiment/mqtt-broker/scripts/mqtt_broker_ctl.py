@@ -5,7 +5,6 @@ import argparse
 import shlex
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -17,6 +16,10 @@ DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
 DEFAULT_SERVER_NAME = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
+OQS_IMAGE = "openquantumsafe/mosquitto:latest"
+OQS_KEM_GROUP = "mlkem768"
+OQS_CA_ALGORITHM = "mldsa65"
+OQS_LEAF_ALGORITHM = "falcon512"
 
 
 @dataclass(frozen=True)
@@ -86,12 +89,27 @@ def load_host_config(path: Path) -> HostConfig:
     )
 
 
+def _display_command(args: list[str]) -> str:
+    return " ".join(args)
+
+
 def run_command(args: list[str], *, cwd: Path | None = None, dry_run: bool = False) -> None:
-    display = " ".join(args)
+    display = _display_command(args)
     if dry_run:
         print(display)
         return
     completed = subprocess.run(args, cwd=cwd, text=True, check=False)
+    if completed.returncode != 0:
+        raise SystemExit(f"command failed with exit code {completed.returncode}: {display}")
+
+
+def run_command_with_input(args: list[str], input_text: str, *, dry_run: bool = False) -> None:
+    display = _display_command(args)
+    if dry_run:
+        print(display)
+        print(input_text)
+        return
+    completed = subprocess.run(args, input=input_text, text=True, check=False)
     if completed.returncode != 0:
         raise SystemExit(f"command failed with exit code {completed.returncode}: {display}")
 
@@ -107,12 +125,7 @@ def tls_host(host: HostConfig) -> str:
 
 
 def remote_shell_path(path: str) -> str:
-    """Return a shell-safe remote path while preserving leading ~/ expansion.
-
-    shlex.quote("~/path") produces '"'~/path'"', which prevents tilde
-    expansion on the remote shell. Use $HOME for user-home paths so compose
-    commands can cd into temporary gateway directories reliably.
-    """
+    """Return a shell-safe remote path while preserving leading ~/ expansion."""
     if path == "~":
         return "$HOME"
     if path.startswith("~/"):
@@ -165,7 +178,7 @@ def write_server_openssl_config(path: Path, server_names: Iterable[str], ip_addr
     )
 
 
-def write_ca_openssl_config(path: Path) -> None:
+def write_ca_openssl_config(path: Path, *, common_name: str = "pqc-framework-mqtt-local-ca") -> None:
     path.write_text(
         "\n".join(
             [
@@ -176,7 +189,7 @@ def write_ca_openssl_config(path: Path) -> None:
                 "x509_extensions = v3_ca",
                 "",
                 "[dn]",
-                "CN = pqc-framework-mqtt-local-ca",
+                f"CN = {common_name}",
                 "",
                 "[v3_ca]",
                 "subjectKeyIdentifier = hash",
@@ -213,15 +226,18 @@ def write_client_openssl_config(path: Path, common_name: str) -> None:
     )
 
 
+def _host_address_from_args(args: argparse.Namespace) -> str | None:
+    if getattr(args, "host_config", None):
+        return load_host_config(repo_root() / args.host_config).address
+    return None
+
+
 def provision_classical_certs(args: argparse.Namespace) -> None:
     ensure_openssl()
     cert_dir = broker_root() / "runtime/classical/certs"
     cert_dir.mkdir(parents=True, exist_ok=True)
 
-    host_address = None
-    if getattr(args, "host_config", None):
-        host_address = load_host_config(repo_root() / args.host_config).address
-
+    host_address = _host_address_from_args(args)
     server_name = args.server_name
     extra_names = args.extra_dns_name or []
     extra_ips = args.extra_ip_address or []
@@ -262,6 +278,113 @@ def provision_classical_certs(args: argparse.Namespace) -> None:
         print(f"Provisioned local classical MQTT TLS material under {display_path(cert_dir)}")
 
 
+def oqs_ca_config_text(common_name: str) -> str:
+    return "\n".join([
+        "[req]",
+        "prompt = no",
+        "distinguished_name = dn",
+        "x509_extensions = v3_ca",
+        "",
+        "[dn]",
+        f"CN = {common_name}",
+        "",
+        "[v3_ca]",
+        "subjectKeyIdentifier = hash",
+        "authorityKeyIdentifier = keyid:always,issuer",
+        "basicConstraints = critical,CA:true,pathlen:0",
+        "keyUsage = critical,keyCertSign,cRLSign",
+        "",
+    ])
+
+
+def oqs_server_config_text(common_name: str, dns_names: Iterable[str], ip_addresses: Iterable[str]) -> str:
+    names = [name for name in dict.fromkeys([common_name, "localhost", *dns_names]) if name]
+    ips = [ip for ip in dict.fromkeys(["127.0.0.1", *ip_addresses]) if ip]
+    return "\n".join([
+        "[req]",
+        "prompt = no",
+        "distinguished_name = dn",
+        "req_extensions = req_ext",
+        "",
+        "[dn]",
+        f"CN = {common_name}",
+        "",
+        "[req_ext]",
+        "subjectAltName = @alt_names",
+        "extendedKeyUsage = serverAuth",
+        "keyUsage = digitalSignature",
+        "",
+        "[alt_names]",
+        *[f"DNS.{idx + 1} = {name}" for idx, name in enumerate(names)],
+        *[f"IP.{idx + 1} = {ip}" for idx, ip in enumerate(ips)],
+        "",
+    ])
+
+
+def oqs_client_config_text(common_name: str) -> str:
+    return "\n".join([
+        "[req]",
+        "prompt = no",
+        "distinguished_name = dn",
+        "req_extensions = req_ext",
+        "",
+        "[dn]",
+        f"CN = {common_name}",
+        "",
+        "[req_ext]",
+        "extendedKeyUsage = clientAuth",
+        "keyUsage = digitalSignature",
+        "",
+    ])
+
+
+def _remote_write_file(target: str, remote_path: str, content: str, *, dry_run: bool) -> None:
+    run_command_with_input(["ssh", target, f"cat > {remote_shell_path(remote_path)}"], content, dry_run=dry_run)
+
+
+def provision_oqs_certs(args: argparse.Namespace) -> None:
+    host = load_host_config(repo_root() / args.host_config)
+    target = ssh_target(host)
+    remote_dir = args.remote_dir
+    cert_dir = f"{remote_dir}/runtime/oqs/certs"
+    host_address = host.address
+    extra_ips = args.extra_ip_address or []
+    extra_names = args.extra_dns_name or []
+    ip_addresses = [*( [host_address] if host_address else [] ), *extra_ips]
+    days = str(args.days)
+
+    run_command(["ssh", target, f"mkdir -p {remote_shell_path(cert_dir)}"], dry_run=args.dry_run)
+    _remote_write_file(target, f"{cert_dir}/ca-openssl.cnf", oqs_ca_config_text(args.ca_name), dry_run=args.dry_run)
+    _remote_write_file(target, f"{cert_dir}/server-openssl.cnf", oqs_server_config_text(args.server_name, extra_names, ip_addresses), dry_run=args.dry_run)
+    _remote_write_file(target, f"{cert_dir}/client-openssl.cnf", oqs_client_config_text(args.client_name), dry_run=args.dry_run)
+    _remote_write_file(target, f"{cert_dir}/healthcheck-openssl.cnf", oqs_client_config_text(args.healthcheck_name), dry_run=args.dry_run)
+
+    cert_mount = remote_shell_path(cert_dir)
+    script = " && ".join([
+        "set -eu",
+        "rm -f /certs/ca.crt /certs/ca.key /certs/ca.srl /certs/server.crt /certs/server.csr /certs/server.key /certs/client.crt /certs/client.csr /certs/client.key /certs/healthcheck.crt /certs/healthcheck.csr /certs/healthcheck.key",
+        f"openssl genpkey -algorithm {shlex.quote(args.ca_algorithm)} -out /certs/ca.key",
+        f"openssl req -x509 -new -key /certs/ca.key -days {shlex.quote(days)} -config /certs/ca-openssl.cnf -out /certs/ca.crt",
+        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/server.key",
+        "openssl req -new -key /certs/server.key -out /certs/server.csr -config /certs/server-openssl.cnf",
+        f"openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/server.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/server-openssl.cnf",
+        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/client.key",
+        "openssl req -new -key /certs/client.key -out /certs/client.csr -config /certs/client-openssl.cnf",
+        f"openssl x509 -req -in /certs/client.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/client.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/client-openssl.cnf",
+        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/healthcheck.key",
+        "openssl req -new -key /certs/healthcheck.key -out /certs/healthcheck.csr -config /certs/healthcheck-openssl.cnf",
+        f"openssl x509 -req -in /certs/healthcheck.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/healthcheck.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/healthcheck-openssl.cnf",
+        "chmod -R a+rX /certs",
+    ])
+    command = (
+        f"docker run --rm -v {cert_mount}:/certs --entrypoint sh {shlex.quote(args.image)} "
+        f"-lc {shlex.quote(script)}"
+    )
+    run_command(["ssh", target, command], dry_run=args.dry_run)
+    if not args.dry_run:
+        print(f"Provisioned remote OQS MQTT TLS material under {cert_dir}")
+
+
 def deploy(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     remote_dir = args.remote_dir
@@ -274,22 +397,29 @@ def deploy(args: argparse.Namespace) -> None:
     directory_copies = [
         (source_root / "config", f"{remote_dir}/"),
     ]
-    runtime_dir = source_root / "runtime"
-    if runtime_dir.exists():
-        directory_copies.append((runtime_dir, f"{remote_dir}/"))
+    # Classical TLS material is generated locally and copied to the gateway.
+    # OQS TLS material is generated on the gateway by provision-oqs-certs using
+    # the OQS-enabled container, so deploy must not overwrite or chmod the
+    # gateway-owned runtime/oqs tree.
+    runtime_classical_dir = source_root / "runtime" / "classical"
+    if runtime_classical_dir.exists():
+        directory_copies.append((runtime_classical_dir, f"{remote_dir}/runtime/"))
 
     target = ssh_target(host)
-    run_command(["ssh", target, f"mkdir -p {remote_dir} {remote_dir}/scripts"], dry_run=args.dry_run)
+    run_command([
+        "ssh",
+        target,
+        f"mkdir -p {remote_shell_path(remote_dir)} {remote_shell_path(remote_dir + '/scripts')} {remote_shell_path(remote_dir + '/runtime')}",
+    ], dry_run=args.dry_run)
     for source_path, remote_target_dir in file_copies:
         run_command(["scp", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
     for source_path, remote_target_dir in directory_copies:
         run_command(["scp", "-r", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
 
     permission_targets = [f"{remote_dir}/config"]
-    if runtime_dir.exists():
-        permission_targets.append(f"{remote_dir}/runtime")
-    run_command(["ssh", target, "chmod -R a+rX " + " ".join(permission_targets)], dry_run=args.dry_run)
-
+    if runtime_classical_dir.exists():
+        permission_targets.append(f"{remote_dir}/runtime/classical")
+    run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
 
 
 def remote_cleanup_command(remote_dir: str) -> str:
@@ -299,6 +429,7 @@ def remote_cleanup_command(remote_dir: str) -> str:
         "-c 'rm -rf /work/data /work/log' >/dev/null 2>&1 || true; "
         f"rm -rf {remote_path}"
     )
+
 
 def _compose_environment(args: argparse.Namespace) -> list[str]:
     env: list[str] = []
@@ -342,6 +473,32 @@ def logs(args: argparse.Namespace) -> None:
     compose_remote(args, ["logs", "--tail", str(args.tail), service])
 
 
+def validate_oqs_tls(args: argparse.Namespace) -> None:
+    host = load_host_config(repo_root() / args.host_config)
+    target = ssh_target(host)
+    cert_dir = f"{args.remote_dir}/runtime/oqs/certs"
+    port = str(args.oqs_port or 8884)
+    validation_script = (
+        "set -eu; "
+        "rm -f /tmp/pqc-oqs-tls-validate.log; "
+        "echo | openssl s_client "
+        f"-connect 127.0.0.1:{port} "
+        "-tls1_3 "
+        f"-groups {shlex.quote(args.oqs_group)} "
+        "-CAfile /certs/ca.crt "
+        "-cert /certs/client.crt "
+        "-key /certs/client.key "
+        "-verify_return_error 2>&1 | tee /tmp/pqc-oqs-tls-validate.log; "
+        "grep -q 'Verify return code: 0 (ok)' /tmp/pqc-oqs-tls-validate.log; "
+        "grep -q 'Protocol: TLSv1.3' /tmp/pqc-oqs-tls-validate.log"
+    )
+    command = (
+        f"docker run --rm --network host -v {remote_shell_path(cert_dir)}:/certs:ro --entrypoint sh {shlex.quote(args.image)} "
+        f"-lc {shlex.quote('timeout 20 sh -lc ' + shlex.quote(validation_script))}"
+    )
+    run_command(["ssh", target, command], dry_run=args.dry_run)
+
+
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
@@ -369,6 +526,20 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--dry-run", action="store_true")
     provision.set_defaults(func=provision_classical_certs)
 
+    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS mutual-TLS material on the gateway")
+    add_common_remote_options(oqs_provision)
+    oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
+    oqs_provision.add_argument("--extra-dns-name", action="append")
+    oqs_provision.add_argument("--extra-ip-address", action="append")
+    oqs_provision.add_argument("--client-name", default=DEFAULT_CLIENT_NAME)
+    oqs_provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
+    oqs_provision.add_argument("--ca-name", default="pqc-framework-mqtt-oqs-ca")
+    oqs_provision.add_argument("--ca-algorithm", default=OQS_CA_ALGORITHM)
+    oqs_provision.add_argument("--leaf-algorithm", default=OQS_LEAF_ALGORITHM)
+    oqs_provision.add_argument("--image", default=OQS_IMAGE)
+    oqs_provision.add_argument("--days", type=int, default=365)
+    oqs_provision.set_defaults(func=provision_oqs_certs)
+
     deploy_parser = sub.add_parser("deploy", help="copy compose project and generated runtime material to the gateway")
     add_common_remote_options(deploy_parser)
     deploy_parser.set_defaults(func=deploy)
@@ -395,6 +566,13 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument("--profile", choices=("classical", "oqs"), default="classical")
     logs_parser.add_argument("--tail", type=int, default=100)
     logs_parser.set_defaults(func=logs)
+
+    validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS mutual-TLS handshake using an OQS-enabled OpenSSL client container")
+    add_common_remote_options(validate_oqs)
+    add_port_options(validate_oqs)
+    validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)
+    validate_oqs.add_argument("--image", default=OQS_IMAGE)
+    validate_oqs.set_defaults(func=validate_oqs_tls)
 
     return parser
 

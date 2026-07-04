@@ -47,14 +47,14 @@ Implemented framework scope as of Phase 11.7:
 - read-only benchmark aggregation output to JSON and CSV
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
-- gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto profile, local certificate provisioning, and SSH/SCP deployment helpers
+- gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS, hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -528,7 +528,7 @@ Certificate provisioning should include the host config so the generated server 
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
-The MQTT broker integration test is capability-gated and deploys to a temporary gateway directory, starts a temporary Compose project on an alternate host port, validates external TLS 1.3 mutual authentication, stops the Compose project, and removes the temporary remote directory:
+The MQTT broker integration test is capability-gated and deploys to a temporary gateway directory, starts a temporary Compose project on an alternate host port, validates classical TLS 1.3 mutual authentication and OQS mutual TLS with ML-KEM/ML-DSA/Falcon evidence, stops the Compose project, and removes the temporary remote directory:
 
 ```powershell
 python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
@@ -536,3 +536,13 @@ python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integratio
 ```
 
 Do not record MQTT/TLS runtime success unless supported by explicit Docker status/log output or TLS client validation output.
+
+
+### MQTT OQS Mutual-TLS Profile
+
+The experimental OQS MQTT broker profile uses `openquantumsafe/mosquitto:latest` and project-managed mutual-TLS material generated on the gateway. Default OQS certificate choices are `mldsa65` for the CA and `falcon512` for broker/client/healthcheck leaf certificates. The validation command uses the `mlkem768` TLS key-share group.
+
+The profile remains an experimental protocol-evaluation path, not a production TLS configuration. Do not record OQS MQTT/TLS success unless supported by Docker status/log output and explicit OQS TLS client validation output. Generated OQS keys and certificates under `experiment/mqtt-broker/runtime/` or the remote runtime directory must not be committed.
+
+
+MQTT OQS implementation note: The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to avoid container-owned bind-mount artifacts in gateway and pytest temporary deployments.

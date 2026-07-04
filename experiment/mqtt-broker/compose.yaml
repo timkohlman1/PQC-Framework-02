@@ -26,11 +26,23 @@ services:
     image: openquantumsafe/mosquitto:latest
     restart: unless-stopped
     profiles: ["oqs"]
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
     ports:
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
     environment:
-      BROKER_IP: "${MQTT_OQS_BROKER_IP:-0.0.0.0}"
-      EXAMPLE: "broker-start.sh"
-      SIG_ALG: "${MQTT_OQS_SIG_ALG:-falcon512}"
+      OPENSSL_CONF: "/opt/oqssa/ssl/openssl.cnf"
+      OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
     volumes:
-      - ./log/oqs:/mosquitto/log
+      - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/oqs/aclfile:/mosquitto/config/aclfile:ro
+      - ./runtime/oqs/certs:/mosquitto/config/certs:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups mlkem768 -CAfile /mosquitto/config/certs/ca.crt -cert /mosquitto/config/certs/healthcheck.crt -key /mosquitto/config/certs/healthcheck.key -verify_return_error 2>&1\" | grep -q 'Verify return code: 0 (ok)'",
+        ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 10s

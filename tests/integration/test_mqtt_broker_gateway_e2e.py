@@ -186,3 +186,117 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
             cleanup_errors.append(f"remote rm failed: {rm.stderr or rm.stdout}")
 
     assert not cleanup_errors
+
+
+@pytest.mark.integration
+def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_path, pqc_require_capabilities, monkeypatch):
+    pqc_require_capabilities("gateway", strict_mode="gateway")
+
+    module = _load_ctl_module()
+    host = module.load_host_config(HOST_CONFIG)
+    target = module.ssh_target(host)
+    docker_probe = _ssh(target, "docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1")
+    if docker_probe.returncode != 0:
+        pytest.skip(f"Docker/Compose unavailable on gateway: {docker_probe.stderr or docker_probe.stdout}")
+
+    suffix = uuid.uuid4().hex[:10]
+    remote_dir = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-oqs-{suffix}"
+    project_name = f"pqc-mqtt-oqs-pytest-{suffix}"
+    port = 38000 + (int(suffix[:4], 16) % 10000)
+    local_broker = tmp_path / "mqtt-broker"
+    _copy_broker_project(BROKER_ROOT, local_broker)
+
+    monkeypatch.setattr(module, "broker_root", lambda: local_broker)
+
+    cleanup_errors: list[str] = []
+    try:
+        deploy_args = module.build_parser().parse_args([
+            "deploy",
+            "--host-config",
+            str(HOST_CONFIG),
+            "--remote-dir",
+            remote_dir,
+            "--project-name",
+            project_name,
+        ])
+        module.deploy(deploy_args)
+
+        provision_args = module.build_parser().parse_args([
+            "provision-oqs-certs",
+            "--host-config",
+            str(HOST_CONFIG),
+            "--remote-dir",
+            remote_dir,
+            "--server-name",
+            host.alias,
+            "--days",
+            "7",
+        ])
+        module.provision_oqs_certs(provision_args)
+
+        start_args = module.build_parser().parse_args([
+            "start",
+            "--host-config",
+            str(HOST_CONFIG),
+            "--remote-dir",
+            remote_dir,
+            "--project-name",
+            project_name,
+            "--profile",
+            "oqs",
+            "--oqs-port",
+            str(port),
+        ])
+        module.start(start_args)
+
+        last_error: BaseException | None = None
+        for _attempt in range(30):
+            try:
+                validate_args = module.build_parser().parse_args([
+                    "validate-oqs-tls",
+                    "--host-config",
+                    str(HOST_CONFIG),
+                    "--remote-dir",
+                    remote_dir,
+                    "--project-name",
+                    project_name,
+                    "--oqs-port",
+                    str(port),
+                ])
+                module.validate_oqs_tls(validate_args)
+                break
+            except (SystemExit, AssertionError, OSError) as exc:
+                last_error = exc
+                time.sleep(1)
+        else:
+            logs = _ssh(
+                target,
+                f"cd {_remote_shell_path(remote_dir)} && docker compose --project-name {project_name} logs --tail 100 mqtt-oqs",
+                timeout_seconds=30,
+            )
+            raise AssertionError(
+                f"OQS mutual TLS validation on 127.0.0.1:{port} did not succeed: {last_error}\n"
+                f"broker logs:\n{logs.stdout}\n{logs.stderr}"
+            )
+
+        status = _ssh(
+            target,
+            f"cd {_remote_shell_path(remote_dir)} && docker compose --project-name {project_name} ps",
+            timeout_seconds=30,
+        )
+        _assert_success(status, "docker compose ps")
+        assert "mqtt-oqs" in status.stdout
+        assert "healthy" in status.stdout.lower() or "up" in status.stdout.lower()
+    finally:
+        stop = _ssh(
+            target,
+            f"cd {_remote_shell_path(remote_dir)} && docker compose --project-name {project_name} --profile classical --profile oqs down --remove-orphans",
+            timeout_seconds=60,
+        )
+        if stop.returncode != 0:
+            cleanup_errors.append(f"compose down failed: {stop.stderr or stop.stdout}")
+        rm = _ssh(target, module.remote_cleanup_command(remote_dir), timeout_seconds=60)
+        if rm.returncode != 0:
+            cleanup_errors.append(f"remote rm failed: {rm.stderr or rm.stdout}")
+
+    assert not cleanup_errors
