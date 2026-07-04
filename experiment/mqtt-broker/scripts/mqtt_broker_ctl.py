@@ -16,6 +16,7 @@ DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
 DEFAULT_SERVER_NAME = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
+CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
 OQS_IMAGE = "openquantumsafe/mosquitto:latest"
 OQS_KEM_GROUP = "mlkem768"
 OQS_CA_ALGORITHM = "mldsa65"
@@ -499,6 +500,91 @@ def validate_oqs_tls(args: argparse.Namespace) -> None:
     run_command(["ssh", target, command], dry_run=args.dry_run)
 
 
+def docker_safe_name(value: str) -> str:
+    safe = []
+    for char in value.lower():
+        if char.isalnum() or char in ("-", "_"):
+            safe.append(char)
+        else:
+            safe.append("-")
+    return "".join(safe).strip("-_") or "pqc-mqtt"
+
+
+def validate_mqtt_pubsub(
+    args: argparse.Namespace,
+    *,
+    profile: str,
+    cert_subdir: str,
+    port: int,
+    image: str,
+) -> None:
+    host = load_host_config(repo_root() / args.host_config)
+    target = ssh_target(host)
+    cert_dir = f"{args.remote_dir}/runtime/{cert_subdir}/certs"
+    topic = args.topic
+    message = args.message
+    subscriber_name = docker_safe_name(f"{args.project_name}-{profile}-sub")[:63]
+    cert_mount = remote_shell_path(cert_dir)
+    common_client_args = " ".join([
+        "-h 127.0.0.1",
+        f"-p {shlex.quote(str(port))}",
+        "--cafile /certs/ca.crt",
+        "--cert /certs/client.crt",
+        "--key /certs/client.key",
+        "--tls-version tlsv1.3",
+    ])
+    validation_script = "\n".join([
+        "set -eu",
+        f"subscriber={shlex.quote(subscriber_name)}",
+        f"topic={shlex.quote(topic)}",
+        f"message={shlex.quote(message)}",
+        "docker rm -f \"$subscriber\" >/dev/null 2>&1 || true",
+        (
+            f"docker run -d --network host --name \"$subscriber\" "
+            f"-v {cert_mount}:/certs:ro --entrypoint mosquitto_sub {shlex.quote(image)} "
+            f"{common_client_args} -t \"$topic\" -C 1 >/dev/null"
+        ),
+        "cleanup() { docker rm -f \"$subscriber\" >/dev/null 2>&1 || true; }",
+        "trap cleanup EXIT",
+        "sleep 2",
+        (
+            f"docker run --rm --network host -v {cert_mount}:/certs:ro "
+            f"--entrypoint mosquitto_pub {shlex.quote(image)} "
+            f"{common_client_args} -t \"$topic\" -m \"$message\""
+        ),
+        "found=0",
+        "for _attempt in $(seq 1 20); do",
+        "  logs=$(docker logs \"$subscriber\" 2>/dev/null || true)",
+        "  printf '%s\n' \"$logs\"",
+        "  if printf '%s\n' \"$logs\" | grep -Fx -- \"$message\" >/dev/null; then found=1; break; fi",
+        "  sleep 1",
+        "done",
+        "test \"$found\" = 1",
+    ])
+    command = f"timeout 45 sh -lc {shlex.quote(validation_script)}"
+    run_command(["ssh", target, command], dry_run=args.dry_run)
+
+
+def validate_classical_mqtt(args: argparse.Namespace) -> None:
+    validate_mqtt_pubsub(
+        args,
+        profile="classical",
+        cert_subdir="classical",
+        port=args.classical_port or 8883,
+        image=args.image,
+    )
+
+
+def validate_oqs_mqtt(args: argparse.Namespace) -> None:
+    validate_mqtt_pubsub(
+        args,
+        profile="oqs",
+        cert_subdir="oqs",
+        port=args.oqs_port or 8884,
+        image=args.image,
+    )
+
+
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
@@ -573,6 +659,29 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)
     validate_oqs.add_argument("--image", default=OQS_IMAGE)
     validate_oqs.set_defaults(func=validate_oqs_tls)
+
+
+    validate_classical_mqtt_parser = sub.add_parser(
+        "validate-classical-mqtt",
+        help="validate classical MQTT publish/subscribe using separate client containers",
+    )
+    add_common_remote_options(validate_classical_mqtt_parser)
+    add_port_options(validate_classical_mqtt_parser)
+    validate_classical_mqtt_parser.add_argument("--image", default=CLASSICAL_IMAGE)
+    validate_classical_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
+    validate_classical_mqtt_parser.add_argument("--message", default="pqc-classical-mqtt-e2e")
+    validate_classical_mqtt_parser.set_defaults(func=validate_classical_mqtt)
+
+    validate_oqs_mqtt_parser = sub.add_parser(
+        "validate-oqs-mqtt",
+        help="validate OQS MQTT publish/subscribe using separate OQS client containers",
+    )
+    add_common_remote_options(validate_oqs_mqtt_parser)
+    add_port_options(validate_oqs_mqtt_parser)
+    validate_oqs_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
+    validate_oqs_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
+    validate_oqs_mqtt_parser.add_argument("--message", default="pqc-oqs-mqtt-e2e")
+    validate_oqs_mqtt_parser.set_defaults(func=validate_oqs_mqtt)
 
     return parser
 

@@ -362,18 +362,83 @@ def test_oqs_compose_uses_project_managed_mutual_tls_mounts_and_healthcheck():
     assert "Verify return code: 0 (ok)" in compose
 
 
-def test_mqtt_control_script_has_oqs_provision_and_validation_subcommands():
+def test_mqtt_control_script_has_provision_and_validation_subcommands():
     module = _load_ctl_module()
     parser = module.build_parser()
 
     oqs = parser.parse_args(["provision-oqs-certs", "--dry-run"])
     validate = parser.parse_args(["validate-oqs-tls", "--dry-run"])
+    classical_mqtt = parser.parse_args(["validate-classical-mqtt", "--dry-run"])
+    oqs_mqtt = parser.parse_args(["validate-oqs-mqtt", "--dry-run"])
 
     assert oqs.command == "provision-oqs-certs"
     assert oqs.ca_algorithm == "mldsa65"
     assert oqs.leaf_algorithm == "falcon512"
     assert validate.command == "validate-oqs-tls"
     assert validate.oqs_group == "mlkem768"
+    assert classical_mqtt.command == "validate-classical-mqtt"
+    assert classical_mqtt.topic == "pqc/test/e2e"
+    assert classical_mqtt.message == "pqc-classical-mqtt-e2e"
+    assert classical_mqtt.image == "eclipse-mosquitto:2.0"
+    assert callable(classical_mqtt.func)
+    assert not isinstance(classical_mqtt.func, type(parser))
+    assert oqs_mqtt.command == "validate-oqs-mqtt"
+    assert oqs_mqtt.topic == "pqc/test/e2e"
+    assert callable(oqs_mqtt.func)
+    assert not isinstance(oqs_mqtt.func, type(parser))
+
+
+
+def test_validate_classical_mqtt_main_dispatches_to_validation_function(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    result = module.main([
+        "validate-classical-mqtt",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--classical-port",
+        "28883",
+        "--dry-run",
+    ])
+
+    assert result == 0
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "mosquitto_sub" in command_text
+    assert "mosquitto_pub" in command_text
+
+
+def test_validate_oqs_mqtt_main_dispatches_to_validation_function(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    result = module.main([
+        "validate-oqs-mqtt",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--oqs-port",
+        "38884",
+        "--dry-run",
+    ])
+
+    assert result == 0
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "mosquitto_sub" in command_text
+    assert "mosquitto_pub" in command_text
 
 
 def test_mqtt_oqs_cert_provisioning_runs_on_gateway_with_oqs_provider_image(tmp_path, monkeypatch):
@@ -439,3 +504,92 @@ def test_mqtt_oqs_tls_validation_uses_client_certificate_and_mlkem_group(tmp_pat
     assert "-cert /certs/client.crt" in command_text
     assert "-key /certs/client.key" in command_text
     assert "-verify_return_error" in command_text
+
+
+
+def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    args = module.build_parser().parse_args([
+        "validate-classical-mqtt",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--project-name",
+        "pytest-mqtt",
+        "--classical-port",
+        "28883",
+        "--topic",
+        "pqc/test/e2e",
+        "--message",
+        "hello-classical",
+        "--dry-run",
+    ])
+    module.validate_classical_mqtt(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "timk@pqc-gateway1" in command_text
+    assert "eclipse-mosquitto:2.0" in command_text
+    assert "openquantumsafe/mosquitto:latest" not in command_text
+    assert "--entrypoint mosquitto_sub" in command_text
+    assert "--entrypoint mosquitto_pub" in command_text
+    assert "--network host" in command_text
+    assert "-p 28883" in command_text
+    assert "runtime/classical/certs" in command_text
+    assert "--cafile /certs/ca.crt" in command_text
+    assert "--cert /certs/client.crt" in command_text
+    assert "--key /certs/client.key" in command_text
+    assert "--tls-version tlsv1.3" in command_text
+    assert '-t "$topic" -C 1' in command_text
+    assert '-t "$topic" -m "$message"' in command_text
+    assert 'grep -Fx -- "$message"' in command_text
+
+
+def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    args = module.build_parser().parse_args([
+        "validate-oqs-mqtt",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--project-name",
+        "pytest-mqtt",
+        "--oqs-port",
+        "38884",
+        "--topic",
+        "pqc/test/e2e",
+        "--message",
+        "hello-oqs",
+        "--dry-run",
+    ])
+    module.validate_oqs_mqtt(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "timk@pqc-gateway1" in command_text
+    assert "openquantumsafe/mosquitto:latest" in command_text
+    assert "--entrypoint mosquitto_sub" in command_text
+    assert "--entrypoint mosquitto_pub" in command_text
+    assert "--network host" in command_text
+    assert "-p 38884" in command_text
+    assert "--cafile /certs/ca.crt" in command_text
+    assert "--cert /certs/client.crt" in command_text
+    assert "--key /certs/client.key" in command_text
+    assert "--tls-version tlsv1.3" in command_text
+    assert '-t "$topic" -C 1' in command_text
+    assert '-t "$topic" -m "$message"' in command_text
+    assert 'grep -Fx -- "$message"' in command_text

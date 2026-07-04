@@ -165,6 +165,24 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
                 f"broker logs:\n{logs.stdout}\n{logs.stderr}"
             )
 
+        message = f"pqc-classical-pubsub-{suffix}"
+        mqtt_args = module.build_parser().parse_args([
+            "validate-classical-mqtt",
+            "--host-config",
+            str(HOST_CONFIG),
+            "--remote-dir",
+            remote_dir,
+            "--project-name",
+            project_name,
+            "--classical-port",
+            str(port),
+            "--topic",
+            f"pqc/test/e2e/classical/{suffix}",
+            "--message",
+            message,
+        ])
+        module.validate_classical_mqtt(mqtt_args)
+
         status = _ssh(
             target,
             f"cd {_remote_shell_path(remote_dir)} && docker compose --project-name {project_name} ps",
@@ -278,6 +296,24 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_p
                 f"OQS mutual TLS validation on 127.0.0.1:{port} did not succeed: {last_error}\n"
                 f"broker logs:\n{logs.stdout}\n{logs.stderr}"
             )
+
+        message = f"pqc-oqs-pubsub-{suffix}"
+        mqtt_args = module.build_parser().parse_args([
+            "validate-oqs-mqtt",
+            "--host-config",
+            str(HOST_CONFIG),
+            "--remote-dir",
+            remote_dir,
+            "--project-name",
+            project_name,
+            "--oqs-port",
+            str(port),
+            "--topic",
+            f"pqc/test/e2e/{suffix}",
+            "--message",
+            message,
+        ])
+        module.validate_oqs_mqtt(mqtt_args)
 
         status = _ssh(
             target,
