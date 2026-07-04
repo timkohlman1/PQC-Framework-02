@@ -10,7 +10,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
-Longer-term areas remain planned unless implemented by later phases: wolfSSL MQTT/TLS experiments, PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
+Longer-term areas remain planned unless implemented by later phases: STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
 ## 3. Current Status
 
@@ -47,13 +47,14 @@ Implemented framework scope as of Phase 11.7:
 - read-only benchmark aggregation output to JSON and CSV
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
+- gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto profile, local certificate provisioning, and SSH/SCP deployment helpers
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- MQTT, TLS, hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS, hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -104,6 +105,7 @@ tools/
 results/
 docs/
 pytest.ini
+experiment/mqtt-broker/
 ```
 
 Implemented config layout:
@@ -164,6 +166,7 @@ tests/unit/test_signing.py
 tests/unit/test_source.py
 tests/unit/test_uart.py
 tests/unit/test_wolfboot_build.py
+tests/unit/test_mqtt_broker_compose.py
 tests/integration/test_gateway_flash_helper.py
 tests/integration/test_local_build.py
 tests/integration/test_wolfboot_build_integration.py
@@ -359,24 +362,20 @@ Runtime timing, cycle counts, result codes, stack high-water values, and heap va
 
 ## 10. Testing Model
 
-Use capability categories and short/long risk-cost markers:
+Use three test categories:
 
 ```powershell
-python -m pytest -m short
-python -m pytest -m long
-python -m pytest
 python -m pytest tests/unit
 python -m pytest tests/integration -m integration
 python -m pytest tests/hardware -m hardware
+python -m pytest
 ```
-
-`short` is routine confidence coverage. `long` is slow, destructive, comprehensive, or full-matrix coverage. `python -m pytest` runs both. Marker selection deselects non-matching tests; capability gating skips only selected tests that cannot run on the current host.
 
 Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output.
 
 FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTOSConfig.h` settings, CubeMX `.ioc` timebase/task settings, and UART marker ordering. Local-build integration coverage should compile both `Debug` and `RelocatedDebug` presets after FreeRTOS generation. Hardware coverage should treat FreeRTOS scheduler/task success as valid only when explicit UART markers are captured.
 
-Secure-boot algorithm benchmark hardware profile selection is marker-based: ML-DSA-65 is marked `short`; all other algorithm benchmark profiles are marked `long`. Use `python -m pytest -m short` for routine ML-DSA-65 coverage, `python -m pytest -m long` for the full long-profile matrix plus other long tests, and `python -m pytest` for all-in validation.
+Routine secure-boot algorithm benchmark hardware runs should keep execution time bounded by running ML-DSA-65 by default and skipping the other profile matrix entries unless explicitly selected. Set `PQC_HARDWARE_SECURE_BOOT_PROFILES=<comma-separated profile names>` to add named profiles to the default ML-DSA-65 run, or set `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` for an all-in algorithm benchmark hardware pass.
 
 Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied.
 
@@ -387,11 +386,10 @@ Capability-gated strict checks:
 ```powershell
 python -m pytest tests/integration -m integration --pqc-require-local-build
 python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-python -m pytest -m short --pqc-require-hardware
-python -m pytest -m long --pqc-require-hardware
 python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 Primary verification command after documentation-only changes:
@@ -426,6 +424,10 @@ tools/wolfboot/wolfboot.elf
 tools/wolfboot/wolfboot.bin
 tools/wolfboot/wolfboot_signing_private_key.der
 secrets/wolfboot/
+experiment/mqtt-broker/runtime/
+experiment/mqtt-broker/data/
+experiment/mqtt-broker/log/
+experiment/mqtt-broker/.env
 ```
 
 Never commit or request committing:
@@ -436,6 +438,7 @@ VPN private keys
 TLS private keys
 MQTT passwords
 real .env files
+MQTT password files
 private certificates
 private signing keys
 private wolfBoot signing keys
@@ -494,3 +497,42 @@ Review-response sections:
 - Use `docs/007_framework_architecture.md` for current architecture and file map.
 - Keep detailed phase plans/checklists as historical planning artifacts unless explicitly updating them.
 - Do not duplicate long command explanations across every document.
+
+MQTT broker scaffold:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+```
+
+The OQS Mosquitto profile is experimental and must only be used for protocol evaluation. Do not claim PQC TLS success unless explicit broker/client logs confirm the negotiated algorithms.
+
+## MQTT Broker Gateway Integration Update
+
+The MQTT broker compose project uses `configs/hosts/gateway.yaml` for both SSH orchestration and non-SSH network validation:
+
+```text
+alias: pqc-gateway1
+user: timk
+network.address: 10.1.1.18
+```
+
+Use the SSH alias/user for `ssh` and `scp`. Use `network.address` for external MQTT/TLS checks when the SSH alias is not resolvable through DNS.
+
+Certificate provisioning should include the host config so the generated server certificate contains the gateway IP address as an IP subject alternative name:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+```
+
+The MQTT broker integration test is capability-gated and deploys to a temporary gateway directory, starts a temporary Compose project on an alternate host port, validates external TLS 1.3 mutual authentication, stops the Compose project, and removes the temporary remote directory:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+```
+
+Do not record MQTT/TLS runtime success unless supported by explicit Docker status/log output or TLS client validation output.

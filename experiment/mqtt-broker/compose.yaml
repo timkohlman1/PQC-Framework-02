@@ -1,0 +1,36 @@
+services:
+  mqtt-classical:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    profiles: ["classical"]
+    ports:
+      - "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883"
+    volumes:
+      - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/classical/aclfile:/mosquitto/config/aclfile:ro
+      - ./runtime/classical/certs:/mosquitto/config/certs:ro
+      - ./data/classical:/mosquitto/data
+      - ./log/classical:/mosquitto/log
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mosquitto_sub -h 127.0.0.1 -p 8883 --cafile /mosquitto/config/certs/ca.crt --cert /mosquitto/config/certs/client.crt --key /mosquitto/config/certs/client.key -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mqtt-oqs:
+    image: openquantumsafe/mosquitto:latest
+    restart: unless-stopped
+    profiles: ["oqs"]
+    ports:
+      - "${MQTT_OQS_TLS_PORT:-8884}:8883"
+    environment:
+      BROKER_IP: "${MQTT_OQS_BROKER_IP:-0.0.0.0}"
+      EXAMPLE: "broker-start.sh"
+      SIG_ALG: "${MQTT_OQS_SIG_ALG:-falcon512}"
+    volumes:
+      - ./log/oqs:/mosquitto/log

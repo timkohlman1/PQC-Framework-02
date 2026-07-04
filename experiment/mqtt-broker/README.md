@@ -1,0 +1,135 @@
+# MQTT broker compose project
+
+This directory contains the gateway-hosted MQTT broker service for transport-security experiments.
+
+The build server remains the orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`.
+
+## Profiles
+
+- `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses generated local X.509 test material and mutual TLS client-certificate authentication.
+- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. This is experimental and depends on the `openquantumsafe/mosquitto` image.
+
+The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
+
+## Files
+
+```text
+experiment/mqtt-broker/compose.yaml
+experiment/mqtt-broker/env.example
+experiment/mqtt-broker/config/classical/mosquitto.conf
+experiment/mqtt-broker/config/classical/aclfile
+experiment/mqtt-broker/config/oqs/README.md
+experiment/mqtt-broker/scripts/mqtt_broker_ctl.py
+```
+
+Generated runtime material is ignored by Git:
+
+```text
+experiment/mqtt-broker/runtime/
+experiment/mqtt-broker/data/
+experiment/mqtt-broker/log/
+experiment/mqtt-broker/.env
+```
+
+## Provision local classical TLS material
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+```
+
+This creates a local development CA, server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed.
+
+## Deploy to the gateway
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+```
+
+Preview remote commands without running them:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
+```
+
+## Start, inspect, and stop
+
+Start the classical TLS broker:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+```
+
+Start the experimental OQS broker:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+```
+
+Check status:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+```
+
+Show logs:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
+```
+
+Stop broker services:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+```
+
+## Local Docker smoke test
+
+After provisioning certificates, the classical profile can be run locally from this directory:
+
+```powershell
+cd experiment/mqtt-broker
+docker compose --profile classical up -d
+docker compose ps
+docker compose down
+```
+
+Local and gateway Docker success must be confirmed from command output or logs before recording it as experiment evidence.
+
+## Gateway address and certificate SANs
+
+`configs/hosts/gateway.yaml` contains both the SSH alias and `network.address`. The SSH alias is used for orchestration commands, while `network.address` is used for MQTT/TLS validation from clients that cannot resolve the SSH alias through DNS.
+
+Provision certificates with the host config so the server certificate includes the gateway IP address as an IP subject alternative name:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+```
+
+External TLS validation can use the configured IP address:
+
+```powershell
+openssl s_client `
+  -connect 10.1.1.18:8883 `
+  -verify_ip 10.1.1.18 `
+  -CAfile .\experiment\mqtt-broker\runtime\classical\certs\ca.crt `
+  -cert .\experiment\mqtt-broker\runtime\classical\certs\client.crt `
+  -key .\experiment\mqtt-broker\runtime\classical\certs\client.key `
+  -tls1_3
+```
+
+## Gateway integration test
+
+The gateway integration test creates a temporary broker directory under the gateway, provisions temporary local TLS material, deploys the compose project, starts the classical profile on an alternate host port, performs an external TLS 1.3 mutual-auth handshake, stops Compose, and removes the temporary gateway directory.
+
+It skips cleanly unless gateway access and Docker Compose are available:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+```
+
+To fail instead of skip when the gateway capability is unavailable:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+```

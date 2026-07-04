@@ -1,7 +1,10 @@
 id: gateway
 alias: pqc-gateway1
 user: timk
-description: Experiment gateway used for remote flashing and UART capture.
+description: Experiment gateway used for remote flashing, UART capture, and gateway-hosted experiment services.
+network:
+  address: 10.1.1.18
+  description: Stable gateway IP address for TLS, MQTT, Docker, or other workflows where the SSH alias is not resolvable through DNS.
 flash:
   helper: flash-stm32a
 reset:

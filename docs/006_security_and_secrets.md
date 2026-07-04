@@ -77,3 +77,11 @@ Do not hard-code private key paths into framework code or documentation.
 ## VPN and future transport secrets
 
 If VPN, MQTT, TLS, or broker access is required in later phases, document the requirement without committing private profiles, private keys, passwords, tokens, or production certificates.
+
+## MQTT broker TLS material
+
+The MQTT broker compose project uses generated local TLS material under `experiment/mqtt-broker/runtime/`. That directory is ignored by Git and must remain local or be copied only to the intended gateway host during deployment.
+
+Do not commit MQTT broker private keys, client private keys, password files, real `.env` files, production certificates, or private CA material. The committed files are limited to compose files, Mosquitto configuration templates, documentation, tests, and scripts.
+
+The classical profile uses local test X.509 certificates for TLS development. The OQS profile is experimental and uses Open Quantum Safe tooling or images for PQC TLS evaluation; it must not be treated as production TLS infrastructure.

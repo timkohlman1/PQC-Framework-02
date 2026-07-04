@@ -19,10 +19,11 @@ Implemented:
 9. ML-DSA-44 and ML-DSA-65 secure-boot benchmark profiles using the existing 8192-byte image-header reserve.
 10. Cross-profile benchmark aggregation output.
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
+12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
 
 Planned but not implemented:
 
-1. MQTT transport experiments.
+1. STM32 MQTT client firmware integration.
 2. TLS/wolfSSL transport experiments.
 3. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
 4. Network degradation automation.
@@ -48,6 +49,7 @@ configs/experiments/baseline_direct_uart.yaml
 configs/experiments/wolfboot_*_uart.yaml    Experiment profiles
 configs/benchmarks/classical_signing_profiles.yaml
 configs/wolfboot/stm32l4r5_*.config         Project-local wolfBoot config templates
+experiment/mqtt-broker/                      Gateway MQTT broker compose project
 ```
 
 ## Python implementation map
@@ -158,26 +160,20 @@ tests/integration/   Real local toolchain or gateway checks; skip when unavailab
 tests/hardware/      End-to-end board/gateway/UART workflows; capability gated
 ```
 
-FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
+FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `RelocatedDebug` presets with the generated FreeRTOS middleware. Hardware tests should continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
 
-The suite uses `short` and `long` pytest markers for risk/cost selection. `short` is routine confidence coverage and includes unit/integration tests, the baseline UART smoke test, the positive secure-boot workflow, and the ML-DSA-65 algorithm benchmark profile. `long` is slow, destructive, comprehensive, or full-matrix coverage and includes the corrupted-application negative secure-boot workflow plus all non-ML-DSA-65 algorithm benchmark profiles. Marker selection deselects non-matching tests; capability gating only skips tests that were selected but cannot run on the current host.
-
-Run the short confidence suite:
-
-```powershell
-python -m pytest -m short
-```
-
-Run the long validation suite:
-
-```powershell
-python -m pytest -m long
-```
+The secure-boot algorithm benchmark hardware test is intentionally profile-selective to keep routine runs short. ML-DSA-65 is the default always-on profile. Other algorithm profiles are collected but skipped unless named with `PQC_HARDWARE_SECURE_BOOT_PROFILES`, or unless the full matrix is enabled with `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1`.
 
 Run all tests that can run on the current machine:
 
 ```powershell
 python -m pytest
+```
+
+Run strict hardware benchmark workflow only when hardware is intentionally available:
+
+```powershell
+python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 ## Result ownership
@@ -190,3 +186,15 @@ Build records identify produced firmware binaries. Experiment run records identi
 The framework includes post-Phase 11 ML-DSA benchmark profiles for `mldsa44` and `mldsa65`. Both use wolfBoot `SIGN=ML_DSA`, the existing relocated HAL payload, the same UART marker model, and the Phase 11 repeated-run/statistics manifest schema. `mldsa44` sets `ML_DSA_LEVEL=2` and `IMAGE_SIGNATURE_SIZE=2420`; `mldsa65` sets `ML_DSA_LEVEL=3` and `IMAGE_SIGNATURE_SIZE=3309`.
 
 `mldsa87` is intentionally not configured as a runnable profile in this change because wolfBoot's ML-DSA example documents `IMAGE_HEADER_SIZE=12288` for the level-5 signature, while the current framework layout reserves 8192 bytes for the image header.
+
+## MQTT broker compose data flow
+
+```text
+build server repository checkout
+  -> local certificate provisioning under experiment/mqtt-broker/runtime/
+  -> scp of compose/config/script/runtime files to the gateway
+  -> ssh remote Docker Compose start/stop/status commands
+  -> MQTT-over-TLS broker listener on the gateway
+```
+
+The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.

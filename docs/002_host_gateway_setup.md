@@ -191,3 +191,44 @@ When outside the local network, connect to the VPN first.
 VPN private keys and credentials must not be stored in this repository.
 
 If the gateway uses a different VPN hostname or IP address, configure this locally through SSH config rather than hard-coding private keys or credentials into the project.
+
+## MQTT broker service
+
+The repository includes a gateway-hosted Docker Compose project at `experiment/mqtt-broker/` for MQTT-over-TLS experiments.
+
+The build server remains the orchestrator. It provisions local development certificates, copies the compose project to the gateway with `scp`, and starts or stops Docker Compose remotely with `ssh`.
+
+Typical build-server commands from the repository root:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+```
+
+The deploy command uses the SSH alias from `configs/hosts/gateway.yaml`. It does not require private SSH key paths in repository files.
+
+## Repository Gateway Network Address
+
+`configs/hosts/gateway.yaml` records two different gateway identifiers:
+
+```text
+alias: pqc-gateway1
+network.address: 10.1.1.18
+```
+
+Use the SSH alias for `ssh` and `scp` orchestration. Use `network.address` for MQTT/TLS, Docker service validation, or other client workflows where the SSH alias may not resolve through DNS.
+
+The MQTT broker certificate provisioning command reads `network.address` and includes it as an IP subject alternative name when certificates are generated with the host config:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+```
+
+The gateway integration test deploys the broker into a temporary remote directory, starts it on an alternate host port, validates external TLS 1.3 mutual authentication against `network.address`, then stops and removes the temporary deployment:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+```
