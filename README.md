@@ -208,6 +208,20 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
+## GitHub Actions CI
+
+The repository includes `.github/workflows/ci.yml` for runner-compatible continuous integration on every pushed commit and pull request. The workflow runs in runner-compatible jobs:
+
+```text
+unit-tests                  Runs python -m pytest tests/unit.
+firmware-builds            Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain.
+wolfboot-build-integration Runs the opt-in real wolfBoot build integration test with PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1.
+integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass, including Docker Compose config rendering for the MQTT broker profiles.
+mqtt-broker-docker-runtime Starts the local classical Mosquitto container, provisions temporary TLS material, validates mutual TLS, and verifies MQTT publish/subscribe with client certificates.
+```
+
+The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The separate MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
+
 ## Generated files and secrets
 
 Generated outputs and local state must not be committed:
@@ -277,6 +291,25 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
 ```
 
+Run the framework-level broker experiment wrapper when you want one command to provision certificates, deploy the compose project, start one selected broker profile, retry broker validation while the selected container becomes ready, collect broker logs into `results/<run_id>/`, and optionally stop the broker. The wrapper records each step as `running` in the manifest before launching its subprocess, writes a step log immediately, prints progress for each attempt, and applies `--step-timeout-seconds` to prevent a silent unbounded subprocess:
+
+```powershell
+python scripts/experiment.py mqtt-broker-experiment --profile classical --stop-after
+python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
+```
+
+Use `--no-provision-certs`, `--no-deploy`, or `--skip-validation` only when that step has already been handled manually and you still want framework result evidence for the remaining steps.
+
+
+Run the runner-compatible MQTT broker checks locally when Docker is available:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_docker_config.py -m integration
+python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
+```
+
+The Docker runtime test copies the broker compose project into a pytest temporary directory, provisions short-lived classical TLS material under that temporary directory, starts only the classical broker container, validates TLS 1.3 mutual authentication, verifies MQTT publish/subscribe using the Mosquitto client binaries inside the container, and tears the compose project down. It does not use the gateway or write runtime material into the repository tree.
+
 ### MQTT broker gateway validation
 
 The MQTT broker orchestration uses the SSH alias from `configs/hosts/gateway.yaml` for `ssh`/`scp`, and uses `network.address` from the same file for external TLS validation when the SSH alias is not available through DNS.
@@ -295,3 +328,5 @@ python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integratio
 
 
 The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to keep gateway temporary deployments removable by the normal gateway user.
+
+MQTT broker note: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.

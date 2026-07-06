@@ -3,11 +3,28 @@ services:
     image: eclipse-mosquitto:2.0
     restart: unless-stopped
     profiles: ["classical"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        if id mosquitto >/dev/null 2>&1; then
+          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        elif id nobody >/dev/null 2>&1; then
+          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        else
+          chown 0:0 /tmp/mosquitto-aclfile
+          chmod 0644 /tmp/mosquitto-aclfile
+        fi
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883"
     volumes:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./config/classical/aclfile:/mosquitto/config/aclfile:ro
+      - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
       - ./runtime/classical/certs:/mosquitto/config/certs:ro
       - ./data/classical:/mosquitto/data
       - ./log/classical:/mosquitto/log
@@ -26,7 +43,23 @@ services:
     image: openquantumsafe/mosquitto:latest
     restart: unless-stopped
     profiles: ["oqs"]
-    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        if id mosquitto >/dev/null 2>&1; then
+          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        elif id nobody >/dev/null 2>&1; then
+          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        else
+          chown 0:0 /tmp/mosquitto-aclfile
+          chmod 0644 /tmp/mosquitto-aclfile
+        fi
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
     environment:
@@ -34,7 +67,7 @@ services:
       OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
     volumes:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./config/oqs/aclfile:/mosquitto/config/aclfile:ro
+      - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
       - ./runtime/oqs/certs:/mosquitto/config/certs:ro
     healthcheck:
       test:

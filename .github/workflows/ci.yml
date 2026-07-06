@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Run unit tests
+        run: python -m pytest tests/unit
+
+  firmware-builds:
+    name: Firmware CMake builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake \
+            ninja-build \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi
+
+      - name: Configure and build Debug preset
+        run: |
+          cmake --preset Debug
+          cmake --build --preset Debug
+
+      - name: Configure and build RelocatedDebug preset
+        run: |
+          cmake --preset RelocatedDebug
+          cmake --build --preset RelocatedDebug
+
+  wolfboot-build-integration:
+    name: wolfBoot build integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install wolfBoot build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            make \
+            cmake \
+            ninja-build \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Run wolfBoot build integration test
+        env:
+          PQC_RUN_WOLFBOOT_BUILD_INTEGRATION: "1"
+        run: python -m pytest tests/integration/test_wolfboot_build_integration.py -m integration
+
+  integration-tests:
+    name: Runner-compatible integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - unit-tests
+      - firmware-builds
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cmake \
+            ninja-build \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Check Docker Compose availability
+        run: docker compose version
+
+      - name: Run local integration tests
+        run: python -m pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
+
+  mqtt-broker-docker-runtime:
+    name: MQTT broker Docker runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Check Docker runtime availability
+        run: |
+          docker info
+          docker compose version
+          openssl version
+
+      - name: Pull MQTT broker runtime image
+        run: docker pull eclipse-mosquitto:2.0
+
+      - name: Run MQTT broker Docker runtime tests
+        run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime

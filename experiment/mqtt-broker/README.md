@@ -11,6 +11,8 @@ The build server remains the orchestrator. Commands are run from the repository 
 
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
+Both profiles override the image entrypoint with an explicit shell script, copy the source ACL file to `/tmp/mosquitto-aclfile` inside the container, set container-local ownership and mode there, and run Mosquitto against that copy. This avoids changing bind-mounted repository files and avoids image startup attempts to change ownership of read-only config/certificate mounts.
+
 ## Files
 
 ```text
@@ -68,6 +70,17 @@ Preview remote commands without running them:
 ```powershell
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
 ```
+
+## Framework-level broker experiment orchestration
+
+Use the top-level experiment CLI when the broker is being used as framework infrastructure rather than as a standalone service utility:
+
+```powershell
+python scripts/experiment.py mqtt-broker-experiment --profile classical --stop-after
+python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
+```
+
+The wrapper provisions the selected profile's certificates, deploys the compose project, starts the selected profile, checks status, runs the applicable MQTT/TLS validation, retries validation for a bounded startup-readiness window, writes each step as `running` before its subprocess starts, creates the step log immediately, prints progress for each attempt, applies `--step-timeout-seconds` to bound subprocess hangs, attempts log collection even after validation failures, and stops the broker when `--stop-after` is supplied. Use `--dry-run` to write framework evidence while passing dry-run through to the broker control script.
 
 ## Start, inspect, and stop
 
@@ -154,3 +167,7 @@ python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integratio
 
 
 OQS broker logs are emitted to Docker stdout only. The OQS profile disables Mosquitto file logging and persistence so temporary gateway deployments can be cleaned up without root-owned log or data files.
+
+## OQS image user compatibility
+
+The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.

@@ -37,6 +37,26 @@ def test_mqtt_broker_compose_declares_classical_and_oqs_profiles():
     assert "${MQTT_OQS_TLS_PORT:-8884}:8883" in compose
 
 
+def test_mqtt_broker_compose_copies_acl_files_to_container_local_paths():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+
+    assert "user: \"0:0\"" in compose
+    assert "entrypoint:" in compose
+    assert "- /bin/sh" in compose
+    assert "- -ec" in compose
+    assert "command: |" not in compose
+    assert "aclfile.source" in compose
+    assert "cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile" in compose
+    assert "if id mosquitto >/dev/null 2>&1; then" in compose
+    assert 'chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile' in compose
+    assert "elif id nobody >/dev/null 2>&1; then" in compose
+    assert 'chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile' in compose
+    assert "chown 0:0 /tmp/mosquitto-aclfile" in compose
+    assert "chmod 0640 /tmp/mosquitto-aclfile" in compose
+    assert "chmod 0644 /tmp/mosquitto-aclfile" in compose
+    assert "exec mosquitto -c /mosquitto/config/mosquitto.conf" in compose
+
+
 def test_mqtt_broker_compose_avoids_fixed_container_and_network_names():
     compose = _read(BROKER_ROOT / "compose.yaml")
 
@@ -343,7 +363,9 @@ def test_oqs_mosquitto_config_enforces_mutual_tls_with_project_certs():
     assert "cafile /mosquitto/config/certs/ca.crt" in config
     assert "certfile /mosquitto/config/certs/server.crt" in config
     assert "keyfile /mosquitto/config/certs/server.key" in config
-    assert "acl_file /mosquitto/config/aclfile" in config
+    assert "acl_file /tmp/mosquitto-aclfile" in config
+    assert "user mosquitto" not in config
+    assert "user nobody" in config
     assert "user pqc-mqtt-client" in acl
     assert "user pqc-mqtt-server-healthcheck" in acl
 
@@ -352,7 +374,7 @@ def test_oqs_compose_uses_project_managed_mutual_tls_mounts_and_healthcheck():
     compose = _read(BROKER_ROOT / "compose.yaml")
 
     assert "./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in compose
-    assert "./config/oqs/aclfile:/mosquitto/config/aclfile:ro" in compose
+    assert "./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro" in compose
     assert "./runtime/oqs/certs:/mosquitto/config/certs:ro" in compose
     assert "OPENSSL_CONF" in compose
     assert "OPENSSL_MODULES" in compose

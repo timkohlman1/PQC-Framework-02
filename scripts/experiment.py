@@ -45,11 +45,15 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+MQTT_BROKER_SCRIPT_RELATIVE_PATH = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py")
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -2208,6 +2212,297 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
 
     return final_return_code
 
+
+def _append_option(command: list[str], option: str, value: Any) -> None:
+    if value is not None:
+        command.extend([option, str(value)])
+
+
+def _mqtt_broker_script_path(repo_root: Path) -> Path:
+    return repo_root / MQTT_BROKER_SCRIPT_RELATIVE_PATH
+
+
+def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list[str]:
+    repo_root = Path.cwd()
+    command = [sys.executable, str(_mqtt_broker_script_path(repo_root)), subcommand]
+    _append_option(command, "--host-config", args.host_config)
+
+    remote_subcommands = {
+        "provision-oqs-certs",
+        "deploy",
+        "start",
+        "stop",
+        "status",
+        "logs",
+        "validate-oqs-tls",
+        "validate-classical-mqtt",
+        "validate-oqs-mqtt",
+    }
+    port_subcommands = {
+        "start",
+        "stop",
+        "status",
+        "logs",
+        "validate-oqs-tls",
+        "validate-classical-mqtt",
+        "validate-oqs-mqtt",
+    }
+
+    if subcommand in remote_subcommands:
+        _append_option(command, "--remote-dir", args.remote_dir)
+        _append_option(command, "--project-name", args.project_name)
+    if subcommand in port_subcommands:
+        _append_option(command, "--classical-port", args.classical_port)
+        _append_option(command, "--oqs-port", args.oqs_port)
+    if args.dry_run:
+        command.append("--dry-run")
+    return command
+
+
+def _write_mqtt_manifest(result_dir: Path, manifest: dict[str, Any]) -> None:
+    (result_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _timeout_output_text(exc: subprocess.TimeoutExpired) -> str:
+    """Return captured timeout output as text for result logs."""
+
+    parts: list[str] = []
+    for value in (exc.output, exc.stderr):
+        if value is None:
+            continue
+        if isinstance(value, bytes):
+            parts.append(value.decode(errors="replace"))
+        else:
+            parts.append(str(value))
+    return "".join(parts)
+
+
+def _run_logged_mqtt_step(
+    *,
+    step_name: str,
+    command: list[str],
+    result_dir: Path,
+    manifest: dict[str, Any],
+    attempts: int = 1,
+    retry_delay_seconds: float = 0.0,
+    timeout_seconds: float | None = None,
+) -> int:
+    log_path = result_dir / f"{step_name}.log"
+    attempts = max(1, attempts)
+    outputs: list[str] = []
+    final_return_code = 1
+    timed_out = False
+
+    step_record: dict[str, Any] = {
+        "name": step_name,
+        "command": command,
+        "return_code": None,
+        "log": str(log_path),
+        "status": "running",
+    }
+    if timeout_seconds is not None:
+        step_record["timeout_seconds"] = timeout_seconds
+    if attempts > 1:
+        step_record["max_attempts"] = attempts
+        step_record["retry_delay_seconds"] = retry_delay_seconds
+    manifest.setdefault("steps", []).append(step_record)
+    _write_mqtt_manifest(result_dir, manifest)
+    log_path.write_text(
+        f"# step: {step_name}\n# command: {' '.join(command)}\n# status: running\n",
+        encoding="utf-8",
+    )
+
+    for attempt_index in range(1, attempts + 1):
+        print(f"MQTT broker step {step_name}: attempt {attempt_index} of {attempts}", flush=True)
+        if attempts > 1:
+            outputs.append(f"# attempt {attempt_index} of {attempts}\n")
+        try:
+            run_kwargs: dict[str, Any] = {
+                "text": True,
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "check": False,
+            }
+            if timeout_seconds is not None:
+                run_kwargs["timeout"] = timeout_seconds
+            completed = subprocess.run(command, **run_kwargs)
+            final_return_code = completed.returncode
+            outputs.append(f"# return_code={completed.returncode}\n")
+            outputs.append(completed.stdout or "")
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            final_return_code = 124
+            outputs.append(f"# timed out after {timeout_seconds} seconds\n")
+            outputs.append(_timeout_output_text(exc))
+            break
+
+        if final_return_code == 0:
+            break
+        if attempt_index < attempts and retry_delay_seconds > 0:
+            time.sleep(retry_delay_seconds)
+
+    log_path.write_text(
+        f"# step: {step_name}\n# command: {' '.join(command)}\n" + "".join(outputs),
+        encoding="utf-8",
+    )
+    step_record["return_code"] = final_return_code
+    step_record["status"] = "failed" if final_return_code != 0 else "passed"
+    if attempts > 1:
+        step_record["attempts"] = attempt_index
+    if timed_out:
+        step_record["timed_out"] = True
+    _write_mqtt_manifest(result_dir, manifest)
+    return final_return_code
+
+
+def _mqtt_step_command(args: argparse.Namespace, subcommand: str) -> list[str]:
+    command = _mqtt_broker_base_command(args, subcommand)
+    if subcommand == "start":
+        command.extend(["--profile", args.profile])
+    elif subcommand == "logs":
+        command.extend(["--profile", args.profile, "--tail", str(args.log_tail)])
+    elif subcommand == "validate-classical-mqtt":
+        _append_option(command, "--topic", args.topic)
+        _append_option(command, "--message", args.message)
+    elif subcommand == "validate-oqs-mqtt":
+        _append_option(command, "--topic", args.topic)
+        _append_option(command, "--message", args.message)
+    return command
+
+
+def _filesystem_safe_timestamp(timestamp: str) -> str:
+    """Return a timestamp fragment that is safe for Windows and POSIX paths."""
+
+    return timestamp.replace(":", "").replace("+", "_").replace("T", "_")
+
+
+def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
+    """Run a gateway MQTT broker experiment through the framework CLI."""
+
+    if args.message is None:
+        args.message = "pqc-classical-mqtt-e2e" if args.profile == "classical" else "pqc-oqs-mqtt-e2e"
+
+    timestamp = format_manifest_timestamp()
+    run_id = f"{_filesystem_safe_timestamp(timestamp)}_mqtt_{args.profile}_broker"
+    result_dir = args.results_dir / run_id
+    result_dir.mkdir(parents=True, exist_ok=False)
+    manifest: dict[str, Any] = {
+        "run_id": run_id,
+        "command": "mqtt-broker-experiment",
+        "created_at": timestamp,
+        "status": "running",
+        "profile": args.profile,
+        "broker": {
+            "host_config": str(args.host_config),
+            "remote_dir": args.remote_dir,
+            "project_name": args.project_name,
+            "classical_port": args.classical_port,
+            "oqs_port": args.oqs_port,
+        },
+        "mqtt_test": {
+            "topic": args.topic,
+            "message": args.message,
+            "enabled": not args.skip_validation,
+            "validation_retries": args.validation_retries,
+            "validation_retry_delay_seconds": args.validation_retry_delay_seconds,
+            "step_timeout_seconds": args.step_timeout_seconds,
+        },
+        "steps": [],
+    }
+    _write_mqtt_manifest(result_dir, manifest)
+
+    planned_steps: list[tuple[str, str]] = []
+    if not args.no_provision_certs:
+        if args.profile == "classical":
+            planned_steps.append(("provision_classical_certs", "provision-certs"))
+        else:
+            planned_steps.append(("provision_oqs_certs", "provision-oqs-certs"))
+    if not args.no_deploy:
+        planned_steps.append(("deploy_broker", "deploy"))
+    planned_steps.extend([
+        ("start_broker", "start"),
+        ("status_after_start", "status"),
+    ])
+    if not args.skip_validation:
+        if args.profile == "classical":
+            planned_steps.append(("validate_classical_mqtt", "validate-classical-mqtt"))
+        else:
+            planned_steps.extend([
+                ("validate_oqs_tls", "validate-oqs-tls"),
+                ("validate_oqs_mqtt", "validate-oqs-mqtt"),
+            ])
+    planned_steps.append(("collect_broker_logs", "logs"))
+
+    final_return_code = 0
+    broker_started = False
+    logs_collected = False
+    failed_step: str | None = None
+    for step_name, subcommand in planned_steps:
+        step_attempts = 1
+        step_retry_delay_seconds = 0.0
+        if subcommand.startswith("validate-") and not args.dry_run:
+            step_attempts = args.validation_retries
+            step_retry_delay_seconds = args.validation_retry_delay_seconds
+
+        return_code = _run_logged_mqtt_step(
+            step_name=step_name,
+            command=_mqtt_step_command(args, subcommand),
+            result_dir=result_dir,
+            manifest=manifest,
+            attempts=step_attempts,
+            retry_delay_seconds=step_retry_delay_seconds,
+            timeout_seconds=args.step_timeout_seconds,
+        )
+        if step_name == "start_broker" and return_code == 0:
+            broker_started = True
+        if step_name == "collect_broker_logs":
+            logs_collected = True
+        if return_code != 0:
+            final_return_code = return_code
+            failed_step = step_name
+            manifest["status"] = "failed"
+            manifest["failed_step"] = step_name
+            break
+
+    if broker_started and not logs_collected:
+        _run_logged_mqtt_step(
+            step_name="collect_broker_logs",
+            command=_mqtt_step_command(args, "logs"),
+            result_dir=result_dir,
+            manifest=manifest,
+            timeout_seconds=args.step_timeout_seconds,
+        )
+
+    if args.stop_after:
+        stop_return_code = _run_logged_mqtt_step(
+            step_name="stop_broker",
+            command=_mqtt_step_command(args, "stop"),
+            result_dir=result_dir,
+            manifest=manifest,
+            timeout_seconds=args.step_timeout_seconds,
+        )
+        manifest["stop_after"] = True
+        if final_return_code == 0 and stop_return_code != 0:
+            final_return_code = stop_return_code
+            manifest["status"] = "failed"
+            manifest["failed_step"] = "stop_broker"
+    else:
+        manifest["stop_after"] = False
+
+    if final_return_code == 0:
+        manifest["status"] = "passed"
+    _write_mqtt_manifest(result_dir, manifest)
+
+    print("MQTT broker experiment completed" if final_return_code == 0 else "MQTT broker experiment failed")
+    print("--------------------------------" if final_return_code == 0 else "-----------------------------")
+    print(f"Run ID: {run_id}")
+    print(f"Result directory: {result_dir}")
+    print(f"Profile: {args.profile}")
+    print(f"Manifest: {result_dir / 'manifest.json'}")
+    print(f"Return code: {final_return_code}")
+    return final_return_code
+
 def run_aggregate_benchmarks_command(args: argparse.Namespace) -> int:
     """Aggregate secure-boot benchmark manifests into JSON and CSV summaries."""
 
@@ -2513,6 +2808,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run repeated post-flash secure-boot verification samples for the same benchmark profile. Each sample captures explicit UART timing evidence after reset.",
     )
     secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
+
+
+    mqtt_parser = subparsers.add_parser(
+        "mqtt-broker-experiment",
+        help="Provision, deploy, start, validate, log, and optionally stop a gateway MQTT broker profile.",
+    )
+    mqtt_parser.add_argument("--profile", choices=("classical", "oqs"), required=True, help="Broker profile to orchestrate.")
+    mqtt_parser.add_argument("--results-dir", default=Path("results"), type=Path, help="Directory where MQTT broker experiment result folders are created.")
+    mqtt_parser.add_argument("--host-config", default=Path("configs/hosts/gateway.yaml"), type=Path, help="Repository-relative gateway host config path.")
+    mqtt_parser.add_argument("--remote-dir", default="~/pqc-framework-02/experiment/mqtt-broker", help="Remote gateway broker compose directory.")
+    mqtt_parser.add_argument("--project-name", default="pqc-framework-mqtt-broker", help="Docker Compose project name.")
+    mqtt_parser.add_argument("--classical-port", type=int, default=None, help="Host TLS port for the classical profile.")
+    mqtt_parser.add_argument("--oqs-port", type=int, default=None, help="Host TLS port for the OQS profile.")
+    mqtt_parser.add_argument("--topic", default="pqc/test/e2e", help="MQTT validation topic.")
+    mqtt_parser.add_argument("--message", default=None, help="MQTT validation message. Defaults to a profile-specific message.")
+    mqtt_parser.add_argument("--log-tail", type=int, default=200, help="Number of broker log lines to collect.")
+    mqtt_parser.add_argument("--no-provision-certs", action="store_true", help="Skip certificate provisioning.")
+    mqtt_parser.add_argument("--no-deploy", action="store_true", help="Skip compose-project deployment.")
+    mqtt_parser.add_argument("--skip-validation", action="store_true", help="Skip TLS/MQTT validation steps.")
+    mqtt_parser.add_argument("--validation-retries", type=int, default=8, help="Maximum broker validation attempts after broker start.")
+    mqtt_parser.add_argument("--validation-retry-delay-seconds", type=float, default=5.0, help="Delay between broker validation attempts after broker start.")
+    mqtt_parser.add_argument("--step-timeout-seconds", type=float, default=300.0, help="Maximum wall-clock seconds for each broker orchestration subprocess before it is marked failed.")
+    mqtt_parser.add_argument("--stop-after", action="store_true", help="Stop the broker after logs are collected, or after a failed earlier step.")
+    mqtt_parser.add_argument("--dry-run", action="store_true", help="Pass --dry-run through to broker control commands while still writing framework result evidence.")
+    mqtt_parser.set_defaults(func=run_mqtt_broker_experiment_command)
 
     aggregate_parser = subparsers.add_parser(
         "aggregate-benchmarks",
