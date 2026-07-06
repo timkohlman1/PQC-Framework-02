@@ -193,8 +193,12 @@ The framework includes post-Phase 11 ML-DSA benchmark profiles for `mldsa44` and
 build server repository checkout
   -> local certificate provisioning under experiment/mqtt-broker/runtime/
   -> scp of compose/config/script/runtime files to the gateway
-  -> ssh remote Docker Compose start/stop/status commands
+  -> optional scripts/experiment.py mqtt-broker-experiment orchestration
+  -> ssh remote Docker Compose start/stop/status/log commands
   -> MQTT-over-TLS broker listener on the gateway
+  -> MQTT/TLS validation logs and manifest under results/<run_id>/
 ```
 
-The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.
+The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. Each profile overrides the image entrypoint, copies its bind-mounted ACL file to a container-local `/tmp/mosquitto-aclfile`, sets ownership and restrictive permissions for the runtime user there, and configures Mosquitto to read that copy. The top-level `mqtt-broker-experiment` command wraps certificate provisioning, deployment, profile start, validation, broker validation retries during startup, live step progress, bounded per-step subprocess timeouts, log capture even after validation failures, result manifest creation, and optional stop. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.
+
+MQTT broker OQS image compatibility: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.

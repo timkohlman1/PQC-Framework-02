@@ -277,6 +277,15 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
 ```
 
+Run the framework-level broker experiment wrapper when you want one command to provision certificates, deploy the compose project, start one selected broker profile, retry broker validation while the selected container becomes ready, collect broker logs into `results/<run_id>/`, and optionally stop the broker. The wrapper records each step as `running` in the manifest before launching its subprocess, writes a step log immediately, prints progress for each attempt, and applies `--step-timeout-seconds` to prevent a silent unbounded subprocess:
+
+```powershell
+python scripts/experiment.py mqtt-broker-experiment --profile classical --stop-after
+python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
+```
+
+Use `--no-provision-certs`, `--no-deploy`, or `--skip-validation` only when that step has already been handled manually and you still want framework result evidence for the remaining steps.
+
 ### MQTT broker gateway validation
 
 The MQTT broker orchestration uses the SSH alias from `configs/hosts/gateway.yaml` for `ssh`/`scp`, and uses `network.address` from the same file for external TLS validation when the SSH alias is not available through DNS.
@@ -295,3 +304,5 @@ python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integratio
 
 
 The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to keep gateway temporary deployments removable by the normal gateway user.
+
+MQTT broker note: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
