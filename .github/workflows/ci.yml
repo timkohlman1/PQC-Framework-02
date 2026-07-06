@@ -143,5 +143,41 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest pyyaml
 
+      - name: Check Docker Compose availability
+        run: docker compose version
+
       - name: Run local integration tests
-        run: python -m pytest tests/integration -m integration --pqc-require-local-build
+        run: python -m pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
+
+  mqtt-broker-docker-runtime:
+    name: MQTT broker Docker runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Check Docker runtime availability
+        run: |
+          docker info
+          docker compose version
+          openssl version
+
+      - name: Pull MQTT broker runtime image
+        run: docker pull eclipse-mosquitto:2.0
+
+      - name: Run MQTT broker Docker runtime tests
+        run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime

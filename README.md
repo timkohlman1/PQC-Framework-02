@@ -210,16 +210,17 @@ $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/
 
 ## GitHub Actions CI
 
-The repository includes `.github/workflows/ci.yml` for runner-compatible continuous integration on every pushed commit and pull request. The workflow runs in three stages:
+The repository includes `.github/workflows/ci.yml` for runner-compatible continuous integration on every pushed commit and pull request. The workflow runs in runner-compatible jobs:
 
 ```text
 unit-tests                  Runs python -m pytest tests/unit.
 firmware-builds            Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain.
 wolfboot-build-integration Runs the opt-in real wolfBoot build integration test with PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1.
-integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass.
+integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass, including Docker Compose config rendering for the MQTT broker profiles.
+mqtt-broker-docker-runtime Starts the local classical Mosquitto container, provisions temporary TLS material, validates mutual TLS, and verifies MQTT publish/subscribe with client certificates.
 ```
 
-The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present.
+The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The separate MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
 
 ## Generated files and secrets
 
@@ -298,6 +299,16 @@ python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
 ```
 
 Use `--no-provision-certs`, `--no-deploy`, or `--skip-validation` only when that step has already been handled manually and you still want framework result evidence for the remaining steps.
+
+
+Run the runner-compatible MQTT broker checks locally when Docker is available:
+
+```powershell
+python -m pytest tests/integration/test_mqtt_broker_docker_config.py -m integration
+python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
+```
+
+The Docker runtime test copies the broker compose project into a pytest temporary directory, provisions short-lived classical TLS material under that temporary directory, starts only the classical broker container, validates TLS 1.3 mutual authentication, verifies MQTT publish/subscribe using the Mosquitto client binaries inside the container, and tears the compose project down. It does not use the gateway or write runtime material into the repository tree.
 
 ### MQTT broker gateway validation
 
