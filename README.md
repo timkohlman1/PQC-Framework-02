@@ -208,6 +208,18 @@ python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hard
 $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
+## GitHub Actions CI
+
+The repository includes `.github/workflows/ci.yml` for runner-compatible continuous integration on every pushed commit and pull request. The workflow runs in three stages:
+
+```text
+unit-tests          Runs python -m pytest tests/unit.
+firmware-builds    Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain.
+integration-tests  Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass.
+```
+
+The CI workflow intentionally does not run `tests/hardware` or require the gateway. Hardware, gateway, flash-helper, UART, MQTT broker, and benchmark evidence remain manual or lab-run checks unless an explicit runner with those capabilities is added later.
+
 ## Generated files and secrets
 
 Generated outputs and local state must not be committed:
