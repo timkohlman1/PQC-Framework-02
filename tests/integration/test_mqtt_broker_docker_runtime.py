@@ -83,6 +83,36 @@ def _copy_broker_project(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=ignore)
 
 
+
+
+def _make_mosquitto_runtime_paths_container_readable(broker_root: Path) -> None:
+    """Prepare pytest-only runtime bind mounts for the Mosquitto container.
+
+    The eclipse-mosquitto image starts as root in this compose project but the
+    broker process may drop privileges before opening TLS keys and log files.
+    The certificates generated here are short-lived test-only material under
+    pytest's temporary directory, so relaxing permissions on these copies avoids
+    CI runner UID/GID differences without exposing repository secrets.
+    """
+
+    for directory in [
+        broker_root / "runtime",
+        broker_root / "runtime" / "classical",
+        broker_root / "runtime" / "classical" / "certs",
+        broker_root / "data",
+        broker_root / "data" / "classical",
+        broker_root / "log",
+        broker_root / "log" / "classical",
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o777 if directory.parts[-2:] in [("data", "classical"), ("log", "classical")] else 0o755)
+
+    cert_dir = broker_root / "runtime" / "classical" / "certs"
+    for path in cert_dir.iterdir():
+        if path.is_file():
+            path.chmod(0o644)
+
+
 def _free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -110,6 +140,7 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     ])
     provision_args.host_config = None
     module.provision_classical_certs(provision_args)
+    _make_mosquitto_runtime_paths_container_readable(broker_root)
 
     project_name = f"pqc-mqtt-runtime-{uuid.uuid4().hex[:10]}"
     host_port = _free_local_port()
