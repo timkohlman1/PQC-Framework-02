@@ -213,12 +213,13 @@ $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/
 The repository includes `.github/workflows/ci.yml` for runner-compatible continuous integration on every pushed commit and pull request. The workflow runs in three stages:
 
 ```text
-unit-tests          Runs python -m pytest tests/unit.
-firmware-builds    Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain.
-integration-tests  Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass.
+unit-tests                  Runs python -m pytest tests/unit.
+firmware-builds            Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain.
+wolfboot-build-integration Runs the opt-in real wolfBoot build integration test with PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1.
+integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass.
 ```
 
-The CI workflow intentionally does not run `tests/hardware` or require the gateway. Hardware, gateway, flash-helper, UART, MQTT broker, and benchmark evidence remain manual or lab-run checks unless an explicit runner with those capabilities is added later.
+The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present.
 
 ## Generated files and secrets
 

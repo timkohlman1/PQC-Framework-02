@@ -176,7 +176,7 @@ Run strict hardware benchmark workflow only when hardware is intentionally avail
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
-GitHub Actions CI is defined in `.github/workflows/ci.yml`. It runs on every pushed commit and pull request, checks unit tests first, builds both local CMake firmware presets that can run on an Ubuntu GitHub-hosted runner, and then runs integration tests with the local-build capability required. Gateway and hardware tests remain outside the default CI workflow because they require SSH access, board flashing, UART devices, Docker gateway state, or explicit lab evidence.
+GitHub Actions CI is defined in `.github/workflows/ci.yml`. It runs on every pushed commit and pull request, checks unit tests first, builds both local CMake firmware presets that can run on an Ubuntu GitHub-hosted runner, runs the opt-in real wolfBoot build integration test with `PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1`, and then runs integration tests with the local-build capability required. Gateway and hardware tests remain outside the default CI workflow because they require SSH access, board flashing, UART devices, Docker gateway state, or explicit lab evidence.
 
 ## Result ownership
 

@@ -71,6 +71,45 @@ jobs:
           cmake --preset RelocatedDebug
           cmake --build --preset RelocatedDebug
 
+  wolfboot-build-integration:
+    name: wolfBoot build integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - unit-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install wolfBoot build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            make \
+            cmake \
+            ninja-build \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Run wolfBoot build integration test
+        env:
+          PQC_RUN_WOLFBOOT_BUILD_INTEGRATION: "1"
+        run: python -m pytest tests/integration/test_wolfboot_build_integration.py -m integration
+
   integration-tests:
     name: Runner-compatible integration tests
     runs-on: ubuntu-latest
