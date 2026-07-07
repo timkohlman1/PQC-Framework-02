@@ -1,5 +1,6 @@
-# Non-hardware development image for Python framework validation and STM32 local builds.
-# This image intentionally omits wolfBoot build/signing tools and hardware/gateway access packages.
+# Non-hardware development image for Python framework validation, STM32 local builds,
+# wolfBoot builds, and local application-signing workflows.
+# This image intentionally omits hardware/gateway access packages and contains no secret material.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -14,6 +15,7 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         ca-certificates \
         git \
+        build-essential \
         cmake \
         ninja-build \
         gcc-arm-none-eabi \

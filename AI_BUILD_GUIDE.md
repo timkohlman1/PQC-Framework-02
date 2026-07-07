@@ -48,14 +48,14 @@ Implemented framework scope as of Phase 11.7:
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
-- containerised non-hardware baseline for Python validation plus STM32 direct and relocated local CMake builds before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
+- containerised non-hardware baseline for Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, and relocated application signing before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- wolfBoot container build/signing support, gateway-capable container integration, CI container integration, STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- gateway-capable container integration, CI container integration, STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -403,19 +403,21 @@ python -m pytest
 
 ## 10a. Containerised Non-Hardware Build/Test Environment
 
-Phase C3 implements a non-hardware container baseline for Python framework validation and STM32 local builds. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, and defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
+Phase C4 implements a non-hardware container baseline for Python framework validation, STM32 local builds, wolfBoot builds, and relocated application signing. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies and host build tooling for wolfBoot/keytools, and defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
 
-Supported Phase C3 container workflows:
+Supported Phase C4 container workflows:
 
 ```text
 Python unit tests
-Framework commands that only load, validate, or aggregate local repository data and do not require SSH, UART, gateway, broker, wolfBoot build/signing tools, or hardware access
+Framework commands that only load, validate, or aggregate local repository data and do not require SSH, UART, gateway, broker, or hardware access
 STM32 direct-flash CMake configure/build using the Debug preset
 STM32 relocated CMake configure/build using the RelocatedDebug preset
 Local-build integration tests when explicitly run with --pqc-require-local-build
+wolfBoot build workflows using local profile configs and the runtime-mounted tools/wolfboot submodule
+Relocated application signing workflows using runtime-mounted or locally generated signing material only
 ```
 
-Known safe Phase C3 framework command and local-build examples:
+Known safe Phase C4 framework command, local-build, wolfBoot, and signing examples:
 
 ```powershell
 docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build .
@@ -424,16 +426,18 @@ docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cma
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset Debug
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --preset RelocatedDebug
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset RelocatedDebug
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/integration -m integration --pqc-require-local-build
 ```
 
-The Phase C3 image intentionally does not provide wolfBoot build support, relocated application signing support, SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, hardware-test support, or direct board access. wolfBoot builds, application signing, optional gateway-capable container integration, and CI container integration remain later phases unless implemented by explicit future requests.
+The Phase C4 image intentionally does not provide SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, hardware-test support, direct board access, flashing support, or secure-boot runtime validation. Optional gateway-capable container integration and CI container integration remain later phases unless implemented by explicit future requests.
 
-Application signing in any later container phase must use runtime-mounted or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, sent in build contexts, or baked into container images.
+Containerised application signing must use the runtime-mounted workspace or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, sent in build contexts, or baked into container images.
 
 Hardware flashing, UART capture, Wi-Fi-module workflows, gateway SSH workflows, MQTT broker gateway validation, and end-to-end runtime tests remain separate from the default container path. A later gateway-capable container extension may be added only as an explicit opt-in workflow with runtime-provided SSH access and capability-gated tests.
 
-Containerised build/test evidence is portable software-build evidence only. Do not claim hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success from container runs unless explicit logs, manifests, or equivalent evidence from those workflows are provided.
+Containerised build/signing evidence is portable software-build evidence only. Do not claim hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success from container runs unless explicit logs, manifests, or equivalent evidence from those workflows are provided.
 
 ## 11. Git, Generated Files, and Secrets
 

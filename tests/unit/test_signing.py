@@ -474,3 +474,54 @@ def test_validate_application_signing_profile_accepts_mldsa65():
 
     assert keygen_command[-3:-1] == ["--ml_dsa", "-g"]
     assert Path(keygen_command[-1]).as_posix() == "/repo/secrets/wolfboot/mldsa65_private_key.der"
+
+
+def test_default_signing_runner_builds_missing_wolfboot_keytool(monkeypatch, tmp_path):
+    signing = load_signing_module()
+    cwd = tmp_path / "repo" / "tools" / "wolfboot"
+    keytools_dir = cwd / "tools" / "keytools"
+    keytools_dir.mkdir(parents=True)
+    (keytools_dir / "Makefile").write_text("all:\n\t@echo build keytools\n", encoding="utf-8")
+    (keytools_dir / "sign.o").write_bytes(b"stale host object")
+    (keytools_dir / "asn.d").write_text("stale Windows dependency file", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append([str(part) for part in command])
+        if command == ["make", "-C", "tools/keytools"]:
+            assert kwargs["timeout"] == signing.DEFAULT_KEYTOOLS_BUILD_TIMEOUT_SECONDS
+            assert not (keytools_dir / "sign.o").exists()
+            assert not (keytools_dir / "asn.d").exists()
+            (keytools_dir / "sign").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            return signing.subprocess.CompletedProcess(command, 0, "built keytools", "")
+        assert kwargs["timeout"] == signing.DEFAULT_SIGNING_COMMAND_TIMEOUT_SECONDS
+        assert Path(command[0]).as_posix().endswith("tools/keytools/sign")
+        return signing.subprocess.CompletedProcess(command, 0, "signed", "")
+
+    monkeypatch.setattr(signing.subprocess, "run", fake_run)
+
+    result = signing.default_signing_runner(["tools/keytools/sign", "--ecc256"], cwd)
+
+    assert result.return_code == 0
+    assert result.stdout == "signed"
+    assert calls[0] == ["make", "-C", "tools/keytools"]
+    assert Path(calls[1][0]).as_posix().endswith("tools/keytools/sign")
+
+
+def test_default_signing_runner_returns_keytool_build_failure(monkeypatch, tmp_path):
+    signing = load_signing_module()
+    cwd = tmp_path / "repo" / "tools" / "wolfboot"
+    keytools_dir = cwd / "tools" / "keytools"
+    keytools_dir.mkdir(parents=True)
+    (keytools_dir / "Makefile").write_text("all:\n\tfalse\n", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        return signing.subprocess.CompletedProcess(command, 2, "", "make failed")
+
+    monkeypatch.setattr(signing.subprocess, "run", fake_run)
+
+    result = signing.default_signing_runner(["tools/keytools/sign", "--ecc256"], cwd)
+
+    assert result.return_code == 2
+    assert result.command == ["make", "-C", "tools/keytools"]
+    assert result.stderr == "make failed"

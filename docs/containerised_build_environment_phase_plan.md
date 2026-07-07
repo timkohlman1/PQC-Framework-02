@@ -287,3 +287,13 @@ The containerised non-hardware build environment is complete when:
 - wolfBoot build and signing workflows run inside the container without committed or baked secrets.
 - Hardware, gateway, UART, Wi-Fi-module, and broker workflows remain optional and capability-gated.
 - Documentation clearly distinguishes portable build/test evidence from hardware/runtime evidence.
+
+
+
+followup
+
+
+Requirement: Review whether Windows-native non-hardware build support should be deprecated in favour of the containerised workflow. Do not remove support automatically. Assess current documentation, scripts, tests, and generated-artifact cleanup requirements, then propose a staged migration plan.
+
+
+

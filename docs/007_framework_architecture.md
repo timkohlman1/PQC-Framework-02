@@ -20,17 +20,16 @@ Implemented:
 10. Cross-profile benchmark aggregation output.
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
-13. Containerised non-hardware baseline with Python validation and STM32 direct/relocated local CMake builds.
+13. Containerised non-hardware baseline with Python validation, STM32 direct/relocated local CMake builds, wolfBoot builds, and application signing.
 
 Planned but not implemented:
 
-1. wolfBoot container build and application-signing support.
-2. Optional gateway-capable container support and CI container integration.
-4. STM32 MQTT client firmware integration.
-5. TLS/wolfSSL transport experiments.
-6. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
-7. Network degradation automation.
-8. Production release packaging.
+1. Optional gateway-capable container support and CI container integration.
+2. STM32 MQTT client firmware integration.
+3. TLS/wolfSSL transport experiments.
+4. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
+5. Network degradation automation.
+6. Production release packaging.
 
 ## Source and configuration map
 
@@ -53,7 +52,7 @@ configs/experiments/wolfboot_*_uart.yaml    Experiment profiles
 configs/benchmarks/classical_signing_profiles.yaml
 configs/wolfboot/stm32l4r5_*.config         Project-local wolfBoot config templates
 experiment/mqtt-broker/                      Gateway MQTT broker compose project
-docker/python/Dockerfile                    Non-hardware Python and STM32 local-build container baseline
+docker/python/Dockerfile                    Non-hardware Python, STM32, wolfBoot, and signing container baseline
 .dockerignore                               Container build-context exclusions for generated output and secrets
 requirements-dev.txt                        Python development dependencies for unit-test validation
 ```
@@ -84,11 +83,11 @@ scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patc
 
 The repository includes a container baseline for portable non-hardware framework validation before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The container definition is `docker/python/Dockerfile`; Python development dependencies are in `requirements-dev.txt`; generated outputs and local secret material are excluded from the build context by `.dockerignore`.
 
-The default container command still runs Python unit tests. The container also includes the local STM32 build dependencies needed to configure and build the existing `Debug` and `RelocatedDebug` CMake presets, and to run the local-build integration tests when `--pqc-require-local-build` is explicitly requested.
+The default container command still runs Python unit tests. The container also includes the local STM32 build dependencies needed to configure and build the existing `Debug` and `RelocatedDebug` CMake presets, host build tooling needed for wolfBoot/keytools builds, and the tooling needed to run local application-signing profiles after the relocated application has been built. The local-build integration tests still run only when `--pqc-require-local-build` is explicitly requested. The wolfBoot integration test remains opt-in through `PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1`.
 
-The container does not include wolfBoot build/signing support, application signing support, SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, or hardware-test support. Supported evidence from this phase is limited to portable software validation: Python test results, safe configuration-validation command output, and STM32 local build output for direct and relocated firmware profiles. Containerised build/test evidence must not be treated as hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant hardware or gateway workflow.
+Supported evidence from this phase is limited to portable software validation: Python test results, safe configuration-validation command output, STM32 local build output for direct and relocated firmware profiles, wolfBoot build evidence, and application-signing evidence. Containerised build/signing evidence must not be treated as hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant hardware or gateway workflow.
 
-Later containerisation phases may add wolfBoot builds, application signing, optional gateway-capable workflows, and CI integration. Signing workflows must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed, sent in build contexts, or baked into images.
+Application signing inside the container uses the runtime-mounted workspace. Private signing keys and generated signing material must remain local generated state, such as under `secrets/wolfboot/`, and must not be committed, sent in build contexts, copied into replacement artifacts, or baked into images. The container does not include SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, flashing support, or hardware-test support. Later containerisation phases may add optional gateway-capable workflows and CI integration.
 
 ## Firmware scheduler model
 

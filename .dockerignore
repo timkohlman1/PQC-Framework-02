@@ -49,6 +49,11 @@ tools/wolfboot/*.der
 tools/wolfboot/*.pem
 tools/wolfboot/*private*
 tools/wolfboot/*signing_key*
+tools/wolfboot/tools/keytools/keygen
+tools/wolfboot/tools/keytools/keygen.exe
+tools/wolfboot/tools/keytools/sign
+tools/wolfboot/tools/keytools/sign.exe
+tools/wolfboot/src/keystore.c
 
 # MQTT broker generated runtime state and local TLS material
 experiment/mqtt-broker/runtime/
