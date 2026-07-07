@@ -15,9 +15,9 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
-- a Python-only container baseline for non-hardware framework validation
+- a container baseline for non-hardware Python validation and STM32 direct/relocated local CMake builds
 
-Not implemented yet: STM32 container build toolchain support, wolfBoot container build/signing support, gateway-capable container support, CI container integration, STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: wolfBoot container build/signing support, gateway-capable container support, CI container integration, STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -84,35 +84,55 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 
 
 
-## Python-only container baseline
+## Containerised non-hardware build/test environment
 
-The repository includes a Python-only container baseline for portable non-hardware framework validation. It is intentionally limited to Python dependencies, unit tests, and framework commands that do not require STM32 toolchains, wolfBoot build/signing tools, gateway SSH, UART devices, broker access, Wi-Fi-module access, ST-LINK access, or hardware.
+The repository includes a container baseline for portable non-hardware framework validation and STM32 local firmware builds. It supports Python dependencies, unit tests, safe framework commands, and the existing direct-flash and relocated CMake build presets. It intentionally excludes wolfBoot build/signing tools, gateway SSH, UART devices, broker access, Wi-Fi-module access, ST-LINK/USB access, and hardware workflows.
 
 Build the image from the repository root:
 
 ```powershell
-docker build -f docker/python/Dockerfile -t pqc-framework-python .
+docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build .
 ```
 
 Run unit tests in the container with the repository mounted at runtime:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-python python -m pytest tests/unit
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/unit
 ```
 
 Run a safe framework command that loads and validates the direct-flash experiment configuration without building, flashing, opening UART, using SSH, or contacting a broker:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-python python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The Python-only image does not include STM32 toolchains and does not provide gateway SSH, UART, broker, Wi-Fi-module, ST-LINK, or hardware access. Do not use it for CMake firmware builds, wolfBoot builds, application signing, flashing, UART capture, MQTT broker validation, or benchmark/runtime evidence. Those remain later containerisation sub-phases or existing host/gateway workflows.
+Build the direct-flash firmware preset inside the container:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --preset Debug
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset Debug
+```
+
+Build the relocated firmware preset inside the container:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --preset RelocatedDebug
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset RelocatedDebug
+```
+
+Run the local-build integration tests inside the container when explicitly requiring the local build capability:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/integration -m integration --pqc-require-local-build
+```
+
+The container provides portable software-build evidence only. It does not provide wolfBoot build support, application signing, gateway SSH, UART capture, broker validation, Wi-Fi-module workflows, ST-LINK/USB access, flashing, hardware tests, benchmark/runtime evidence, or end-to-end runtime evidence. Those remain separate scoped phases or existing host/gateway workflows.
 
 The `.dockerignore` file excludes generated outputs and local secret material from the image build context. Private signing keys, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, generated wolfBoot signing material, and production credentials must not be committed or baked into images.
 
 ## Containerised non-hardware build/test plan
 
-The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 implements only the Python baseline. Later phases may add STM32 direct/relocated build support, wolfBoot build/signing support with runtime-mounted or locally generated signing material only, optional gateway-capable support, and CI integration.
+The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 established the Python baseline. Phase C3 adds STM32 direct and relocated local CMake builds plus the relevant local-build integration tests. Later phases may add wolfBoot build/signing support with runtime-mounted or locally generated signing material only, optional gateway-capable support, and CI integration.
 
 ## Firmware scheduler model
 

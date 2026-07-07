@@ -20,13 +20,12 @@ Implemented:
 10. Cross-profile benchmark aggregation output.
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
-13. Python-only container baseline for non-hardware framework validation.
+13. Containerised non-hardware baseline with Python validation and STM32 direct/relocated local CMake builds.
 
 Planned but not implemented:
 
-1. STM32 container build toolchain support for direct-flash and relocated firmware builds.
-2. wolfBoot container build and application-signing support.
-3. Optional gateway-capable container support and CI container integration.
+1. wolfBoot container build and application-signing support.
+2. Optional gateway-capable container support and CI container integration.
 4. STM32 MQTT client firmware integration.
 5. TLS/wolfSSL transport experiments.
 6. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
@@ -54,7 +53,7 @@ configs/experiments/wolfboot_*_uart.yaml    Experiment profiles
 configs/benchmarks/classical_signing_profiles.yaml
 configs/wolfboot/stm32l4r5_*.config         Project-local wolfBoot config templates
 experiment/mqtt-broker/                      Gateway MQTT broker compose project
-docker/python/Dockerfile                    Python-only non-hardware container baseline
+docker/python/Dockerfile                    Non-hardware Python and STM32 local-build container baseline
 .dockerignore                               Container build-context exclusions for generated output and secrets
 requirements-dev.txt                        Python development dependencies for unit-test validation
 ```
@@ -81,15 +80,15 @@ scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patc
 
 
 
-## Python-only container baseline
+## Containerised non-hardware build/test baseline
 
-The repository includes a Phase C2 Python-only container baseline for portable non-hardware framework validation before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The container definition is `docker/python/Dockerfile`; Python development dependencies are in `requirements-dev.txt`; generated outputs and local secret material are excluded from the build context by `.dockerignore`.
+The repository includes a container baseline for portable non-hardware framework validation before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The container definition is `docker/python/Dockerfile`; Python development dependencies are in `requirements-dev.txt`; generated outputs and local secret material are excluded from the build context by `.dockerignore`.
 
-The default container workflow supports Python unit tests and framework commands that only load, validate, or aggregate local repository data. It does not include STM32 toolchains, CMake firmware build support, wolfBoot build/signing support, SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, or hardware-test support.
+The default container command still runs Python unit tests. The container also includes the local STM32 build dependencies needed to configure and build the existing `Debug` and `RelocatedDebug` CMake presets, and to run the local-build integration tests when `--pqc-require-local-build` is explicitly requested.
 
-Supported evidence from this phase is limited to portable Python/software validation, such as unit-test results and safe configuration-validation command output. Containerised build/test evidence must not be treated as hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant hardware or gateway workflow.
+The container does not include wolfBoot build/signing support, application signing support, SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, or hardware-test support. Supported evidence from this phase is limited to portable software validation: Python test results, safe configuration-validation command output, and STM32 local build output for direct and relocated firmware profiles. Containerised build/test evidence must not be treated as hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant hardware or gateway workflow.
 
-Later containerisation phases may add STM32 direct/relocated builds, wolfBoot builds, application signing, optional gateway-capable workflows, and CI integration. Signing workflows must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed, sent in build contexts, or baked into images.
+Later containerisation phases may add wolfBoot builds, application signing, optional gateway-capable workflows, and CI integration. Signing workflows must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed, sent in build contexts, or baked into images.
 
 ## Firmware scheduler model
 
