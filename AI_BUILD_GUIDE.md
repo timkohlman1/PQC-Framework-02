@@ -10,7 +10,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
-Longer-term areas remain planned unless implemented by later phases: containerised non-hardware build/test implementation, STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
+Longer-term areas remain planned unless implemented by later phases: STM32 container build toolchain support, wolfBoot container build/signing support, gateway-capable container support, CI container integration, STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
 ## 3. Current Status
 
@@ -48,7 +48,7 @@ Implemented framework scope as of Phase 11.7:
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
-- documentation-only containerised non-hardware build/test environment plan before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
+- Python-only container baseline for non-hardware framework validation before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
 
 Important status constraints:
 
@@ -401,22 +401,26 @@ python -m pytest
 ```
 
 
-## 10a. Containerised Non-Hardware Build/Test Environment Plan
+## 10a. Containerised Non-Hardware Build/Test Environment
 
-Phase C1 is documentation-only. It records containerisation as a staged portability track before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Do not infer that Dockerfiles, compose files, entrypoint scripts, CI changes, or container runtime commands exist until a later implementation phase adds them.
+Phase C2 implements the first containerisation baseline: a Python-only image for non-hardware framework validation. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, and defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
 
-The planned default container workflow is non-hardware and should eventually cover:
+Supported Phase C2 container workflows:
 
 ```text
 Python unit tests
-Framework scripts that do not require SSH, UART, gateway, broker, or hardware access
-STM32 direct-flash local builds
-STM32 relocated local builds
-wolfBoot local builds
-Relocated application signing
+Framework commands that only load, validate, or aggregate local repository data and do not require SSH, UART, gateway, broker, STM32 toolchains, wolfBoot build/signing tools, or hardware access
 ```
 
-Application signing in a container must use runtime-mounted or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, or baked into container images.
+Known safe Phase C2 framework command example:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-python python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The Phase C2 image intentionally does not provide STM32 build toolchains, CMake firmware build support, wolfBoot build support, relocated application signing support, SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, or hardware-test support. STM32 direct/relocated builds, wolfBoot builds, application signing, optional gateway-capable container integration, and CI container integration remain later phases unless implemented by explicit future requests.
+
+Application signing in any later container phase must use runtime-mounted or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, sent in build contexts, or baked into container images.
 
 Hardware flashing, UART capture, Wi-Fi-module workflows, gateway SSH workflows, MQTT broker gateway validation, and end-to-end runtime tests remain separate from the default container path. A later gateway-capable container extension may be added only as an explicit opt-in workflow with runtime-provided SSH access and capability-gated tests.
 

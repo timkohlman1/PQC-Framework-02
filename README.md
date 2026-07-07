@@ -15,9 +15,9 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
-- a documentation-only containerisation plan for a future non-hardware build/test environment; no Docker implementation files are added by that planning phase
+- a Python-only container baseline for non-hardware framework validation
 
-Not implemented yet: containerised build/test implementation, STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: STM32 container build toolchain support, wolfBoot container build/signing support, gateway-capable container support, CI container integration, STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -84,13 +84,35 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 
 
 
+## Python-only container baseline
+
+The repository includes a Python-only container baseline for portable non-hardware framework validation. It is intentionally limited to Python dependencies, unit tests, and framework commands that do not require STM32 toolchains, wolfBoot build/signing tools, gateway SSH, UART devices, broker access, Wi-Fi-module access, ST-LINK access, or hardware.
+
+Build the image from the repository root:
+
+```powershell
+docker build -f docker/python/Dockerfile -t pqc-framework-python .
+```
+
+Run unit tests in the container with the repository mounted at runtime:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-python python -m pytest tests/unit
+```
+
+Run a safe framework command that loads and validates the direct-flash experiment configuration without building, flashing, opening UART, using SSH, or contacting a broker:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-python python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+The Python-only image does not include STM32 toolchains and does not provide gateway SSH, UART, broker, Wi-Fi-module, ST-LINK, or hardware access. Do not use it for CMake firmware builds, wolfBoot builds, application signing, flashing, UART capture, MQTT broker validation, or benchmark/runtime evidence. Those remain later containerisation sub-phases or existing host/gateway workflows.
+
+The `.dockerignore` file excludes generated outputs and local secret material from the image build context. Private signing keys, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, generated wolfBoot signing material, and production credentials must not be committed or baked into images.
+
 ## Containerised non-hardware build/test plan
 
-The project documentation includes a staged containerisation track before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The current planning scope defines a future portable non-hardware environment for Python tests, framework scripts, STM32 direct and relocated builds, wolfBoot builds, and relocated application signing.
-
-No Dockerfiles, container compose files, container entrypoint scripts, or container runtime commands are implemented by this documentation phase. Until later implementation phases add those files, use the existing host commands documented in this README and `AI_BUILD_GUIDE.md`.
-
-The planned container workflow keeps hardware flashing, UART capture, Wi-Fi-module access, gateway access, and MQTT broker gateway validation separate from the default non-hardware path. Any future signing support must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed or baked into images.
+The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 implements only the Python baseline. Later phases may add STM32 direct/relocated build support, wolfBoot build/signing support with runtime-mounted or locally generated signing material only, optional gateway-capable support, and CI integration.
 
 ## Firmware scheduler model
 

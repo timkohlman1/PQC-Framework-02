@@ -42,11 +42,13 @@ Build and signing manifests may record non-secret SHA-256 key fingerprints to pr
 
 ## Containerised workflow secret handling
 
-Container images and container build contexts must not contain private keys, credential files, generated signing material, real `.env` files, private certificates, or production credentials. Containerised workflows that need local secret material must receive it through explicit runtime mounts or locally generated files that remain outside the image and outside Git.
+Container images and container build contexts must not contain private keys, credential files, generated signing material, real `.env` files, private certificates, or production credentials. The repository `.dockerignore` excludes generated outputs, `secrets/`, local environment files, wolfBoot generated key material, and MQTT broker runtime material from container build contexts.
+
+The Phase C2 Python-only image does not require local secret material and must not be used for signing, SSH/gateway access, UART capture, broker validation, or hardware workflows. Containerised workflows in later phases that need local secret material must receive it through explicit runtime mounts or locally generated files that remain outside the image, outside Git, and outside replacement artifacts.
 
 This applies to secure-boot signing material, wolfBoot working-tree signing keys, SSH access for any optional gateway-capable workflow, VPN profiles, MQTT broker credentials, TLS private keys, and certificate authority private material. Documentation may describe required mount points or local preparation steps, but must not include real secret values or ask for secret material to be committed.
 
-The default containerisation plan is non-hardware. Any later gateway-capable container workflow must remain opt-in, capability-gated, and supplied with SSH access at runtime only.
+The default containerisation path remains non-hardware. Any later gateway-capable container workflow must remain opt-in, capability-gated, and supplied with SSH access at runtime only.
 
 ## Generated outputs to keep out of Git
 
