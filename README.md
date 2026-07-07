@@ -15,8 +15,9 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
+- a documentation-only containerisation plan for a future non-hardware build/test environment; no Docker implementation files are added by that planning phase
 
-Not implemented yet: STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: containerised build/test implementation, STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -81,6 +82,15 @@ python scripts/experiment.py monitor --experiment configs/experiments/baseline_d
 python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
 ```
 
+
+
+## Containerised non-hardware build/test plan
+
+The project documentation includes a staged containerisation track before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The current planning scope defines a future portable non-hardware environment for Python tests, framework scripts, STM32 direct and relocated builds, wolfBoot builds, and relocated application signing.
+
+No Dockerfiles, container compose files, container entrypoint scripts, or container runtime commands are implemented by this documentation phase. Until later implementation phases add those files, use the existing host commands documented in this README and `AI_BUILD_GUIDE.md`.
+
+The planned container workflow keeps hardware flashing, UART capture, Wi-Fi-module access, gateway access, and MQTT broker gateway validation separate from the default non-hardware path. Any future signing support must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed or baked into images.
 
 ## Firmware scheduler model
 

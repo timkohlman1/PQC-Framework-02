@@ -20,14 +20,16 @@ Implemented:
 10. Cross-profile benchmark aggregation output.
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
+13. Documentation-only containerised non-hardware build/test environment plan; no Docker implementation files are implemented by this phase.
 
 Planned but not implemented:
 
-1. STM32 MQTT client firmware integration.
-2. TLS/wolfSSL transport experiments.
-3. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
-4. Network degradation automation.
-5. Production release packaging.
+1. Containerised non-hardware build/test implementation for Python tests, framework scripts, STM32 builds, wolfBoot builds, and signing.
+2. STM32 MQTT client firmware integration.
+3. TLS/wolfSSL transport experiments.
+4. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
+5. Network degradation automation.
+6. Production release packaging.
 
 ## Source and configuration map
 
@@ -72,6 +74,17 @@ scripts/framework/uart.py                   UART capture and marker parsing
 scripts/framework/wolfboot_build.py         wolfBoot build/config/temporary patch workflow
 ```
 
+
+
+## Containerised non-hardware build/test plan
+
+The repository now records containerisation as a staged portability track before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. The current Phase C1 scope is documentation-only: it defines goals, boundaries, and evidence expectations without adding Dockerfiles, compose files, container scripts, CI changes, or runtime behaviour.
+
+The planned default container workflow is non-hardware. It is expected to cover Python unit tests, framework commands that do not require hardware access, STM32 direct-flash and relocated local builds, wolfBoot local builds, and relocated application signing. Signing workflows must use runtime-mounted or locally generated signing material only; private signing keys and generated signing material must not be committed or baked into images.
+
+Hardware flashing, UART capture, Wi-Fi-module access, MQTT broker gateway workflows, SSH access, and gateway-dependent tests remain separate from the default container workflow. A later gateway-capable container extension may use the existing SSH gateway abstraction, but only as an explicitly enabled, capability-gated path with runtime-provided credentials.
+
+Containerised build/test evidence must not be treated as hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant hardware or gateway workflow.
 
 ## Firmware scheduler model
 

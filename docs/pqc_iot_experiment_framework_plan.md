@@ -26,6 +26,142 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 
 ## Phase 11 — Secure-Boot Benchmark Metrics and Repeated-Run Support
 
+## Phase C — Containerised Non-Hardware Build/Test Environment
+
+This phase sits before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. It is a portability track for non-hardware development workflows. It preserves the existing host, gateway, flashing, UART, and hardware-test model.
+
+Do not commit or bake SSH private keys, VPN private keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, private signing keys, wolfBoot private signing keys, generated signing material, tokens, or production credentials into images or repository files. Use runtime mounts or locally generated material only when a workflow needs local secrets.
+
+Generated build outputs, object files, signed images, signing outputs, result directories, cache directories, and container runtime state remain generated artifacts and must stay out of Git.
+
+---
+
+### Phase C1 — Containerisation Plan and Documentation
+
+Goal: Add a repository-aligned containerisation plan before adding Docker or container runtime files.
+
+Outcomes:
+
+- [x] Document containerisation as a non-hardware portability phase.
+- [x] Position the phase before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work.
+- [x] Identify supported future non-hardware workflow goals: Python tests, framework scripts, STM32 direct builds, STM32 relocated builds, wolfBoot builds, and relocated application signing.
+- [x] Identify unsupported default-container workflows: hardware flashing, UART capture, direct USB/ST-LINK access, Wi-Fi-module access, gateway SSH workflows, MQTT broker gateway validation, and runtime evidence collection.
+- [x] Document that signing workflows must use runtime-mounted or locally generated signing material only.
+- [x] Preserve generated-output and secrets rules.
+- [x] Avoid adding Dockerfiles, compose files, entrypoint scripts, CI changes, or container runtime commands in this phase.
+
+Pass criteria:
+
+- [x] Documentation defines the containerisation phase.
+- [x] Existing hardware workflows are not made mandatory in the container.
+- [x] Secret-handling constraints are preserved.
+- [x] No Docker implementation is included in this phase.
+
+---
+
+### Phase C2 — Python-Only Container Baseline
+
+Goal: Create the smallest useful container workflow for Python framework development.
+
+Outcomes:
+
+- [ ] Add a project-owned Python-only container baseline.
+- [ ] Support Python dependency installation for framework development.
+- [ ] Run unit tests inside the container.
+- [ ] Run framework commands that do not require STM32 toolchains, SSH, UART, gateway access, broker access, or hardware.
+- [ ] Document the workflow for a fresh checkout.
+- [ ] Keep generated test, cache, and runtime output out of Git.
+
+Pass criteria:
+
+- [ ] Python unit tests pass inside the container.
+- [ ] Non-hardware framework commands run inside the container.
+- [ ] No STM32 build, wolfBoot build, signing, gateway, UART, broker, or hardware capability is required.
+
+---
+
+### Phase C3 — STM32 Build Container
+
+Goal: Extend the container workflow to support non-hardware STM32 firmware builds.
+
+Outcomes:
+
+- [ ] Support the existing direct-flash CMake build workflow.
+- [ ] Support the existing relocated CMake build workflow.
+- [ ] Support relevant local-build integration tests when explicitly requested.
+- [ ] Keep build outputs as generated artifacts outside Git.
+- [ ] Keep the workflow independent of STM32 board access, ST-LINK, UART, gateway access, and Wi-Fi hardware.
+
+Pass criteria:
+
+- [ ] Direct-flash firmware builds inside the container.
+- [ ] Relocated firmware builds inside the container.
+- [ ] No flashing, UART capture, gateway access, or Wi-Fi-module access is required.
+
+---
+
+### Phase C4 — wolfBoot Build and Application Signing Container Support
+
+Goal: Extend the container workflow to support secure-boot build and signing workflows without committing or baking secret material into the image.
+
+Outcomes:
+
+- [ ] Support wolfBoot build workflows inside the container.
+- [ ] Support relocated application signing workflows inside the container.
+- [ ] Use runtime-mounted or locally generated signing material only.
+- [ ] Keep private keys and generated signing material uncommitted and outside the image.
+- [ ] Keep secure-boot hardware flashing outside this sub-phase.
+
+Pass criteria:
+
+- [ ] wolfBoot builds inside the container.
+- [ ] Relocated application signing works inside the container.
+- [ ] Secret-handling documentation remains accurate.
+- [ ] No secure-boot flashing, UART capture, or runtime benchmark success is claimed.
+
+---
+
+### Phase C5 — Optional Gateway-Capable Container Integration
+
+Goal: Allow opt-in gateway-dependent integration workflows from the container without making them part of the default container pass criteria.
+
+Outcomes:
+
+- [ ] Support gateway-capable workflows only when explicitly enabled.
+- [ ] Provide SSH access, known-hosts data, and credentials at runtime only.
+- [ ] Keep private SSH keys, VPN keys, broker credentials, certificates, private signing keys, and other secrets out of the image.
+- [ ] Keep hardware, gateway, UART, and broker tests capability-gated.
+- [ ] Keep the default container workflow non-hardware.
+
+Pass criteria:
+
+- [ ] Gateway workflows are opt-in.
+- [ ] No credentials are committed or baked into the image.
+- [ ] Tests skip cleanly without gateway capability.
+- [ ] No hardware, flashing, UART, broker, or MQTT/TLS success is claimed without explicit logs.
+
+---
+
+### Phase C6 — Optional CI Integration
+
+Goal: Use the container as a reproducible non-hardware CI baseline after local container workflows are stable.
+
+Outcomes:
+
+- [ ] Build or reuse the project container image in CI.
+- [ ] Run Python unit tests in CI.
+- [ ] Run non-hardware build checks where toolchain availability permits.
+- [ ] Exclude hardware, gateway, UART, and Wi-Fi-module tests from the default CI path.
+- [ ] Keep CI free of committed, printed, or baked secrets.
+
+Pass criteria:
+
+- [ ] CI validates the containerised non-hardware baseline.
+- [ ] Hardware and gateway tests are not run by default.
+- [ ] No secrets are committed, printed, or baked into images.
+
+---
+
 ## Phase 12 — Add MQTT Plain Baseline
 
 - [ ] Add simple MQTT firmware variant.
@@ -217,75 +353,3 @@ This checklist tracks the staged development of the STM32-based PQC IoT experime
 - [ ] Commit.
 
 ---
-
-
-
-
-## Phase ??? — Containerised Build and Test Environment
-
-### Goal
-
-Provide a portable container-based development environment so the framework's build, signing, and non-hardware test workflows can be reproduced consistently across Windows, Linux, and macOS hosts.
-
-The initial scope should focus on build and software verification portability. Hardware flashing and UART workflows may be supported later through the existing gateway abstraction, but should not be required for the first container milestone.
-
-### Requirements / Outcomes
-
-- Add a project-owned container build environment for the STM32 framework.
-- Ensure a fresh checkout from Git, including required submodules, can run the documented container workflow.
-- Support the core non-hardware development commands inside the container, including:
-  - Python unit tests
-  - configuration/status checks
-  - direct-flash firmware build
-  - relocated firmware build
-  - wolfBoot build
-  - application signing
-- Keep hardware-dependent workflows separate from the default container workflow.
-- Do not require USB/ST-LINK passthrough for the initial container environment.
-- Do not bake private keys, SSH keys, VPN keys, credentials, signing keys, or other secrets into the container image.
-- Document how local-only secrets and generated signing material are handled when container workflows need them.
-- Preserve the existing host/gateway flashing and UART architecture.
-- Ensure generated build artifacts, object files, signing outputs, and result directories remain out of Git.
-- Add documentation describing:
-  - supported host platforms
-  - expected Docker or container runtime prerequisites
-  - commands to build or run the container
-  - which workflows are supported inside the container
-  - which workflows remain host/gateway/hardware dependent
-  - known limitations and reproducibility assumptions
-- Add tests or verification commands proving that the container can run the intended non-hardware workflow from a clean checkout.
-
-### Optional Later Extension
-
-Add an explicitly enabled hardware-capable container workflow that can use the existing SSH gateway abstraction to run flash and UART tests, without requiring direct USB/ST-LINK access from the container.
-
-This extension should:
-
-- mount or provide SSH access at runtime only
-- avoid storing SSH private keys in the image
-- preserve the existing `pqc-gateway1` flash and UART helper model
-- run hardware tests only when the gateway and board are intentionally available
-- keep hardware tests skipped or unavailable by default when prerequisites are missing
-
-### Pass Criteria
-
-- A developer on Windows, Linux, or macOS can clone the repository and run the documented container workflow for non-hardware development.
-- The container can run Python unit tests successfully.
-- The container can build the direct-flash firmware profile.
-- The container can build the relocated firmware profile.
-- The container can run the wolfBoot build workflow when the wolfBoot submodule and required tools are available.
-- The container can run the application signing workflow without committing or baking private signing keys into the image.
-- Hardware flashing and UART capture remain optional and are not required for the default container pass criteria.
-- Documentation clearly distinguishes build/test portability from hardware evidence collection.
-
-### Not in Scope for Initial Container Phase
-
-- Replacing the existing gateway flash workflow.
-- Replacing the existing UART capture workflow.
-- Running ST-LINK USB directly from inside the container.
-- Baking private credentials, SSH keys, signing keys, or generated secrets into the image.
-- Treating containerised hardware tests as mandatory for normal development.
-- Changing secure-boot flash layout, signing format, UART markers, or experiment semantics.
-
----
-
