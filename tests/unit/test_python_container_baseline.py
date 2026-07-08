@@ -14,28 +14,34 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_python_container_definition_supports_stm32_local_builds_and_opt_in_gateway_checks() -> None:
+def test_python_container_definition_supports_stm32_builds_and_runtime_gateway_access() -> None:
     dockerfile = _read(DOCKERFILE)
+    normalised = dockerfile.lower()
 
     assert "FROM python:3.13-slim" in dockerfile
     assert "COPY requirements-dev.txt" in dockerfile
     assert '["python", "-m", "pytest", "tests/unit"]' in dockerfile
 
-    required_terms = [
+    build_tool_packages = [
         "cmake",
         "ninja-build",
         "gcc-arm-none-eabi",
         "binutils-arm-none-eabi",
         "libnewlib-arm-none-eabi",
+    ]
+    for package in build_tool_packages:
+        assert package in normalised
+
+    runtime_gateway_packages = [
         "openssh-client",
         "openssl",
-        "gateway-capable integration checks",
-        "provided at container runtime",
     ]
-    normalised = dockerfile.lower()
-    for term in required_terms:
-        assert term in normalised
+    for package in runtime_gateway_packages:
+        assert package in normalised
 
+    # The image may document gateway-capable workflows in comments, but tests should
+    # validate the concrete boundary: gateway access is SSH/TLS tooling only and
+    # credentials are not baked into the image.
     forbidden_terms = [
         "stm32cube",
         "openocd",
@@ -91,25 +97,49 @@ def test_dockerignore_excludes_generated_outputs_and_secrets() -> None:
         assert pattern in dockerignore
 
 
-def test_readme_documents_container_boundaries_and_stm32_local_builds() -> None:
+def test_readme_documents_container_default_boundaries_and_fallbacks() -> None:
     readme = _read(README)
+    readme_lower = readme.lower()
 
-    assert "docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build ." in readme
-    assert "pqc-framework-stm32-build python -m pytest tests/unit" in readme
-    assert "pqc-framework-stm32-build python scripts/experiment.py status" in readme
-    assert "pqc-framework-stm32-build cmake --preset Debug" in readme
-    assert "pqc-framework-stm32-build cmake --build --preset Debug" in readme
-    assert "pqc-framework-stm32-build cmake --preset RelocatedDebug" in readme
-    assert "pqc-framework-stm32-build cmake --build --preset RelocatedDebug" in readme
-    assert "--pqc-require-local-build" in readme
+    default_policy_terms = [
+        "docker-hosted linux",
+        "default development path",
+        "project wrapper scripts",
+        "scripts\\dev.ps1",
+        "scripts/dev.sh",
+        "host-native commands remain available as an explicit fallback",
+    ]
+    for term in default_policy_terms:
+        assert term in readme_lower
+
+    workflow_terms = [
+        "build-image",
+        "pytest tests/unit",
+        "experiment status",
+        "cmake --preset Debug",
+        "cmake --build --preset Debug",
+        "cmake --preset RelocatedDebug",
+        "cmake --build --preset RelocatedDebug",
+        "--pqc-require-local-build",
+    ]
+    for term in workflow_terms:
+        assert term in readme
 
     boundary_terms = [
-        "wolfBoot build/signing tools",
-        "gateway SSH",
-        "UART devices",
-        "ST-LINK/USB access",
-        "Wi-Fi-module access",
+        "SSH/SCP",
+        "runtime-mounted SSH access",
+        "direct UART devices",
+        "ST-LINK/USB passthrough",
+        "Wi-Fi-module passthrough",
         "hardware workflows",
     ]
     for term in boundary_terms:
+        assert term in readme
+
+    secret_boundary_terms = [
+        "must not be committed",
+        "baked into the image",
+        "Private signing keys",
+    ]
+    for term in secret_boundary_terms:
         assert term in readme

@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   unit-tests:
-    name: Unit tests
+    name: Legacy runner unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -42,7 +42,7 @@ jobs:
         run: python -m pytest tests/unit
 
   firmware-builds:
-    name: Firmware CMake builds
+    name: Legacy runner firmware CMake builds
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -72,7 +72,7 @@ jobs:
           cmake --build --preset RelocatedDebug
 
   wolfboot-build-integration:
-    name: wolfBoot build integration
+    name: Legacy runner wolfBoot build integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs:
@@ -111,7 +111,7 @@ jobs:
         run: python -m pytest tests/integration/test_wolfboot_build_integration.py -m integration
 
   integration-tests:
-    name: Runner-compatible integration tests
+    name: Legacy runner-compatible integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs:
@@ -183,7 +183,7 @@ jobs:
         run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
 
   container-non-hardware:
-    name: Containerised non-hardware checks
+    name: Default containerised non-hardware checks
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -203,9 +203,9 @@ jobs:
       - name: Record containerised CI scope
         run: |
           cat <<'EOF_SCOPE'
-          Containerised CI scope: reproducible non-hardware build/test checks inside the project container.
+          Containerised CI scope: default reproducible non-hardware build/test checks inside the project container.
           This job does not use GitHub Actions secrets, SSH keys, VPN keys, private certificates, private signing keys, board flashing, UART devices, Wi-Fi modules, or gateway access.
-          Existing runner-compatible and MQTT broker Docker runtime jobs remain separate CI coverage.
+          Existing runner-compatible and MQTT broker Docker runtime jobs remain compatibility coverage.
           EOF_SCOPE
 
       - name: Show container tool versions

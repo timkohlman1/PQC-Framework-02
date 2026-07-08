@@ -11,7 +11,7 @@ def _dockerfile_text() -> str:
     return (_repo_root() / "docker" / "python" / "Dockerfile").read_text(encoding="utf-8")
 
 
-def test_container_image_installs_stm32_local_build_toolchain() -> None:
+def test_container_image_installs_stm32_build_toolchain() -> None:
     dockerfile = _dockerfile_text()
 
     for package in (
@@ -32,13 +32,13 @@ def test_container_default_command_remains_non_hardware_unit_tests() -> None:
     assert 'CMD ["python", "-m", "pytest", "tests/unit"]' in dockerfile
 
 
-def test_container_image_installs_only_opt_in_gateway_tooling_not_hardware_access_tools() -> None:
+def test_container_image_installs_only_runtime_gateway_tooling_not_hardware_access_tools() -> None:
     dockerfile = _dockerfile_text()
     normalised = dockerfile.lower()
 
+    # SSH is sufficient because hardware operations remain gateway-mediated.
     assert "openssh-client" in normalised
-    assert "gateway-capable integration checks" in normalised
-    assert "provided at container runtime" in normalised
+    assert "openssl" in normalised
 
     for package in (
         "openocd",
