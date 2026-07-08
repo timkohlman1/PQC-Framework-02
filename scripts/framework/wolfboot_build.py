@@ -40,9 +40,11 @@ DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
     "tools/bin-assemble/*.o",
+    "tools/bin-assemble/*.d",
     "tools/bin-assemble/bin-assemble",
     "tools/bin-assemble/bin-assemble.exe",
     "tools/keytools/*.o",
+    "tools/keytools/*.d",
     "tools/keytools/keygen",
     "tools/keytools/keygen.exe",
     "tools/keytools/sign",
@@ -578,11 +580,11 @@ def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
     wolfBoot builds several host utilities, including ``bin-assemble`` and
     signing/key-generation tools. In this project the wolfBoot submodule is
     often shared between the native Windows workflow and the Linux container
-    through a bind mount. Stale Windows/MinGW object files can otherwise be
-    reused by Linux ``make`` and fail at link time with unresolved MSVCRT
-    symbols. These files are generated build products, not source files or
-    signing secrets, so removing them before the build is safe and keeps
-    cross-host/container builds deterministic.
+    through a bind mount. Stale object files and dependency files can otherwise
+    carry host-specific paths, such as ``/workspace`` from a container run, into
+    a native Windows build or vice versa. These files are generated build
+    products, not source files or signing secrets, so removing them before the
+    build is safe and keeps cross-host/container builds deterministic.
     """
 
     removed: list[Path] = []

@@ -14,7 +14,7 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_python_container_definition_supports_stm32_local_builds() -> None:
+def test_python_container_definition_supports_stm32_local_builds_and_opt_in_gateway_checks() -> None:
     dockerfile = _read(DOCKERFILE)
 
     assert "FROM python:3.13-slim" in dockerfile
@@ -27,6 +27,10 @@ def test_python_container_definition_supports_stm32_local_builds() -> None:
         "gcc-arm-none-eabi",
         "binutils-arm-none-eabi",
         "libnewlib-arm-none-eabi",
+        "openssh-client",
+        "openssl",
+        "gateway-capable integration checks",
+        "provided at container runtime",
     ]
     normalised = dockerfile.lower()
     for term in required_terms:
@@ -34,14 +38,14 @@ def test_python_container_definition_supports_stm32_local_builds() -> None:
 
     forbidden_terms = [
         "stm32cube",
-        "openssh-client",
-        "ssh ",
         "openocd",
         "stlink-tools",
         "picocom",
         "mosquitto-clients",
         "mosquitto",
         "docker",
+        "id_rsa",
+        "id_ed25519",
         "wolfboot_signing_private_key",
     ]
     for term in forbidden_terms:

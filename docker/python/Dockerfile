@@ -1,6 +1,7 @@
-# Non-hardware development image for Python framework validation, STM32 local builds,
-# wolfBoot builds, and local application-signing workflows.
-# This image intentionally omits hardware/gateway access packages and contains no secret material.
+# Development image for Python framework validation, STM32 local builds,
+# wolfBoot builds, local application-signing workflows, and explicitly opt-in
+# gateway-capable integration checks. It contains tools only.
+# The image contains no secret material; SSH access and any other credentials are provided at container runtime.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,6 +16,8 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         ca-certificates \
         git \
+        openssh-client \
+        openssl \
         build-essential \
         cmake \
         ninja-build \

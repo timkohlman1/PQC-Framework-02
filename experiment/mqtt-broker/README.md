@@ -2,7 +2,7 @@
 
 This directory contains the gateway-hosted MQTT broker service for transport-security experiments.
 
-The build server remains the orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`.
+The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`. The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
 
 ## Profiles
 
@@ -148,6 +148,19 @@ openssl s_client `
   -key .\experiment\mqtt-broker\runtime\classical\certs\client.key `
   -tls1_3
 ```
+
+
+## Optional gateway-capable container execution
+
+The default container command does not run gateway or broker integration tests. To run gateway broker checks from the project container, provide SSH access at runtime and set `PQC_CONTAINER_ENABLE_GATEWAY=1`. The image must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, real `.env` files, or generated broker runtime material.
+
+Example PowerShell pattern:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v ${env:USERPROFILE}\.ssh:/root/.ssh:ro pqc-framework-stm32-build python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+```
+
+Without `PQC_CONTAINER_ENABLE_GATEWAY=1`, gateway capability checks inside the container skip or fail according to the existing pytest strict flag. Passing this test is broker/gateway evidence only when supported by the pytest output and collected broker logs; it is not hardware, UART, timing, memory, benchmark, or secure-boot runtime evidence.
 
 ## Gateway integration test
 

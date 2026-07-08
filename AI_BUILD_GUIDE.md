@@ -10,7 +10,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
-Longer-term areas remain planned unless implemented by later phases: wolfBoot container build/signing support, gateway-capable container support, CI container integration, STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
+Longer-term areas remain planned unless implemented by later phases: CI container integration, STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
 ## 3. Current Status
 
@@ -48,14 +48,14 @@ Implemented framework scope as of Phase 11.7:
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
-- containerised non-hardware baseline for Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, and relocated application signing before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
+- containerised baseline for Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- gateway-capable container integration, CI container integration, STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- CI container integration, STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -378,9 +378,9 @@ FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTO
 
 Routine secure-boot algorithm benchmark hardware runs should keep execution time bounded by running ML-DSA-65 by default and skipping the other profile matrix entries unless explicitly selected. Set `PQC_HARDWARE_SECURE_BOOT_PROFILES=<comma-separated profile names>` to add named profiles to the default ML-DSA-65 run, or set `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` for an all-in algorithm benchmark hardware pass.
 
-Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied.
+Integration tests may invoke real local toolchains or gateway probes, but must skip cleanly when capabilities are unavailable unless strict flags are supplied. A plain `python -m pytest` run should automatically exercise available local, gateway, and hardware capabilities and skip unavailable ones. The `--pqc-require-*` switches are strictness controls that convert unavailable capabilities into failures for intentional capability-specific checks; they are not normally required to make available tests run.
 
-Hardware tests may flash the board, capture UART, and run end-to-end secure-boot workflows. They must be marked `hardware` and skip cleanly unless strict capability flags are supplied.
+Hardware tests may flash the board, capture UART, and run end-to-end secure-boot workflows. They must be marked `hardware` and skip cleanly when required capabilities are unavailable.
 
 Capability-gated strict checks:
 
@@ -401,23 +401,23 @@ python -m pytest
 ```
 
 
-## 10a. Containerised Non-Hardware Build/Test Environment
+## 10a. Containerised Build/Test Environment
 
-Phase C4 implements a non-hardware container baseline for Python framework validation, STM32 local builds, wolfBoot builds, and relocated application signing. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies and host build tooling for wolfBoot/keytools, and defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
+Phase C5 implements a container baseline for Python framework validation, STM32 local builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, host build tooling for wolfBoot/keytools, OpenSSL for local certificate provisioning, and an SSH client for runtime-provided gateway access. It defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
 
-Supported Phase C4 container workflows:
+Supported default container workflows:
 
 ```text
 Python unit tests
 Framework commands that only load, validate, or aggregate local repository data and do not require SSH, UART, gateway, broker, or hardware access
 STM32 direct-flash CMake configure/build using the Debug preset
 STM32 relocated CMake configure/build using the RelocatedDebug preset
-Local-build integration tests when explicitly run with --pqc-require-local-build
-wolfBoot build workflows using local profile configs and the runtime-mounted tools/wolfboot submodule
+Local-build integration tests when the local toolchain capability is available
+wolfBoot build workflows and integration tests when the local toolchain, make, profile configs, and runtime-mounted tools/wolfboot submodule are available
 Relocated application signing workflows using runtime-mounted or locally generated signing material only
 ```
 
-Known safe Phase C4 framework command, local-build, wolfBoot, and signing examples:
+Known safe default framework command, local-build, wolfBoot, and signing examples:
 
 ```powershell
 docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build .
@@ -428,16 +428,45 @@ docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cma
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset RelocatedDebug
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/integration -m integration --pqc-require-local-build
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/integration -m integration
 ```
 
-The Phase C4 image intentionally does not provide SSH/gateway access, UART access, MQTT broker access, ST-LINK/USB access, Wi-Fi-module access, hardware-test support, direct board access, flashing support, or secure-boot runtime validation. Optional gateway-capable container integration and CI container integration remain later phases unless implemented by explicit future requests.
+The container image provides an SSH client but no SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Gateway probing remains disabled by default inside the container and requires `PQC_CONTAINER_ENABLE_GATEWAY=1` plus runtime-provided SSH configuration, known-hosts data, and credentials. UART access, ST-LINK/USB access, Wi-Fi-module access, direct board access, flashing workflows, hardware tests, broker validation, and secure-boot runtime validation remain capability-gated: a plain `python -m pytest` run exercises the capabilities that are available and skips those that are unavailable.
+
+Pytest removes generated cross-platform build state at session start when running inside the container, or when `--pqc-clean-generated-build-artifacts` or `PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` is used. The cleanup covers generated `build/Debug`, `build/RelocatedDebug`, wolfBoot `.config`, wolfBoot artifacts, and wolfBoot object/dependency/host-tool outputs that can contain host-specific absolute paths after switching between Windows-native and Linux-container builds. It does not remove source files or canonical signing keys under `secrets/wolfboot/`. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress the default container cleanup.
 
 Containerised application signing must use the runtime-mounted workspace or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, sent in build contexts, or baked into container images.
 
-Hardware flashing, UART capture, Wi-Fi-module workflows, gateway SSH workflows, MQTT broker gateway validation, and end-to-end runtime tests remain separate from the default container path. A later gateway-capable container extension may be added only as an explicit opt-in workflow with runtime-provided SSH access and capability-gated tests.
+Hardware flashing, UART capture, Wi-Fi-module workflows, gateway SSH workflows, MQTT broker gateway validation, and end-to-end runtime tests remain separate from the default container path. Gateway-capable container checks are explicit opt-in workflows using runtime-provided SSH only and existing capability-gated tests.
 
 Containerised build/signing evidence is portable software-build evidence only. Do not claim hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success from container runs unless explicit logs, manifests, or equivalent evidence from those workflows are provided.
+
+### Optional gateway-capable container checks
+
+Gateway-capable container checks require all of the following:
+
+```text
+PQC_CONTAINER_ENABLE_GATEWAY=1
+runtime-mounted SSH configuration and private key material
+runtime-mounted or host-prepared known_hosts data for pqc-gateway1
+reachable gateway network path, including any required host VPN outside the image
+```
+
+Example PowerShell pattern for explicit gateway-capable container testing. SSH material is mounted read-only from the host and copied into the temporary container filesystem with Linux permissions for that one run:
+
+```powershell
+docker run --rm `
+  -v ${PWD}:/workspace `
+  -w /workspace `
+  -e PQC_CONTAINER_ENABLE_GATEWAY=1 `
+  -v ${env:USERPROFILE}\.ssh:/host-ssh:ro `
+  pqc-framework-stm32-build `
+  sh -lc "mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && python -m pytest"
+```
+
+Without `PQC_CONTAINER_ENABLE_GATEWAY=1`, gateway capability checks inside the container skip or fail according to the existing pytest strict flag. Do not use container gateway output as hardware, flashing, UART, broker, MQTT/TLS, timing, memory, benchmark, or end-to-end evidence unless the relevant test logs or manifests explicitly prove that workflow.
+
 
 ## 11. Git, Generated Files, and Secrets
 

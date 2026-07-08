@@ -32,14 +32,26 @@ def test_container_default_command_remains_non_hardware_unit_tests() -> None:
     assert 'CMD ["python", "-m", "pytest", "tests/unit"]' in dockerfile
 
 
-def test_container_image_does_not_install_gateway_or_hardware_access_tools() -> None:
+def test_container_image_installs_only_opt_in_gateway_tooling_not_hardware_access_tools() -> None:
     dockerfile = _dockerfile_text()
+    normalised = dockerfile.lower()
+
+    assert "openssh-client" in normalised
+    assert "gateway-capable integration checks" in normalised
+    assert "provided at container runtime" in normalised
 
     for package in (
-        "openssh-client",
         "openocd",
         "stlink-tools",
         "picocom",
         "mosquitto-clients",
     ):
-        assert package not in dockerfile
+        assert package not in normalised
+
+    for secret_marker in (
+        "id_rsa",
+        "id_ed25519",
+        "mqtt password",
+        "wolfboot_signing_private_key",
+    ):
+        assert secret_marker not in normalised
