@@ -15,9 +15,10 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
+- an MQTT/TLS roadmap that separates hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation from future ST67W61M1-backed wireless validation
 - a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
-Not implemented yet: STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: STM32 MQTT client firmware integration, STM32-local lwIP/wolfSSL/wolfMQTT integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -378,6 +379,51 @@ For release-readiness reviews, use:
 ```text
 docs/009_chatgpt_project_prompt_release_readiness_review.md
 ```
+
+
+## MQTT/TLS client roadmap and evidence boundaries
+
+The MQTT/TLS client roadmap is split so hardware-independent work can proceed before the X-NUCLEO-67W61M1 Wi-Fi module is installed or available.
+
+Target client architecture:
+
+```text
+STM32 application
+  -> wolfMQTT client logic on STM32
+  -> wolfSSL TLS endpoint on STM32
+  -> lwIP TCP/IP stack on STM32
+  -> network-interface boundary
+  -> future ST67W61M1 Wi-Fi module backend
+  -> gateway-hosted MQTT broker
+```
+
+The Wi-Fi module is the network interface backend. It is not the TLS endpoint and is not where MQTT client logic runs. Development phases must preserve that ownership boundary.
+
+Planned transport and validation modes:
+
+```text
+fake/no-network transport          deterministic control-flow tests; simulated evidence only
+host/socket validation path        host-side or broker-side compatibility evidence only
+STM32 build-only preparation        compile/link evidence only; no runtime network claim
+STM32 fake/no-network runtime       UART initialization evidence only; no network claim
+future ST67W61M1 backend           real Wi-Fi/network-interface evidence when hardware exists
+future STM32 MQTT-over-TLS          explicit STM32 + broker evidence for TLS/MQTT success
+```
+
+Evidence categories must stay separate:
+
+```text
+build-only evidence                 compiler/build output only
+fake transport evidence             labelled simulation output only
+host-side evidence                  host client or host utility output only
+broker-side evidence                broker status, logs, or local Docker runtime output only
+STM32 runtime evidence              explicit UART logs or manifests from the board
+end-to-end wireless evidence        explicit ST67W61M1, STM32, and broker evidence together
+```
+
+Do not claim Wi-Fi join, IP address acquisition, TCP connection, TLS handshake, MQTT connect, publish, reconnect, latency, memory, timing, or end-to-end wireless success unless explicit logs, manifests, UART output, broker logs, or equivalent evidence support that specific claim.
+
+Near-term MQTT/TLS work should remain in small phases: documentation split, configuration/result schema, fake transport harness, host/broker validation, STM32 lwIP build-only skeleton, wolfSSL build-only skeleton, wolfMQTT build-only skeleton, STM32 fake/no-network runtime markers, optional host-side wolfSSL/wolfMQTT validation, ST67W61M1 backend, classical STM32 MQTT-over-TLS, network degradation, and later PQC/hybrid TLS experiments.
 
 ## MQTT broker compose project
 

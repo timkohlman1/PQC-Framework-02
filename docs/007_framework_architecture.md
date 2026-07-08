@@ -20,16 +20,20 @@ Implemented:
 10. Cross-profile benchmark aggregation output.
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
-13. Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments.
-14. GitHub Actions CI preserving existing runner-compatible and MQTT broker Docker runtime jobs while using the containerised non-hardware job as the default reproducible software-build validation path.
+13. MQTT/TLS architecture documentation split between hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation and future ST67W61M1-backed validation.
+14. Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments.
+15. GitHub Actions CI preserving existing runner-compatible and MQTT broker Docker runtime jobs while using the containerised non-hardware job as the default reproducible software-build validation path.
 
 Planned but not implemented:
 
 1. STM32 MQTT client firmware integration.
-2. TLS/wolfSSL transport experiments.
-3. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
-4. Network degradation automation.
-5. Production release packaging.
+2. STM32-local lwIP, wolfSSL, and wolfMQTT build/runtime integration.
+3. ST67W61M1 network-interface backend validation.
+4. Classical STM32 MQTT-over-TLS runtime validation.
+5. PQC or hybrid MQTT/TLS experiments after classical MQTT/TLS is stable and library support is confirmed.
+6. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
+7. Network degradation automation.
+8. Production release packaging.
 
 ## Source and configuration map
 
@@ -155,6 +159,37 @@ secure-boot experiment profile
 
 The secure-boot workflow must not infer timing, stack, heap, or hardware success from host-side behaviour. Runtime metrics must come from explicit firmware/UART markers.
 
+
+## STM32 MQTT/TLS target architecture
+
+MQTT/TLS client development is split between hardware-independent preparation and future ST67W61M1-dependent validation. The target ownership model is:
+
+```text
+STM32 firmware
+  -> application MQTT/TLS experiment logic
+  -> wolfMQTT client layer
+  -> wolfSSL TLS endpoint
+  -> lwIP TCP/IP stack
+  -> network-interface abstraction
+  -> future ST67W61M1 Wi-Fi module backend
+  -> external MQTT broker
+```
+
+The Wi-Fi module is treated as the network interface backend. It must not be documented or implemented as the MQTT client, TLS endpoint, certificate owner, or broker-side validation source. lwIP, wolfSSL, and wolfMQTT are intended to run on the STM32.
+
+Supported planning modes are evidence-bound:
+
+- Fake/no-network transport: deterministic simulated control-flow evidence only.
+- Host/socket validation path: host-side client or broker compatibility evidence only.
+- STM32 build-only path: compiler/linker evidence only.
+- STM32 fake/no-network runtime path: board UART initialization evidence only.
+- Future ST67W61M1 network-interface path: module detection, link, IP, and TCP readiness evidence only until TLS/MQTT are explicitly validated.
+- Future STM32 MQTT-over-TLS path: TLS handshake, MQTT connect, publish, reconnect, timing, and resource evidence only from explicit STM32 UART logs, manifests, and broker logs.
+
+Evidence categories must not be collapsed. Build-only evidence does not imply runtime success. Fake transport evidence does not imply broker, TLS, STM32, or Wi-Fi success. Host-side and broker-side evidence does not imply STM32 success. STM32 UART initialization evidence does not imply Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end wireless success.
+
+Small future implementation phases should preserve this boundary: MQTT/TLS config/result schema, fake/no-network transport harness, host-side broker compatibility validation, STM32 lwIP build-only skeleton, wolfSSL build-only skeleton, wolfMQTT build-only skeleton, STM32 fake/no-network runtime evidence, optional host-side wolfSSL/wolfMQTT validation, ST67W61M1 network-interface backend, classical STM32 MQTT-over-TLS validation, network degradation, and later PQC/hybrid MQTT/TLS experiments.
+
 ## Benchmark model
 
 Secure-boot manifests include `secure_boot_benchmark`, which separates:
@@ -242,9 +277,9 @@ Docker-hosted framework checkout
   -> optional scripts/experiment.py mqtt-broker-experiment orchestration
   -> ssh remote Docker Compose start/stop/status/log commands
   -> MQTT-over-TLS broker listener on the gateway
-  -> MQTT/TLS validation logs and manifest under results/<run_id>/
+  -> broker-side or host-side MQTT/TLS validation logs and manifest under results/<run_id>/
 ```
 
-The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The runner-compatible Docker runtime test exercises this classical container locally from a pytest temporary copy of the compose project, so generated certificates, data, and logs are not written to the repository tree. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. Each profile overrides the image entrypoint, copies its bind-mounted ACL file to a container-local `/tmp/mosquitto-aclfile`, sets ownership and restrictive permissions for the runtime user there, and configures Mosquitto to read that copy. The top-level `mqtt-broker-experiment` command wraps certificate provisioning, deployment, profile start, validation, broker validation retries during startup, live step progress, bounded per-step subprocess timeouts, log capture even after validation failures, result manifest creation, and optional stop. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.
+This broker path is broker-side and host-side validation infrastructure. It is not STM32 MQTT/TLS client evidence unless a later STM32 firmware phase records explicit board and broker evidence together. The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The runner-compatible Docker runtime test exercises this classical container locally from a pytest temporary copy of the compose project, so generated certificates, data, and logs are not written to the repository tree. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. Each profile overrides the image entrypoint, copies its bind-mounted ACL file to a container-local `/tmp/mosquitto-aclfile`, sets ownership and restrictive permissions for the runtime user there, and configures Mosquitto to read that copy. The top-level `mqtt-broker-experiment` command wraps certificate provisioning, deployment, profile start, validation, broker validation retries during startup, live step progress, bounded per-step subprocess timeouts, log capture even after validation failures, result manifest creation, and optional stop. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.
 
 MQTT broker OQS image compatibility: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
