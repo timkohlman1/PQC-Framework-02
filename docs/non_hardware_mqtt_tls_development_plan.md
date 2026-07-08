@@ -62,7 +62,7 @@ Update the plan and architecture documentation so MQTT/TLS development is explic
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Update the MQTT/TLS roadmap and architecture documentation to split hardware-independent development from ST67W61M1-dependent validation. The revised plan must preserve the target architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32, while the Wi-Fi module is treated as the network interface. Focus on goals, outcomes, evidence boundaries, and small future implementation phases. Do not implement firmware, Docker, or framework code yet.
+Requirement: Implement Phase M1 of the attached development plan - MQTT/TLS Architecture Split Without Wi-Fi Hardware. Update the MQTT/TLS roadmap and architecture documentation to split hardware-independent development from ST67W61M1-dependent validation. The revised plan must preserve the target architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32, while the Wi-Fi module is treated as the network interface. Focus on goals, outcomes, evidence boundaries, and small future implementation phases. Do not implement firmware, Docker, or framework code yet.
 
 ```
 
@@ -100,7 +100,7 @@ Add framework-side configuration and result schema support for MQTT/TLS experime
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add framework-side MQTT/TLS experiment configuration and result schema support for future MQTT client work. The schema must support explicit transport backend selection and unavailable metrics. It must distinguish fake/no-network, host-side, STM32 build-only, STM32 runtime, and future ST67W61M1-backed evidence. Do not implement STM32 firmware networking, lwIP integration, wolfSSL integration, wolfMQTT integration, broker deployment, or hardware tests in this sub-phase.
+Requirement: Implement Phase _ of the attached development plan - _. Add framework-side MQTT/TLS experiment configuration and result schema support for future MQTT client work. The schema must support explicit transport backend selection and unavailable metrics. It must distinguish fake/no-network, host-side, STM32 build-only, STM32 runtime, and future ST67W61M1-backed evidence. Do not implement STM32 firmware networking, lwIP integration, wolfSSL integration, wolfMQTT integration, broker deployment, or hardware tests in this sub-phase.
 
 ```
 
@@ -137,7 +137,7 @@ Provide deterministic non-network test coverage for MQTT client control-flow beh
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add a fake/no-network MQTT transport harness for deterministic non-hardware testing of MQTT client control-flow behavior. It should support simulated connect, publish, timeout, disconnect, and reconnect outcomes, and all simulated evidence must be clearly labelled as fake transport evidence. Do not implement real networking, lwIP, wolfSSL, wolfMQTT firmware integration, broker deployment, gateway access, or hardware tests in this sub-phase.
+Requirement: Implement Phase _ of the attached development plan - _. Add a fake/no-network MQTT transport harness for deterministic non-hardware testing of MQTT client control-flow behavior. It should support simulated connect, publish, timeout, disconnect, and reconnect outcomes, and all simulated evidence must be clearly labelled as fake transport evidence. Do not implement real networking, lwIP, wolfSSL, wolfMQTT firmware integration, broker deployment, gateway access, or hardware tests in this sub-phase.
 
 ```
 
@@ -173,7 +173,7 @@ Validate MQTT/TLS broker compatibility separately from STM32 firmware and Wi-Fi 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add or refine host-side MQTT/TLS broker compatibility validation for the existing broker scaffold. The validation must be clearly labelled as host-side and broker-side evidence only. It must not claim STM32, Wi-Fi module, lwIP, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep gateway/broker-dependent tests capability-gated.
+Requirement: Implement Phase _ of the attached development plan - _. Add or refine host-side MQTT/TLS broker compatibility validation for the existing broker scaffold. The validation must be clearly labelled as host-side and broker-side evidence only. It must not claim STM32, Wi-Fi module, lwIP, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep gateway/broker-dependent tests capability-gated.
 
 ```
 
@@ -219,7 +219,7 @@ Introduce or validate STM32-local lwIP build integration without requiring the W
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add or validate a STM32-local lwIP build-only skeleton for future MQTT/TLS work. This sub-phase must not require the ST67W61M1 Wi-Fi module and must not claim Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end success. Keep any network interface unavailable, stubbed, or explicitly deferred. Preserve CubeMX-generated layout unless an inspected file requires a scoped change.
+Requirement: Implement Phase _ of the attached development plan - _. Add or validate a STM32-local lwIP build-only skeleton for future MQTT/TLS work. This sub-phase must not require the ST67W61M1 Wi-Fi module and must not claim Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end success. Keep any network interface unavailable, stubbed, or explicitly deferred. Preserve CubeMX-generated layout unless an inspected file requires a scoped change.
 
 ```
 
@@ -255,7 +255,7 @@ Add or validate wolfSSL build integration for STM32 without performing a real TL
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add or validate a wolfSSL build-only skeleton for STM32 MQTT/TLS work. The firmware should build with the intended wolfSSL integration boundary, but this sub-phase must not perform or claim a real TLS handshake. Certificate and secret handling must follow the repository secrets policy. Do not implement real network transport, ST67W61M1 backend, MQTT publish, or hardware tests in this sub-phase.
+Requirement: Implement Phase _ of the attached development plan - _. Add or validate a wolfSSL build-only skeleton for STM32 MQTT/TLS work. The firmware should build with the intended wolfSSL integration boundary, but this sub-phase must not perform or claim a real TLS handshake. Certificate and secret handling must follow the repository secrets policy. Do not implement real network transport, ST67W61M1 backend, MQTT publish, or hardware tests in this sub-phase.
 
 ```
 
@@ -292,7 +292,7 @@ Add or validate wolfMQTT build integration and bind it to an abstract transport 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add or validate a wolfMQTT build-only skeleton for STM32 MQTT/TLS work. The MQTT client must be separated from the transport backend so fake/no-network and future ST67W61M1 backends can be selected without changing MQTT logic. This sub-phase must not claim broker connection, TLS handshake, publish, reconnect, Wi-Fi, or end-to-end success.
+Requirement: Implement Phase _ of the attached development plan - _. Add or validate a wolfMQTT build-only skeleton for STM32 MQTT/TLS work. The MQTT client must be separated from the transport backend so fake/no-network and future ST67W61M1 backends can be selected without changing MQTT logic. This sub-phase must not claim broker connection, TLS handshake, publish, reconnect, Wi-Fi, or end-to-end success.
 
 ```
 
@@ -329,7 +329,7 @@ Run the STM32 firmware on the existing board with a fake/no-network backend to v
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated.
+Requirement: Implement Phase _ of the attached development plan - _. Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated.
 
 ```
 
@@ -364,7 +364,7 @@ Optionally validate MQTT/TLS semantics against the broker using wolfSSL and wolf
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add an optional host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated.
+Requirement: Implement Phase _ of the attached development plan - _. Add an optional host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated.
 
 ```
 
@@ -401,7 +401,7 @@ Add the real Wi-Fi module backend once the X-NUCLEO-67W61M1 is installed and ava
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add the ST67W61M1 network-interface backend for the existing STM32-local lwIP/wolfSSL/wolfMQTT architecture. Validate module detection and network-interface bring-up separately from TLS and MQTT success. Do not claim TLS handshake, MQTT connect, publish, reconnect, or end-to-end success unless explicit logs, UART evidence, manifests, or broker logs support those claims. Keep hardware tests capability-gated.
+Requirement: Implement Phase _ of the attached development plan - _. Add the ST67W61M1 network-interface backend for the existing STM32-local lwIP/wolfSSL/wolfMQTT architecture. Validate module detection and network-interface bring-up separately from TLS and MQTT success. Do not claim TLS handshake, MQTT connect, publish, reconnect, or end-to-end success unless explicit logs, UART evidence, manifests, or broker logs support those claims. Keep hardware tests capability-gated.
 
 ```
 
@@ -444,7 +444,7 @@ Validate actual STM32-to-broker MQTT-over-TLS with lwIP, wolfSSL, wolfMQTT, and 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement classical MQTT-over-TLS runtime validation on STM32 using the established architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32 and the ST67W61M1 provides the network interface. Capture TLS handshake, MQTT connect, publish, reconnect, and relevant resource metrics only from explicit logs, UART markers, manifests, or broker evidence. Keep tests capability-gated and preserve the repository secrets policy.
+Requirement: Implement Phase _ of the attached development plan - _. Implement classical MQTT-over-TLS runtime validation on STM32 using the established architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32 and the ST67W61M1 provides the network interface. Capture TLS handshake, MQTT connect, publish, reconnect, and relevant resource metrics only from explicit logs, UART markers, manifests, or broker evidence. Keep tests capability-gated and preserve the repository secrets policy.
 
 ```
 
@@ -474,7 +474,7 @@ Evaluate MQTT/TLS behavior under controlled network impairment after the real ne
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add controlled network-degradation support for MQTT/TLS experiments after the real STM32 MQTT-over-TLS path is working. The implementation must apply, verify, and clean up impairments safely, record the active network profile in results, and keep gateway-dependent tests capability-gated. Do not claim degraded-network results without explicit logs or manifests.
+Requirement: Implement Phase _ of the attached development plan - _. Add controlled network-degradation support for MQTT/TLS experiments after the real STM32 MQTT-over-TLS path is working. The implementation must apply, verify, and clean up impairments safely, record the active network profile in results, and keep gateway-dependent tests capability-gated. Do not claim degraded-network results without explicit logs or manifests.
 
 ```
 
@@ -504,7 +504,7 @@ Add PQC or hybrid TLS experiments only after classical MQTT/TLS is stable and su
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add PQC or hybrid MQTT/TLS experiment profiles only after confirming the selected wolfSSL/wolfMQTT support and after classical STM32 MQTT-over-TLS is stable. Preserve comparable metrics, capability-gated tests, and evidence discipline. Do not add unsupported profiles or claim PQC/hybrid TLS success without explicit logs, manifests, or broker/client validation output.
+Requirement: Implement Phase _ of the attached development plan - _. Add PQC or hybrid MQTT/TLS experiment profiles only after confirming the selected wolfSSL/wolfMQTT support and after classical STM32 MQTT-over-TLS is stable. Preserve comparable metrics, capability-gated tests, and evidence discipline. Do not add unsupported profiles or claim PQC/hybrid TLS success without explicit logs, manifests, or broker/client validation output.
 
 ```
 
