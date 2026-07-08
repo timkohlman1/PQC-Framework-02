@@ -38,6 +38,18 @@ STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
 DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.der")
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
+WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
+    "tools/bin-assemble/*.o",
+    "tools/bin-assemble/*.d",
+    "tools/bin-assemble/bin-assemble",
+    "tools/bin-assemble/bin-assemble.exe",
+    "tools/keytools/*.o",
+    "tools/keytools/*.d",
+    "tools/keytools/keygen",
+    "tools/keytools/keygen.exe",
+    "tools/keytools/sign",
+    "tools/keytools/sign.exe",
+)
 
 
 @dataclass(frozen=True)
@@ -562,6 +574,29 @@ def _copy_project_local_config(
     return template_path, generated_path, True
 
 
+def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
+    """Remove generated wolfBoot host-tool outputs before a local build.
+
+    wolfBoot builds several host utilities, including ``bin-assemble`` and
+    signing/key-generation tools. In this project the wolfBoot submodule is
+    often shared between the native Windows workflow and the Linux container
+    through a bind mount. Stale object files and dependency files can otherwise
+    carry host-specific paths, such as ``/workspace`` from a container run, into
+    a native Windows build or vice versa. These files are generated build
+    products, not source files or signing secrets, so removing them before the
+    build is safe and keeps cross-host/container builds deterministic.
+    """
+
+    removed: list[Path] = []
+    for pattern in WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS:
+        for path in source_dir.glob(pattern):
+            if not path.exists() or path.is_dir():
+                continue
+            path.unlink()
+            removed.append(path)
+    return removed
+
+
 def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExecution:
     """Run a wolfBoot build command and capture stdout, stderr, and timing."""
 
@@ -1064,6 +1099,7 @@ def execute_wolfboot_build(
                             failure_reason = str(exc)
                         else:
                             try:
+                                _remove_wolfboot_host_tool_outputs(source_dir)
                                 key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
                                     signing_key_path=signing_key_path,
                                     wolfboot_private_key_path=wolfboot_private_key_path,

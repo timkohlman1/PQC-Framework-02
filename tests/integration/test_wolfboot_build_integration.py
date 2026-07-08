@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -15,21 +14,19 @@ def _repo_root() -> Path:
 
 
 @pytest.mark.integration
-def test_real_wolfboot_build_profile_records_evidence_when_tooling_is_available(tmp_path):
-    """Run the real wolfBoot build profile only when explicitly enabled.
+def test_real_wolfboot_build_profile_records_evidence_when_tooling_is_available(
+    tmp_path,
+    pqc_require_capabilities,
+):
+    """Run the real wolfBoot build profile when local tooling is available.
 
-    Phase 10f.1 adds the project-local STM32L4R5 wolfBoot build
-    adaptation, but this test still requires a populated local wolfBoot
-    submodule and the cross-build tools. It remains opt-in so normal test
-    runs do not invoke real wolfBoot tooling.
+    The test is capability-gated rather than hidden behind an additional
+    opt-in environment variable. A plain ``python -m pytest`` run exercises this
+    local-toolchain-only wolfBoot build when the submodule and build tools are
+    available, and skips cleanly when they are unavailable.
     """
 
-    if os.environ.get("PQC_RUN_WOLFBOOT_BUILD_INTEGRATION") != "1":
-        pytest.skip(
-            "real wolfBoot build integration is opt-in because it requires the "
-            "local wolfBoot submodule and cross-build tooling; set "
-            "PQC_RUN_WOLFBOOT_BUILD_INTEGRATION=1 to run it intentionally"
-        )
+    pqc_require_capabilities("local_toolchain", strict_mode="local_build")
 
     repo_root = _repo_root()
     source_dir = repo_root / "tools" / "wolfboot"

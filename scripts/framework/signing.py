@@ -37,6 +37,7 @@ KEYGEN_TOOL_MISSING_RETURN_CODE = 35
 BINARY_CONVERSION_TOOL_MISSING_RETURN_CODE = 36
 SIGNING_COMMAND_TIMEOUT_RETURN_CODE = 37
 DEFAULT_SIGNING_COMMAND_TIMEOUT_SECONDS = 30
+DEFAULT_KEYTOOLS_BUILD_TIMEOUT_SECONDS = 120
 DEFAULT_SIGNING_RESULTS_SUBDIR = "signing"
 DEFAULT_SIGNING_LOG_NAME = "signing.log"
 DEFAULT_RETAINED_SIGNED_IMAGE_NAME = "application_signed.bin"
@@ -360,6 +361,93 @@ def _resolve_command_for_cwd(command: list[str], cwd: Path) -> list[str]:
     return command
 
 
+
+def _is_wolfboot_keytool_command(command: list[str], cwd: Path) -> bool:
+    """Return true for configured wolfBoot keytool commands under a wolfBoot tree."""
+
+    if not command:
+        return False
+    executable = command[0].replace("\\", "/")
+    if executable not in {"tools/keytools/keygen", "tools/keytools/sign"}:
+        return False
+    return (cwd / "tools" / "keytools" / "Makefile").is_file()
+
+
+def _native_wolfboot_keytool_path(command: list[str], cwd: Path) -> Path | None:
+    """Return the expected native wolfBoot keytool path for this host."""
+
+    if not _is_wolfboot_keytool_command(command, cwd):
+        return None
+    executable = command[0].replace("\\", "/")
+    tool_name = Path(executable).name
+    if os.name == "nt":
+        tool_name = f"{tool_name}.exe"
+    return cwd / "tools" / "keytools" / tool_name
+
+
+def _remove_stale_wolfboot_keytool_outputs(cwd: Path) -> None:
+    """Remove generated keytool outputs before rebuilding host-native tools."""
+
+    keytools_dir = cwd / "tools" / "keytools"
+    for pattern in ("*.o", "*.d", "keygen", "keygen.exe", "sign", "sign.exe"):
+        for path in keytools_dir.glob(pattern):
+            if path.is_file():
+                path.unlink()
+
+
+def _ensure_native_wolfboot_keytool(command: list[str], cwd: Path) -> SigningCommandExecution | None:
+    """Build wolfBoot keytools when the configured native executable is absent.
+
+    The repository may be bind-mounted between Windows and Linux. Generated
+    keytool objects and executables are host-specific, so remove stale generated
+    outputs and rebuild the keytools locally before running keygen/sign.
+    """
+
+    native_tool = _native_wolfboot_keytool_path(command, cwd)
+    if native_tool is None or native_tool.is_file():
+        return None
+
+    _remove_stale_wolfboot_keytool_outputs(cwd)
+    build_command = ["make", "-C", "tools/keytools"]
+    start = perf_counter()
+    try:
+        completed = subprocess.run(
+            build_command,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=DEFAULT_KEYTOOLS_BUILD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        duration_seconds = perf_counter() - start
+        timeout_message = (
+            f"wolfBoot keytools build timed out after "
+            f"{DEFAULT_KEYTOOLS_BUILD_TIMEOUT_SECONDS} seconds"
+        )
+        stderr = _timeout_output(exc.stderr)
+        if stderr:
+            stderr = f"{stderr}\n{timeout_message}"
+        else:
+            stderr = timeout_message
+        return SigningCommandExecution(
+            command=build_command,
+            return_code=SIGNING_COMMAND_TIMEOUT_RETURN_CODE,
+            stdout=_timeout_output(exc.stdout),
+            stderr=stderr,
+            duration_seconds=duration_seconds,
+        )
+    if completed.returncode != 0:
+        return SigningCommandExecution(
+            command=build_command,
+            return_code=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            duration_seconds=perf_counter() - start,
+        )
+    return None
+
+
 def _timeout_output(value: str | bytes | None) -> str:
     """Normalize subprocess timeout output to text for evidence logs."""
 
@@ -372,6 +460,10 @@ def _timeout_output(value: str | bytes | None) -> str:
 
 def default_signing_runner(command: list[str], cwd: Path, stdin_text: str | None = None) -> SigningCommandExecution:
     """Run a signing-related command and capture stdout, stderr, and timing."""
+
+    keytool_build_execution = _ensure_native_wolfboot_keytool(command, cwd)
+    if keytool_build_execution is not None:
+        return keytool_build_execution
 
     resolved_command = _resolve_command_for_cwd(command, cwd)
     start = perf_counter()

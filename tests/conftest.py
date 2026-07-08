@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +14,44 @@ DEFAULT_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
 DEFAULT_HOST_CONFIG = "configs/hosts/gateway.yaml"
 SSH_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 5
+CONTAINER_GATEWAY_ENABLE_ENV = "PQC_CONTAINER_ENABLE_GATEWAY"
+CONTAINER_ENV = "PQC_CONTAINER"
+CLEAN_GENERATED_BUILD_ARTIFACTS_ENV = "PQC_CLEAN_GENERATED_BUILD_ARTIFACTS"
+SKIP_CONTAINER_GENERATED_BUILD_CLEANUP_ENV = "PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP"
+GENERATED_BUILD_CLEANUP_DONE_KEY = "pqc_generated_build_cleanup_done"
+
+CMAKE_BUILD_DIRS_TO_CLEAN = (
+    Path("build/Debug"),
+    Path("build/RelocatedDebug"),
+)
+WOLFBOOT_GENERATED_FILES_TO_CLEAN = (
+    Path("tools/wolfboot/.config"),
+    Path("tools/wolfboot/wolfboot.elf"),
+    Path("tools/wolfboot/wolfboot.bin"),
+    Path("tools/wolfboot/wolfboot.hex"),
+    Path("tools/wolfboot/wolfboot.map"),
+    Path("tools/wolfboot/wolfboot_signing_private_key.der"),
+)
+WOLFBOOT_GENERATED_GLOBS_TO_CLEAN = (
+    "tools/wolfboot/*.o",
+    "tools/wolfboot/*.d",
+    "tools/wolfboot/src/*.o",
+    "tools/wolfboot/src/*.d",
+    "tools/wolfboot/hal/*.o",
+    "tools/wolfboot/hal/*.d",
+    "tools/wolfboot/tools/bin-assemble/*.o",
+    "tools/wolfboot/tools/bin-assemble/*.d",
+    "tools/wolfboot/tools/bin-assemble/bin-assemble",
+    "tools/wolfboot/tools/bin-assemble/bin-assemble.exe",
+    "tools/wolfboot/tools/keytools/*.o",
+    "tools/wolfboot/tools/keytools/*.d",
+    "tools/wolfboot/tools/keytools/keygen",
+    "tools/wolfboot/tools/keytools/keygen.exe",
+    "tools/wolfboot/tools/keytools/sign",
+    "tools/wolfboot/tools/keytools/sign.exe",
+)
+FOREIGN_PATH_MARKERS_IN_NATIVE_WINDOWS = ("/workspace/",)
+FOREIGN_PATH_MARKERS_IN_CONTAINER = ("C:/", "C:\\")
 
 
 TEST_PHASE_UNIT = "unit"
@@ -66,6 +106,92 @@ class CapabilityResult:
     name: str
     available: bool
     reason: str
+
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _running_in_container() -> bool:
+    return _truthy_env(CONTAINER_ENV) or Path("/.dockerenv").exists()
+
+
+def _container_gateway_enabled() -> bool:
+    return _truthy_env(CONTAINER_GATEWAY_ENABLE_ENV)
+
+
+def _generated_build_cleanup_markers() -> tuple[str, ...]:
+    if _running_in_container():
+        return FOREIGN_PATH_MARKERS_IN_CONTAINER
+    return FOREIGN_PATH_MARKERS_IN_NATIVE_WINDOWS
+
+
+def _text_file_contains_any(path: Path, markers: tuple[str, ...]) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return any(marker in text for marker in markers)
+
+
+def _has_foreign_generated_build_state(repo_root: Path) -> bool:
+    markers = _generated_build_cleanup_markers()
+    if not markers:
+        return False
+
+    for cache_path in (repo_root / path / "CMakeCache.txt" for path in CMAKE_BUILD_DIRS_TO_CLEAN):
+        if cache_path.is_file() and _text_file_contains_any(cache_path, markers):
+            return True
+
+    wolfboot_dir = repo_root / "tools" / "wolfboot"
+    if wolfboot_dir.is_dir():
+        for dep_path in wolfboot_dir.glob("**/*.d"):
+            if dep_path.is_file() and _text_file_contains_any(dep_path, markers):
+                return True
+
+    return False
+
+
+def _remove_path(path: Path) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return True
+
+
+def _clean_generated_build_artifacts(repo_root: Path) -> list[Path]:
+    removed: list[Path] = []
+
+    for relative_path in CMAKE_BUILD_DIRS_TO_CLEAN:
+        path = repo_root / relative_path
+        if _remove_path(path):
+            removed.append(path)
+
+    for relative_path in WOLFBOOT_GENERATED_FILES_TO_CLEAN:
+        path = repo_root / relative_path
+        if _remove_path(path):
+            removed.append(path)
+
+    for pattern in WOLFBOOT_GENERATED_GLOBS_TO_CLEAN:
+        for path in repo_root.glob(pattern):
+            if _remove_path(path):
+                removed.append(path)
+
+    return removed
+
+
+def _should_clean_generated_build_artifacts(config: pytest.Config) -> bool:
+    if config.getoption("--pqc-clean-generated-build-artifacts"):
+        return True
+    if _truthy_env(CLEAN_GENERATED_BUILD_ARTIFACTS_ENV):
+        return True
+    if _running_in_container() and not _truthy_env(SKIP_CONTAINER_GENERATED_BUILD_CLEANUP_ENV):
+        return True
+    return _has_foreign_generated_build_state(_repo_root())
 
 
 def _repo_root() -> Path:
@@ -238,6 +364,13 @@ class PqcCapabilityChecker:
         return CapabilityResult("local_toolchain", True, "cmake, ninja, and CMake presets are available")
 
     def _check_gateway(self) -> CapabilityResult:
+        if _running_in_container() and not _container_gateway_enabled():
+            return CapabilityResult(
+                "gateway",
+                False,
+                f"container gateway access requires {CONTAINER_GATEWAY_ENABLE_ENV}=1 and runtime-provided SSH configuration",
+            )
+
         host = _host_config()
         host_alias = _nested(host, "alias")
         if not host_alias:
@@ -304,7 +437,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--pqc-require-gateway",
         action="store_true",
         default=False,
-        help="Fail instead of skip when gateway or gateway flash-helper capability is unavailable.",
+        help="Fail instead of skip when gateway or gateway flash-helper capability is unavailable. Inside a container, gateway checks also require PQC_CONTAINER_ENABLE_GATEWAY=1 and runtime-provided SSH access.",
     )
     group.addoption(
         "--pqc-require-hardware",
@@ -312,6 +445,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Fail instead of skip when hardware/UART capability is unavailable.",
     )
+    group.addoption(
+        "--pqc-clean-generated-build-artifacts",
+        action="store_true",
+        default=False,
+        help=(
+            "Remove generated CMake and wolfBoot build outputs before the test "
+            "session. Container runs perform this cleanup by default unless "
+            f"{SKIP_CONTAINER_GENERATED_BUILD_CLEANUP_ENV}=1 is set."
+        ),
+    )
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    config = session.config
+    if getattr(config, GENERATED_BUILD_CLEANUP_DONE_KEY, False):
+        return
+    setattr(config, GENERATED_BUILD_CLEANUP_DONE_KEY, True)
+
+    if not _should_clean_generated_build_artifacts(config):
+        return
+
+    _clean_generated_build_artifacts(_repo_root())
 
 
 def pytest_cmdline_main(config: pytest.Config) -> None:

@@ -420,3 +420,47 @@ def test_validate_wolfboot_build_profile_accepts_mldsa44():
     profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_mldsa44.config"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
+
+
+def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
+
+    stale_paths = [
+        source_dir / "tools" / "bin-assemble" / "bin-assemble.o",
+        source_dir / "tools" / "bin-assemble" / "bin-assemble.exe",
+        source_dir / "tools" / "keytools" / "sign.o",
+        source_dir / "tools" / "keytools" / "sign.exe",
+    ]
+    for stale_path in stale_paths:
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_bytes(b"stale host build output")
+
+    def fake_runner(command: list[str], cwd: Path):
+        assert command == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]
+        assert cwd == source_dir
+        for stale_path in stale_paths:
+            assert not stale_path.exists()
+        artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 0
+    for stale_path in stale_paths:
+        assert not stale_path.exists()

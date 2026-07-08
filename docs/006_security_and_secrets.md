@@ -39,6 +39,34 @@ Build and signing manifests may record non-secret SHA-256 key fingerprints to pr
 
 `flash-secure-boot` refuses hardware flashing when available canonical and wolfBoot working-tree private-key fingerprints differ. This prevents flashing a bootloader and application signed with inconsistent key material.
 
+
+## Containerised workflow secret handling
+
+Container images and container build contexts must not contain private keys, credential files, generated signing material, real `.env` files, private certificates, or production credentials. The repository `.dockerignore` excludes generated outputs, `secrets/`, local environment files, wolfBoot generated key material, and MQTT broker runtime material from container build contexts.
+
+The container image supports Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. Signing material for containerised secure-boot workflows must come from the runtime-mounted workspace or locally generated files such as `secrets/wolfboot/<profile>_private_key.der`; it must remain outside the image, outside Git, and outside replacement artifacts. The image may contain client tools such as OpenSSH and OpenSSL, but it must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, real `.env` files, or generated signing material.
+
+This applies to secure-boot signing material, wolfBoot working-tree signing keys, SSH access for any optional gateway-capable workflow, VPN profiles, MQTT broker credentials, TLS private keys, and certificate authority private material. Documentation may describe required mount points or local preparation steps, but must not include real secret values or ask for secret material to be committed.
+
+The default containerisation path remains non-hardware. Gateway-capable container workflows are opt-in, capability-gated, and supplied with SSH access at runtime only. Inside the container, gateway checks require `PQC_CONTAINER_ENABLE_GATEWAY=1` and runtime-mounted SSH configuration, known-hosts data, and credentials. Without that explicit enablement, gateway tests skip or fail according to the existing pytest strict flag.
+
+
+### Container gateway SSH access
+
+Gateway-capable container checks must use runtime-provided SSH material only. A typical PowerShell invocation mounts the workspace and a local SSH directory read-only:
+
+```powershell
+docker run --rm -v ${PWD}:/workspace -w /workspace -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v ${env:USERPROFILE}\.ssh:/root/.ssh:ro pqc-framework-stm32-build python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+```
+
+Do not copy SSH private keys, VPN profiles, broker credentials, TLS private keys, private certificates, private signing keys, or real `.env` files into the repository or the image. Keep known-hosts data and SSH configuration local to the runtime environment.
+
+## CI secret handling
+
+The GitHub Actions workflow preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation, and adds a containerised non-hardware job. The containerised job must not require repository, organization, or environment secrets. It must not mount SSH keys, VPN keys, broker credentials, TLS private keys, private certificates, private signing keys, real `.env` files, or production credentials. Signing material generated during CI is local runner workspace state only and must remain ignored by Git and excluded from container images.
+
+The existing MQTT broker Docker runtime job uses temporary local test certificates generated for the CI run; it must not use production broker credentials, private certificates, real `.env` files, or committed secrets. Gateway, hardware, Wi-Fi-module, or other secret-dependent CI workflows must be separate opt-in workflows if they are added later, and must preserve the same no-committed-secrets rule.
+
 ## Generated outputs to keep out of Git
 
 ```text

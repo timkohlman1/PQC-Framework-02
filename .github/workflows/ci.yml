@@ -181,3 +181,70 @@ jobs:
 
       - name: Run MQTT broker Docker runtime tests
         run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
+
+  container-non-hardware:
+    name: Containerised non-hardware checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      IMAGE_NAME: pqc-framework-stm32-build
+      DOCKER_BUILDKIT: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build project container image
+        run: docker build -f docker/python/Dockerfile -t "${IMAGE_NAME}:ci" .
+
+      - name: Record containerised CI scope
+        run: |
+          cat <<'EOF_SCOPE'
+          Containerised CI scope: reproducible non-hardware build/test checks inside the project container.
+          This job does not use GitHub Actions secrets, SSH keys, VPN keys, private certificates, private signing keys, board flashing, UART devices, Wi-Fi modules, or gateway access.
+          Existing runner-compatible and MQTT broker Docker runtime jobs remain separate CI coverage.
+          EOF_SCOPE
+
+      - name: Show container tool versions
+        run: |
+          docker run --rm "${IMAGE_NAME}:ci" sh -lc '
+            python --version && \
+            cmake --version && \
+            ninja --version && \
+            arm-none-eabi-gcc --version | head -n 1 && \
+            make --version | head -n 1
+          '
+
+      - name: Run Python unit tests in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit
+
+      - name: Run safe framework status command in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+
+      - name: Build direct-flash firmware preset in container
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset Debug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset Debug
+
+      - name: Build relocated firmware preset in container
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset RelocatedDebug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset RelocatedDebug
+
+      - name: Build wolfBoot profile in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+
+      - name: Sign relocated application in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+
+      - name: Run non-hardware local-build integration tests in container
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
+            python -m pytest \
+              tests/integration/test_local_build.py \
+              tests/integration/test_wolfboot_build_integration.py \
+              -m integration \
+              --pqc-require-local-build

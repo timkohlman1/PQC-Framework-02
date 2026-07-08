@@ -122,7 +122,7 @@ Extend the container to support non-hardware STM32 firmware builds.
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Extend the containerised non-hardware environment to support STM32 local builds. It should support the existing direct-flash and relocated CMake build workflows and the relevant local-build integration tests. Do not add wolfBoot build/signing support, gateway access, UART capture, direct USB/ST-LINK access, Wi-Fi module access, or hardware tests in this sub-phase.
+Requirement: Implement Phase C3 - STM32 Build Container per the attached phase plan. Extend the containerised non-hardware environment to support STM32 local builds. It should support the existing direct-flash and relocated CMake build workflows and the relevant local-build integration tests. Do not add wolfBoot build/signing support, gateway access, UART capture, direct USB/ST-LINK access, Wi-Fi module access, or hardware tests in this sub-phase.
 
 ```
 
@@ -171,7 +171,7 @@ Extend the container to support secure-boot build and signing workflows without 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Extend the containerised non-hardware environment to support wolfBoot build and application signing workflows. The solution must preserve the repository's secrets policy: private signing keys and generated signing material must not be committed or baked into the image. Use runtime-mounted or locally generated material only. Do not add hardware flashing, UART capture, gateway access, or Wi-Fi module support in this sub-phase.
+Requirement: Implement Phase C4 - Wolfboot build and app signing container support per the attached phase plan. Extend the containerised non-hardware environment to support wolfBoot build and application signing workflows. The solution must preserve the repository's secrets policy: private signing keys and generated signing material must not be committed or baked into the image. Use runtime-mounted or locally generated material only. Do not add hardware flashing, UART capture, gateway access, or Wi-Fi module support in this sub-phase.
 
 ```
 
@@ -219,7 +219,7 @@ Allow opt-in gateway-dependent integration workflows from the container without 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add optional gateway-capable integration support to the container workflow. Gateway access must be explicitly enabled and must use runtime-provided SSH access only. The container image must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Hardware, gateway, UART, and broker tests must remain capability-gated and must not run by default.
+Requirement: Implement Phase C5 Gateway-capable container integration - per the attached phase plan. Add optional gateway-capable integration support to the container workflow. Gateway access must be explicitly enabled and must use runtime-provided SSH access only. The container image must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Hardware, gateway, UART, and broker tests must remain capability-gated and must not run by default.
 
 ```
 
@@ -265,7 +265,7 @@ Use the container as a reproducible non-hardware CI baseline after local contain
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Add optional CI support for the containerised non-hardware workflow. CI should run the reproducible Python and non-hardware build checks already supported by the local container workflow. It must not run hardware, gateway, UART, broker, Wi-Fi-module, or secret-dependent workflows by default. Do not add or require secrets in CI.
+Requirement: Implement Phase C6 - CI Integration per the attached phase plan. Add CI support for the containerised non-hardware workflow. CI should run the reproducible Python and non-hardware build checks already supported by the local container workflow. It must not run hardware, gateway, UART, broker, Wi-Fi-module, or secret-dependent workflows by default. Do not add or require secrets in CI.
 
 ```
 
@@ -287,3 +287,13 @@ The containerised non-hardware build environment is complete when:
 - wolfBoot build and signing workflows run inside the container without committed or baked secrets.
 - Hardware, gateway, UART, Wi-Fi-module, and broker workflows remain optional and capability-gated.
 - Documentation clearly distinguishes portable build/test evidence from hardware/runtime evidence.
+
+
+
+followup
+
+
+Requirement: Review whether Windows-native non-hardware build support should be deprecated in favour of the containerised workflow. Do not remove support automatically. Assess current documentation, scripts, tests, and generated-artifact cleanup requirements, then propose a staged migration plan.
+
+
+
