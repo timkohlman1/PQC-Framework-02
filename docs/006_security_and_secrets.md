@@ -61,6 +61,12 @@ docker run --rm -v ${PWD}:/workspace -w /workspace -e PQC_CONTAINER_ENABLE_GATEW
 
 Do not copy SSH private keys, VPN profiles, broker credentials, TLS private keys, private certificates, private signing keys, or real `.env` files into the repository or the image. Keep known-hosts data and SSH configuration local to the runtime environment.
 
+## CI secret handling
+
+The default GitHub Actions workflow is the containerised non-hardware baseline and must not require repository, organization, or environment secrets. It must not mount SSH keys, VPN keys, broker credentials, TLS private keys, private certificates, private signing keys, real `.env` files, or production credentials. Signing material generated during CI is local runner workspace state only and must remain ignored by Git and excluded from container images.
+
+Gateway, hardware, broker runtime, Wi-Fi-module, or other secret-dependent CI workflows must be separate opt-in workflows if they are added later, and must preserve the same no-committed-secrets rule.
+
 ## Generated outputs to keep out of Git
 
 ```text

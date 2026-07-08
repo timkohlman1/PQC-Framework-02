@@ -10,7 +10,7 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
 
-Longer-term areas remain planned unless implemented by later phases: CI container integration, STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
+Longer-term areas remain planned unless implemented by later phases: STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
 
 ## 3. Current Status
 
@@ -49,13 +49,14 @@ Implemented framework scope as of Phase 11.7:
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
 - containerised baseline for Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
+- GitHub Actions CI for the containerised non-hardware workflow, covering Python unit tests, safe framework status validation, STM32 direct/relocated builds, wolfBoot build, relocated application signing, and targeted local-build integration tests without default hardware, gateway, UART, broker, Wi-Fi-module, or secret-dependent workflows
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- CI container integration, STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -105,6 +106,8 @@ tests/
 tools/
 results/
 docs/
+docker/
+.github/workflows/
 pytest.ini
 experiment/mqtt-broker/
 ```
@@ -403,7 +406,7 @@ python -m pytest
 
 ## 10a. Containerised Build/Test Environment
 
-Phase C5 implements a container baseline for Python framework validation, STM32 local builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, host build tooling for wolfBoot/keytools, OpenSSL for local certificate provisioning, and an SSH client for runtime-provided gateway access. It defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
+Phase C5 implements a container baseline for Python framework validation, STM32 local builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. Phase C6 adds GitHub Actions CI for the same containerised non-hardware baseline. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, host build tooling for wolfBoot/keytools, OpenSSL for local certificate provisioning, and an SSH client for runtime-provided gateway access. It defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
 
 Supported default container workflows:
 
@@ -441,6 +444,22 @@ Containerised application signing must use the runtime-mounted workspace or loca
 Hardware flashing, UART capture, Wi-Fi-module workflows, gateway SSH workflows, MQTT broker gateway validation, and end-to-end runtime tests remain separate from the default container path. Gateway-capable container checks are explicit opt-in workflows using runtime-provided SSH only and existing capability-gated tests.
 
 Containerised build/signing evidence is portable software-build evidence only. Do not claim hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success from container runs unless explicit logs, manifests, or equivalent evidence from those workflows are provided.
+
+### CI containerised non-hardware checks
+
+GitHub Actions CI is defined in `.github/workflows/ci.yml`. The default CI job builds the project container image and runs only containerised non-hardware checks:
+
+```text
+Python unit tests
+Safe framework status validation with no build, flash, SSH, UART, broker, or hardware access
+STM32 Debug configure/build
+STM32 RelocatedDebug configure/build
+wolfBoot ECDSA P-256 build profile
+Relocated application signing for the ECDSA P-256 profile using runtime-generated or runtime-mounted workspace material only
+Targeted local-build integration tests for `test_local_build.py` and `test_wolfboot_build_integration.py`
+```
+
+The default CI path does not run `tests/hardware`, gateway SSH checks, UART capture, flashing, MQTT broker runtime/gateway validation, Wi-Fi-module workflows, or secret-dependent workflows. CI must not require repository, organization, or environment secrets for this default path. Any future gateway, hardware, broker runtime, or secret-dependent CI workflow must be separate and explicitly opt-in. Containerised CI evidence is portable software-build evidence only; it is not hardware, gateway, flashing, UART, MQTT/TLS, runtime, timing, memory, benchmark, or end-to-end evidence.
 
 ### Optional gateway-capable container checks
 

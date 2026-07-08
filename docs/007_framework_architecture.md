@@ -21,15 +21,15 @@ Implemented:
 11. Post-secureboot application scheduler template using CMSIS-RTOS v1 FreeRTOS.
 12. Gateway MQTT broker Docker Compose project with classical MQTT-over-TLS and an experimental OQS Mosquitto profile.
 13. Containerised baseline with Python validation, STM32 direct/relocated local CMake builds, wolfBoot builds, application signing, and explicitly opt-in gateway-capable integration checks.
+14. GitHub Actions CI for the default containerised non-hardware workflow.
 
 Planned but not implemented:
 
-1. CI container integration.
-2. STM32 MQTT client firmware integration.
-3. TLS/wolfSSL transport experiments.
-4. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
-5. Network degradation automation.
-6. Production release packaging.
+1. STM32 MQTT client firmware integration.
+2. TLS/wolfSSL transport experiments.
+3. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
+4. Network degradation automation.
+5. Production release packaging.
 
 ## Source and configuration map
 
@@ -54,6 +54,7 @@ configs/wolfboot/stm32l4r5_*.config         Project-local wolfBoot config templa
 experiment/mqtt-broker/                      Gateway MQTT broker compose project
 docker/python/Dockerfile                    Non-hardware Python, STM32, wolfBoot, and signing container baseline
 .dockerignore                               Container build-context exclusions for generated output and secrets
+.github/workflows/ci.yml                    Containerised non-hardware CI baseline
 requirements-dev.txt                        Python development dependencies for unit-test validation
 ```
 
@@ -194,7 +195,9 @@ Run strict hardware benchmark workflow only when hardware is intentionally avail
 python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
-GitHub Actions CI is defined in `.github/workflows/ci.yml`. It runs on every pushed commit and pull request, checks unit tests first, builds both local CMake firmware presets that can run on an Ubuntu GitHub-hosted runner, runs the real wolfBoot build integration test when local tooling and the wolfBoot submodule are available, and then runs integration tests with the local-build capability required. The integration job also runs MQTT broker Docker Compose config rendering tests with `docker compose config`, which validate the classical and OQS compose model without deploying to the gateway or running experiment orchestration. A separate MQTT broker Docker runtime job starts the local classical Mosquitto container, uses temporary test certificates, validates TLS 1.3 mutual authentication, and verifies MQTT publish/subscribe using client certificates. Gateway and hardware tests remain outside the default CI workflow because they require SSH access, board flashing, UART devices, Docker gateway state, or explicit lab evidence. The experimental OQS runtime path remains covered by explicit gateway validation rather than default GitHub-hosted CI.
+GitHub Actions CI is defined in `.github/workflows/ci.yml`. It runs on every pushed commit, pull request, and manual dispatch. The default CI job builds the project container image from `docker/python/Dockerfile` and runs the non-hardware checks inside that image: Python unit tests, the safe framework status command, `Debug` and `RelocatedDebug` CMake configure/build, one wolfBoot build profile, relocated ECDSA P-256 application signing, and targeted local-build integration tests for `test_local_build.py` and `test_wolfboot_build_integration.py`. The workflow does not install the STM32 or wolfBoot toolchain directly on the runner outside the project container.
+
+Default CI intentionally excludes `tests/hardware`, gateway SSH checks, UART capture, board flashing, MQTT broker runtime/gateway validation, Wi-Fi-module workflows, and secret-dependent workflows. It requires no GitHub Actions secrets. Signing material generated during CI is runtime workspace state only and remains covered by the generated-output and secret exclusions. CI output is portable software-build evidence only; it must not be used as hardware, gateway, flashing, UART, MQTT/TLS, runtime, timing, memory, benchmark, or end-to-end evidence.
 
 ## Result ownership
 

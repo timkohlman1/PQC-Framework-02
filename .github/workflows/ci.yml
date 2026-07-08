@@ -1,4 +1,4 @@
-name: CI
+name: Containerised Non-Hardware CI
 
 on:
   push:
@@ -16,168 +16,69 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  IMAGE_NAME: pqc-framework-stm32-build
+  DOCKER_BUILDKIT: "1"
+
 jobs:
-  unit-tests:
-    name: Unit tests
+  container-non-hardware:
+    name: Containerised non-hardware checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
+      - name: Build project container image
+        run: docker build -f docker/python/Dockerfile -t "${IMAGE_NAME}:ci" .
 
-      - name: Install Python test dependencies
+      - name: Record default CI exclusions
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
+          cat <<'EOF_EXCLUSIONS'
+          Default CI scope: containerised non-hardware checks only.
+          Excluded by default: hardware tests, gateway SSH checks, UART capture, board flashing, broker runtime/gateway validation, Wi-Fi-module workflows, and secret-dependent workflows.
+          EOF_EXCLUSIONS
 
-      - name: Run unit tests
-        run: python -m pytest tests/unit
-
-  firmware-builds:
-    name: Firmware CMake builds
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Install build toolchain
+      - name: Show container tool versions
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
+          docker run --rm "${IMAGE_NAME}:ci" sh -lc '
+            python --version && \
+            cmake --version && \
+            ninja --version && \
+            arm-none-eabi-gcc --version | head -n 1 && \
+            make --version | head -n 1
+          '
 
-      - name: Configure and build Debug preset
+      - name: Run Python unit tests
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit
+
+      - name: Run safe framework status command
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+
+      - name: Build direct-flash firmware preset
         run: |
-          cmake --preset Debug
-          cmake --build --preset Debug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset Debug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset Debug
 
-      - name: Configure and build RelocatedDebug preset
+      - name: Build relocated firmware preset
         run: |
-          cmake --preset RelocatedDebug
-          cmake --build --preset RelocatedDebug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset RelocatedDebug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset RelocatedDebug
 
-  wolfboot-build-integration:
-    name: wolfBoot build integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs:
-      - unit-tests
+      - name: Build wolfBoot profile
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
+      - name: Sign relocated application
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install wolfBoot build toolchain
+      - name: Run non-hardware local-build integration tests
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            make \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
-
-      - name: Install Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
-
-      - name: Run wolfBoot build integration test
-        env:
-          PQC_RUN_WOLFBOOT_BUILD_INTEGRATION: "1"
-        run: python -m pytest tests/integration/test_wolfboot_build_integration.py -m integration
-
-  integration-tests:
-    name: Runner-compatible integration tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs:
-      - unit-tests
-      - firmware-builds
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install build toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
-
-      - name: Install Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
-
-      - name: Check Docker Compose availability
-        run: docker compose version
-
-      - name: Run local integration tests
-        run: python -m pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
-
-  mqtt-broker-docker-runtime:
-    name: MQTT broker Docker runtime
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs:
-      - unit-tests
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
-
-      - name: Check Docker runtime availability
-        run: |
-          docker info
-          docker compose version
-          openssl version
-
-      - name: Pull MQTT broker runtime image
-        run: docker pull eclipse-mosquitto:2.0
-
-      - name: Run MQTT broker Docker runtime tests
-        run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
+            python -m pytest \
+              tests/integration/test_local_build.py \
+              tests/integration/test_wolfboot_build_integration.py \
+              -m integration \
+              --pqc-require-local-build
