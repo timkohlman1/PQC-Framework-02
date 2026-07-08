@@ -1,12 +1,13 @@
-# Development image for Python framework validation, STM32 local builds,
-# wolfBoot builds, local application-signing workflows, and explicitly opt-in
-# gateway-capable integration checks. It contains tools only.
+# Default development/runtime image for Python framework validation, STM32 builds,
+# wolfBoot builds, application-signing workflows, pytest, and gateway-mediated
+# hardware experiments and gateway-capable integration checks. It contains tools only.
 # The image contains no secret material; SSH access and any other credentials are provided at container runtime.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PQC_CONTAINER=1
 
 ARG DEBIAN_FRONTEND=noninteractive
 

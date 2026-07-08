@@ -15,7 +15,7 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
-- a container baseline for Python validation, STM32 direct/relocated local CMake builds, wolfBoot builds, application signing, and explicitly enabled gateway-capable integration checks
+- a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
 Not implemented yet: STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
@@ -39,76 +39,119 @@ tools/wolfboot/                           Local wolfBoot submodule; generated ou
 
 ## Common commands
 
-Run all tests that can run on the current machine. Integration and hardware tests skip when capabilities are unavailable:
+The default development path is Docker-hosted Linux execution through the project wrapper scripts. The development machine should provide Docker and runtime-mounted SSH access for gateway workflows; it should not need local STM32/CMake/Ninja/Arm GCC/Python pytest tooling for normal framework use.
+
+Build or refresh the project image from the repository root:
 
 ```powershell
-python -m pytest
+.\scripts\dev.ps1 build-image
+```
+
+Equivalent raw Docker command:
+
+```powershell
+docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build .
+```
+
+Run all tests that can run without gateway access. Integration and hardware tests skip when capabilities are unavailable:
+
+```powershell
+.\scripts\dev.ps1 pytest
 ```
 
 Run unit tests only:
 
 ```powershell
-python -m pytest tests/unit
+.\scripts\dev.ps1 pytest tests/unit
 ```
 
-Check the direct-flash baseline config:
+Equivalent raw Docker command, retained for compatibility with container baseline checks:
 
 ```powershell
-python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/unit
 ```
 
-Build the direct-flash baseline:
+Check the direct-flash baseline config inside the container:
 
 ```powershell
-python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Run the full direct-flash baseline workflow:
+Build the direct-flash baseline inside the container:
 
 ```powershell
-python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Use an existing first-class build record for the direct-flash run:
+Run the full direct-flash baseline workflow through Docker and the SSH gateway:
 
 ```powershell
-python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml --build-number <number>
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Monitor UART through the gateway:
+Use an existing first-class build record for the direct-flash run through Docker and the SSH gateway:
 
 ```powershell
-python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
-python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml --build-number <number>
 ```
 
+Monitor UART through Docker and the SSH gateway:
 
+```powershell
+.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
+```
 
-## Containerised build/test environment
+On Linux or macOS, use the equivalent shell wrapper:
 
-The repository includes a container baseline for portable framework validation, STM32 local firmware builds, wolfBoot builds, relocated application signing, and explicitly enabled gateway-capable integration checks. The default container command remains non-hardware unit testing. Gateway, UART, broker, flashing, and hardware workflows remain capability-gated: a plain `python -m pytest` run exercises whatever local, gateway, and hardware capabilities are actually available, and skips unavailable capabilities. Inside a container, gateway probing is disabled unless `PQC_CONTAINER_ENABLE_GATEWAY=1` is set and SSH configuration is provided at runtime. The container includes wolfBoot build/signing tools and optional gateway SSH client tooling, but direct UART devices, ST-LINK/USB access, Wi-Fi-module access, broker deployment, flashing, and hardware workflows remain capability-gated and outside the default non-hardware pass criteria.
+```bash
+./scripts/dev.sh build-image
+./scripts/dev.sh pytest tests/unit
+./scripts/dev.sh experiment status --experiment configs/experiments/baseline_direct_uart.yaml
+./scripts/dev.sh experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Host-native commands remain available as an explicit fallback for manual diagnosis, but they are no longer the documented default path.
+
+## Containerised build/test/experiment environment
+
+The Docker-hosted Linux workflow is the default path for framework commands, firmware builds, wolfBoot builds, signing, pytest, and gateway-mediated hardware experiments. Hardware access remains gateway-mediated over SSH/SCP: the container runs the framework on the development machine, then connects to `pqc-gateway1` to execute the configured flash/reset/UART helper commands. The container does not require direct UART devices, ST-LINK/USB passthrough, Wi-Fi-module passthrough, committed credentials, or host-installed STM32 build tools.
+
+Gateway, UART, broker, flashing, and hardware workflows remain capability-gated. Inside the container, gateway probing is disabled unless `PQC_CONTAINER_ENABLE_GATEWAY=1` is set and SSH configuration is supplied at runtime. The wrapper scripts set this flag for `experiment-gateway`, `pytest-gateway`, and `pytest-hardware`, and mount the host SSH directory read-only before copying it into the temporary container filesystem with Linux permissions for that single run.
 
 Pytest cleans generated cross-platform build state at session start when running inside the container. It removes generated `build/Debug`, `build/RelocatedDebug`, and wolfBoot object/dependency/tool outputs that can contain host-specific absolute paths after switching between Windows-native and Linux-container builds. It does not remove source files or canonical signing keys under `secrets/wolfboot/`. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress this default container cleanup, or use `--pqc-clean-generated-build-artifacts`/`PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` to request the cleanup explicitly in any environment.
 
 Build the image from the repository root:
 
 ```powershell
-docker build -f docker/python/Dockerfile -t pqc-framework-stm32-build .
+.\scripts\dev.ps1 build-image
 ```
 
 Run unit tests in the container with the repository mounted at runtime:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/unit
+.\scripts\dev.ps1 pytest tests/unit
 ```
 
 Run the full capability-gated pytest suite in the container without gateway access:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest
+.\scripts\dev.ps1 pytest
+```
+
+Run the hardware test suite through Docker and the SSH gateway:
+
+```powershell
+.\scripts\dev.ps1 pytest-hardware
 ```
 
 Run a safe framework command that loads and validates the direct-flash experiment configuration without building, flashing, opening UART, using SSH, or contacting a broker:
+
+```powershell
+.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
+```
+
+Equivalent raw Docker command, retained for compatibility with container baseline checks:
 
 ```powershell
 docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
@@ -117,54 +160,50 @@ docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build pyt
 Build the direct-flash firmware preset inside the container:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --preset Debug
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset Debug
+.\scripts\dev.ps1 cmake --preset Debug
+.\scripts\dev.ps1 cmake --build --preset Debug
 ```
 
 Build the relocated firmware preset inside the container:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --preset RelocatedDebug
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build cmake --build --preset RelocatedDebug
+.\scripts\dev.ps1 cmake --preset RelocatedDebug
+.\scripts\dev.ps1 cmake --build --preset RelocatedDebug
 ```
 
 Build one wolfBoot profile inside the container:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
 Sign the relocated application inside the container after the relocated build exists. The signing workflow uses `secrets/wolfboot/` from the runtime-mounted workspace and may locally generate missing profile keys there; those files remain host-local generated material and must not be committed or baked into the image:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
+.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
 ```
 
-Run the local-build and wolfBoot integration tests inside the container. They use capability detection and skip when required local tooling or the wolfBoot submodule is unavailable:
+Run the local-build and wolfBoot integration tests inside the container. They use capability detection and skip when required in-container tooling or the wolfBoot submodule is unavailable:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace pqc-framework-stm32-build python -m pytest tests/integration -m integration
+.\scripts\dev.ps1 pytest tests/integration -m integration
 ```
 
-Run gateway-capable container integration by mounting SSH material read-only at runtime, copying it into the temporary container filesystem with Linux permissions, and enabling gateway probing explicitly:
+Run gateway-capable integration checks through Docker with runtime-mounted SSH material:
 
 ```powershell
-docker run --rm `
-  -v ${PWD}:/workspace `
-  -w /workspace `
-  -e PQC_CONTAINER_ENABLE_GATEWAY=1 `
-  -v ${env:USERPROFILE}\.ssh:/host-ssh:ro `
-  pqc-framework-stm32-build `
-  sh -lc "mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && python -m pytest"
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
 ```
 
-The container provides portable software-build and signing evidence by default. Gateway, flashing, UART, broker, hardware, benchmark/runtime, and end-to-end runtime evidence may only be claimed when the relevant capability-gated tests run and produce explicit logs or manifests.
+The default SSH mount source is `${env:USERPROFILE}\.ssh` on PowerShell and `$HOME/.ssh` on POSIX shells. Set `PQC_DOCKER_SSH_DIR` to use a different host-side SSH directory. Set `PQC_DOCKER_IMAGE` to use a different image tag.
+
+The container provides portable software-build and signing evidence by default. Gateway, flashing, UART, broker, hardware, benchmark/runtime, and end-to-end runtime evidence may only be claimed when the relevant capability-gated tests or experiment commands run and produce explicit logs or manifests.
 
 The `.dockerignore` file excludes generated outputs and local secret material from the image build context. Private signing keys, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, generated wolfBoot signing material, and production credentials must not be committed or baked into images.
 
-## Containerised non-hardware build/test plan
+## Docker-default migration status
 
-The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 established the Python baseline. Phase C3 added STM32 direct and relocated local CMake builds plus the relevant local-build integration tests. Phase C4 added wolfBoot build and relocated application-signing support with runtime-mounted or locally generated signing material only. Phase C5 added optional gateway-capable integration with runtime-provided SSH access and generated-artifact cleanup for Windows/container build switching. Phase C6 added a GitHub Actions containerised non-hardware job while preserving the existing runner-compatible and MQTT broker Docker runtime CI jobs.
+The containerisation track is now the default development path. Phase C2 established the Python baseline. Phase C3 added STM32 direct and relocated CMake builds plus the relevant integration tests. Phase C4 added wolfBoot build and relocated application-signing support with runtime-mounted or locally generated signing material only. Phase C5 added gateway-capable integration with runtime-provided SSH access and generated-artifact cleanup for Windows/container build switching. Phase C6 added GitHub Actions containerised non-hardware checks while preserving the existing runner-compatible and MQTT broker Docker runtime CI jobs as compatibility coverage. The host-native development-machine build path remains available only as a manual fallback.
 
 ## Firmware scheduler model
 
@@ -177,11 +216,11 @@ FreeRTOS regression coverage checks that generated CMake includes the middleware
 The secure-boot profile workflow is:
 
 ```powershell
-python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
-cmake --preset RelocatedDebug
-cmake --build --preset RelocatedDebug
-python scripts/experiment.py sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
+./scripts/dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
+./scripts/dev.ps1 cmake --preset RelocatedDebug
+./scripts/dev.ps1 cmake --build --preset RelocatedDebug
+./scripts/dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
+./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
 
 Implemented profile stems:
@@ -204,9 +243,9 @@ The ECC256 reference uses historical file names containing `ecdsa_p256`, while b
 Diagnostic secure-boot commands:
 
 ```powershell
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --skip-uart
+./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --skip-uart
 ```
 
 ## Benchmark aggregation
@@ -214,14 +253,14 @@ python scripts/experiment.py flash-secure-boot --experiment configs/experiments/
 Aggregate existing secure-boot run manifests:
 
 ```powershell
-python scripts/experiment.py aggregate-benchmarks
+./scripts/dev.ps1 experiment aggregate-benchmarks
 ```
 
 Use explicit input manifests or run directories:
 
 ```powershell
-python scripts/experiment.py aggregate-benchmarks --manifest results/<run_id>/manifest.json --manifest results/<run_id>/manifest.json
-python scripts/experiment.py aggregate-benchmarks --run-dir results/<run_id> --run-dir results/<run_id>
+./scripts/dev.ps1 experiment aggregate-benchmarks --manifest results/<run_id>/manifest.json --manifest results/<run_id>/manifest.json
+./scripts/dev.ps1 experiment aggregate-benchmarks --run-dir results/<run_id> --run-dir results/<run_id>
 ```
 
 Default outputs:
@@ -237,14 +276,14 @@ Routine hardware test time is controlled by the secure-boot algorithm benchmark 
 
 ```powershell
 $env:PQC_HARDWARE_SECURE_BOOT_PROFILES="ecc256,ed25519"
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 For an all-in algorithm benchmark pass:
 
 ```powershell
 $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 Clear those environment variables after the run if you want to return to the default ML-DSA-65-only benchmark pass.
@@ -275,37 +314,37 @@ Interpretation rules:
 ## Test categories
 
 ```powershell
-python -m pytest tests/unit
-python -m pytest tests/integration -m integration
-python -m pytest tests/hardware -m hardware
-python -m pytest
+.\scripts\dev.ps1 pytest tests/unit
+.\scripts\dev.ps1 pytest tests/integration -m integration
+.\scripts\dev.ps1 pytest-hardware
+.\scripts\dev.ps1 pytest
 ```
 
 Strict capability checks:
 
 ```powershell
-python -m pytest tests/integration -m integration --pqc-require-local-build
-python -m pytest tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-python -m pytest tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
-python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
-$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+.\scripts\dev.ps1 pytest tests/integration -m integration --pqc-require-local-build
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
+.\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
+.\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
+$env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
 ```
 
 ## GitHub Actions CI
 
-The repository includes `.github/workflows/ci.yml` for continuous integration on every pushed commit, pull request, and manual dispatch. Phase C6 preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation, and adds a separate containerised non-hardware job for the project-owned container workflow.
+The repository includes `.github/workflows/ci.yml` for continuous integration on every pushed commit, pull request, and manual dispatch. The project-owned Docker image is the default CI path for reproducible non-hardware build/test validation. Existing runner-compatible jobs and MQTT broker Docker runtime validation remain as compatibility coverage.
 
 ```text
-unit-tests                  Runs python -m pytest tests/unit.
+unit-tests                  Runs ./scripts/dev.ps1 pytest tests/unit.
 firmware-builds            Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain on the runner.
 wolfboot-build-integration Runs the real wolfBoot build integration test when local tooling and the wolfBoot submodule are available.
 integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass, including Docker Compose config rendering for the MQTT broker profiles.
 mqtt-broker-docker-runtime Starts the local classical Mosquitto container, provisions temporary TLS material, validates mutual TLS, and verifies MQTT publish/subscribe with client certificates.
-container-non-hardware     Builds docker/python/Dockerfile and runs Python unit tests, safe status validation, Debug and RelocatedDebug builds, one wolfBoot profile build, relocated ECDSA P-256 application signing, and targeted local-build integration tests inside the project container.
+container-non-hardware     Default reproducible CI path: builds docker/python/Dockerfile and runs Python unit tests, safe status validation, Debug and RelocatedDebug builds, one wolfBoot profile build, relocated ECDSA P-256 application signing, and targeted local-build integration tests inside the project container.
 ```
 
-The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
+The default CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
 
 The containerised CI job requires no repository, organization, or environment secrets. Signing material generated by that job is runtime workspace state only and remains excluded from Git and the container image by the generated-output and secret rules. CI results provide portable software-build and local Docker runtime evidence only. Do not treat CI output as hardware, gateway, flashing, UART, production MQTT/TLS, runtime timing, runtime memory, benchmark, or end-to-end device evidence.
 
@@ -347,25 +386,25 @@ The gateway-hosted MQTT broker compose project lives under `experiment/mqtt-brok
 Provision local classical TLS material for development testing:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
 ```
 
 Deploy the broker project to the gateway without committing secrets:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 ```
 
 Start the classical TLS broker on the gateway:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
 ```
 
 Stop it again:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
 The OQS profile is experimental and depends on Open Quantum Safe's Mosquitto image. It provisions project-managed OQS mutual-TLS material on the gateway, using ML-DSA-65 for the CA, Falcon-512 for leaf certificates, and ML-KEM-768 for TLS validation. It is intended for PQC TLS protocol evaluation only, not production security claims.
@@ -373,16 +412,16 @@ The OQS profile is experimental and depends on Open Quantum Safe's Mosquitto ima
 Provision and validate the OQS profile after deployment:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
 ```
 
 Run the framework-level broker experiment wrapper when you want one command to provision certificates, deploy the compose project, start one selected broker profile, retry broker validation while the selected container becomes ready, collect broker logs into `results/<run_id>/`, and optionally stop the broker. The wrapper records each step as `running` in the manifest before launching its subprocess, writes a step log immediately, prints progress for each attempt, and applies `--step-timeout-seconds` to prevent a silent unbounded subprocess:
 
 ```powershell
-python scripts/experiment.py mqtt-broker-experiment --profile classical --stop-after
-python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
+./scripts/dev.ps1 experiment-gateway mqtt-broker-experiment --profile classical --stop-after
+./scripts/dev.ps1 experiment-gateway mqtt-broker-experiment --profile oqs --stop-after
 ```
 
 Use `--no-provision-certs`, `--no-deploy`, or `--skip-validation` only when that step has already been handled manually and you still want framework result evidence for the remaining steps.
@@ -391,8 +430,8 @@ Use `--no-provision-certs`, `--no-deploy`, or `--skip-validation` only when that
 Run the runner-compatible MQTT broker checks locally when Docker is available:
 
 ```powershell
-python -m pytest tests/integration/test_mqtt_broker_docker_config.py -m integration
-python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
+./scripts/dev.ps1 pytest tests/integration/test_mqtt_broker_docker_config.py -m integration
+./scripts/dev.ps1 pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
 ```
 
 The Docker runtime test copies the broker compose project into a pytest temporary directory, provisions short-lived classical TLS material under that temporary directory, starts only the classical broker container, validates TLS 1.3 mutual authentication, verifies MQTT publish/subscribe using the Mosquitto client binaries inside the container, and tears the compose project down. It does not use the gateway or write runtime material into the repository tree.
@@ -404,13 +443,13 @@ The MQTT broker orchestration uses the SSH alias from `configs/hosts/gateway.yam
 Provision certificates with the host config so the gateway IP address is included in the server certificate SANs:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
 Run the gateway MQTT broker integration test when Docker is available on the gateway:
 
 ```powershell
-python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
 ```
 
 
