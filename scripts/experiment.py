@@ -188,6 +188,172 @@ def require_field(config: dict[str, Any], dotted_path: str, config_name: str) ->
     return current
 
 
+MQTT_TLS_SCHEMA_VERSION = 1
+MQTT_TLS_EVIDENCE_CLASSES = {
+    "fake_no_network",
+    "host_side",
+    "stm32_build_only",
+    "stm32_runtime",
+    "st67w61m1_backed",
+}
+MQTT_TLS_TRANSPORT_BACKENDS = {
+    "fake_no_network",
+    "host_socket",
+    "stm32_build_only",
+    "stm32_runtime",
+    "st67w61m1",
+}
+MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
+    "fake_no_network": {"fake_no_network"},
+    "host_socket": {"host_side"},
+    "stm32_build_only": {"stm32_build_only"},
+    "stm32_runtime": {"stm32_runtime"},
+    "st67w61m1": {"st67w61m1_backed"},
+}
+MQTT_TLS_MODES = {
+    "disabled",
+    "classical_tls",
+    "oqs_experimental_tls",
+    "not_applicable",
+    "unavailable",
+}
+MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
+    "wifi_association",
+    "ip_address",
+    "tcp_connect",
+    "tls_handshake",
+    "mqtt_connect",
+    "mqtt_publish",
+    "mqtt_reconnect",
+    "latency_ms",
+    "throughput_bytes_per_second",
+}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed"}
+
+
+def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
+    """Validate the Phase M2 MQTT/TLS experiment schema fragment.
+
+    This validates representational support only. It does not open sockets,
+    deploy brokers, access SSH, access UART, build firmware, or touch hardware.
+    """
+
+    mqtt_config = config.get("mqtt")
+    if mqtt_config is None:
+        return
+    if not isinstance(mqtt_config, dict):
+        raise ConfigError("experiment config mqtt field must be a mapping")
+
+    required_fields = [
+        "mqtt.schema_version",
+        "mqtt.evidence_class",
+        "mqtt.transport_backend",
+        "mqtt.tls.mode",
+        "mqtt.result_schema.unavailable_metrics",
+    ]
+    for field in required_fields:
+        require_field(config, field, "experiment config")
+
+    schema_version = require_field(config, "mqtt.schema_version", "experiment config")
+    if schema_version != MQTT_TLS_SCHEMA_VERSION:
+        raise ConfigError(f"mqtt.schema_version must be {MQTT_TLS_SCHEMA_VERSION}")
+
+    evidence_class = require_field(config, "mqtt.evidence_class", "experiment config")
+    if evidence_class not in MQTT_TLS_EVIDENCE_CLASSES:
+        raise ConfigError(
+            "mqtt.evidence_class must be one of: "
+            + ", ".join(sorted(MQTT_TLS_EVIDENCE_CLASSES))
+        )
+
+    transport_backend = require_field(config, "mqtt.transport_backend", "experiment config")
+    if transport_backend not in MQTT_TLS_TRANSPORT_BACKENDS:
+        raise ConfigError(
+            "mqtt.transport_backend must be one of: "
+            + ", ".join(sorted(MQTT_TLS_TRANSPORT_BACKENDS))
+        )
+
+    allowed_evidence = MQTT_TLS_TRANSPORT_EVIDENCE_MAP[transport_backend]
+    if evidence_class not in allowed_evidence:
+        raise ConfigError(
+            f"mqtt.transport_backend '{transport_backend}' is not compatible with "
+            f"mqtt.evidence_class '{evidence_class}'"
+        )
+
+    tls_config = mqtt_config.get("tls")
+    if not isinstance(tls_config, dict):
+        raise ConfigError("experiment config mqtt.tls field must be a mapping")
+    tls_mode = require_field(config, "mqtt.tls.mode", "experiment config")
+    if tls_mode not in MQTT_TLS_MODES:
+        raise ConfigError(
+            "mqtt.tls.mode must be one of: " + ", ".join(sorted(MQTT_TLS_MODES))
+        )
+
+    certificate_refs = tls_config.get("certificate_refs", {})
+    if certificate_refs and not isinstance(certificate_refs, dict):
+        raise ConfigError("experiment config mqtt.tls.certificate_refs field must be a mapping")
+    if certificate_refs and tls_mode in {"disabled", "not_applicable", "unavailable"}:
+        raise ConfigError(
+            "mqtt.tls.certificate_refs requires mqtt.tls.mode to be classical_tls or oqs_experimental_tls"
+        )
+    for ref_name, ref_value in certificate_refs.items():
+        if not isinstance(ref_value, str) or not ref_value.strip():
+            raise ConfigError(f"mqtt.tls.certificate_refs.{ref_name} must be a non-empty path reference")
+        lowered_ref_name = str(ref_name).lower()
+        lowered_ref_value = ref_value.lower()
+        if "private" in lowered_ref_name or "key" in lowered_ref_name:
+            raise ConfigError(
+                "mqtt.tls.certificate_refs must not include private key references in Phase M2"
+            )
+        if lowered_ref_value.endswith((".key", ".pem.key")):
+            raise ConfigError(
+                "mqtt.tls.certificate_refs must not reference private key files in Phase M2"
+            )
+
+    broker = mqtt_config.get("broker", {})
+    if broker and not isinstance(broker, dict):
+        raise ConfigError("experiment config mqtt.broker field must be a mapping")
+    if evidence_class == "host_side":
+        require_field(config, "mqtt.broker.host", "experiment config")
+        require_field(config, "mqtt.broker.port", "experiment config")
+    if evidence_class == "fake_no_network" and broker:
+        raise ConfigError("fake_no_network MQTT configs must not configure a real broker endpoint")
+
+    result_schema = mqtt_config.get("result_schema")
+    if not isinstance(result_schema, dict):
+        raise ConfigError("experiment config mqtt.result_schema field must be a mapping")
+    unavailable_metrics = result_schema.get("unavailable_metrics")
+    if not isinstance(unavailable_metrics, dict):
+        raise ConfigError("mqtt.result_schema.unavailable_metrics field must be a mapping")
+
+    unknown_metrics = set(unavailable_metrics) - MQTT_TLS_UNAVAILABLE_METRIC_FIELDS
+    if unknown_metrics:
+        raise ConfigError(
+            "mqtt.result_schema.unavailable_metrics contains unsupported metric names: "
+            + ", ".join(sorted(unknown_metrics))
+        )
+
+    for metric_name, reason in unavailable_metrics.items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ConfigError(
+                f"mqtt.result_schema.unavailable_metrics.{metric_name} must provide a non-empty reason"
+            )
+
+    requires_unavailable_runtime = evidence_class not in MQTT_TLS_RUNTIME_EVIDENCE_CLASSES
+    runtime_metrics = {"tls_handshake", "mqtt_connect", "mqtt_publish", "mqtt_reconnect", "latency_ms"}
+    if requires_unavailable_runtime and not runtime_metrics.issubset(unavailable_metrics):
+        raise ConfigError(
+            "non-runtime MQTT evidence classes must explicitly mark TLS/MQTT runtime metrics unavailable"
+        )
+
+    requires_unavailable_network = evidence_class not in MQTT_TLS_NETWORK_EVIDENCE_CLASSES
+    network_metrics = {"wifi_association", "ip_address", "tcp_connect"}
+    if requires_unavailable_network and not network_metrics.issubset(unavailable_metrics):
+        raise ConfigError(
+            "non-network MQTT evidence classes must explicitly mark Wi-Fi/IP/TCP metrics unavailable"
+        )
+
+
 def validate_experiment_config(config: dict[str, Any]) -> None:
     """Validate required fields for the initial experiment config schema."""
 
@@ -205,6 +371,8 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
 
     for field in required_fields:
         require_field(config, field, "experiment config")
+
+    validate_mqtt_tls_config(config)
 
 
 def validate_board_config(config: dict[str, Any]) -> None:

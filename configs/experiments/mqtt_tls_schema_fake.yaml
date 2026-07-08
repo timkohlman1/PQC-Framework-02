@@ -1,0 +1,28 @@
+id: mqtt_tls_schema_fake
+description: Phase M2 MQTT/TLS schema-only fake/no-network experiment config.
+board: board_a
+host: gateway
+boot: direct_flash
+firmware:
+  mode: direct_flash
+  artifact: build/Debug/stm32_basic_hal1.elf
+uart:
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_message: tick
+mqtt:
+  schema_version: 1
+  evidence_class: fake_no_network
+  transport_backend: fake_no_network
+  tls:
+    mode: not_applicable
+  result_schema:
+    unavailable_metrics:
+      wifi_association: Fake/no-network transport does not use Wi-Fi hardware.
+      ip_address: Fake/no-network transport does not acquire an IP address.
+      tcp_connect: Fake/no-network transport does not open a TCP socket.
+      tls_handshake: Phase M2 does not perform a TLS handshake.
+      mqtt_connect: Phase M2 does not connect to an MQTT broker.
+      mqtt_publish: Phase M2 does not publish MQTT messages.
+      mqtt_reconnect: Phase M2 does not exercise reconnect behaviour.
+      latency_ms: Phase M2 has no runtime latency evidence.
+      throughput_bytes_per_second: Phase M2 has no throughput evidence.

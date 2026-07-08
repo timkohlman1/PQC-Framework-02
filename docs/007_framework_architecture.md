@@ -225,6 +225,15 @@ results/benchmark-aggregation/benchmark_summary.csv
 
 It does not create new measurement evidence.
 
+
+## MQTT/TLS configuration and result schema
+
+Framework-side MQTT/TLS schema support is configuration-only in Phase M2. Experiment configs can carry an `mqtt` mapping with schema version, evidence class, transport backend, TLS mode, optional non-secret certificate references, optional host-side broker endpoint, and explicit unavailable metrics. The supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. The supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`.
+
+The validation model rejects mismatched backend/evidence combinations, fake/no-network configs that name a real broker endpoint, host-side configs without a broker endpoint, unsupported metric names, empty unavailable reasons, and private-key references in certificate metadata. Certificate references are path references only and must not introduce private keys or credentials.
+
+When MQTT/TLS schema fields are present, the initial result manifest includes an `mqtt_tls` block. The block records the evidence class, backend, TLS mode, broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Unavailable metrics are first-class records with a source and reason. This schema does not claim Wi-Fi association, IP address, TCP connection, TLS handshake, MQTT connect, publish, reconnect, latency, throughput, STM32 runtime success, or ST67W61M1-backed success without explicit future evidence.
+
 ## Test architecture
 
 ```text

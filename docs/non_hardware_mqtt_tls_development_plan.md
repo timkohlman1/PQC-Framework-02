@@ -100,7 +100,7 @@ Add framework-side configuration and result schema support for MQTT/TLS experime
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add framework-side MQTT/TLS experiment configuration and result schema support for future MQTT client work. The schema must support explicit transport backend selection and unavailable metrics. It must distinguish fake/no-network, host-side, STM32 build-only, STM32 runtime, and future ST67W61M1-backed evidence. Do not implement STM32 firmware networking, lwIP integration, wolfSSL integration, wolfMQTT integration, broker deployment, or hardware tests in this sub-phase.
+Requirement: Implement Phase M2 of the attached development plan - MQTT Configuration and Result Schema. Add framework-side MQTT/TLS experiment configuration and result schema support for future MQTT client work. The schema must support explicit transport backend selection and unavailable metrics. It must distinguish fake/no-network, host-side, STM32 build-only, STM32 runtime, and future ST67W61M1-backed evidence. Do not implement STM32 firmware networking, lwIP integration, wolfSSL integration, wolfMQTT integration, broker deployment, or hardware tests in this sub-phase.
 
 ```
 
@@ -137,7 +137,7 @@ Provide deterministic non-network test coverage for MQTT client control-flow beh
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add a fake/no-network MQTT transport harness for deterministic non-hardware testing of MQTT client control-flow behavior. It should support simulated connect, publish, timeout, disconnect, and reconnect outcomes, and all simulated evidence must be clearly labelled as fake transport evidence. Do not implement real networking, lwIP, wolfSSL, wolfMQTT firmware integration, broker deployment, gateway access, or hardware tests in this sub-phase.
+Requirement: Implement Phase M3 of the attached development plan - Fake/No-Network MQTT Transport Harness. Add a fake/no-network MQTT transport harness for deterministic non-hardware testing of MQTT client control-flow behavior. It should support simulated connect, publish, timeout, disconnect, and reconnect outcomes, and all simulated evidence must be clearly labelled as fake transport evidence. Do not implement real networking, lwIP, wolfSSL, wolfMQTT firmware integration, broker deployment, gateway access, or hardware tests in this sub-phase.
 
 ```
 

@@ -50,13 +50,14 @@ Implemented framework scope as of Phase 11.7:
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
 - Docker-hosted Linux default path for Python validation, STM32 direct and relocated builds, wolfBoot builds, relocated application signing, pytest, gateway checks, and gateway-mediated hardware experiments
 - GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while using the containerised non-hardware job as the default reproducible software-build validation path
+- Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -345,7 +346,9 @@ results/benchmark-aggregation/benchmark_summary.json
 results/benchmark-aggregation/benchmark_summary.csv
 ```
 
-The manifest is the source of truth for what was run. Secure-boot benchmark manifests separate:
+The manifest is the source of truth for what was run. MQTT/TLS Phase M2 manifests may include an `mqtt_tls` block when the experiment config includes MQTT schema fields. That block records schema version, evidence class, transport backend, TLS mode, optional broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`. Metrics without evidence must be recorded explicitly as unavailable with a reason.
+
+Secure-boot benchmark manifests separate:
 
 - profile and algorithm metadata
 - build-time metrics
@@ -378,7 +381,7 @@ Use three test categories:
 .\scripts\dev.ps1 pytest
 ```
 
-Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output.
+Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output. Phase M2 MQTT/TLS unit coverage should validate MQTT config acceptance/rejection, backend/evidence compatibility, secret-reference rejection, unavailable-metric handling, and manifest schema creation.
 
 FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTOSConfig.h` settings, CubeMX `.ioc` timebase/task settings, and UART marker ordering. Local-build integration coverage should compile both `Debug` and `RelocatedDebug` presets after FreeRTOS generation. Hardware coverage should treat FreeRTOS scheduler/task success as valid only when explicit UART markers are captured.
 

@@ -643,3 +643,79 @@ def test_build_secure_boot_benchmark_model_records_phase_11_5a_classical_profile
     assert profile["minimum_comparison_scope"]["required_algorithms"] == ["ED25519", "ECC256", "RSA2048"]
     assert profile["capability_status"]["ed25519"]["runnable"] is False
     assert profile["capability_status"]["rsa2048"]["runnable"] is False
+
+
+def test_build_mqtt_tls_result_model_records_unavailable_metrics_and_evidence_boundaries():
+    manifest = load_manifest_module()
+
+    result = manifest.build_mqtt_tls_result_model(
+        experiment_id="mqtt_tls_schema_fake",
+        evidence_class="fake_no_network",
+        transport_backend="fake_no_network",
+        tls_mode="not_applicable",
+        unavailable_metrics={
+            "wifi_association": "Fake/no-network transport does not use Wi-Fi hardware.",
+            "ip_address": "Fake/no-network transport does not acquire an IP address.",
+            "tcp_connect": "Fake/no-network transport does not open a TCP socket.",
+            "tls_handshake": "Phase M2 does not perform a TLS handshake.",
+            "mqtt_connect": "Phase M2 does not connect to an MQTT broker.",
+            "mqtt_publish": "Phase M2 does not publish MQTT messages.",
+            "mqtt_reconnect": "Phase M2 does not exercise reconnect behaviour.",
+            "latency_ms": "Phase M2 has no runtime latency evidence.",
+            "throughput_bytes_per_second": "Phase M2 has no throughput evidence.",
+        },
+    )
+
+    assert result["schema_version"] == 1
+    assert result["model_phase"] == "phase_m2_mqtt_tls_config_result_schema"
+    assert result["evidence_class"] == "fake_no_network"
+    assert result["transport_backend"] == "fake_no_network"
+    assert result["tls"]["mode"] == "not_applicable"
+    assert result["metrics"]["mqtt_publish"]["status"] == "unavailable"
+    assert result["metrics"]["mqtt_publish"]["source"] == "unavailable"
+    assert result["metric_summary"] == {
+        "available_count": 0,
+        "unavailable_count": 9,
+        "total_count": 9,
+    }
+    assert result["evidence_boundaries"]["claims_network_success"] is False
+    assert result["evidence_boundaries"]["claims_tls_success"] is False
+    assert result["evidence_boundaries"]["claims_mqtt_success"] is False
+
+
+def test_build_manifest_embeds_mqtt_tls_schema_when_experiment_configures_mqtt():
+    manifest = load_manifest_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["id"] = "mqtt_tls_schema_build_only"
+    bundle["experiment"]["mqtt"] = {
+        "schema_version": 1,
+        "evidence_class": "stm32_build_only",
+        "transport_backend": "stm32_build_only",
+        "tls": {
+            "mode": "unavailable",
+        },
+        "result_schema": {
+            "unavailable_metrics": {
+                "wifi_association": "STM32 build-only evidence does not include Wi-Fi hardware.",
+                "ip_address": "STM32 build-only evidence does not include IP assignment.",
+                "tcp_connect": "STM32 build-only evidence does not include TCP connection evidence.",
+                "tls_handshake": "STM32 build-only evidence does not include TLS runtime evidence.",
+                "mqtt_connect": "STM32 build-only evidence does not include MQTT connection evidence.",
+                "mqtt_publish": "STM32 build-only evidence does not include MQTT publish evidence.",
+                "mqtt_reconnect": "STM32 build-only evidence does not include reconnect evidence.",
+                "latency_ms": "STM32 build-only evidence does not include latency evidence.",
+                "throughput_bytes_per_second": "STM32 build-only evidence does not include throughput evidence.",
+            }
+        },
+    }
+
+    data = manifest.build_manifest(
+        bundle,
+        "2026-07-08_001_mqtt_tls_schema_build_only",
+        datetime(2026, 7, 8, 10, 30, tzinfo=timezone.utc),
+    )
+
+    assert data["mqtt_tls"]["model_phase"] == "phase_m2_mqtt_tls_config_result_schema"
+    assert data["mqtt_tls"]["evidence_class"] == "stm32_build_only"
+    assert data["mqtt_tls"]["metrics"]["tls_handshake"]["status"] == "unavailable"
+    assert data["mqtt_tls"]["evidence_boundaries"]["claims_mqtt_success"] is False

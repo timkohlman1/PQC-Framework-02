@@ -425,6 +425,10 @@ Do not claim Wi-Fi join, IP address acquisition, TCP connection, TLS handshake, 
 
 Near-term MQTT/TLS work should remain in small phases: documentation split, configuration/result schema, fake transport harness, host/broker validation, STM32 lwIP build-only skeleton, wolfSSL build-only skeleton, wolfMQTT build-only skeleton, STM32 fake/no-network runtime markers, optional host-side wolfSSL/wolfMQTT validation, ST67W61M1 backend, classical STM32 MQTT-over-TLS, network degradation, and later PQC/hybrid TLS experiments.
 
+Phase M2 adds framework-side MQTT/TLS configuration and manifest schema support. MQTT experiment configs may include an `mqtt` mapping with `schema_version: 1`, an explicit `transport_backend`, an `evidence_class`, TLS mode, optional non-secret certificate references, optional broker endpoint for host-side validation, and explicit unavailable-metric reasons. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`.
+
+The schema-only example config is `configs/experiments/mqtt_tls_schema_fake.yaml`. When an experiment config includes MQTT/TLS schema fields, newly created manifests include an `mqtt_tls` result model. Metrics that do not have evidence are recorded as `status: unavailable` with a reason instead of being omitted or inferred. Phase M2 schema handling does not perform broker deployment, socket I/O, STM32 networking, UART capture, lwIP, wolfSSL, wolfMQTT, or hardware validation.
+
 ## MQTT broker compose project
 
 The gateway-hosted MQTT broker compose project lives under `experiment/mqtt-broker/`. It is orchestrated from the repository root on the build server and can provision local test certificates, deploy the compose project to `pqc-gateway1` with `scp`, and start or stop the broker with `ssh`.

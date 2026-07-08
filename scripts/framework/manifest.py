@@ -29,6 +29,120 @@ SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE = "phase_11_4_runtime_memory_me
 SECURE_BOOT_BENCHMARK_CLASSICAL_PROFILE_MODEL_PHASE = "phase_11_5a_classical_profile_model"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
+MQTT_TLS_RESULT_SCHEMA_VERSION = 1
+MQTT_TLS_RESULT_MODEL_PHASE = "phase_m2_mqtt_tls_config_result_schema"
+MQTT_TLS_METRIC_NAMES = (
+    "wifi_association",
+    "ip_address",
+    "tcp_connect",
+    "tls_handshake",
+    "mqtt_connect",
+    "mqtt_publish",
+    "mqtt_reconnect",
+    "latency_ms",
+    "throughput_bytes_per_second",
+)
+MQTT_TLS_EVIDENCE_LABELS = {
+    "fake_no_network": "fake/no-network evidence",
+    "host_side": "host-side evidence",
+    "stm32_build_only": "STM32 build-only evidence",
+    "stm32_runtime": "STM32 runtime evidence",
+    "st67w61m1_backed": "future ST67W61M1-backed evidence",
+}
+
+
+def _mqtt_unavailable_metric(reason: str, *, source: str = UNAVAILABLE_METRIC_SOURCE) -> dict[str, Any]:
+    """Return an explicit unavailable MQTT/TLS metric record."""
+
+    return {
+        "status": "unavailable",
+        "source": source,
+        "reason": reason,
+    }
+
+
+def build_mqtt_tls_result_model(
+    *,
+    experiment_id: str,
+    evidence_class: str,
+    transport_backend: str,
+    tls_mode: str,
+    broker: dict[str, Any] | None = None,
+    certificate_refs: dict[str, Any] | None = None,
+    unavailable_metrics: dict[str, str] | None = None,
+    available_metrics: dict[str, dict[str, Any]] | None = None,
+    limitations: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build the Phase M2 MQTT/TLS result schema.
+
+    The model is schema-first. It can record future MQTT/TLS evidence while
+    preserving explicit unavailable records for metrics that do not yet have
+    supporting firmware, host, broker, UART, or hardware evidence.
+    """
+
+    unavailable_reasons = dict(unavailable_metrics or {})
+    available = dict(available_metrics or {})
+    metric_records: dict[str, Any] = {}
+
+    for metric_name in MQTT_TLS_METRIC_NAMES:
+        if metric_name in available:
+            metric_record = dict(available[metric_name])
+            metric_record.setdefault("status", "available")
+            if not metric_record.get("source"):
+                raise ValueError(f"available MQTT/TLS metric '{metric_name}' must include a source")
+            metric_records[metric_name] = metric_record
+            continue
+
+        reason = unavailable_reasons.get(
+            metric_name,
+            "No explicit MQTT/TLS evidence was available for this metric in Phase M2.",
+        )
+        metric_records[metric_name] = _mqtt_unavailable_metric(reason)
+
+    unavailable_count = sum(
+        1 for metric in metric_records.values() if metric.get("status") == "unavailable"
+    )
+    available_count = sum(
+        1 for metric in metric_records.values() if metric.get("status") == "available"
+    )
+
+    return {
+        "schema_version": MQTT_TLS_RESULT_SCHEMA_VERSION,
+        "model_phase": MQTT_TLS_RESULT_MODEL_PHASE,
+        "experiment_id": experiment_id,
+        "evidence_class": evidence_class,
+        "evidence_label": MQTT_TLS_EVIDENCE_LABELS.get(evidence_class, evidence_class),
+        "transport_backend": transport_backend,
+        "tls": {
+            "mode": tls_mode,
+            "certificate_refs": dict(certificate_refs or {}),
+        },
+        "broker": dict(broker or {}),
+        "metrics": metric_records,
+        "metric_summary": {
+            "available_count": available_count,
+            "unavailable_count": unavailable_count,
+            "total_count": len(metric_records),
+        },
+        "limitations": list(limitations or []),
+        "evidence_boundaries": {
+            "claims_runtime_success": available_count > 0,
+            "claims_network_success": any(
+                metric_records[name].get("status") == "available"
+                for name in ("wifi_association", "ip_address", "tcp_connect")
+            ),
+            "claims_tls_success": metric_records["tls_handshake"].get("status") == "available",
+            "claims_mqtt_success": any(
+                metric_records[name].get("status") == "available"
+                for name in ("mqtt_connect", "mqtt_publish", "mqtt_reconnect")
+            ),
+            "note": (
+                "Phase M2 adds schema support only. Runtime success claims require explicit future evidence "
+                "from logs, manifests, UART output, broker output, or equivalent records."
+            ),
+        },
+    }
+
 
 def _unavailable_reason(reason: str) -> dict[str, Any]:
     return {
@@ -733,7 +847,7 @@ def build_manifest(
     transport = experiment.get("transport", {})
     network = experiment.get("network", {})
 
-    return {
+    manifest = {
         "run_id": run_id,
         "timestamp": format_manifest_timestamp(timestamp),
         "experiment": experiment["id"],
@@ -744,6 +858,29 @@ def build_manifest(
         "network_profile": network.get("profile", DEFAULT_NETWORK_PROFILE),
         "result": result,
     }
+
+    mqtt_config = experiment.get("mqtt")
+    if isinstance(mqtt_config, dict):
+        tls_config = mqtt_config.get("tls", {})
+        result_schema = mqtt_config.get("result_schema", {})
+        manifest["mqtt_tls"] = build_mqtt_tls_result_model(
+            experiment_id=experiment["id"],
+            evidence_class=mqtt_config.get("evidence_class", "unknown"),
+            transport_backend=mqtt_config.get("transport_backend", "unknown"),
+            tls_mode=tls_config.get("mode", "unavailable") if isinstance(tls_config, dict) else "unavailable",
+            broker=mqtt_config.get("broker", {}) if isinstance(mqtt_config.get("broker", {}), dict) else {},
+            certificate_refs=tls_config.get("certificate_refs", {}) if isinstance(tls_config, dict) else {},
+            unavailable_metrics=(
+                result_schema.get("unavailable_metrics", {})
+                if isinstance(result_schema, dict) and isinstance(result_schema.get("unavailable_metrics", {}), dict)
+                else {}
+            ),
+            limitations=[
+                "Phase M2 records MQTT/TLS schema support only; no STM32 networking, broker deployment, UART capture, or hardware validation was performed by create-run/status schema handling."
+            ],
+        )
+
+    return manifest
 
 
 def write_manifest(path: Path | str, manifest: dict[str, Any]) -> None:
