@@ -49,7 +49,7 @@ Implemented framework scope as of Phase 11.7:
 - FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
 - containerised baseline for Python validation, STM32 direct and relocated local CMake builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work
-- GitHub Actions CI for the containerised non-hardware workflow, covering Python unit tests, safe framework status validation, STM32 direct/relocated builds, wolfBoot build, relocated application signing, and targeted local-build integration tests without default hardware, gateway, UART, broker, Wi-Fi-module, or secret-dependent workflows
+- GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while adding a containerised non-hardware job for Python unit tests, safe framework status validation, STM32 direct/relocated builds, wolfBoot build, relocated application signing, and targeted local-build integration tests
 
 Important status constraints:
 
@@ -406,7 +406,7 @@ python -m pytest
 
 ## 10a. Containerised Build/Test Environment
 
-Phase C5 implements a container baseline for Python framework validation, STM32 local builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. Phase C6 adds GitHub Actions CI for the same containerised non-hardware baseline. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, host build tooling for wolfBoot/keytools, OpenSSL for local certificate provisioning, and an SSH client for runtime-provided gateway access. It defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
+Phase C5 implements a container baseline for Python framework validation, STM32 local builds, wolfBoot builds, relocated application signing, and explicitly opt-in gateway-capable integration checks. Phase C6 adds a GitHub Actions containerised non-hardware job while preserving the existing runner-compatible CI jobs and MQTT broker Docker runtime validation. The container definition lives at `docker/python/Dockerfile`, uses `requirements-dev.txt` for Python development dependencies, includes the local STM32 CMake/Ninja/Arm GCC build dependencies, host build tooling for wolfBoot/keytools, OpenSSL for local certificate provisioning, and an SSH client for runtime-provided gateway access. It defaults to `python -m pytest tests/unit`. The repository `.dockerignore` excludes generated outputs and local secret material from the image build context.
 
 Supported default container workflows:
 
@@ -447,7 +447,7 @@ Containerised build/signing evidence is portable software-build evidence only. D
 
 ### CI containerised non-hardware checks
 
-GitHub Actions CI is defined in `.github/workflows/ci.yml`. The default CI job builds the project container image and runs only containerised non-hardware checks:
+GitHub Actions CI is defined in `.github/workflows/ci.yml`. The workflow keeps the previously implemented runner-compatible jobs and MQTT broker Docker runtime validation, and adds a separate `container-non-hardware` job for the project-owned container workflow. The containerised job builds the image from `docker/python/Dockerfile` and runs:
 
 ```text
 Python unit tests
@@ -459,7 +459,7 @@ Relocated application signing for the ECDSA P-256 profile using runtime-generate
 Targeted local-build integration tests for `test_local_build.py` and `test_wolfboot_build_integration.py`
 ```
 
-The default CI path does not run `tests/hardware`, gateway SSH checks, UART capture, flashing, MQTT broker runtime/gateway validation, Wi-Fi-module workflows, or secret-dependent workflows. CI must not require repository, organization, or environment secrets for this default path. Any future gateway, hardware, broker runtime, or secret-dependent CI workflow must be separate and explicitly opt-in. Containerised CI evidence is portable software-build evidence only; it is not hardware, gateway, flashing, UART, MQTT/TLS, runtime, timing, memory, benchmark, or end-to-end evidence.
+CI must not require repository, organization, or environment secrets for the containerised non-hardware job. Hardware tests, gateway SSH checks, UART capture, board flashing, Wi-Fi-module workflows, and secret-dependent workflows remain outside the default CI path. The existing MQTT broker Docker runtime job remains local Docker runtime coverage using temporary test certificates, not gateway or production broker evidence. Any future gateway, hardware, Wi-Fi-module, or secret-dependent CI workflow must be separate and explicitly opt-in. Containerised CI evidence is portable software-build evidence only; it is not hardware, gateway, flashing, UART, runtime, timing, memory, benchmark, or end-to-end evidence.
 
 ### Optional gateway-capable container checks
 

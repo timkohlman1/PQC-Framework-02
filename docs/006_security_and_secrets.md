@@ -63,9 +63,9 @@ Do not copy SSH private keys, VPN profiles, broker credentials, TLS private keys
 
 ## CI secret handling
 
-The default GitHub Actions workflow is the containerised non-hardware baseline and must not require repository, organization, or environment secrets. It must not mount SSH keys, VPN keys, broker credentials, TLS private keys, private certificates, private signing keys, real `.env` files, or production credentials. Signing material generated during CI is local runner workspace state only and must remain ignored by Git and excluded from container images.
+The GitHub Actions workflow preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation, and adds a containerised non-hardware job. The containerised job must not require repository, organization, or environment secrets. It must not mount SSH keys, VPN keys, broker credentials, TLS private keys, private certificates, private signing keys, real `.env` files, or production credentials. Signing material generated during CI is local runner workspace state only and must remain ignored by Git and excluded from container images.
 
-Gateway, hardware, broker runtime, Wi-Fi-module, or other secret-dependent CI workflows must be separate opt-in workflows if they are added later, and must preserve the same no-committed-secrets rule.
+The existing MQTT broker Docker runtime job uses temporary local test certificates generated for the CI run; it must not use production broker credentials, private certificates, real `.env` files, or committed secrets. Gateway, hardware, Wi-Fi-module, or other secret-dependent CI workflows must be separate opt-in workflows if they are added later, and must preserve the same no-committed-secrets rule.
 
 ## Generated outputs to keep out of Git
 

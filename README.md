@@ -164,7 +164,7 @@ The `.dockerignore` file excludes generated outputs and local secret material fr
 
 ## Containerised non-hardware build/test plan
 
-The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 established the Python baseline. Phase C3 added STM32 direct and relocated local CMake builds plus the relevant local-build integration tests. Phase C4 added wolfBoot build and relocated application-signing support with runtime-mounted or locally generated signing material only. Phase C5 added optional gateway-capable integration with runtime-provided SSH access and generated-artifact cleanup for Windows/container build switching. Phase C6 added GitHub Actions CI for the containerised non-hardware baseline.
+The staged containerisation track remains positioned before STM32 MQTT client firmware, lwIP, wolfSSL, and wolfMQTT implementation work. Phase C2 established the Python baseline. Phase C3 added STM32 direct and relocated local CMake builds plus the relevant local-build integration tests. Phase C4 added wolfBoot build and relocated application-signing support with runtime-mounted or locally generated signing material only. Phase C5 added optional gateway-capable integration with runtime-provided SSH access and generated-artifact cleanup for Windows/container build switching. Phase C6 added a GitHub Actions containerised non-hardware job while preserving the existing runner-compatible and MQTT broker Docker runtime CI jobs.
 
 ## Firmware scheduler model
 
@@ -294,17 +294,20 @@ $env:PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES="1"; python -m pytest tests/hardware/
 
 ## GitHub Actions CI
 
-The repository includes `.github/workflows/ci.yml` for the default containerised non-hardware CI baseline. It runs on pushed commits, pull requests, and manual dispatch. The workflow builds `docker/python/Dockerfile` on the GitHub-hosted runner and runs all checks inside that project container image rather than installing STM32 or wolfBoot tooling directly on the runner.
-
-Default CI checks:
+The repository includes `.github/workflows/ci.yml` for continuous integration on every pushed commit, pull request, and manual dispatch. Phase C6 preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation, and adds a separate containerised non-hardware job for the project-owned container workflow.
 
 ```text
-container-non-hardware  Builds the project container image, records the intentionally excluded workflow classes, runs Python unit tests, validates the safe status command, builds the Debug and RelocatedDebug CMake presets, builds one wolfBoot profile, signs the relocated ECDSA P-256 application, and runs targeted non-hardware local-build integration tests.
+unit-tests                  Runs python -m pytest tests/unit.
+firmware-builds            Builds the Debug and RelocatedDebug CMake presets with the ARM embedded toolchain on the runner.
+wolfboot-build-integration Runs the real wolfBoot build integration test when local tooling and the wolfBoot submodule are available.
+integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass, including Docker Compose config rendering for the MQTT broker profiles.
+mqtt-broker-docker-runtime Starts the local classical Mosquitto container, provisions temporary TLS material, validates mutual TLS, and verifies MQTT publish/subscribe with client certificates.
+container-non-hardware     Builds docker/python/Dockerfile and runs Python unit tests, safe status validation, Debug and RelocatedDebug builds, one wolfBoot profile build, relocated ECDSA P-256 application signing, and targeted local-build integration tests inside the project container.
 ```
 
-The default CI path intentionally does not run `tests/hardware`, gateway SSH checks, UART capture, board flashing, MQTT broker runtime/gateway validation, Wi-Fi-module workflows, or secret-dependent workflows. CI does not require repository, organization, or environment secrets. Application-signing material used by the CI job is runtime-generated or runtime-mounted workspace state only and remains excluded from Git and the container image by the existing generated-output and secret rules.
+The CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
 
-CI results provide portable software-build evidence only. Do not treat CI output as hardware, gateway, flashing, UART, MQTT/TLS, runtime, timing, memory, benchmark, or end-to-end evidence. Those claims still require explicit logs, manifests, or equivalent evidence from the relevant capability-gated workflow.
+The containerised CI job requires no repository, organization, or environment secrets. Signing material generated by that job is runtime workspace state only and remains excluded from Git and the container image by the generated-output and secret rules. CI results provide portable software-build and local Docker runtime evidence only. Do not treat CI output as hardware, gateway, flashing, UART, production MQTT/TLS, runtime timing, runtime memory, benchmark, or end-to-end device evidence.
 
 ## Generated files and secrets
 
