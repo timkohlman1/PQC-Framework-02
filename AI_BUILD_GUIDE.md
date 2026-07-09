@@ -53,13 +53,14 @@ Implemented framework scope as of Phase 11.7:
 - Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
+- Phase M5 STM32-local lwIP build-only skeleton compiled into direct and relocated firmware builds with runtime networking explicitly unavailable
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware integration, lwIP integration, wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -103,6 +104,8 @@ STM32L4R5XX_FLASH.ld
 STM32L4R5XX_FLASH_RELOCATED.ld
 startup_stm32l4r5xx.s
 stm32_basic_hal1.ioc
+Core/Inc/pqc_lwip_build_only.h
+Core/Src/pqc_lwip_build_only.c
 configs/
 scripts/
 tests/
@@ -179,6 +182,7 @@ tests/unit/test_uart.py
 tests/unit/test_wolfboot_build.py
 tests/unit/test_mqtt_broker_compose.py
 tests/unit/test_docker_default_workflow_docs.py
+tests/unit/test_stm32_lwip_build_only_skeleton.py
 tests/integration/test_gateway_flash_helper.py
 tests/integration/test_local_build.py
 tests/integration/test_wolfboot_build_integration.py

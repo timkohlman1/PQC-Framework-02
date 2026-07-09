@@ -223,7 +223,7 @@ Introduce or validate STM32-local lwIP build integration without requiring the W
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add or validate a STM32-local lwIP build-only skeleton for future MQTT/TLS work. This sub-phase must not require the ST67W61M1 Wi-Fi module and must not claim Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end success. Keep any network interface unavailable, stubbed, or explicitly deferred. Preserve CubeMX-generated layout unless an inspected file requires a scoped change.
+Requirement: Implement Phase M5 of the attached development plan - STM32 lwIP Build-Only Skeleton. Add or validate a STM32-local lwIP build-only skeleton for future MQTT/TLS work. This sub-phase must not require the ST67W61M1 Wi-Fi module and must not claim Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end success. Keep any network interface unavailable, stubbed, or explicitly deferred. Preserve CubeMX-generated layout unless an inspected file requires a scoped change.
 
 ```
 
@@ -259,7 +259,7 @@ Add or validate wolfSSL build integration for STM32 without performing a real TL
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add or validate a wolfSSL build-only skeleton for STM32 MQTT/TLS work. The firmware should build with the intended wolfSSL integration boundary, but this sub-phase must not perform or claim a real TLS handshake. Certificate and secret handling must follow the repository secrets policy. Do not implement real network transport, ST67W61M1 backend, MQTT publish, or hardware tests in this sub-phase.
+Requirement: Implement Phase M6 of the attached development plan - wolfSSL Build-Only Skeleton. Add or validate a wolfSSL build-only skeleton for STM32 MQTT/TLS work. The firmware should build with the intended wolfSSL integration boundary, but this sub-phase must not perform or claim a real TLS handshake. Certificate and secret handling must follow the repository secrets policy. Do not implement real network transport, ST67W61M1 backend, MQTT publish, or hardware tests in this sub-phase.
 
 ```
 
@@ -296,7 +296,7 @@ Add or validate wolfMQTT build integration and bind it to an abstract transport 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add or validate a wolfMQTT build-only skeleton for STM32 MQTT/TLS work. The MQTT client must be separated from the transport backend so fake/no-network and future ST67W61M1 backends can be selected without changing MQTT logic. This sub-phase must not claim broker connection, TLS handshake, publish, reconnect, Wi-Fi, or end-to-end success.
+Requirement: Implement Phase M7 of the attached development plan - wolfMQTT Build-Only Skeleton. Add or validate a wolfMQTT build-only skeleton for STM32 MQTT/TLS work. The MQTT client must be separated from the transport backend so fake/no-network and future ST67W61M1 backends can be selected without changing MQTT logic. This sub-phase must not claim broker connection, TLS handshake, publish, reconnect, Wi-Fi, or end-to-end success.
 
 ```
 

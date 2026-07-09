@@ -18,7 +18,7 @@ The repository currently contains:
 - an MQTT/TLS roadmap that separates hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation from future ST67W61M1-backed wireless validation
 - a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
-Not implemented yet: STM32 MQTT client firmware integration, STM32-local lwIP/wolfSSL/wolfMQTT integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, STM32-local wolfSSL/wolfMQTT integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -428,6 +428,8 @@ Near-term MQTT/TLS work should remain in small phases: documentation split, conf
 Phase M2 adds framework-side MQTT/TLS configuration and manifest schema support. MQTT experiment configs may include an `mqtt` mapping with `schema_version: 1`, an explicit `transport_backend`, an `evidence_class`, TLS mode, optional non-secret certificate references, optional broker endpoint for host-side validation, and explicit unavailable-metric reasons. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`.
 
 Phase M3 adds a deterministic fake/no-network MQTT transport harness for non-hardware control-flow testing. The `mqtt-fake-transport` command records simulated connect, publish, timeout, disconnect, and reconnect outcomes under the manifest `mqtt_tls.fake_transport` block. This evidence is labelled `fake/no-network transport evidence`; it is not broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or real network evidence.
+
+Phase M5 adds a STM32-local lwIP build-only skeleton under `Core/Inc/pqc_lwip_build_only.h` and `Core/Src/pqc_lwip_build_only.c`. The skeleton is compiled into the direct and relocated firmware builds as preparation-layer evidence only. It does not include lwIP middleware headers, initialize a network interface, require the ST67W61M1 module, acquire an IP address, open TCP, perform TLS, connect MQTT, publish, or reconnect. Runtime networking remains explicitly unavailable until later phases provide real STM32 and broker evidence.
 
 The fake/no-network example config is `configs/experiments/mqtt_tls_schema_fake.yaml`. When an experiment config includes MQTT/TLS schema fields, newly created manifests include an `mqtt_tls` result model. Metrics that do not have real evidence are recorded as `status: unavailable` with a reason instead of being omitted or inferred. Phase M2/M3 schema and fake-transport handling does not perform broker deployment, socket I/O, STM32 networking, UART capture, lwIP, wolfSSL, wolfMQTT, or hardware validation.
 
