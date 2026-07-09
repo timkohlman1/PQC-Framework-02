@@ -194,6 +194,7 @@ Run gateway-capable integration checks through Docker with runtime-mounted SSH m
 
 ```powershell
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 ```
 
 The default SSH mount source is `${env:USERPROFILE}\.ssh` on PowerShell and `$HOME/.ssh` on POSIX shells. Set `PQC_DOCKER_SSH_DIR` to use a different host-side SSH directory. Set `PQC_DOCKER_IMAGE` to use a different image tag.
@@ -326,6 +327,7 @@ Strict capability checks:
 ```powershell
 .\scripts\dev.ps1 pytest tests/integration -m integration --pqc-require-local-build
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
@@ -429,7 +431,9 @@ Phase M2 adds framework-side MQTT/TLS configuration and manifest schema support.
 
 Phase M3 adds a deterministic fake/no-network MQTT transport harness for non-hardware control-flow testing. The `mqtt-fake-transport` command records simulated connect, publish, timeout, disconnect, and reconnect outcomes under the manifest `mqtt_tls.fake_transport` block. This evidence is labelled `fake/no-network transport evidence`; it is not broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or real network evidence.
 
-Phase M5 now compiles the STM32-local lwIP/ST67W6X preparation layer without enabling runtime networking. The earlier `Core/Inc/pqc_lwip_build_only.h` and `Core/Src/pqc_lwip_build_only.c` boundary remains present, and CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X driver sources are included in the direct and relocated firmware builds. This is compile/link evidence only. The generated ST67W6X hardware-facing code is present so interfaces can be inspected and future stubs can be scoped, but the firmware does not claim module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, UART runtime success, or end-to-end wireless success.
+Phase M5 now compiles the STM32-local lwIP/ST67W6X preparation layer without enabling runtime networking. The earlier `Core/Inc/pqc_lwip_build_only.h` and `Core/Src/pqc_lwip_build_only.c` boundary remains present, and CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X driver sources are included in the direct and relocated firmware builds. This is compile/link evidence only, with one additional non-network lwIP runtime smoke marker emitted over UART. The smoke marker exercises deterministic lwIP version, IPv4 formatting, and checksum helpers only; it does not initialize a netif, use ST67W6X hardware, acquire an IP address, open TCP, run TLS, or perform MQTT. The generated ST67W6X hardware-facing code is present so interfaces can be inspected and future stubs can be scoped, but the firmware does not claim module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, network runtime success, or end-to-end wireless success.
+
+The expected UART smoke marker begins with `lwIP runtime smoke:` and records `network=unavailable`; it is lwIP helper-call evidence only, not network-interface or wireless evidence. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` runs the baseline build/flash/UART flow and asserts that marker appears in `uart.log` alongside the existing boot, scheduler, default-task, and tick markers.
 
 The current compile-only ST67W61M1 shield pin preparation is `PA5/D13 SPI1_SCK`, `PA6/D12 SPI1_MISO`, `PA7/D11 SPI1_MOSI`, `PD14/D10 SPI_CS`, `PE11/D5 CHIP_EN`, `PE9/D6 BOOT`, `PE13/D3 SPI_RDY` through `EXTI15_10_IRQn`, and `PF15/D2 USER_BUTTON` through `EXTI15_10_IRQn`. The clock preparation targets 120 MHz SYSCLK/HCLK and SPI1 prescaler 4, which gives about 30 Mbit/s if SPI1 is clocked from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
 

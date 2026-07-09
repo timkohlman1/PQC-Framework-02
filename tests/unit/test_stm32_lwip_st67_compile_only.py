@@ -140,9 +140,53 @@ def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
         for fragment in runtime_entrypoints:
             assert fragment not in source
 
+    assert "APP_PrintLwIPRuntimeSmoke();" in main_c
+    assert "lwIP runtime smoke:" in main_c
+    assert "network=unavailable" in main_c
+    assert "PQC_LwIP_BuildOnly_RuntimeSmokeLine" not in freertos_c
+
     for doc in (architecture, readme):
         assert "compile/link evidence only" in doc
         assert "does not initialize" in doc or "does not claim" in doc
         assert "Wi-Fi association" in doc
         assert "MQTT connect" in doc
         assert "end-to-end wireless success" in doc
+
+
+def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
+    header = _read("Core/Inc/pqc_lwip_build_only.h")
+    source = _read("Core/Src/pqc_lwip_build_only.c")
+    main_c = _read("Core/Src/main.c")
+    architecture = _read("docs/007_framework_architecture.md")
+    readme = _read("README.md")
+
+    assert "PQC_LwIP_BuildOnly_RuntimeSmokeLine" in header
+    assert "LWIP_VERSION_MAJOR" in source
+    assert "ip4addr_ntoa_r" in source
+    assert "inet_chksum" in source
+    assert "lwIP runtime smoke: version=" in source
+    assert "ip4_format=%s" in source
+    assert "IP4_ADDR(&example_addr, 192, 0, 2, 1)" in source
+    assert "network=unavailable" in source
+    assert "APP_PrintLwIPRuntimeSmoke();" in main_c
+
+    forbidden_runtime_network_fragments = (
+        "lwip_init(",
+        "MX_LWIP_Init(",
+        "netif_add(",
+        "netif_set_up(",
+        "dhcp_start(",
+        "tcp_connect(",
+        "mqtt_client_connect(",
+        "W6X_Init(",
+        "W6X_WiFi_Connect(",
+    )
+
+    for fragment in forbidden_runtime_network_fragments:
+        assert fragment not in source
+        assert fragment not in main_c
+
+    for doc in (architecture, readme):
+        assert "non-network lwIP runtime smoke" in doc
+        assert "version, IPv4 formatting, and checksum helpers" in doc
+        assert "does not initialize a netif" in doc

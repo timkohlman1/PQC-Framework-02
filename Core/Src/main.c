@@ -22,7 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "pqc_lwip_build_only.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -107,6 +107,22 @@ static void APP_UART_WriteUint32(uint32_t value)
   {
     count--;
     HAL_UART_Transmit(&hlpuart1, (uint8_t *)&digits[count], 1U, HAL_MAX_DELAY);
+  }
+}
+
+static void APP_PrintLwIPRuntimeSmoke(void)
+{
+  char smoke_line[128];
+
+  PQC_LwIP_BuildOnly_Init();
+
+  if (PQC_LwIP_BuildOnly_RuntimeSmokeLine(smoke_line, (uint32_t)sizeof(smoke_line)))
+  {
+    APP_UART_WriteString(smoke_line);
+  }
+  else
+  {
+    APP_UART_WriteString("lwIP runtime smoke: unavailable reason=format_failed network=unavailable\r\n");
   }
 }
 
@@ -216,6 +232,7 @@ int main(void)
   const char boot_msg[] = "\r\nstm32-basic_hal1 boot v0.1.0\r\n";
 #endif
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
+  APP_PrintLwIPRuntimeSmoke();
 
   /* USER CODE END 2 */
 

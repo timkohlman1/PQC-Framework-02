@@ -53,7 +53,7 @@ Implemented framework scope as of Phase 11.7:
 - Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
-- Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable
+- Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable; firmware also emits a non-network lwIP runtime smoke UART marker using version, IPv4 formatting, and checksum helpers only
 
 Important status constraints:
 
@@ -223,7 +223,7 @@ All default commands are run from the repository root through the Docker wrapper
 Firmware scheduler model:
 
 ```text
-The application uses CubeMX-generated CMSIS-RTOS v2 FreeRTOS. main() emits one-time direct-flash and secure-boot UART markers before osKernelStart(), then emits default task creation and scheduler-start UART markers. StartDefaultTask() emits a task-start marker before emitting the recurring tick marker and toggling the LED with osDelay(1000). HAL timebase uses TIM1 so FreeRTOS owns SysTick.
+The application uses CubeMX-generated CMSIS-RTOS v2 FreeRTOS. main() emits one-time direct-flash and secure-boot UART markers before osKernelStart(), emits the Phase M5 non-network lwIP runtime smoke marker, then emits default task creation and scheduler-start UART markers. StartDefaultTask() emits a task-start marker before emitting the recurring tick marker and toggling the LED with osDelay(1000). HAL timebase uses TIM1 so FreeRTOS owns SysTick.
 ```
 
 Direct-flash baseline:
@@ -404,6 +404,7 @@ Capability-gated strict checks:
 ```powershell
 .\scripts\dev.ps1 pytest tests/integration -m integration --pqc-require-local-build
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
@@ -475,7 +476,7 @@ Containerised build/signing evidence is portable software-build evidence only. D
 
 ### Phase M5 lwIP/ST67W6X compile-only preparation
 
-Phase M5 extends the earlier `pqc_lwip_build_only` boundary by allowing CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X network-driver sources to compile into the STM32 firmware. The project remains in compile-only/non-network mode for this layer: firmware builds may prove that sources compile and link, but they do not prove module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, UART runtime success, or end-to-end wireless success.
+Phase M5 extends the earlier `pqc_lwip_build_only` boundary by allowing CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X network-driver sources to compile into the STM32 firmware. The project remains in compile-only/non-network mode for this layer: firmware builds may prove that sources compile and link, and UART logs may prove that the non-network lwIP runtime smoke helper ran. That smoke helper is limited to lwIP version, IPv4 formatting, and checksum helpers. It does not prove module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, network runtime success, or end-to-end wireless success.
 
 The current compile-only pin and peripheral preparation is:
 
@@ -490,9 +491,9 @@ SPI_RDY   PE13  Arduino D3, EXTI13 through EXTI15_10_IRQn
 USER_BUTTON PF15 Arduino D2, EXTI15 through EXTI15_10_IRQn
 ```
 
-The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred.
+The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred. The expected UART smoke line begins with `lwIP runtime smoke:` and includes `network=unavailable`.
 
-CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
+CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` builds, flashes, captures UART, and asserts the non-network lwIP smoke marker appears with `network=unavailable`; it is hardware/UART helper-call evidence only and remains outside the default CI path. Broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
 
 ### CI containerised non-hardware checks
 
