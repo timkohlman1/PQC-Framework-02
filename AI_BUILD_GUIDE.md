@@ -404,7 +404,6 @@ Capability-gated strict checks:
 ```powershell
 .\scripts\dev.ps1 pytest tests/integration -m integration --pqc-require-local-build
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
@@ -493,7 +492,7 @@ USER_BUTTON PF15 Arduino D2, EXTI15 through EXTI15_10_IRQn
 
 The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred. The expected UART smoke line begins with `lwIP runtime smoke:` and includes `network=unavailable`.
 
-CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` builds, flashes, captures UART, and asserts the non-network lwIP smoke marker appears with `network=unavailable`; it is hardware/UART helper-call evidence only and remains outside the default CI path. Broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
+CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
 
 ### CI containerised non-hardware checks
 
@@ -570,7 +569,7 @@ When implementing or reviewing changes:
 5. Do not implement future phases early.
 6. Preserve the direct-flash baseline unless explicitly asked to change it.
 7. Do not move CubeMX-generated folders unless explicitly requested.
-8. Add or update tests for framework code changes.
+8. Add or update tests for framework code changes. Do not stop at unit tests when the feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries. If no integration, gateway, or hardware test is added for an affected boundary, state the specific reason in the implementation response and document the deferred test item in `docs/007_framework_architecture.md` under a concise "Deferred test coverage" subsection for the affected area. Each deferred item must name the feature, the missing test layer, the capability or phase needed to complete it, and the command that should eventually verify it. Future AI requests that modify or complete related functionality must inspect this deferred coverage subsection and either implement the listed test, update it with current context, or explicitly justify why it is no longer applicable.
 9. Keep hardware-dependent tests separate and capability-gated.
 10. Update relevant documentation in the same change.
 11. Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success without explicit logs/manifests.
