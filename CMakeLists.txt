@@ -60,6 +60,42 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+# Phase M6 wolfSSL source build integration.
+#
+# Reuse the wolfSSL source tree carried by the wolfBoot submodule, but keep all
+# project-specific configuration in Core/Inc/user_settings.h and the
+# pqc_wolfssl_build_only boundary. This target intentionally builds only the
+# wolfCrypt SHA-256 source needed by the STM32 build-only smoke check. It does
+# not build or run a TLS transport, certificate loader, MQTT client, or
+# ST67W61M1 backend.
+set(PQC_WOLFSSL_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
+    CACHE PATH
+    "Repository-local wolfSSL source directory used for Phase M6 STM32 build-only smoke coverage"
+)
+
+set(PQC_WOLFSSL_SHA256_SOURCE "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c")
+if(NOT EXISTS "${PQC_WOLFSSL_SHA256_SOURCE}")
+    message(FATAL_ERROR
+        "Phase M6 wolfSSL source file not found: ${PQC_WOLFSSL_SHA256_SOURCE}. "
+        "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+    )
+endif()
+
+add_library(pqc_wolfssl_stm32_build_only STATIC
+    "${PQC_WOLFSSL_SHA256_SOURCE}"
+)
+
+target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC
+    Core/Inc
+    "${PQC_WOLFSSL_SOURCE_DIR}"
+)
+
+target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
+    WOLFSSL_USER_SETTINGS
+    PQC_WOLFSSL_SOURCE_BUILD=1
+)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -75,12 +111,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc
+    "${PQC_WOLFSSL_SOURCE_DIR}"
     # Add user defined include paths
 )
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_WOLFSSL_BUILD_ONLY=1
+    PQC_WOLFSSL_SOURCE_BUILD=1
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
@@ -102,6 +140,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
+    pqc_wolfssl_stm32_build_only
 
     # Add user defined libraries
 )

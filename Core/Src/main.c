@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pqc_lwip_build_only.h"
+#include "pqc_wolfssl_build_only.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -123,6 +124,22 @@ static void APP_PrintLwIPRuntimeSmoke(void)
   else
   {
     APP_UART_WriteString("lwIP runtime smoke: unavailable reason=format_failed network=unavailable\r\n");
+  }
+}
+
+static void APP_PrintWolfSSLRuntimeSmoke(void)
+{
+  char smoke_line[256];
+
+  PQC_WolfSSL_BuildOnly_Init();
+
+  if (PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(smoke_line, (uint32_t)sizeof(smoke_line)))
+  {
+    APP_UART_WriteString(smoke_line);
+  }
+  else
+  {
+    APP_UART_WriteString("wolfSSL build-only smoke: unavailable reason=format_failed tls_handshake=unavailable transport=unavailable certs=not-loaded secrets=not-compiled-in\r\n");
   }
 }
 
@@ -233,6 +250,7 @@ int main(void)
 #endif
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
   APP_PrintLwIPRuntimeSmoke();
+  APP_PrintWolfSSLRuntimeSmoke();
 
   /* USER CODE END 2 */
 

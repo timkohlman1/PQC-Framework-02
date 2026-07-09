@@ -120,3 +120,8 @@ Do not treat a successful Phase M6 firmware build as TLS runtime evidence. TLS h
 
 
 The classical profile uses local test X.509 certificates for TLS development. The OQS profile is experimental and uses Open Quantum Safe tooling or images for PQC TLS evaluation; it must not be treated as production TLS infrastructure.
+
+
+## Phase M6 wolfSSL source-build smoke
+
+The Phase M6 wolfSSL smoke path builds a minimal wolfCrypt SHA-256 source target from `tools/wolfboot/lib/wolfssl` and runs it over a fixed non-secret test message. This path must not embed private keys, CA private keys, client keys, broker credentials, MQTT passwords, real `.env` files, private certificates, or production TLS material. The UART marker may report source-build and SHA-256 smoke status only; it must continue to mark certificate loading, compiled-in secrets, runtime transport, TLS handshake, MQTT, Wi-Fi, and end-to-end network success as unavailable until later evidence-backed phases implement them.

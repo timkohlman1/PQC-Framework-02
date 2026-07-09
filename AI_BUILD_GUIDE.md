@@ -54,14 +54,14 @@ Implemented framework scope as of Phase 11.7:
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
 - Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable; firmware also emits a non-network lwIP runtime smoke UART marker using version, IPv4 formatting, and checksum helpers only
-- Phase M6 STM32-local wolfSSL build-only preparation: `pqc_wolfssl_build_only` is compiled into direct and relocated firmware builds as a TLS integration boundary, with runtime transport, certificate store, private key material, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success explicitly unavailable
+- Phase M6 STM32-local wolfSSL source build-only preparation: a minimal wolfCrypt SHA-256 source target is built from `tools/wolfboot/lib/wolfssl`, linked into direct and relocated firmware builds, and exercised through `pqc_wolfssl_build_only`; runtime transport, certificate store, private key material, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success remain explicitly unavailable
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware runtime integration, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, real wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware runtime integration, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, real wolfSSL TLS handshakes, wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests beyond the Phase M6 wolfCrypt build-only smoke marker, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -498,9 +498,11 @@ The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI
 
 CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
 
-### Phase M6 wolfSSL compile-only preparation
+### Phase M6 wolfSSL source build-only preparation
 
-Phase M6 adds `Core/Inc/pqc_wolfssl_build_only.h` and `Core/Src/pqc_wolfssl_build_only.c` as the STM32-local wolfSSL build-only preparation boundary. The source is compiled into direct and relocated firmware builds and records whether wolfSSL headers are visible to the compiler, while keeping TLS runtime unavailable. It does not create a wolfSSL context, open TCP, load certificates or private keys, perform a TLS handshake, perform MQTT work, use ST67W61M1, or claim end-to-end network success. Certificate handling is limited to future non-secret path/reference configuration; private keys, credentials, real certificates, private CA material, and production TLS material must not be committed, copied into result artifacts, included in replacement ZIPs, or baked into container images.
+Phase M6 builds a minimal STM32 wolfSSL/wolfCrypt source target from the wolfSSL tree carried by the wolfBoot submodule at `tools/wolfboot/lib/wolfssl`. The CMake target `pqc_wolfssl_stm32_build_only` currently compiles `wolfcrypt/src/sha256.c`, uses the project-owned `Core/Inc/user_settings.h` wrapper and `Core/Inc/pqc_wolfssl_user_settings.h`, and links into both direct and relocated firmware builds through `pqc_wolfssl_build_only`. The firmware emits a build-only UART smoke marker after computing SHA-256 over a fixed non-secret message with wolfCrypt; the expected line begins with `wolfSSL build-only smoke:` and includes `source=enabled`, `sha256=ok`, `tls_handshake=unavailable`, `transport=unavailable`, `certs=not-loaded`, and `secrets=not-compiled-in`.
+
+This is source-build and hardware-smoke evidence for a narrow wolfCrypt primitive only. It does not create a wolfSSL context, open TCP, load certificates or private keys, perform a TLS handshake, perform MQTT work, use ST67W61M1, or claim end-to-end network success. Certificate handling is limited to future non-secret path/reference configuration; private keys, credentials, real certificates, private CA material, and production TLS material must not be committed, copied into result artifacts, included in replacement ZIPs, or baked into container images.
 
 CI and local verification for this phase remain non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, real TLS, MQTT, and secret-dependent workflows remain outside this phase.
 
