@@ -2614,6 +2614,28 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
             "validation_retry_delay_seconds": args.validation_retry_delay_seconds,
             "step_timeout_seconds": args.step_timeout_seconds,
         },
+        "evidence": {
+            "evidence_class": "host_side",
+            "evidence_label": "host-side/broker-side MQTT/TLS compatibility evidence",
+            "evidence_sources": [
+                "host-side MQTT/TLS client validation output",
+                "broker-side Docker Compose status and broker logs",
+            ],
+            "evidence_boundaries": {
+                "claims_host_side_broker_compatibility": not args.skip_validation,
+                "claims_broker_side_container_status": True,
+                "claims_stm32_success": False,
+                "claims_wifi_module_success": False,
+                "claims_lwip_on_stm32_success": False,
+                "claims_wolfssl_on_stm32_success": False,
+                "claims_wolfmqtt_on_stm32_success": False,
+                "claims_end_to_end_wireless_success": False,
+            },
+            "limitations": [
+                "Phase M4 broker validation is host-side and broker-side evidence only.",
+                "It does not exercise STM32 firmware, the ST67W61M1 Wi-Fi module, lwIP on STM32, wolfSSL on STM32, wolfMQTT on STM32, or end-to-end wireless operation.",
+            ],
+        },
         "steps": [],
     }
     _write_mqtt_manifest(result_dir, manifest)
@@ -2705,6 +2727,8 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
     print(f"Run ID: {run_id}")
     print(f"Result directory: {result_dir}")
     print(f"Profile: {args.profile}")
+    print("Evidence label: host-side/broker-side MQTT/TLS compatibility evidence")
+    print("Evidence boundary: host-side client and broker-side Docker validation only; no STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success is claimed")
     print(f"Manifest: {result_dir / 'manifest.json'}")
     print(f"Return code: {final_return_code}")
     return final_return_code

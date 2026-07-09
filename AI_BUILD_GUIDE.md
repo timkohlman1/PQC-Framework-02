@@ -52,6 +52,7 @@ Implemented framework scope as of Phase 11.7:
 - GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while using the containerised non-hardware job as the default reproducible software-build validation path
 - Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
+- Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
 
 Important status constraints:
 
@@ -619,7 +620,7 @@ The MQTT broker integration test is capability-gated and deploys to a temporary 
 ./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
 ```
 
-Do not record MQTT/TLS runtime success unless supported by explicit Docker status/log output or TLS client validation output.
+Do not record MQTT/TLS runtime success unless supported by explicit Docker status/log output or TLS client validation output. Phase M4 broker compatibility validation is host-side and broker-side evidence only; it must not be used to claim STM32 firmware, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success.
 
 
 ### MQTT OQS Mutual-TLS Profile

@@ -82,6 +82,8 @@ python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
 
 The wrapper provisions the selected profile's certificates, deploys the compose project, starts the selected profile, checks status, runs the applicable MQTT/TLS validation, retries validation for a bounded startup-readiness window, writes each step as `running` before its subprocess starts, creates the step log immediately, prints progress for each attempt, applies `--step-timeout-seconds` to bound subprocess hangs, attempts log collection even after validation failures, and stops the broker when `--stop-after` is supplied. Use `--dry-run` to write framework evidence while passing dry-run through to the broker control script.
 
+The result manifest labels this path as `host-side/broker-side MQTT/TLS compatibility evidence`. Its evidence boundary is limited to host-side client containers and broker-side Docker status/log output. It must not be used to claim STM32 firmware success, ST67W61M1 or Wi-Fi-module success, lwIP-on-STM32 success, wolfSSL-on-STM32 success, wolfMQTT-on-STM32 success, or end-to-end wireless success.
+
 ## Start, inspect, and stop
 
 Start the classical TLS broker:
@@ -113,6 +115,17 @@ Stop broker services:
 ```powershell
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
+
+## Host-side broker compatibility validation
+
+After provisioning, deploying, and starting a profile, the broker utility can validate MQTT publish/subscribe through host-side client containers:
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
+```
+
+The validation command output includes the evidence class, evidence label, profile, and evidence boundary before running the client checks. This output is broker/client compatibility evidence only.
 
 ## Local Docker smoke test
 
