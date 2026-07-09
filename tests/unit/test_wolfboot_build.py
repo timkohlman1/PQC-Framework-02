@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,6 +128,34 @@ def test_construct_wolfboot_build_command_uses_profile_scalars():
         "SIGN=ECC256",
     ]
 
+
+
+
+def test_default_wolfboot_runner_tolerates_non_utf8_build_output(monkeypatch, tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+
+    def fake_run(command, cwd, text, capture_output, check):
+        assert command == ["make", "wolfboot.elf"]
+        assert cwd == tmp_path
+        assert text is False
+        assert capture_output is True
+        assert check is False
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=b"build output before invalid byte: \x86\n",
+            stderr=b"warning before invalid byte: \x86\n",
+        )
+
+    monkeypatch.setattr(wolfboot_build.subprocess, "run", fake_run)
+
+    execution = wolfboot_build.default_wolfboot_runner(["make", "wolfboot.elf"], tmp_path)
+
+    assert execution.return_code == 0
+    assert "build output before invalid byte" in execution.stdout
+    assert "warning before invalid byte" in execution.stderr
+    assert "�" in execution.stdout
+    assert "�" in execution.stderr
 
 def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path):
     wolfboot_build = load_wolfboot_build_module()

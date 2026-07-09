@@ -597,6 +597,22 @@ def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
     return removed
 
 
+def _decode_wolfboot_command_output(output: bytes | str | None) -> str:
+    """Decode captured wolfBoot command output without failing on toolchain bytes.
+
+    wolfBoot builds invoke host tools and cross-compilers through ``make``. Some
+    environments can emit non-UTF-8 bytes in diagnostic output. Build evidence
+    should preserve the command output as text, but invalid byte sequences must
+    not crash the framework before the build result and log are recorded.
+    """
+
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    return output.decode("utf-8", errors="replace")
+
+
 def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExecution:
     """Run a wolfBoot build command and capture stdout, stderr, and timing."""
 
@@ -604,15 +620,15 @@ def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExe
     completed = subprocess.run(
         command,
         cwd=cwd,
-        text=True,
+        text=False,
         capture_output=True,
         check=False,
     )
     return WolfBootCommandExecution(
         command=command,
         return_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        stdout=_decode_wolfboot_command_output(completed.stdout),
+        stderr=_decode_wolfboot_command_output(completed.stderr),
         duration_seconds=perf_counter() - start,
     )
 
