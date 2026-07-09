@@ -271,6 +271,119 @@ Requirement: Implement Phase M6 of the attached development plan - wolfSSL Build
 
 ---
 
+## Phase M6.1 — wolfSSL TLS Context Build-Only Smoke
+
+### Goal
+
+Extend the Phase M6 wolfSSL source-build work from wolfCrypt-only smoke evidence to a minimal wolfSSL TLS context lifecycle smoke, without performing a TLS handshake.
+
+### Outcomes
+
+- Firmware can build and link the selected wolfSSL TLS source needed for a minimal client context lifecycle.
+- The STM32 firmware can call wolfSSL initialization, create a client `WOLFSSL_CTX`, free it, and clean up wolfSSL state.
+- TLS context creation is represented separately from TLS handshake success.
+- Certificate loading, private key loading, TCP transport, MQTT, and ST67W61M1 backend integration remain unavailable.
+- The UART/runtime marker, if hardware smoke evidence is included, states that context lifecycle passed while handshake, certificates, transport, and MQTT remain unavailable.
+
+### Expected Evidence
+
+- Direct and relocated firmware builds.
+- Unit/build tests for wolfSSL TLS source wiring and STM32 user settings.
+- Optional capability-gated hardware UART smoke test using the existing STM32 board only.
+- Documentation records that this is TLS context lifecycle evidence only, not TLS handshake evidence.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.1 of the attached development plan - wolfSSL TLS Context Build-Only Smoke. Extend the STM32 wolfSSL source-build integration so the firmware can build and run a minimal wolfSSL TLS context lifecycle smoke. The smoke may initialize wolfSSL, create and free a client TLS context, and clean up wolfSSL state, but it must not perform or claim a TLS handshake, certificate loading, TCP transport, MQTT, ST67W61M1 backend use, Wi-Fi, or end-to-end network success. Keep any hardware UART smoke test capability-gated and label the evidence as TLS context lifecycle evidence only.
+
+```
+
+### Pass Criteria
+
+- Firmware builds with the selected wolfSSL TLS source and user settings.
+- TLS context lifecycle evidence is clearly separated from TLS handshake success.
+- No certificates, private keys, transport, MQTT, Wi-Fi, or end-to-end network success are claimed.
+
+---
+
+## Phase M6.2 — lwIP Network-Interface Boundary and Unavailable Status
+
+### Goal
+
+Add or validate a project-owned STM32 network-interface boundary that represents the future ST67W61M1-backed lwIP netif while keeping the backend explicitly unavailable until hardware-dependent work begins.
+
+### Outcomes
+
+- The firmware has a clear network-interface boundary for later ST67W61M1 backend integration.
+- The boundary reports unavailable link, unavailable IP address, unavailable TCP readiness, and unavailable transport state.
+- lwIP helper or netif data structures may be initialized locally where safe, but no link-up, DHCP/static IP assignment, TCP connection, TLS handshake, MQTT connect, or publish success is claimed.
+- The boundary can be consumed later by wolfSSL transport and wolfMQTT work without coupling MQTT logic directly to the ST67W61M1 driver.
+- Documentation records that the network-interface backend remains deferred.
+
+### Expected Evidence
+
+- Direct and relocated firmware builds.
+- Unit/build tests for the network-interface boundary and unavailable-state marker.
+- Optional capability-gated hardware UART smoke test using the existing STM32 board only.
+- Documentation records unavailable network metrics and deferred ST67W61M1 validation.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.2 of the attached development plan - lwIP Network-Interface Boundary and Unavailable Status. Add or validate a project-owned STM32 network-interface boundary for the future ST67W61M1-backed lwIP integration. The boundary should expose explicit unavailable status for link, IP address, TCP readiness, and transport availability, and may exercise safe local lwIP helpers where appropriate. This sub-phase must not claim Wi-Fi module detection, link-up, IP acquisition, TCP connection, TLS handshake, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Keep any hardware UART smoke test capability-gated.
+
+```
+
+### Pass Criteria
+
+- Firmware builds with the network-interface boundary.
+- Network/link/IP/TCP status remains explicitly unavailable.
+- The boundary is suitable for later wolfSSL transport and wolfMQTT integration without requiring Wi-Fi hardware.
+
+---
+
+## Phase M6.3 — wolfSSL Transport Boundary Without Network
+
+### Goal
+
+Prepare the wolfSSL transport integration boundary between wolfSSL and the future lwIP/ST67W61M1 network path without performing real socket I/O or a TLS handshake.
+
+### Outcomes
+
+- wolfSSL transport callback structure or wrapper functions are represented in project-owned firmware code.
+- The transport boundary can report unavailable read/write/connect state without performing real network I/O.
+- The boundary is aligned with the lwIP network-interface unavailable status from Phase M6.2.
+- The firmware can build with the planned wolfSSL transport boundary before wolfMQTT is introduced.
+- No TLS handshake, certificate loading, TCP connection, MQTT connect, MQTT publish, reconnect, Wi-Fi, or end-to-end network success is claimed.
+
+### Expected Evidence
+
+- Direct and relocated firmware builds.
+- Unit/build tests for transport-boundary wiring and unavailable-state behavior.
+- Optional capability-gated hardware UART smoke test using the existing STM32 board only.
+- Documentation records that wolfSSL transport callbacks are prepared but runtime transport remains unavailable.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Transport Boundary Without Network. Add or validate the STM32 wolfSSL transport boundary that will later connect wolfSSL to the lwIP/ST67W61M1 network path. The boundary may define callback structure, wrapper functions, and unavailable read/write/connect status, but it must not perform real socket I/O, TLS handshake, certificate loading, MQTT connect, MQTT publish, reconnect, Wi-Fi, or end-to-end network success. Keep any hardware UART smoke test capability-gated and label all evidence as build-only or unavailable-transport evidence.
+
+```
+
+### Pass Criteria
+
+- Firmware builds with the wolfSSL transport boundary.
+- Transport status remains explicitly unavailable.
+- The boundary is ready for later wolfMQTT build-only work without requiring real networking.
+
+
 ## Phase M7 — wolfMQTT Build-Only Skeleton
 
 ### Goal
@@ -529,6 +642,7 @@ The non-hardware MQTT/TLS preparation path is complete when:
 - Fake/no-network transport behavior is testable.
 - Host/broker validation is available and clearly separated from STM32 evidence.
 - STM32 firmware can build with the planned lwIP/wolfSSL/wolfMQTT boundaries where implemented.
+- Intermediate lwIP network-interface, wolfSSL TLS-context, and wolfSSL transport-boundary work remains clearly separated from real network and TLS handshake success.
 - STM32 can provide fake/no-network initialization evidence without the Wi-Fi module where implemented.
 - ST67W61M1-dependent work remains deferred until the hardware is available.
 - No runtime success is claimed without explicit supporting evidence.
