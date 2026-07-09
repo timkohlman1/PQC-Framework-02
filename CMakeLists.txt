@@ -68,6 +68,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
+    Core/Src/pqc_wolfssl_build_only.c
     # Add user sources here
 )
 
@@ -79,6 +80,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    PQC_WOLFSSL_BUILD_ONLY=1
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
