@@ -147,6 +147,10 @@ Requirement: Implement Phase M3 of the attached development plan - Fake/No-Netwo
 - Simulated evidence is not confused with real broker, TLS, or STM32 runtime evidence.
 - No hardware or network dependency is introduced.
 
+### Implementation Status
+
+Implemented by the Phase M3 fake/no-network transport harness. The harness records simulated control-flow evidence only and keeps broker, network, TLS, STM32 runtime, gateway, UART, Wi-Fi, and hardware success claims false.
+
 ---
 
 ## Phase M4 — Host-Side Broker Compatibility Validation
@@ -173,7 +177,7 @@ Validate MQTT/TLS broker compatibility separately from STM32 firmware and Wi-Fi 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add or refine host-side MQTT/TLS broker compatibility validation for the existing broker scaffold. The validation must be clearly labelled as host-side and broker-side evidence only. It must not claim STM32, Wi-Fi module, lwIP, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep gateway/broker-dependent tests capability-gated.
+Requirement: Implement Phase M4 of the attached development plan - Host-Side Broker Compatibility Validation. Add or refine host-side MQTT/TLS broker compatibility validation for the existing broker scaffold. The validation must be clearly labelled as host-side and broker-side evidence only. It must not claim STM32, Wi-Fi module, lwIP, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep gateway/broker-dependent tests capability-gated.
 
 ```
 

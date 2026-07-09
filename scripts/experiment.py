@@ -18,6 +18,7 @@ The initial supported commands are:
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+    python scripts/experiment.py mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
     python scripts/experiment.py aggregate-benchmarks
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -38,7 +39,7 @@ command builds firmware and, only if the build succeeds, flashes that artifact
 through the configured gateway in the same result run folder. The monitor
 command performs ad hoc bounded UART monitoring and writes timestamped logs
 under results/adhoc/. The aggregate-benchmarks command reads existing secure-boot
-benchmark manifests and writes JSON/CSV summaries without touching hardware.
+benchmark manifests and writes JSON/CSV summaries without touching hardware. The mqtt-fake-transport command records deterministic simulated fake/no-network MQTT control-flow evidence without broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access.
 """
 
 from __future__ import annotations
@@ -65,12 +66,19 @@ from framework.manifest import (
     apply_repeated_run_samples_to_benchmark_model,
     build_secure_boot_benchmark_model,
     build_secure_boot_benchmark_sample,
+    build_mqtt_fake_transport_manifest_evidence,
     create_result_folder,
     format_manifest_timestamp,
     read_manifest,
     update_manifest,
 )
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
+from framework.mqtt_fake_transport import (
+    FAKE_MQTT_VALID_OUTCOMES,
+    FakeMqttTransportConfigError,
+    scenario_from_config,
+    run_fake_mqtt_transport_scenario,
+)
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
@@ -318,6 +326,36 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         require_field(config, "mqtt.broker.port", "experiment config")
     if evidence_class == "fake_no_network" and broker:
         raise ConfigError("fake_no_network MQTT configs must not configure a real broker endpoint")
+
+    fake_transport = mqtt_config.get("fake_transport", {})
+    if fake_transport and not isinstance(fake_transport, dict):
+        raise ConfigError("experiment config mqtt.fake_transport field must be a mapping")
+    if fake_transport and transport_backend != "fake_no_network":
+        raise ConfigError("mqtt.fake_transport requires mqtt.transport_backend to be fake_no_network")
+    if fake_transport:
+        for outcome_field in (
+            "connect_outcome",
+            "publish_outcome",
+            "disconnect_outcome",
+            "reconnect_outcome",
+        ):
+            outcome_value = fake_transport.get(outcome_field)
+            if outcome_value is not None and outcome_value not in FAKE_MQTT_VALID_OUTCOMES:
+                raise ConfigError(
+                    f"mqtt.fake_transport.{outcome_field} must be one of: "
+                    + ", ".join(sorted(FAKE_MQTT_VALID_OUTCOMES))
+                )
+        reconnect_attempts = fake_transport.get("reconnect_attempts", 0)
+        if not isinstance(reconnect_attempts, int) or reconnect_attempts < 0:
+            raise ConfigError("mqtt.fake_transport.reconnect_attempts must be a non-negative integer")
+        for text_field in ("scenario", "topic", "message"):
+            text_value = fake_transport.get(text_field)
+            if text_value is not None and not isinstance(text_value, str):
+                raise ConfigError(f"mqtt.fake_transport.{text_field} must be a string")
+        if fake_transport.get("scenario") == "":
+            raise ConfigError("mqtt.fake_transport.scenario must be a non-empty string")
+        if fake_transport.get("topic") == "":
+            raise ConfigError("mqtt.fake_transport.topic must be a non-empty string")
 
     result_schema = mqtt_config.get("result_schema")
     if not isinstance(result_schema, dict):
@@ -2671,6 +2709,87 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
     print(f"Return code: {final_return_code}")
     return final_return_code
 
+
+def _mqtt_fake_transport_config_from_args(
+    *,
+    mqtt_config: dict[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Merge fake-transport config defaults with CLI overrides."""
+
+    config = dict(mqtt_config.get("fake_transport", {}) or {})
+    for attr, key in (
+        ("scenario", "scenario"),
+        ("connect_outcome", "connect_outcome"),
+        ("publish_outcome", "publish_outcome"),
+        ("disconnect_outcome", "disconnect_outcome"),
+        ("reconnect_outcome", "reconnect_outcome"),
+        ("reconnect_attempts", "reconnect_attempts"),
+        ("topic", "topic"),
+        ("message", "message"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            config[key] = value
+    return config
+
+
+def run_mqtt_fake_transport_command(args: argparse.Namespace) -> int:
+    """Run deterministic fake/no-network MQTT transport control-flow evidence."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    experiment = bundle["experiment"]
+    mqtt_config = experiment.get("mqtt", {})
+    if not isinstance(mqtt_config, dict):
+        print("MQTT fake transport requires an experiment mqtt mapping.", file=sys.stderr)
+        return 2
+    if mqtt_config.get("evidence_class") != "fake_no_network" or mqtt_config.get("transport_backend") != "fake_no_network":
+        print(
+            "MQTT fake transport requires mqtt.evidence_class and mqtt.transport_backend to be fake_no_network.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        scenario_config = _mqtt_fake_transport_config_from_args(
+            mqtt_config=mqtt_config,
+            args=args,
+        )
+        scenario = scenario_from_config(scenario_config)
+        fake_result = run_fake_mqtt_transport_scenario(scenario)
+    except (FakeMqttTransportConfigError, ValueError) as exc:
+        print(f"MQTT fake transport configuration failed: {exc}", file=sys.stderr)
+        return 2
+
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    manifest_path = result_dir / "manifest.json"
+    mqtt_tls = dict(manifest.get("mqtt_tls", {}))
+    mqtt_tls["fake_transport"] = build_mqtt_fake_transport_manifest_evidence(fake_result)
+    mqtt_tls["limitations"] = list(mqtt_tls.get("limitations", [])) + [
+        "Phase M3 fake/no-network MQTT transport harness evidence is simulated control-flow evidence only; no broker, gateway, socket, TLS handshake, UART, STM32 runtime, Wi-Fi, or hardware access was performed."
+    ]
+
+    update_manifest(
+        manifest_path,
+        {
+            "result": "fake_mqtt_transport_completed",
+            "mqtt_tls": mqtt_tls,
+        },
+    )
+
+    print("MQTT fake/no-network transport completed")
+    print("----------------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Scenario: {fake_result['scenario_id']}")
+    print(f"Evidence label: {fake_result['evidence_label']}")
+    print(f"Events: {fake_result['summary']['event_count']}")
+    print(f"Timeout operations: {', '.join(fake_result['summary']['timeout_operations']) or 'none'}")
+    print(f"Failed operations: {', '.join(fake_result['summary']['failed_operations']) or 'none'}")
+    print("No broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access was performed.")
+    return 0
+
+
 def run_aggregate_benchmarks_command(args: argparse.Namespace) -> int:
     """Aggregate secure-boot benchmark manifests into JSON and CSV summaries."""
 
@@ -2976,6 +3095,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run repeated post-flash secure-boot verification samples for the same benchmark profile. Each sample captures explicit UART timing evidence after reset.",
     )
     secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
+
+
+    mqtt_fake_parser = subparsers.add_parser(
+        "mqtt-fake-transport",
+        help="Run deterministic fake/no-network MQTT client control-flow evidence without sockets or hardware.",
+    )
+    mqtt_fake_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to a fake/no-network MQTT experiment YAML config.",
+    )
+    mqtt_fake_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    mqtt_fake_parser.add_argument("--scenario", default=None, help="Scenario identifier recorded in fake evidence.")
+    mqtt_fake_parser.add_argument("--connect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated connect outcome.")
+    mqtt_fake_parser.add_argument("--publish-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated publish outcome.")
+    mqtt_fake_parser.add_argument("--disconnect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated disconnect outcome.")
+    mqtt_fake_parser.add_argument("--reconnect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated reconnect outcome.")
+    mqtt_fake_parser.add_argument("--reconnect-attempts", type=int, default=None, help="Number of simulated reconnect attempts.")
+    mqtt_fake_parser.add_argument("--topic", default=None, help="Simulated MQTT topic recorded in fake evidence.")
+    mqtt_fake_parser.add_argument("--message", default=None, help="Simulated MQTT payload used only for message-size evidence.")
+    mqtt_fake_parser.set_defaults(func=run_mqtt_fake_transport_command)
 
 
     mqtt_parser = subparsers.add_parser(

@@ -427,7 +427,15 @@ Near-term MQTT/TLS work should remain in small phases: documentation split, conf
 
 Phase M2 adds framework-side MQTT/TLS configuration and manifest schema support. MQTT experiment configs may include an `mqtt` mapping with `schema_version: 1`, an explicit `transport_backend`, an `evidence_class`, TLS mode, optional non-secret certificate references, optional broker endpoint for host-side validation, and explicit unavailable-metric reasons. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`.
 
-The schema-only example config is `configs/experiments/mqtt_tls_schema_fake.yaml`. When an experiment config includes MQTT/TLS schema fields, newly created manifests include an `mqtt_tls` result model. Metrics that do not have evidence are recorded as `status: unavailable` with a reason instead of being omitted or inferred. Phase M2 schema handling does not perform broker deployment, socket I/O, STM32 networking, UART capture, lwIP, wolfSSL, wolfMQTT, or hardware validation.
+Phase M3 adds a deterministic fake/no-network MQTT transport harness for non-hardware control-flow testing. The `mqtt-fake-transport` command records simulated connect, publish, timeout, disconnect, and reconnect outcomes under the manifest `mqtt_tls.fake_transport` block. This evidence is labelled `fake/no-network transport evidence`; it is not broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or real network evidence.
+
+The fake/no-network example config is `configs/experiments/mqtt_tls_schema_fake.yaml`. When an experiment config includes MQTT/TLS schema fields, newly created manifests include an `mqtt_tls` result model. Metrics that do not have real evidence are recorded as `status: unavailable` with a reason instead of being omitted or inferred. Phase M2/M3 schema and fake-transport handling does not perform broker deployment, socket I/O, STM32 networking, UART capture, lwIP, wolfSSL, wolfMQTT, or hardware validation.
+
+```powershell
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml --publish-outcome timeout
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml --connect-outcome failure --reconnect-attempts 2 --reconnect-outcome success
+```
 
 ## MQTT broker compose project
 

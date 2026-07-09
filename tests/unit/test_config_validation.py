@@ -782,3 +782,49 @@ def test_validate_mqtt_tls_config_rejects_private_key_references():
 
     with pytest.raises(experiment_cli.ConfigError, match="private key"):
         experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_accepts_fake_transport_harness_fields():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["fake_transport"] = {
+        "scenario": "publish_timeout_then_disconnect",
+        "connect_outcome": "success",
+        "publish_outcome": "timeout",
+        "disconnect_outcome": "success",
+        "reconnect_outcome": "success",
+        "reconnect_attempts": 1,
+        "topic": "pqc/fake/no-network",
+        "message": "fake payload",
+    }
+
+    experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_invalid_fake_transport_outcome():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["fake_transport"] = {
+        "connect_outcome": "real_socket_connect",
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="connect_outcome"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["evidence_class"] = "host_side"
+    config["mqtt"]["transport_backend"] = "host_socket"
+    config["mqtt"]["broker"] = {
+        "host": "pqc-gateway1",
+        "port": 8883,
+    }
+    config["mqtt"]["tls"] = {"mode": "classical_tls"}
+    config["mqtt"]["fake_transport"] = {
+        "connect_outcome": "success",
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="fake_transport requires"):
+        experiment_cli.validate_experiment_config(config)

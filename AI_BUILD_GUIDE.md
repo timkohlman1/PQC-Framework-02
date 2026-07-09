@@ -51,6 +51,7 @@ Implemented framework scope as of Phase 11.7:
 - Docker-hosted Linux default path for Python validation, STM32 direct and relocated builds, wolfBoot builds, relocated application signing, pytest, gateway checks, and gateway-mediated hardware experiments
 - GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while using the containerised non-hardware job as the default reproducible software-build validation path
 - Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
+- Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 
 Important status constraints:
 
@@ -144,6 +145,7 @@ scripts/framework/build_state.py
 scripts/framework/fingerprint.py
 scripts/framework/flash.py
 scripts/framework/manifest.py
+scripts/framework/mqtt_fake_transport.py
 scripts/framework/secure_boot_flash.py
 scripts/framework/signing.py
 scripts/framework/source.py
@@ -167,6 +169,7 @@ tests/unit/test_config_validation.py
 tests/unit/test_fingerprint.py
 tests/unit/test_flash.py
 tests/unit/test_manifest.py
+tests/unit/test_mqtt_fake_transport.py
 tests/unit/test_run.py
 tests/unit/test_secure_boot_flash.py
 tests/unit/test_signing.py
@@ -346,7 +349,7 @@ results/benchmark-aggregation/benchmark_summary.json
 results/benchmark-aggregation/benchmark_summary.csv
 ```
 
-The manifest is the source of truth for what was run. MQTT/TLS Phase M2 manifests may include an `mqtt_tls` block when the experiment config includes MQTT schema fields. That block records schema version, evidence class, transport backend, TLS mode, optional broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`. Metrics without evidence must be recorded explicitly as unavailable with a reason.
+The manifest is the source of truth for what was run. MQTT/TLS manifests may include an `mqtt_tls` block when the experiment config includes MQTT schema fields. That block records schema version, evidence class, transport backend, TLS mode, optional broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`. Metrics without evidence must be recorded explicitly as unavailable with a reason. Phase M3 fake/no-network harness runs may also include `mqtt_tls.fake_transport` with deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence. Fake transport evidence must be labelled `fake/no-network transport evidence` and must not be treated as real broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network success.
 
 Secure-boot benchmark manifests separate:
 
@@ -381,7 +384,7 @@ Use three test categories:
 .\scripts\dev.ps1 pytest
 ```
 
-Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output. Phase M2 MQTT/TLS unit coverage should validate MQTT config acceptance/rejection, backend/evidence compatibility, secret-reference rejection, unavailable-metric handling, and manifest schema creation.
+Unit tests must not require STM32 hardware, SSH, UART devices, MQTT broker access, VPN access, network impairment privileges, or local wolfBoot hardware tooling. Use injected/mocked command runners for command construction and result handling. Phase 11 benchmark unit coverage should validate schema creation, repeated-run aggregate calculations, unavailable-metric handling, manifest updates, and aggregation JSON/CSV output. Phase M2/M3 MQTT/TLS unit coverage should validate MQTT config acceptance/rejection, backend/evidence compatibility, secret-reference rejection, unavailable-metric handling, manifest schema creation, and deterministic fake/no-network transport outcomes.
 
 FreeRTOS unit coverage should validate generated CMake wiring, baseline `FreeRTOSConfig.h` settings, CubeMX `.ioc` timebase/task settings, and UART marker ordering. Local-build integration coverage should compile both `Debug` and `RelocatedDebug` presets after FreeRTOS generation. Hardware coverage should treat FreeRTOS scheduler/task success as valid only when explicit UART markers are captured.
 

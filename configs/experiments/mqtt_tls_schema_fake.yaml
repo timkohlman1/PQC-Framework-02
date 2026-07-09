@@ -1,5 +1,5 @@
 id: mqtt_tls_schema_fake
-description: Phase M2 MQTT/TLS schema-only fake/no-network experiment config.
+description: Phase M3 MQTT/TLS fake/no-network transport harness experiment config.
 board: board_a
 host: gateway
 boot: direct_flash
@@ -13,6 +13,15 @@ mqtt:
   schema_version: 1
   evidence_class: fake_no_network
   transport_backend: fake_no_network
+  fake_transport:
+    scenario: connect_publish_disconnect_success
+    connect_outcome: success
+    publish_outcome: success
+    disconnect_outcome: success
+    reconnect_outcome: success
+    reconnect_attempts: 0
+    topic: pqc/fake/no-network
+    message: fake MQTT payload
   tls:
     mode: not_applicable
   result_schema:
@@ -20,9 +29,9 @@ mqtt:
       wifi_association: Fake/no-network transport does not use Wi-Fi hardware.
       ip_address: Fake/no-network transport does not acquire an IP address.
       tcp_connect: Fake/no-network transport does not open a TCP socket.
-      tls_handshake: Phase M2 does not perform a TLS handshake.
-      mqtt_connect: Phase M2 does not connect to an MQTT broker.
-      mqtt_publish: Phase M2 does not publish MQTT messages.
-      mqtt_reconnect: Phase M2 does not exercise reconnect behaviour.
-      latency_ms: Phase M2 has no runtime latency evidence.
-      throughput_bytes_per_second: Phase M2 has no throughput evidence.
+      tls_handshake: Phase M3 fake/no-network transport does not perform a TLS handshake.
+      mqtt_connect: Phase M3 fake/no-network transport records simulated connect control flow only, not real MQTT broker connection evidence.
+      mqtt_publish: Phase M3 fake/no-network transport records simulated publish control flow only, not real MQTT broker publish evidence.
+      mqtt_reconnect: Phase M3 fake/no-network transport records simulated reconnect control flow only, not real MQTT broker reconnect evidence.
+      latency_ms: Phase M3 fake/no-network transport has no real runtime latency evidence.
+      throughput_bytes_per_second: Phase M3 fake/no-network transport has no real throughput evidence.

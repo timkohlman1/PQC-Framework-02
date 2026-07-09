@@ -719,3 +719,68 @@ def test_build_manifest_embeds_mqtt_tls_schema_when_experiment_configures_mqtt()
     assert data["mqtt_tls"]["evidence_class"] == "stm32_build_only"
     assert data["mqtt_tls"]["metrics"]["tls_handshake"]["status"] == "unavailable"
     assert data["mqtt_tls"]["evidence_boundaries"]["claims_mqtt_success"] is False
+
+
+def test_build_mqtt_fake_transport_manifest_evidence_labels_simulated_evidence():
+    manifest = load_manifest_module()
+
+    fake_result = {
+        "scenario_id": "publish_timeout",
+        "events": [
+            {
+                "index": 1,
+                "operation": "publish",
+                "outcome": "timeout",
+                "simulated": True,
+            }
+        ],
+        "summary": {
+            "timeout_operations": ["publish"],
+        },
+    }
+
+    evidence = manifest.build_mqtt_fake_transport_manifest_evidence(fake_result)
+
+    assert evidence["model_phase"] == "phase_m3_fake_no_network_transport_harness"
+    assert evidence["evidence_class"] == "fake_no_network"
+    assert evidence["evidence_label"] == "fake/no-network transport evidence"
+    assert evidence["transport_backend"] == "fake_no_network"
+    assert evidence["simulated"] is True
+    assert evidence["evidence_boundaries"]["claims_network_success"] is False
+    assert evidence["evidence_boundaries"]["claims_tls_success"] is False
+    assert evidence["evidence_boundaries"]["claims_mqtt_runtime_success"] is False
+
+
+def test_build_mqtt_tls_result_model_can_embed_fake_transport_without_runtime_claims():
+    manifest = load_manifest_module()
+
+    result = manifest.build_mqtt_tls_result_model(
+        experiment_id="mqtt_tls_schema_fake",
+        evidence_class="fake_no_network",
+        transport_backend="fake_no_network",
+        tls_mode="not_applicable",
+        unavailable_metrics={
+            "wifi_association": "Fake/no-network transport does not use Wi-Fi hardware.",
+            "ip_address": "Fake/no-network transport does not acquire an IP address.",
+            "tcp_connect": "Fake/no-network transport does not open a TCP socket.",
+            "tls_handshake": "Fake/no-network transport does not perform a TLS handshake.",
+            "mqtt_connect": "Simulated connect only.",
+            "mqtt_publish": "Simulated publish only.",
+            "mqtt_reconnect": "Simulated reconnect only.",
+            "latency_ms": "No real latency evidence.",
+            "throughput_bytes_per_second": "No real throughput evidence.",
+        },
+        fake_transport_evidence={
+            "scenario_id": "connect_publish_disconnect_success",
+            "simulated": True,
+            "summary": {
+                "control_flow_success": True,
+            },
+        },
+    )
+
+    assert result["fake_transport"]["scenario_id"] == "connect_publish_disconnect_success"
+    assert result["fake_transport"]["simulated"] is True
+    assert result["evidence_boundaries"]["claims_network_success"] is False
+    assert result["evidence_boundaries"]["claims_tls_success"] is False
+    assert result["evidence_boundaries"]["claims_mqtt_success"] is False

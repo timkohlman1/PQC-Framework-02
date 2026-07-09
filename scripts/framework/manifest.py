@@ -31,6 +31,7 @@ UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
 MQTT_TLS_RESULT_SCHEMA_VERSION = 1
 MQTT_TLS_RESULT_MODEL_PHASE = "phase_m2_mqtt_tls_config_result_schema"
+MQTT_FAKE_TRANSPORT_MODEL_PHASE = "phase_m3_fake_no_network_transport_harness"
 MQTT_TLS_METRIC_NAMES = (
     "wifi_association",
     "ip_address",
@@ -43,7 +44,7 @@ MQTT_TLS_METRIC_NAMES = (
     "throughput_bytes_per_second",
 )
 MQTT_TLS_EVIDENCE_LABELS = {
-    "fake_no_network": "fake/no-network evidence",
+    "fake_no_network": "fake/no-network transport evidence",
     "host_side": "host-side evidence",
     "stm32_build_only": "STM32 build-only evidence",
     "stm32_runtime": "STM32 runtime evidence",
@@ -72,6 +73,7 @@ def build_mqtt_tls_result_model(
     unavailable_metrics: dict[str, str] | None = None,
     available_metrics: dict[str, dict[str, Any]] | None = None,
     limitations: list[str] | None = None,
+    fake_transport_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the Phase M2 MQTT/TLS result schema.
 
@@ -106,7 +108,7 @@ def build_mqtt_tls_result_model(
         1 for metric in metric_records.values() if metric.get("status") == "available"
     )
 
-    return {
+    result = {
         "schema_version": MQTT_TLS_RESULT_SCHEMA_VERSION,
         "model_phase": MQTT_TLS_RESULT_MODEL_PHASE,
         "experiment_id": experiment_id,
@@ -137,11 +139,44 @@ def build_mqtt_tls_result_model(
                 for name in ("mqtt_connect", "mqtt_publish", "mqtt_reconnect")
             ),
             "note": (
-                "Phase M2 adds schema support only. Runtime success claims require explicit future evidence "
-                "from logs, manifests, UART output, broker output, or equivalent records."
+                "MQTT/TLS runtime success claims require explicit real evidence from logs, manifests, "
+                "UART output, broker output, or equivalent records. Fake/no-network transport evidence "
+                "is simulated control-flow evidence only."
             ),
         },
     }
+
+    if fake_transport_evidence is not None:
+        fake_evidence = dict(fake_transport_evidence)
+        fake_evidence.setdefault("model_phase", MQTT_FAKE_TRANSPORT_MODEL_PHASE)
+        fake_evidence.setdefault("simulated", True)
+        result["fake_transport"] = fake_evidence
+
+    return result
+
+
+def build_mqtt_fake_transport_manifest_evidence(fake_transport_result: dict[str, Any]) -> dict[str, Any]:
+    """Return a manifest-safe Phase M3 fake/no-network transport evidence block."""
+
+    evidence = dict(fake_transport_result)
+    evidence["simulated"] = True
+    evidence["evidence_class"] = "fake_no_network"
+    evidence["evidence_label"] = MQTT_TLS_EVIDENCE_LABELS["fake_no_network"]
+    evidence["transport_backend"] = "fake_no_network"
+    evidence.setdefault("model_phase", MQTT_FAKE_TRANSPORT_MODEL_PHASE)
+    evidence["evidence_boundaries"] = {
+        "claims_broker_success": False,
+        "claims_network_success": False,
+        "claims_tls_success": False,
+        "claims_mqtt_runtime_success": False,
+        "claims_stm32_runtime_success": False,
+        "note": (
+            "Phase M3 fake/no-network transport evidence is deterministic simulated "
+            "control-flow evidence only. It is not broker, TLS, network, STM32 runtime, "
+            "gateway, Wi-Fi, UART, or hardware evidence."
+        ),
+    }
+    return evidence
 
 
 def _unavailable_reason(reason: str) -> dict[str, Any]:
