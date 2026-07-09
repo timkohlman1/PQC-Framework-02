@@ -57,6 +57,24 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define SPI_SCK_Pin GPIO_PIN_5
+#define SPI_SCK_GPIO_Port GPIOA
+#define SPI_MISO_Pin GPIO_PIN_6
+#define SPI_MISO_GPIO_Port GPIOA
+#define SPI_MOSI_Pin GPIO_PIN_7
+#define SPI_MOSI_GPIO_Port GPIOA
+#define USER_BUTTON_Pin GPIO_PIN_15
+#define USER_BUTTON_GPIO_Port GPIOF
+#define USER_BUTTON_EXTI_IRQn EXTI15_10_IRQn
+#define BOOT_Pin GPIO_PIN_9
+#define BOOT_GPIO_Port GPIOE
+#define CHIP_EN_Pin GPIO_PIN_11
+#define CHIP_EN_GPIO_Port GPIOE
+#define SPI_RDY_Pin GPIO_PIN_13
+#define SPI_RDY_GPIO_Port GPIOE
+#define SPI_RDY_EXTI_IRQn EXTI15_10_IRQn
+#define SPI_CS_Pin GPIO_PIN_14
+#define SPI_CS_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
 

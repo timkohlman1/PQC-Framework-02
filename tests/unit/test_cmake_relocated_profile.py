@@ -43,9 +43,10 @@ def test_stm32cubemx_cmake_includes_freertos_application_sources():
 
     assert "Core/Src/freertos.c" in stm32cubemx_cmake
     assert "Middlewares/Third_Party/FreeRTOS/Source/include" in stm32cubemx_cmake
-    assert "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS" in stm32cubemx_cmake
+    assert "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2" in stm32cubemx_cmake
     assert "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F" in stm32cubemx_cmake
     assert "Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c" in stm32cubemx_cmake
+    assert "Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c" in stm32cubemx_cmake
     assert "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c" in stm32cubemx_cmake
     assert "add_library(FreeRTOS OBJECT)" in stm32cubemx_cmake
     assert "FreeRTOS" in stm32cubemx_cmake
@@ -54,7 +55,7 @@ def test_application_emits_freertos_scheduler_uart_markers():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
     assert "FreeRTOS defaultTask created: name=defaultTask priority=osPriorityNormal stack_words=512" in main_c
-    assert "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask" in main_c
+    assert "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask" in main_c
     assert "tick_hz=" in main_c
     assert "heap_bytes=" in main_c
     assert "default_task_stack_words=512" in main_c
@@ -75,7 +76,7 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
     freertos_config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
 
     assert "1000" in _macro_define_line(freertos_config, "configTICK_RATE_HZ")
-    assert "8192" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
+    assert "40000" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
     assert " 2" in _macro_define_line(freertos_config, "configCHECK_FOR_STACK_OVERFLOW")
     assert " 1" in _macro_define_line(freertos_config, "configUSE_MALLOC_FAILED_HOOK")
     assert " 1" in _macro_define_line(
@@ -88,17 +89,17 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
     )
 
 
-def test_stm32cubemx_ioc_records_freertos_and_tim6_timebase_settings():
+def test_stm32cubemx_ioc_records_freertos_and_tim1_timebase_settings():
     ioc_text = Path("stm32_basic_hal1.ioc").read_text(encoding="utf-8")
 
-    assert "FREERTOS.configTOTAL_HEAP_SIZE=8192" in ioc_text
+    assert "FREERTOS.configTOTAL_HEAP_SIZE=40000" in ioc_text
     assert "FREERTOS.configCHECK_FOR_STACK_OVERFLOW=2" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark=1" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark2=1" in ioc_text
-    assert "FREERTOS.Tasks01=defaultTask,0,512,StartDefaultTask,Default,NULL,Dynamic" in ioc_text
-    assert "NVIC.TimeBase=TIM6_DAC_IRQn" in ioc_text
-    assert "NVIC.TimeBaseIP=TIM6" in ioc_text
-    assert "VP_SYS_VS_tim6.Mode=TIM6" in ioc_text
+    assert "FREERTOS.Tasks01=defaultTask,24,512,StartDefaultTask,Default,NULL,Dynamic,NULL,NULL" in ioc_text
+    assert "NVIC.TimeBase=TIM1_UP_TIM16_IRQn" in ioc_text
+    assert "NVIC.TimeBaseIP=TIM1" in ioc_text
+    assert "VP_SYS_VS_tim1.Mode=TIM1" in ioc_text
 
 
 def test_freertos_scheduler_marker_is_emitted_before_scheduler_start():
@@ -113,7 +114,7 @@ def test_freertos_scheduler_marker_is_emitted_before_scheduler_start():
 def test_freertos_tick_runs_from_default_task_not_main_loop():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
-    task_definition = "void StartDefaultTask(void const * argument)"
+    task_definition = "void StartDefaultTask(void *argument)"
     task_start = main_c.rindex(task_definition)
     task_body = main_c[task_start:]
 

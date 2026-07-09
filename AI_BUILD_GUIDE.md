@@ -21,7 +21,7 @@ Board: NUCLEO-L4R5ZI-P / NUCLEO-L4R5ZI
 MCU: STM32L4R5 / STM32L4Rxxx
 Direct-flash UART marker: stm32-basic_hal1 boot v0.1.0
 Secure-boot app UART marker: stm32-basic_hal1 secure-boot app v0.1.0
-FreeRTOS scheduler marker: FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask ...
+FreeRTOS scheduler marker: FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask ...
 FreeRTOS task marker: FreeRTOS defaultTask started: periodic tick task active
 Tick marker: tick
 ```
@@ -29,7 +29,7 @@ Tick marker: tick
 Implemented framework scope as of Phase 11.7:
 
 - direct-flash baseline build, flash, UART capture, and run workflows
-- CubeMX-generated CMSIS-RTOS v1 FreeRTOS application template using TIM6 as the HAL timebase
+- CubeMX-generated CMSIS-RTOS v2 FreeRTOS application template using TIM1 as the HAL timebase
 - first-class build records under `results/builds/<build_number>/`
 - source/build fingerprinting and safe rebuild skipping
 - explicit direct-flash boot config under `configs/boot/direct_flash.yaml`
@@ -46,21 +46,21 @@ Implemented framework scope as of Phase 11.7:
 - ML-DSA-87 is recorded as unavailable under the current 8192-byte image-header reserve
 - read-only benchmark aggregation output to JSON and CSV
 - consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
-- FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM6 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
+- FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM1 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
 - gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
 - Docker-hosted Linux default path for Python validation, STM32 direct and relocated builds, wolfBoot builds, relocated application signing, pytest, gateway checks, and gateway-mediated hardware experiments
 - GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while using the containerised non-hardware job as the default reproducible software-build validation path
 - Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
-- Phase M5 STM32-local lwIP build-only skeleton compiled into direct and relocated firmware builds with runtime networking explicitly unavailable
+- Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable
 
 Important status constraints:
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware runtime integration, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, wolfSSL/wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -223,7 +223,7 @@ All default commands are run from the repository root through the Docker wrapper
 Firmware scheduler model:
 
 ```text
-The application uses CubeMX-generated CMSIS-RTOS v1 FreeRTOS. main() emits one-time direct-flash and secure-boot UART markers before osKernelStart(), then emits default task creation and scheduler-start UART markers. StartDefaultTask() emits a task-start marker before emitting the recurring tick marker and toggling the LED with osDelay(1000). HAL timebase uses TIM6 so FreeRTOS owns SysTick.
+The application uses CubeMX-generated CMSIS-RTOS v2 FreeRTOS. main() emits one-time direct-flash and secure-boot UART markers before osKernelStart(), then emits default task creation and scheduler-start UART markers. StartDefaultTask() emits a task-start marker before emitting the recurring tick marker and toggling the LED with osDelay(1000). HAL timebase uses TIM1 so FreeRTOS owns SysTick.
 ```
 
 Direct-flash baseline:
@@ -471,6 +471,28 @@ Containerised application signing must use the runtime-mounted workspace or loca
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis and CubeMX/IDE-oriented work. They are not the documented default path and should not be treated as the reproducible validation gate.
 
 Containerised build/signing evidence is portable software-build evidence only. Do not claim hardware, gateway, flashing, UART, MQTT/TLS, timing, memory, benchmark, or end-to-end runtime success from container runs unless explicit logs, manifests, or equivalent evidence from those workflows are provided.
+
+
+### Phase M5 lwIP/ST67W6X compile-only preparation
+
+Phase M5 extends the earlier `pqc_lwip_build_only` boundary by allowing CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X network-driver sources to compile into the STM32 firmware. The project remains in compile-only/non-network mode for this layer: firmware builds may prove that sources compile and link, but they do not prove module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, UART runtime success, or end-to-end wireless success.
+
+The current compile-only pin and peripheral preparation is:
+
+```text
+SPI1_SCK  PA5   Arduino D13
+SPI1_MISO PA6   Arduino D12
+SPI1_MOSI PA7   Arduino D11
+SPI_CS    PD14  Arduino D10
+CHIP_EN   PE11  Arduino D5
+BOOT      PE9   Arduino D6
+SPI_RDY   PE13  Arduino D3, EXTI13 through EXTI15_10_IRQn
+USER_BUTTON PF15 Arduino D2, EXTI15 through EXTI15_10_IRQn
+```
+
+The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred.
+
+CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
 
 ### CI containerised non-hardware checks
 

@@ -221,6 +221,9 @@ jobs:
       - name: Run Python unit tests in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit
 
+      - name: Run lwIP/ST67 compile-only static validation in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit/test_stm32_lwip_st67_compile_only.py
+
       - name: Run safe framework status command in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 
