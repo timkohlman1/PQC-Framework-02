@@ -145,3 +145,66 @@ def test_stm32_wolfssl_source_smoke_does_not_embed_secret_material():
         "private_key.der",
     ):
         assert fragment not in combined
+
+
+def test_stm32_wolfssl_unavailable_transport_boundary_is_wired_and_evidence_bound():
+    root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_wolfssl_transport.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfssl_transport.c").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "Core/Src/pqc_wolfssl_transport.c" in root_cmake
+    assert "PQC_WolfSSL_Transport_Connect" in header
+    assert "PQC_WolfSSL_Transport_Read" in header
+    assert "PQC_WolfSSL_Transport_Write" in header
+    assert "PQC_WolfSSL_Transport_RecvCallback" in header
+    assert "PQC_WolfSSL_Transport_SendCallback" in header
+    assert '#include "pqc_network_interface.h"' in source
+    assert "PQC_NetworkInterface_GetStatus" in source
+    assert "PQC_WOLFSSL_TRANSPORT_RESULT_UNAVAILABLE" in source
+    assert "STM32 wolfSSL unavailable-transport evidence only" in source
+    assert "wolfSSL transport boundary:" in source
+    assert "evidence=unavailable-transport-only" in source
+    assert "connect=unavailable" in source
+    assert "read=unavailable" in source
+    assert "write=unavailable" in source
+    assert "socket_io=not-performed" in source
+    assert "tls_handshake=unavailable" in source
+    assert "mqtt_connect=unavailable" in source
+    assert "mqtt_publish=unavailable" in source
+    assert "reconnect=unavailable" in source
+    assert "wifi=unavailable" in source
+    assert "st67w61m1=unavailable" in source
+    assert "end_to_end=unavailable" in source
+    assert '#include "pqc_wolfssl_transport.h"' in main_c
+    assert "PQC_WolfSSL_Transport_StatusLine" in main_c
+
+
+def test_stm32_wolfssl_transport_boundary_performs_no_network_tls_or_mqtt_work():
+    source = Path("Core/Src/pqc_wolfssl_transport.c").read_text(encoding="utf-8")
+
+    forbidden_fragments = (
+        "socket(",
+        "connect(",
+        "recv(",
+        "send(",
+        "lwip_socket(",
+        "lwip_connect(",
+        "lwip_recv(",
+        "lwip_send(",
+        "tcp_connect(",
+        "netconn_connect(",
+        "wolfSSL_new(",
+        "wolfSSL_SetIORecv(",
+        "wolfSSL_SetIOSend(",
+        "wolfSSL_connect(",
+        "wolfSSL_read(",
+        "wolfSSL_write(",
+        "wolfSSL_CTX_load_verify_locations",
+        "wolfSSL_CTX_use_PrivateKey",
+        "MQTTConnect",
+        "MQTTPublish",
+        "W6X_WiFi_Connect(",
+    )
+    for fragment in forbidden_fragments:
+        assert fragment not in source

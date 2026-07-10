@@ -123,6 +123,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfssl_build_only.c
+    Core/Src/pqc_wolfssl_transport.c
     # Add user sources here
 )
 

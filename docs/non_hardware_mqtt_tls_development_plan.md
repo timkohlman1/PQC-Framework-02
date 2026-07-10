@@ -429,6 +429,10 @@ Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Tra
 - Transport status remains explicitly unavailable.
 - The boundary is ready for later wolfMQTT build-only work without requiring real networking.
 
+### Implementation Status
+
+Implemented in project-owned `pqc_wolfssl_transport` firmware code. The boundary exposes connect/read/write wrappers and callback-shaped receive/send functions, consumes the Phase M6.2 network-interface status, and always reports unavailable transport without socket I/O, TLS sessions, certificate loading, handshake, MQTT, Wi-Fi, or ST67W61M1 runtime work. Completion still requires the documented unit and direct/relocated build evidence; any UART assertion remains capability-gated and must use a known flashed image.
+
 
 ## Phase M6.4 — Secure-Boot Timing Clock Evidence Cleanup
 

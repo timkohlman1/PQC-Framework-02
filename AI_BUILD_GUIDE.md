@@ -54,6 +54,7 @@ Implemented framework scope as of Phase 11.7:
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
 - Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable; firmware also emits a non-network lwIP runtime smoke UART marker using version, IPv4 formatting, and checksum helpers only
+- Phase M6.3 project-owned wolfSSL unavailable transport boundary: `pqc_wolfssl_transport` exposes connect/read/write wrappers and callback-shaped receive/send entry points, consumes the Phase M6.2 network-interface state, and reports all transport operations unavailable without socket I/O, TLS sessions, certificates, handshake, MQTT, Wi-Fi, ST67W61M1, or end-to-end success
 - Phase M6.2 project-owned STM32 lwIP network-interface boundary: `pqc_network_interface` owns an unattached local lwIP netif, derives interface/link/IP/TCP observations from lwIP netif and IPv4 state, and reports transport, Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect/publish, reconnect, and end-to-end status as explicitly unavailable
 - Phase M6.1 STM32-local wolfSSL TLS-context lifecycle preparation: selected wolfSSL client-context and supporting wolfCrypt sources are built from `tools/wolfboot/lib/wolfssl`, linked into direct and relocated firmware builds, and exercised through `pqc_wolfssl_build_only`; wolfSSL initialization, TLS 1.2 client `WOLFSSL_CTX` creation/free, and cleanup are supported, while certificate loading, private keys, runtime transport, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success remain explicitly unavailable
 
@@ -112,6 +113,8 @@ Core/Inc/pqc_lwip_build_only.h
 Core/Src/pqc_lwip_build_only.c
 Core/Inc/pqc_wolfssl_build_only.h
 Core/Src/pqc_wolfssl_build_only.c
+Core/Inc/pqc_wolfssl_transport.h
+Core/Src/pqc_wolfssl_transport.c
 configs/
 scripts/
 tests/
@@ -501,6 +504,11 @@ USER_BUTTON PF15 Arduino D2, EXTI15 through EXTI15_10_IRQn
 The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred. The expected UART smoke line begins with `lwIP runtime smoke:` and includes `network=unavailable`.
 
 CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
+
+
+### Phase M6.3 wolfSSL unavailable transport boundary
+
+Phase M6.3 adds `Core/Inc/pqc_wolfssl_transport.h` and `Core/Src/pqc_wolfssl_transport.c`. The project-owned boundary exposes connect, read, write, receive-callback, and send-callback entry points and reads the Phase M6.2 network-interface status only to preserve architectural alignment. Every operation returns explicit unavailable status, transfers zero bytes, and performs no socket I/O. Firmware emits `wolfSSL transport boundary:` with `evidence=unavailable-transport-only` and unavailable connect/read/write/TLS handshake/certificate/MQTT/reconnect/Wi-Fi/ST67W61M1/end-to-end fields. Direct and relocated builds plus static unit coverage are the non-hardware verification path. A known-image capability-gated UART assertion remains deferred in `docs/007_framework_architecture.md`.
 
 ### Phase M6.2 lwIP network-interface boundary and unavailable status
 

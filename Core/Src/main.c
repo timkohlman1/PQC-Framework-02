@@ -25,6 +25,7 @@
 #include "pqc_lwip_build_only.h"
 #include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
+#include "pqc_wolfssl_transport.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -160,6 +161,22 @@ static void APP_PrintWolfSSLRuntimeSmoke(void)
   }
 }
 
+static void APP_PrintWolfSSLTransportStatus(void)
+{
+  char status_line[384];
+
+  PQC_WolfSSL_Transport_Init();
+
+  if (PQC_WolfSSL_Transport_StatusLine(status_line, (uint32_t)sizeof(status_line)))
+  {
+    APP_UART_WriteString(status_line);
+  }
+  else
+  {
+    APP_UART_WriteString("wolfSSL transport boundary: evidence=unavailable-transport-only boundary=present callbacks=present network_boundary=present connect=unavailable read=unavailable write=unavailable socket_io=not-performed tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable st67w61m1=unavailable end_to_end=unavailable reason=format_failed\r\n");
+  }
+}
+
 static void APP_PrintFreeRTOSSchedulerStarting(void)
 {
   APP_UART_WriteString("FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask tick_hz=");
@@ -269,6 +286,7 @@ int main(void)
   APP_PrintLwIPRuntimeSmoke();
   APP_PrintNetworkInterfaceStatus();
   APP_PrintWolfSSLRuntimeSmoke();
+  APP_PrintWolfSSLTransportStatus();
 
   /* USER CODE END 2 */
 
