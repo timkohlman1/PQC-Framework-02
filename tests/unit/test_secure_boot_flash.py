@@ -103,7 +103,7 @@ def sample_bundle():
                 "rsa2048_status": "planned_phase_11_5c_not_implemented",
                 "application_payload": "same_relocated_hal_application_payload",
                 "board": "board_a",
-                "cpu_hz": 80000000,
+                
                 "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
                 "repeated_run_model": "phase_11_2_repeat_count_samples",
                 "static_metrics_model": "phase_11_3_elf_and_artifact_metrics",
@@ -296,7 +296,7 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert evidence["artifact_freshness"]["artifact_freshness_status"] == "recorded_not_enforced"
     assert evidence["flash_evidence"]["return_code"] == 0
     assert evidence["uart_evidence"]["skipped"] is True
-    assert evidence["boot_timing"]["verification_time_ms"] is None
+    assert evidence["boot_timing"]["derived_verification_time_ms"] is None
     benchmark = manifest["secure_boot_benchmark"]
     assert benchmark["schema_version"] == 1
     assert benchmark["model_phase"] == "phase_11_5a_classical_profile_model"
@@ -326,12 +326,12 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert benchmark["signed_artifact_metrics"]["signed_image_overhead_bytes"] == 64
     assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"] is None
     assert benchmark["runtime_verification_metrics"]["status"] == "unavailable"
-    assert benchmark["runtime_verification_metrics"]["verification_time_ms"] is None
+    assert benchmark["runtime_verification_metrics"]["derived_verification_time_ms"] is None
     assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
     assert benchmark["repeated_run_samples"]["status"] == "not_configured"
     assert benchmark["repeated_run_samples"]["samples"] == []
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
-    assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
+    assert benchmark["aggregate_statistics"]["derived_verification_time_ms"]["median"] is None
     assert manifest["source"] == {
         "git_commit": "abc123",
         "git_dirty": False,
@@ -522,7 +522,11 @@ def test_uart_parses_explicit_runtime_stack_high_water_marker_only():
     uart = load_uart_module()
 
     output = """
-    wolfBoot verification time: 17 ms
+    wolfBoot verification cycles: 1360000 cycles
+    wolfBoot clock sysclk_hz: 80000000
+    wolfBoot clock hclk_hz: 80000000
+    wolfBoot clock pclk1_hz: 80000000
+    wolfBoot clock pclk2_hz: 80000000
     wolfBoot verification cycles: 1360000 cycles
     wolfBoot verification max stack used: 2048 bytes
     """

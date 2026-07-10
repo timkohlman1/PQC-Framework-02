@@ -383,8 +383,8 @@ def _assert_profile_benchmark_manifest(
     assert run["repeated_run_sample_count"] == REPEAT_COUNT
     assert run["positive_boot_evidence_passed"] is True
     assert run["primary_statistic"] == "median"
-    assert isinstance(run["primary_verification_time_ms"], int | float)
-    assert run["primary_verification_time_ms"] > 0
+    assert isinstance(run["primary_derived_verification_time_ms"], int | float)
+    assert run["primary_derived_verification_time_ms"] > 0
     assert isinstance(run["primary_verification_cycles"], int | float)
     assert run["primary_verification_cycles"] > 0
 
@@ -399,9 +399,9 @@ def _assert_profile_benchmark_manifest(
     assert aggregate["valid_sample_count"] == REPEAT_COUNT
     assert aggregate["failed_sample_count"] == 0
     assert aggregate["headline_metrics"]["primary_statistic"] == "median"
-    assert aggregate["headline_metrics"]["primary_verification_time_ms"] == run["primary_verification_time_ms"]
+    assert aggregate["headline_metrics"]["primary_derived_verification_time_ms"] == run["primary_derived_verification_time_ms"]
     assert aggregate["headline_metrics"]["primary_verification_cycles"] == run["primary_verification_cycles"]
-    assert aggregate["verification_time_ms"]["median"] == run["primary_verification_time_ms"]
+    assert aggregate["derived_verification_time_ms"]["median"] == run["primary_derived_verification_time_ms"]
     assert aggregate["verification_cycles"]["median"] == run["primary_verification_cycles"]
 
     repeated = benchmark["repeated_run_samples"]
@@ -413,10 +413,10 @@ def _assert_profile_benchmark_manifest(
         assert sample["sample_verdict"] == "passed"
         assert sample["valid_for_statistics"] is True
         assert sample["verification_result_code"] == 0
-        assert sample["verification_cpu_hz"] == 80000000
+        assert sample["bootloader_hclk_hz"] > 0
         assert sample["verification_time_source"] == "uart_explicit_verification_time_marker"
         assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"
-        assert sample["verification_time_ms"] > 0
+        assert sample["derived_verification_time_ms"] > 0
         assert sample["verification_cycles"] > 0
 
         marker_result = sample["uart_marker_detection_result"]

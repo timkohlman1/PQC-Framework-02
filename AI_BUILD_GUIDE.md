@@ -344,7 +344,7 @@ RSA3072   configs/experiments/wolfboot_rsa3072_uart.yaml
 RSA4096   configs/experiments/wolfboot_rsa4096_uart.yaml
 ```
 
-All current classical benchmark profiles use the same board, relocated HAL payload, UART marker model, 80 MHz CPU-Hz assumption, Phase 11 8192-byte image-header reserve, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema.
+All current classical benchmark profiles use the same board, relocated HAL payload, UART marker model, reported bootloader RCC clock evidence, Phase 11 8192-byte image-header reserve, repeated-run model, static metrics model, runtime stack high-water model, and secure-boot benchmark manifest schema.
 
 ## 9. Result and Evidence Model
 
@@ -380,7 +380,7 @@ Secure-boot benchmark manifests separate:
 
 Benchmark comparison rules:
 
-- Use median verification time and median verification cycles as primary headline metrics.
+- Use median derived verification time and median raw verification cycles as primary headline metrics.
 - Use mean, minimum, maximum, standard deviation, range, and coefficient of variation to review repeatability and outliers.
 - Treat build metrics as static bootloader/resource evidence, not runtime memory evidence.
 - Treat `.data + .bss` as the static RAM estimate.
@@ -699,3 +699,10 @@ The canonical MQTT/TLS development plan path is `docs/non_hardware_mqtt_tls_deve
 `tests/hardware/test_secure_boot_algorithm_benchmarks.py` must not invoke wolfBoot `keysclean`. The benchmark test relies on `build-wolfboot` generated-state preflight for wolfBoot cleanup and may remove only its directly managed relocated CMake output. Pytest startup cleanup must not delete the wolfBoot-local private key, public key, or generated keystore because they are members of the reusable local signing tuple.
 
 The profile-selection contract is executable: ML-DSA-65 runs by default, `PQC_HARDWARE_SECURE_BOOT_PROFILES` adds comma-separated named profiles, and `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` selects all profiles. Unknown profile names are rejected during collection.
+
+
+### Phase M6.4 secure-boot timing clock evidence
+
+Secure-boot verification timing uses the DWT cycle counter as the primary firmware-side evidence. The wolfBoot instrumentation mailbox records raw elapsed cycles, verification result, stack high-water evidence, and bootloader clock values derived from the active STM32 RCC register model: SYSCLK, HCLK, PCLK1, and PCLK2. Firmware does not convert cycles to milliseconds and does not report a hard-coded CPU frequency.
+
+The framework may derive `derived_verification_time_ms` as `verification_cycles * 1000 / hclk_hz` only when both explicit UART values are present. The manifest records `derived_time_clock_source: hclk_hz` and keeps the raw cycles and reported clocks separate. This derived value is not RTC, wall-clock, host-duration, UART-latency, or independently calibrated timing evidence. Hardware assertions remain capability-gated and require explicit UART/manifest evidence.

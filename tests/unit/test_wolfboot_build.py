@@ -190,6 +190,16 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" in patched_image_source
         assert "elapsed_cycles" in patched_image_source
+        assert "PQC_BOOT_RCC_BASE" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_MSI" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSI" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSE" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_PLL" in patched_image_source
+        assert "PQC_BOOT_PQC_BOOT_RCC_CFGR_SWS_" not in patched_image_source
+        assert "PQC_BOOT_RCC_CFGR" in patched_image_source
+        assert "RCC->" not in patched_image_source
+        assert "RCC_PLLCFGR_PLLSRC_Msk" not in patched_image_source
+        assert "RCC_PLLSOURCE_HSI" not in patched_image_source
         assert "verification_result" in patched_image_source
         assert "max_stack_used_bytes" in patched_image_source
         assert "pqc_boot_stack_high_water" in patched_image_source
@@ -380,6 +390,7 @@ def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user
         config_text = config_path.read_text(encoding="utf-8")
 
         assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
+        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
         assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
         assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
         assert "not the STM32 application wolfSSL smoke-test settings in Core/Inc" in config_text
@@ -395,7 +406,7 @@ def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user
         assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
         assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
         assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
-        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL" in config_text
+        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
         assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
         assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
         assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text

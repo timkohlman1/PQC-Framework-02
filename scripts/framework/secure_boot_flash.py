@@ -463,7 +463,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "benchmark_assumptions": {
             "application_payload": str(profile.get("application_payload", "same_relocated_hal_application_payload")),
             "board": str(profile.get("board", experiment.get("board", "unknown"))),
-            "cpu_hz": profile.get("cpu_hz"),
+            
             "measurement_method": str(profile.get("measurement_method", "uart_explicit_wolfboot_mailbox_markers")),
             "repeated_run_model": str(profile.get("repeated_run_model", "phase_11_2_repeat_count_samples")),
             "static_metrics_model": str(profile.get("static_metrics_model", "phase_11_3_elf_and_artifact_metrics")),
@@ -1043,7 +1043,7 @@ def execute_secure_boot_flash(
                     "secure_boot_marker_present": None,
                 },
                 "boot_timing": {
-                    "verification_time_ms": None,
+                    "derived_verification_time_ms": None,
                     "verification_time_source": "unavailable",
                 },
                 "artifact_freshness": fingerprint_evidence,

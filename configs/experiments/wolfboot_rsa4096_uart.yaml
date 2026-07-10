@@ -33,7 +33,6 @@ secure_boot_benchmark_profile:
   rsa2048_status: configured_phase_11_5c_rsa2048_profile_not_hardware_validated
   application_payload: same_relocated_hal_application_payload
   board: board_a
-  cpu_hz: 80000000
   measurement_method: uart_explicit_wolfboot_mailbox_markers
   repeated_run_model: phase_11_2_repeat_count_samples
   static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -57,7 +56,7 @@ secure_boot_flash:
   wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
   negative_test_corrupt_application: false
   boot_timing_source: uart_explicit_verification_time_marker
-  boot_timing_expected_uart_pattern: 'wolfBoot verification time: <milliseconds> ms'
+  boot_timing_expected_uart_pattern: 'wolfBoot verification cycles: <cycles> cycles'
   boot_timing_unavailable_behavior: record_null_verification_time_ms
   corruption_method: flip_first_byte
   corrupted_application_artifact: corrupted_application_signed.bin

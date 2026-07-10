@@ -59,7 +59,7 @@ def sample_benchmark_manifest(profile_id="ecc256_reference", algorithm="ECC256",
                 "sample_count": 5,
                 "valid_sample_count": 5,
                 "failed_sample_count": 0,
-                "verification_time_ms": {
+                "derived_verification_time_ms": {
                     "minimum": 10,
                     "mean": 12,
                     "median": 12,
@@ -109,10 +109,10 @@ def test_build_benchmark_summary_row_flattens_required_phase_11_6_fields(tmp_pat
     assert row["sample_count"] == 5
     assert row["valid_sample_count"] == 5
     assert row["failed_sample_count"] == 0
-    assert row["median_verification_time_ms"] == 12
-    assert row["mean_verification_time_ms"] == 12
-    assert row["minimum_verification_time_ms"] == 10
-    assert row["maximum_verification_time_ms"] == 15
+    assert row["median_derived_verification_time_ms"] == 12
+    assert row["mean_derived_verification_time_ms"] == 12
+    assert row["minimum_derived_verification_time_ms"] == 10
+    assert row["maximum_derived_verification_time_ms"] == 15
     assert row["verification_time_standard_deviation_ms"] == 1.87
     assert row["median_verification_cycles"] == 960000
     assert row["cycles_per_kb"] == 10000
@@ -139,7 +139,7 @@ def test_build_benchmark_summary_row_preserves_unavailable_metric_limitations(tm
         "sample_count": 2,
         "valid_sample_count": 0,
         "failed_sample_count": 2,
-        "verification_time_ms": {
+        "derived_verification_time_ms": {
             "minimum": None,
             "mean": None,
             "median": None,
@@ -176,7 +176,7 @@ def test_build_benchmark_summary_row_preserves_unavailable_metric_limitations(tm
 
     assert row["valid_sample_count"] == 0
     assert row["failed_sample_count"] == 2
-    assert row["median_verification_time_ms"] is None
+    assert row["median_derived_verification_time_ms"] is None
     assert row["cycles_per_kb"] is None
     assert row["bootloader_flash_size_bytes"] is None
     assert row["maximum_stack_usage_bytes"] is None
@@ -219,7 +219,7 @@ def test_aggregate_benchmark_manifests_writes_json_and_csv_outputs(tmp_path):
     with Path(output_files["csv"]).open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows[0]["profile_id"] == "ecc256_reference"
-    assert rows[0]["median_verification_time_ms"] == "12"
+    assert rows[0]["median_derived_verification_time_ms"] == "12"
     assert rows[0]["signed_image_size_bytes"] == "98304"
 
 

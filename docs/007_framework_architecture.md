@@ -361,3 +361,10 @@ Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup 
 ## Deferred test coverage — Phase M6.3 wolfSSL unavailable transport boundary
 
 The Phase M6.3 implementation includes static unit coverage and existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes a known Phase M6.3 image and asserts the `wolfSSL transport boundary:` UART marker is deferred because the supplied hardware test only monitors the currently running image and does not build or flash a known artifact before capture. Complete this when the baseline known-image build/flash/UART helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=unavailable-transport-only`, `boundary=present`, `callbacks=present`, `network_boundary=present`, `socket_io=not-performed`, and connect, read, write, TLS handshake, certificates, MQTT connect, MQTT publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end fields to remain unavailable.
+
+
+### Phase M6.4 secure-boot timing clock evidence
+
+Secure-boot verification timing uses the DWT cycle counter as the primary firmware-side evidence. The wolfBoot instrumentation mailbox records raw elapsed cycles, verification result, stack high-water evidence, and bootloader clock values derived from the active STM32 RCC register model: SYSCLK, HCLK, PCLK1, and PCLK2. Firmware does not convert cycles to milliseconds and does not report a hard-coded CPU frequency.
+
+The framework may derive `derived_verification_time_ms` as `verification_cycles * 1000 / hclk_hz` only when both explicit UART values are present. The manifest records `derived_time_clock_source: hclk_hz` and keeps the raw cycles and reported clocks separate. This derived value is not RTC, wall-clock, host-duration, UART-latency, or independently calibrated timing evidence. Hardware assertions remain capability-gated and require explicit UART/manifest evidence.

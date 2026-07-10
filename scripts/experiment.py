@@ -1891,15 +1891,15 @@ def _secure_boot_sample_from_uart_result(
     }
     sample_passed = (
         uart_result.return_code == 0
-        and uart_result.verification_time_ms is not None
+        and uart_result.derived_verification_time_ms is not None
         and uart_result.verification_cycles is not None
     )
     return build_secure_boot_benchmark_sample(
         run_index=run_index,
         timestamp=format_manifest_timestamp(),
-        verification_time_ms=uart_result.verification_time_ms,
+        derived_verification_time_ms=uart_result.derived_verification_time_ms,
         verification_cycles=uart_result.verification_cycles,
-        verification_cpu_hz=uart_result.verification_cpu_hz,
+        bootloader_hclk_hz=uart_result.bootloader_hclk_hz,
         verification_result_code=uart_result.verification_result_code,
         verification_time_source=uart_result.verification_time_source,
         verification_cycles_source=(
@@ -2036,9 +2036,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     )
     boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
     tick_present = None if uart_result is None else uart_result.tick_present
-    verification_time_ms = None if uart_result is None else uart_result.verification_time_ms
+    derived_verification_time_ms = None if uart_result is None else uart_result.derived_verification_time_ms
     verification_cycles = None if uart_result is None else uart_result.verification_cycles
-    verification_cpu_hz = None if uart_result is None else uart_result.verification_cpu_hz
+    bootloader_hclk_hz = None if uart_result is None else uart_result.bootloader_hclk_hz
     verification_result_code = None if uart_result is None else uart_result.verification_result_code
     verification_time_source = (
         "unavailable" if uart_result is None else uart_result.verification_time_source
@@ -2155,9 +2155,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
             },
             "boot_timing": {
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
@@ -2234,9 +2234,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         bootloader_static_ram_bytes=prior_build_time_metrics.get("bootloader_static_ram_bytes"),
         static_metrics_source=prior_build_time_metrics.get("source", "unavailable"),
         static_metrics_limitations=prior_build_time_metrics.get("limitations"),
-        verification_time_ms=verification_time_ms,
+        derived_verification_time_ms=derived_verification_time_ms,
         verification_cycles=verification_cycles,
-        verification_cpu_hz=verification_cpu_hz,
+        bootloader_hclk_hz=bootloader_hclk_hz,
         verification_result_code=verification_result_code,
         verification_time_source=verification_time_source,
         verification_cycles_source=(
@@ -2296,12 +2296,12 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
                 "repeat_count_requested": repeat_count,
                 "repeated_run_sample_count": len(samples),
-                "primary_verification_time_ms": headline_metrics.get("primary_verification_time_ms"),
+                "primary_derived_verification_time_ms": headline_metrics.get("primary_derived_verification_time_ms"),
                 "primary_verification_cycles": headline_metrics.get("primary_verification_cycles"),
                 "primary_statistic": headline_metrics.get("primary_statistic") if headline_metrics else None,
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "verification_time_measurement_method": verification_time_measurement_method,
@@ -2313,9 +2313,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "runtime_memory_limitations": runtime_memory_limitations,
             },
             "boot_timing": {
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
@@ -2377,19 +2377,19 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             print(f"Benchmark sample count: {aggregate_statistics.get('sample_count', len(uart_results))}")
             print(f"Benchmark valid samples: {aggregate_statistics.get('valid_sample_count', 0)}")
             print(f"Benchmark failed samples: {aggregate_statistics.get('failed_sample_count', 0)}")
-        if headline_metrics.get("primary_verification_time_ms") is not None:
-            print(f"Primary verification time (median): {headline_metrics['primary_verification_time_ms']} ms")
-        elif verification_time_ms is None:
+        if headline_metrics.get("primary_derived_verification_time_ms") is not None:
+            print(f"Primary verification time (median): {headline_metrics['primary_derived_verification_time_ms']} ms")
+        elif derived_verification_time_ms is None:
             print("Verification time: unavailable")
         else:
-            print(f"Verification time: {verification_time_ms} ms")
+            print(f"Verification time: {derived_verification_time_ms} ms")
         if headline_metrics.get("primary_verification_cycles") is not None:
             print(f"Primary verification cycles (median): {headline_metrics['primary_verification_cycles']}")
         elif verification_cycles is None:
             print("Verification cycles: unavailable")
         else:
             print(f"Verification cycles: {verification_cycles}")
-        verification_time_stats = aggregate_statistics.get("verification_time_ms", {}) if isinstance(aggregate_statistics, dict) else {}
+        verification_time_stats = aggregate_statistics.get("derived_verification_time_ms", {}) if isinstance(aggregate_statistics, dict) else {}
         verification_cycle_stats = aggregate_statistics.get("verification_cycles", {}) if isinstance(aggregate_statistics, dict) else {}
         if verification_time_stats.get("median") is not None:
             print(
@@ -2413,10 +2413,10 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 f"range={verification_cycle_stats.get('range')}, "
                 f"cv_percent={verification_cycle_stats.get('coefficient_of_variation_percent')}"
             )
-        if verification_cpu_hz is None:
+        if bootloader_hclk_hz is None:
             print("Verification CPU Hz: unavailable")
         else:
-            print(f"Verification CPU Hz: {verification_cpu_hz}")
+            print(f"Verification CPU Hz: {bootloader_hclk_hz}")
         if verification_result_code is None:
             print("Verification result code: unavailable")
         else:

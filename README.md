@@ -306,7 +306,7 @@ Supported metric groups:
 
 Interpretation rules:
 
-- Use median verification time and median verification cycles as the primary timing comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation are supporting values for repeatability and outlier checks.
+- Use median derived verification time and median raw verification cycles as the primary timing comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation are supporting values for repeatability and outlier checks.
 - Compare algorithms across the same board, relocated HAL payload, CPU-Hz assumption, UART marker model, repeated-run count, and image-header reserve.
 - Treat build metrics as static properties of the bootloader image, not runtime memory evidence. `.data + .bss` is the static RAM estimate.
 - Treat stack and heap metrics as runtime metrics only when they come from explicit firmware-side evidence emitted over UART. Do not infer stack, heap, timing, or success from host-side capture duration, SSH duration, reset delay, ELF output alone, or build logs alone.
@@ -533,3 +533,10 @@ MQTT broker note: The startup script creates a runtime-user-owned `/tmp/mosquitt
 ### Generated-state preflight
 
 Build and signing commands maintain local compatibility/provenance records under `.pqc-generated-state/`. The directory is generated and ignored by Git. A command may remove incompatible generated build directories or stale final artifacts before execution, but it will not remove canonical keys or other files under `secrets/`. Secure-boot flashing requires successful wolfBoot-build and application-signing provenance rather than accepting artifacts based only on their presence on disk.
+
+
+### Phase M6.4 secure-boot timing clock evidence
+
+Secure-boot verification timing uses the DWT cycle counter as the primary firmware-side evidence. The wolfBoot instrumentation mailbox records raw elapsed cycles, verification result, stack high-water evidence, and bootloader clock values derived from the active STM32 RCC register model: SYSCLK, HCLK, PCLK1, and PCLK2. Firmware does not convert cycles to milliseconds and does not report a hard-coded CPU frequency.
+
+The framework may derive `derived_verification_time_ms` as `verification_cycles * 1000 / hclk_hz` only when both explicit UART values are present. The manifest records `derived_time_clock_source: hclk_hz` and keeps the raw cycles and reported clocks separate. This derived value is not RTC, wall-clock, host-duration, UART-latency, or independently calibrated timing evidence. Hardware assertions remain capability-gated and require explicit UART/manifest evidence.

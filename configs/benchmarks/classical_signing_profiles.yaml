@@ -46,7 +46,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_ecdsa_p256.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -67,7 +66,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_ed25519.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -89,7 +87,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_rsa2048.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -112,7 +109,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_ecc384.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -135,7 +131,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_ecc521.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -158,7 +153,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_ed448.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -180,7 +174,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_rsa3072.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -202,7 +195,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_rsa4096.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -228,7 +220,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_mldsa44.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics
@@ -254,7 +245,6 @@ profiles:
     boot_profile: configs/boot/wolfboot_mldsa65.yaml
     application_payload: same_relocated_hal_application_payload
     board: board_a
-    cpu_hz: 80000000
     measurement_method: uart_explicit_wolfboot_mailbox_markers
     repeated_run_model: phase_11_2_repeat_count_samples
     static_metrics_model: phase_11_3_elf_and_artifact_metrics

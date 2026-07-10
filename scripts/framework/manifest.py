@@ -213,9 +213,9 @@ def build_secure_boot_benchmark_model(
     retained_wolfboot_artifact_size_bytes: int | None = None,
     static_metrics_source: str = UNAVAILABLE_METRIC_SOURCE,
     static_metrics_limitations: str | list[str] | None = None,
-    verification_time_ms: int | None = None,
+    derived_verification_time_ms: int | None = None,
     verification_cycles: int | None = None,
-    verification_cpu_hz: int | None = None,
+    bootloader_hclk_hz: int | None = None,
     verification_result_code: int | None = None,
     verification_time_source: str = UNAVAILABLE_METRIC_SOURCE,
     verification_cycles_source: str = UNAVAILABLE_METRIC_SOURCE,
@@ -332,7 +332,7 @@ def build_secure_boot_benchmark_model(
         overhead_unavailable = _unavailable_reason(unavailable_overhead_reason)
         signed_artifact_limitations.append(unavailable_overhead_reason)
 
-    runtime_status = "available" if verification_time_ms is not None else "unavailable"
+    runtime_status = "available" if derived_verification_time_ms is not None else "unavailable"
     cycles_status = "available" if verification_cycles is not None else "unavailable"
     runtime_memory_available = max_stack_used_bytes is not None
     runtime_memory_status = "available" if runtime_memory_available else "unavailable"
@@ -417,9 +417,9 @@ def build_secure_boot_benchmark_model(
         },
         "runtime_verification_metrics": {
             "status": runtime_status,
-            "verification_time_ms": verification_time_ms,
+            "derived_verification_time_ms": derived_verification_time_ms,
             "verification_cycles": verification_cycles,
-            "verification_cpu_hz": verification_cpu_hz,
+            "bootloader_hclk_hz": bootloader_hclk_hz,
             "verification_result_code": verification_result_code,
             "verification_time_source": verification_time_source,
             "verification_cycles_source": verification_cycles_source,
@@ -450,9 +450,9 @@ def build_secure_boot_benchmark_model(
             "sample_schema": {
                 "run_index": None,
                 "timestamp": None,
-                "verification_time_ms": None,
+                "derived_verification_time_ms": None,
                 "verification_cycles": None,
-                "verification_cpu_hz": None,
+                "bootloader_hclk_hz": None,
                 "verification_result_code": None,
                 "verification_time_source": None,
                 "verification_cycles_source": None,
@@ -475,7 +475,7 @@ def build_secure_boot_benchmark_model(
             "sample_count": 0,
             "valid_sample_count": 0,
             "failed_sample_count": 0,
-            "verification_time_ms": {
+            "derived_verification_time_ms": {
                 "minimum": None,
                 "mean": None,
                 "median": None,
@@ -609,9 +609,9 @@ def build_secure_boot_benchmark_sample(
     *,
     run_index: int,
     timestamp: str,
-    verification_time_ms: float | int | None,
+    derived_verification_time_ms: float | int | None,
     verification_cycles: int | None,
-    verification_cpu_hz: int | None,
+    bootloader_hclk_hz: int | None,
     verification_result_code: int | None,
     verification_time_source: str,
     verification_cycles_source: str,
@@ -629,16 +629,16 @@ def build_secure_boot_benchmark_sample(
     return {
         "run_index": int(run_index),
         "timestamp": timestamp,
-        "verification_time_ms": verification_time_ms,
+        "derived_verification_time_ms": derived_verification_time_ms,
         "verification_cycles": verification_cycles,
-        "verification_cpu_hz": verification_cpu_hz,
+        "bootloader_hclk_hz": bootloader_hclk_hz,
         "verification_result_code": verification_result_code,
         "verification_time_source": verification_time_source,
         "verification_cycles_source": verification_cycles_source,
         "uart_marker_detection_result": uart_marker_detection_result,
         "sample_verdict": sample_verdict,
         "valid_for_statistics": sample_verdict == "passed"
-        and verification_time_ms is not None
+        and derived_verification_time_ms is not None
         and verification_cycles is not None,
         "referenced_artifact_identity": referenced_artifact_identity,
         "runtime_memory_metrics": {
@@ -693,9 +693,9 @@ def calculate_secure_boot_benchmark_aggregate_statistics(
         if sample.get("valid_for_statistics") is not True
     ]
     time_values = [
-        sample["verification_time_ms"]
+        sample["derived_verification_time_ms"]
         for sample in valid_samples
-        if sample.get("verification_time_ms") is not None
+        if sample.get("derived_verification_time_ms") is not None
     ]
     cycle_values = [
         sample["verification_cycles"]
@@ -710,10 +710,10 @@ def calculate_secure_boot_benchmark_aggregate_statistics(
         "sample_count": len(samples),
         "valid_sample_count": len(valid_samples),
         "failed_sample_count": len(failed_samples),
-        "verification_time_ms": time_stats,
+        "derived_verification_time_ms": time_stats,
         "verification_cycles": cycle_stats,
         "headline_metrics": {
-            "primary_verification_time_ms": time_stats["median"],
+            "primary_derived_verification_time_ms": time_stats["median"],
             "primary_verification_cycles": cycle_stats["median"],
             "primary_statistic": "median",
         },
@@ -762,9 +762,9 @@ def apply_repeated_run_samples_to_benchmark_model(
         "sample_schema": {
             "run_index": None,
             "timestamp": None,
-            "verification_time_ms": None,
+            "derived_verification_time_ms": None,
             "verification_cycles": None,
-            "verification_cpu_hz": None,
+            "bootloader_hclk_hz": None,
             "verification_result_code": None,
             "verification_time_source": None,
             "verification_cycles_source": None,

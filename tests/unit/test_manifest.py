@@ -319,9 +319,9 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
         signed_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
         signed_application_sha256="def",
         signed_application_size_bytes=54321,
-        verification_time_ms=17,
+        derived_verification_time_ms=17,
         verification_cycles=1360000,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -340,7 +340,7 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == 54321
     assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"]["status"] == "unavailable"
     assert benchmark["runtime_verification_metrics"]["status"] == "available"
-    assert benchmark["runtime_verification_metrics"]["verification_time_ms"] == 17
+    assert benchmark["runtime_verification_metrics"]["derived_verification_time_ms"] == 17
     assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
     assert benchmark["runtime_memory_metrics"]["max_stack_used_bytes"] is None
     assert benchmark["repeated_run_samples"]["status"] == "not_configured"
@@ -348,7 +348,7 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["repeated_run_samples"]["sample_schema"]["verification_time_source"] is None
     assert benchmark["repeated_run_samples"]["sample_schema"]["verification_cycles_source"] is None
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
-    assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
+    assert benchmark["aggregate_statistics"]["derived_verification_time_ms"]["median"] is None
 
 
 def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samples_only():
@@ -369,9 +369,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=1,
             timestamp="2026-06-30T10:00:00+10:00",
-            verification_time_ms=17,
+            derived_verification_time_ms=17,
             verification_cycles=1360000,
-            verification_cpu_hz=80000000,
+            bootloader_hclk_hz=80000000,
             verification_result_code=0,
             verification_time_source="uart_explicit_verification_time_marker",
             verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -382,9 +382,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=2,
             timestamp="2026-06-30T10:01:00+10:00",
-            verification_time_ms=19,
+            derived_verification_time_ms=19,
             verification_cycles=1520000,
-            verification_cpu_hz=80000000,
+            bootloader_hclk_hz=80000000,
             verification_result_code=0,
             verification_time_source="uart_explicit_verification_time_marker",
             verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -395,9 +395,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=3,
             timestamp="2026-06-30T10:02:00+10:00",
-            verification_time_ms=None,
+            derived_verification_time_ms=None,
             verification_cycles=None,
-            verification_cpu_hz=None,
+            bootloader_hclk_hz=None,
             verification_result_code=None,
             verification_time_source="unavailable",
             verification_cycles_source="unavailable",
@@ -419,17 +419,17 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
     assert aggregate["sample_count"] == 3
     assert aggregate["valid_sample_count"] == 2
     assert aggregate["failed_sample_count"] == 1
-    assert aggregate["verification_time_ms"]["minimum"] == 17
-    assert aggregate["verification_time_ms"]["mean"] == 18
-    assert aggregate["verification_time_ms"]["median"] == 18.0
-    assert aggregate["verification_time_ms"]["maximum"] == 19
-    assert round(aggregate["verification_time_ms"]["standard_deviation"], 6) == 1.414214
-    assert aggregate["verification_time_ms"]["range"] == 2
-    assert round(aggregate["verification_time_ms"]["coefficient_of_variation_percent"], 6) == 7.856742
+    assert aggregate["derived_verification_time_ms"]["minimum"] == 17
+    assert aggregate["derived_verification_time_ms"]["mean"] == 18
+    assert aggregate["derived_verification_time_ms"]["median"] == 18.0
+    assert aggregate["derived_verification_time_ms"]["maximum"] == 19
+    assert round(aggregate["derived_verification_time_ms"]["standard_deviation"], 6) == 1.414214
+    assert aggregate["derived_verification_time_ms"]["range"] == 2
+    assert round(aggregate["derived_verification_time_ms"]["coefficient_of_variation_percent"], 6) == 7.856742
     assert aggregate["verification_cycles"]["median"] == 1440000.0
     assert aggregate["verification_cycles"]["range"] == 160000
     assert aggregate["headline_metrics"] == {
-        "primary_verification_time_ms": 18.0,
+        "primary_derived_verification_time_ms": 18.0,
         "primary_verification_cycles": 1440000.0,
         "primary_statistic": "median",
     }
@@ -446,9 +446,9 @@ def test_secure_boot_benchmark_sample_records_metric_sources_and_unavailable_mem
     sample = manifest.build_secure_boot_benchmark_sample(
         run_index=1,
         timestamp="2026-07-01T10:00:00+10:00",
-        verification_time_ms=12,
+        derived_verification_time_ms=12,
         verification_cycles=960000,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -550,9 +550,9 @@ def test_apply_repeated_run_samples_preserves_phase_11_3_static_metrics():
     sample = manifest.build_secure_boot_benchmark_sample(
         run_index=1,
         timestamp="2026-06-30T00:00:00+10:00",
-        verification_time_ms=41,
+        derived_verification_time_ms=41,
         verification_cycles=3253764,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",

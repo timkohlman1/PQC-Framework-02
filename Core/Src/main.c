@@ -189,18 +189,29 @@ static void APP_PrintFreeRTOSSchedulerStarting(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   1UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   2UL
 
 typedef struct
 {
   uint32_t magic;
   uint32_t version;
-  uint32_t verification_time_ms;
   uint32_t elapsed_cycles;
-  uint32_t cpu_hz;
   uint32_t verification_result;
   uint32_t max_stack_used_bytes;
+  uint32_t sysclk_hz;
+  uint32_t hclk_hz;
+  uint32_t pclk1_hz;
+  uint32_t pclk2_hz;
 } PQC_BootTimingMailbox;
+
+static void APP_PrintWolfBootClock(const char *name, uint32_t value)
+{
+  APP_UART_WriteString("wolfBoot clock ");
+  APP_UART_WriteString(name);
+  APP_UART_WriteString(": ");
+  APP_UART_WriteUint32(value);
+  APP_UART_WriteString("\r\n");
+}
 
 static void APP_PrintWolfBootVerificationTiming(void)
 {
@@ -210,17 +221,14 @@ static void APP_PrintWolfBootVerificationTiming(void)
   if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
       (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
   {
-    APP_UART_WriteString("wolfBoot verification time: ");
-    APP_UART_WriteUint32(mailbox->verification_time_ms);
-    APP_UART_WriteString(" ms\r\n");
-
     APP_UART_WriteString("wolfBoot verification cycles: ");
     APP_UART_WriteUint32(mailbox->elapsed_cycles);
     APP_UART_WriteString(" cycles\r\n");
 
-    APP_UART_WriteString("wolfBoot verification cpu_hz: ");
-    APP_UART_WriteUint32(mailbox->cpu_hz);
-    APP_UART_WriteString("\r\n");
+    APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
+    APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
+    APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
+    APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
 
     APP_UART_WriteString("wolfBoot verification result: ");
     APP_UART_WriteUint32(mailbox->verification_result);

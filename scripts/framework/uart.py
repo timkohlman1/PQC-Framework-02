@@ -61,9 +61,11 @@ class UartResult:
     tick_present: bool
     secure_boot_marker_present: bool | None
     data_captured: bool
-    verification_time_ms: float | None
     verification_cycles: int | None
-    verification_cpu_hz: int | None
+    derived_verification_time_ms: float | None
+    derived_time_clock_source: str | None
+    bootloader_clock_hz: dict[str, int | None]
+    bootloader_hclk_hz: int | None
     verification_result_code: int | None
     verification_time_source: str
     verification_time_measurement_method: str
@@ -182,18 +184,16 @@ def _capture_completed(return_code: int) -> bool:
     return return_code in {0, TIMEOUT_RETURN_CODE}
 
 
-DEFAULT_VERIFICATION_TIME_SOURCE = "uart_explicit_verification_time_marker"
+DEFAULT_VERIFICATION_TIME_SOURCE = "framework_derived_from_uart_cycles_and_reported_hclk"
 DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE = "unavailable"
 DEFAULT_VERIFICATION_TIME_METHOD = (
     "Parse explicit wolfBoot verification timing lines from captured UART output."
 )
 DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS = (
-    "No explicit wolfBoot verification-time line was present in the captured UART output; "
-    "verification_time_ms and verification_cycles are intentionally null rather than estimated."
+    "Raw DWT verification cycles or reported HCLK were unavailable; derived_verification_time_ms is intentionally null."
 )
 DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS = (
-    "Timing is reported by firmware over UART and includes only the values emitted by wolfBoot or the instrumented boot path; "
-    "host-side UART capture latency is not used to derive these values."
+    "Raw DWT cycles and RCC-derived clock state are reported by firmware over UART. Milliseconds are derived by the framework from cycles and reported HCLK; no RTC, wall clock, UART duration, or reset delay is used."
 )
 DEFAULT_STACK_MEMORY_SOURCE = "uart_explicit_stack_high_water_marker"
 DEFAULT_HEAP_MEMORY_SOURCE = "uart_explicit_heap_marker"
@@ -209,16 +209,6 @@ DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS = (
 DEFAULT_HEAP_MEMORY_UNAVAILABLE_LIMITATIONS = (
     "Heap usage is not recorded because no explicit firmware-side heap measurement evidence was emitted."
 )
-_VERIFICATION_TIME_PATTERNS = [
-    re.compile(
-        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification(?: time)?[^\r\n]*?[:=]\s*(?P<value>\d+(?:\.\d+)?)\s*ms\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\bverification_time_ms\s*[:=]\s*(?P<value>\d+(?:\.\d+)?)\b",
-        re.IGNORECASE,
-    ),
-]
 _VERIFICATION_CYCLE_PATTERNS = [
     re.compile(
         r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+cycles\s*[:=]\s*(?P<value>\d+)\s*(?:cycles)?\b",
@@ -229,16 +219,12 @@ _VERIFICATION_CYCLE_PATTERNS = [
         re.IGNORECASE,
     ),
 ]
-_VERIFICATION_CPU_HZ_PATTERNS = [
-    re.compile(
-        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+(?:cpu[-_ ]?hz|clock)\s*[:=]\s*(?P<value>\d+)\s*(?:hz)?\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\bverification_cpu_hz\s*[:=]\s*(?P<value>\d+)\b",
-        re.IGNORECASE,
-    ),
-]
+_BOOTLOADER_CLOCK_PATTERNS = {
+    "sysclk_hz": re.compile(r"\bwolfBoot clock sysclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "hclk_hz": re.compile(r"\bwolfBoot clock hclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk1_hz": re.compile(r"\bwolfBoot clock pclk1_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk2_hz": re.compile(r"\bwolfBoot clock pclk2_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+}
 _VERIFICATION_RESULT_PATTERNS = [
     re.compile(
         r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+(?:result|return(?: code)?)\s*[:=]\s*(?P<value>-?\d+)\b",
@@ -272,23 +258,6 @@ _HEAP_USED_PATTERNS = [
 ]
 
 
-def parse_verification_time_ms(uart_output: str) -> float | None:
-    """Parse an explicit wolfBoot verification-time value from UART output.
-
-    The parser intentionally accepts only lines that contain explicit
-    verification-time wording and a millisecond unit, or an explicit
-    ``verification_time_ms`` key. It does not infer timing from host-side
-    command duration or marker ordering.
-    """
-
-    for pattern in _VERIFICATION_TIME_PATTERNS:
-        match = pattern.search(uart_output)
-        if match is not None:
-            value = float(match.group("value"))
-            return int(value) if value.is_integer() else value
-    return None
-
-
 def _parse_first_int(patterns: list[re.Pattern[str]], uart_output: str) -> int | None:
     for pattern in patterns:
         match = pattern.search(uart_output)
@@ -303,10 +272,13 @@ def parse_verification_cycles(uart_output: str) -> int | None:
     return _parse_first_int(_VERIFICATION_CYCLE_PATTERNS, uart_output)
 
 
-def parse_verification_cpu_hz(uart_output: str) -> int | None:
-    """Parse explicit CPU frequency used for cycle-to-ms conversion."""
-
-    return _parse_first_int(_VERIFICATION_CPU_HZ_PATTERNS, uart_output)
+def parse_bootloader_clock_hz(uart_output: str) -> dict[str, int | None]:
+    """Parse separately reported bootloader clock values from UART output."""
+    result: dict[str, int | None] = {}
+    for name, pattern in _BOOTLOADER_CLOCK_PATTERNS.items():
+        match = pattern.search(uart_output)
+        result[name] = int(match.group("value")) if match is not None else None
+    return result
 
 
 def parse_verification_result_code(uart_output: str) -> int | None:
@@ -350,28 +322,25 @@ def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
 
 
 def _boot_timing_evidence(uart_output: str) -> dict[str, Any]:
-    verification_time_ms = parse_verification_time_ms(uart_output)
     verification_cycles = parse_verification_cycles(uart_output)
-    verification_cpu_hz = parse_verification_cpu_hz(uart_output)
+    clocks = parse_bootloader_clock_hz(uart_output)
+    hclk_hz = clocks.get("hclk_hz")
+    derived_time = None
+    if verification_cycles is not None and hclk_hz not in (None, 0):
+        derived_time = (verification_cycles * 1000.0) / hclk_hz
     verification_result_code = parse_verification_result_code(uart_output)
-    if verification_time_ms is None:
-        return {
-            "verification_time_ms": None,
-            "verification_cycles": verification_cycles,
-            "verification_cpu_hz": verification_cpu_hz,
-            "verification_result_code": verification_result_code,
-            "verification_time_source": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE,
-            "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
-            "limitations": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS,
-        }
     return {
-        "verification_time_ms": verification_time_ms,
         "verification_cycles": verification_cycles,
-        "verification_cpu_hz": verification_cpu_hz,
+        "verification_cycles_source": "uart_explicit_dwt_cycles_marker" if verification_cycles is not None else "unavailable",
+        "bootloader_clock_hz": clocks,
+        "bootloader_hclk_hz": hclk_hz,
+        "bootloader_clock_source": "uart_reported_rcc_register_model" if any(v is not None for v in clocks.values()) else "unavailable",
+        "derived_verification_time_ms": derived_time,
+        "derived_time_clock_source": "hclk_hz" if derived_time is not None else None,
         "verification_result_code": verification_result_code,
-        "verification_time_source": DEFAULT_VERIFICATION_TIME_SOURCE,
+        "verification_time_source": DEFAULT_VERIFICATION_TIME_SOURCE if derived_time is not None else DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE,
         "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
-        "limitations": DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS,
+        "limitations": DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS if derived_time is not None else DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS,
     }
 
 
@@ -432,9 +401,13 @@ def _write_uart_capture_log(
         "",
         "Boot timing evidence",
         "--------------------",
-        f"verification_time_ms: {boot_timing['verification_time_ms'] if boot_timing['verification_time_ms'] is not None else 'unavailable'}",
+        f"derived_verification_time_ms: {boot_timing['derived_verification_time_ms'] if boot_timing['derived_verification_time_ms'] is not None else 'unavailable'}",
         f"verification_cycles: {boot_timing['verification_cycles'] if boot_timing['verification_cycles'] is not None else 'unavailable'}",
-        f"verification_cpu_hz: {boot_timing['verification_cpu_hz'] if boot_timing['verification_cpu_hz'] is not None else 'unavailable'}",
+        f"derived_time_clock_source: {boot_timing['derived_time_clock_source'] or 'unavailable'}",
+        f"bootloader_sysclk_hz: {boot_timing['bootloader_clock_hz']['sysclk_hz'] if boot_timing['bootloader_clock_hz']['sysclk_hz'] is not None else 'unavailable'}",
+        f"bootloader_hclk_hz: {boot_timing['bootloader_clock_hz']['hclk_hz'] if boot_timing['bootloader_clock_hz']['hclk_hz'] is not None else 'unavailable'}",
+        f"bootloader_pclk1_hz: {boot_timing['bootloader_clock_hz']['pclk1_hz'] if boot_timing['bootloader_clock_hz']['pclk1_hz'] is not None else 'unavailable'}",
+        f"bootloader_pclk2_hz: {boot_timing['bootloader_clock_hz']['pclk2_hz'] if boot_timing['bootloader_clock_hz']['pclk2_hz'] is not None else 'unavailable'}",
         f"verification_result_code: {boot_timing['verification_result_code'] if boot_timing['verification_result_code'] is not None else 'unavailable'}",
         f"verification_time_source: {boot_timing['verification_time_source']}",
         f"Measurement method: {boot_timing['measurement_method']}",
@@ -669,9 +642,13 @@ def execute_uart_capture(
                 "restart_command": restart_command,
                 "restart_during_capture": restart_command is not None,
                 "skipped": False,
-                "verification_time_ms": boot_timing["verification_time_ms"],
+                "derived_verification_time_ms": boot_timing["derived_verification_time_ms"],
+                "derived_time_clock_source": boot_timing["derived_time_clock_source"],
+                "bootloader_clock_hz": boot_timing["bootloader_clock_hz"],
+                "bootloader_hclk_hz": boot_timing["bootloader_hclk_hz"],
+                "bootloader_clock_source": boot_timing["bootloader_clock_source"],
                 "verification_cycles": boot_timing["verification_cycles"],
-                "verification_cpu_hz": boot_timing["verification_cpu_hz"],
+                
                 "verification_result_code": boot_timing["verification_result_code"],
                 "verification_time_source": boot_timing["verification_time_source"],
                 "verification_time_measurement_method": boot_timing["measurement_method"],
@@ -702,9 +679,11 @@ def execute_uart_capture(
         tick_present=tick_present,
         secure_boot_marker_present=secure_boot_marker_present,
         data_captured=data_captured,
-        verification_time_ms=boot_timing["verification_time_ms"],
+        derived_verification_time_ms=boot_timing["derived_verification_time_ms"],
+        derived_time_clock_source=boot_timing["derived_time_clock_source"],
+        bootloader_clock_hz=boot_timing["bootloader_clock_hz"],
+        bootloader_hclk_hz=boot_timing["bootloader_hclk_hz"],
         verification_cycles=boot_timing["verification_cycles"],
-        verification_cpu_hz=boot_timing["verification_cpu_hz"],
         verification_result_code=boot_timing["verification_result_code"],
         verification_time_source=boot_timing["verification_time_source"],
         verification_time_measurement_method=boot_timing["measurement_method"],
