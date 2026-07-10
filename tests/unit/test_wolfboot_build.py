@@ -352,21 +352,18 @@ def test_execute_wolfboot_build_records_missing_project_local_config_template(tm
     assert "config template not found" in result.failure_reason
 
 
-def test_project_local_wolfboot_config_selects_stm32l4r5_header():
+def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user_settings_leakage():
     repo_root = Path(__file__).resolve().parents[2]
-    config_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_paths = sorted((repo_root / "configs" / "wolfboot").glob("stm32l4r5_*.config"))
 
-    config_text = config_path.read_text(encoding="utf-8")
-
-    assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
-    assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
-    assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
+    assert config_paths
 
     wolfboot_user_settings = (repo_root / "tools" / "wolfboot" / "include" / "user_settings.h").read_text(
         encoding="utf-8"
     )
     assert "#define CTYPE_USER" in wolfboot_user_settings
-    for duplicated_wolfboot_setting in (
+
+    duplicated_wolfboot_settings = (
         "NO_CTYPE_H",
         "NO_CTYPE",
         "NO_FILESYSTEM",
@@ -377,23 +374,33 @@ def test_project_local_wolfboot_config_selects_stm32l4r5_header():
         "ECC_TIMING_RESISTANT",
         "TFM_TIMING_RESISTANT",
         "WC_RSA_BLINDING",
-    ):
-        assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
+    )
 
-    assert "IMAGE_HEADER_SIZE=8192" in config_text
-    assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
-    assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
-    assert "CFLAGS_EXTRA+=-include" not in config_text
-    assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
-    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
-    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
-    assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
-    assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
-    assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
-    assert config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx") < config_text.index("CFLAGS_EXTRA+=-I../../Drivers/STM32L4xx_HAL_Driver/Inc")
+    for config_path in config_paths:
+        config_text = config_path.read_text(encoding="utf-8")
+
+        assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
+        assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
+        assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
+        assert "not the STM32 application wolfSSL smoke-test settings in Core/Inc" in config_text
+
+        for duplicated_wolfboot_setting in duplicated_wolfboot_settings:
+            assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
+
+        assert "IMAGE_HEADER_SIZE=8192" in config_text
+        assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
+        assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
+        assert "CFLAGS_EXTRA+=-include" not in config_text
+        assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
+        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
+        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
+        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
+        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL" in config_text
+        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
+        assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
+        assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
+        assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
+        assert config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx") < config_text.index("CFLAGS_EXTRA+=-I../../Drivers/STM32L4xx_HAL_Driver/Inc")
 
 
 def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():

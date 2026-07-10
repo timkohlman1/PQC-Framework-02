@@ -384,6 +384,45 @@ Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Tra
 - The boundary is ready for later wolfMQTT build-only work without requiring real networking.
 
 
+## Phase M6.4 — Secure-Boot Timing Clock Evidence Cleanup
+
+### Goal
+
+Replace the hard-coded wolfBoot timing CPU-frequency assumption with explicit secure-boot timing evidence that records raw verification cycles and reported bootloader clock state separately from any derived milliseconds value.
+
+Minor wording note: this phase is not really MQTT/TLS-specific, but placing it at M6.4 makes sense because the issue was exposed during the current wolfBoot/M6-era test cleanup and affects the hardware benchmark evidence used around these phases.
+
+### Outcomes
+
+- The wolfBoot verification timing instrumentation no longer treats a hard-coded `80000000` Hz constant as measured CPU frequency.
+- UART output reports raw DWT verification cycles as the primary timing evidence.
+- UART output reports relevant bootloader clock values separately, such as reported SYSCLK, HCLK, PCLK1, PCLK2, and `SystemCoreClock` where available in the wolfBoot build context.
+- Any cycle-to-millisecond conversion is either removed from firmware/runtime evidence or clearly labelled as a derived/reporting-layer calculation using an explicitly named clock source.
+- Result manifests record raw verification cycles and reported clock values without implying that a compile-time conversion constant is a measured runtime CPU frequency.
+- Framework parsers, manifest schema, aggregate reporting, and tests are updated so they no longer hard-code or require `80000000` Hz.
+- Existing UART and manifest fields are migrated or renamed where needed to avoid ambiguity between:
+  - raw DWT cycle counts
+  - reported bootloader clock values
+  - derived time in milliseconds
+- Hardware tests remain capability-gated and validate the new UART markers using explicit boot evidence.
+- No RTC or wall-clock measurement is introduced in this phase.
+
+### Expected Evidence
+
+- Unit tests for UART parsing and manifest generation using the new timing/clock fields.
+- Unit tests confirming tests and reporting no longer hard-code `80000000` as the expected CPU frequency.
+- Integration or build tests confirming wolfBoot instrumentation still builds for secure-boot profiles.
+- Capability-gated hardware tests confirming UART captures include raw verification cycles, verification result, memory markers, and bootloader clock evidence.
+- Updated documentation explaining that DWT cycles are the primary firmware-side verification timing evidence and that milliseconds, if reported, are derived from an explicitly named clock source.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.4 of the attached development plan - Secure-Boot Timing Clock Evidence Cleanup. Update the wolfBoot secure-boot timing instrumentation and experiment framework so timing evidence no longer depends on a hard-coded 80000000 Hz CPU-frequency constant. The UART output and manifest should record raw DWT verification cycles as the primary timing metric and should report actual bootloader clock values available from the MCU/HAL/CMSIS clock model separately. Remove or relabel firmware-side cycle-to-millisecond conversion so any milliseconds value is clearly derived from an explicitly named clock source rather than treated as measured evidence. Update UART parsing, manifest schema, aggregate benchmark reporting, unit tests, integration tests, hardware tests, and documentation so they no longer hard-code 80000000 Hz. Do not introduce RTC or wall-clock timing in this phase. Keep hardware tests capability-gated and do not claim timing accuracy beyond explicit UART, manifest, or hardware evidence.
+```
+
 ## Phase M7 — wolfMQTT Build-Only Skeleton
 
 ### Goal

@@ -15,7 +15,7 @@ REPEAT_COUNT = 2
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 FREERTOS_UART_MARKERS = (
     "FreeRTOS defaultTask created: name=defaultTask",
-    "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask",
+    "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask",
     "FreeRTOS defaultTask started: periodic tick task active",
 )
 
