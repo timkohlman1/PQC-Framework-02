@@ -39,3 +39,18 @@ def test_docker_wrappers_exist_for_default_and_gateway_paths() -> None:
         assert "experiment-gateway" in wrapper
         assert "PQC_CONTAINER_ENABLE_GATEWAY=1" in wrapper
         assert "PQC_DOCKER_IMAGE" in wrapper
+
+
+def test_container_ci_records_relocated_build_provenance_before_signing() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+
+    relocated_build = workflow.index(
+        "Build relocated firmware with framework provenance in container"
+    )
+    signing = workflow.index("Sign relocated application in container")
+
+    assert relocated_build < signing
+    assert "python scripts/experiment.py build" in workflow
+    assert "--configure-preset RelocatedDebug" in workflow
+    assert "--build-preset RelocatedDebug" in workflow
+    assert "--artifact build/RelocatedDebug/stm32_basic_hal1.elf" in workflow

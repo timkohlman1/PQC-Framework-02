@@ -232,10 +232,14 @@ jobs:
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset Debug
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset Debug
 
-      - name: Build relocated firmware preset in container
+      - name: Build relocated firmware with framework provenance in container
         run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset RelocatedDebug
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset RelocatedDebug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
+            python scripts/experiment.py build \
+              --experiment configs/experiments/baseline_direct_uart.yaml \
+              --configure-preset RelocatedDebug \
+              --build-preset RelocatedDebug \
+              --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 
       - name: Build wolfBoot profile in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml

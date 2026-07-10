@@ -929,6 +929,18 @@ def run_build_command(args: argparse.Namespace) -> int:
     """Run the build command."""
 
     bundle = load_experiment_bundle(args.experiment)
+    artifact_override = getattr(args, "artifact", None)
+    if artifact_override is not None:
+        bundle = {
+            **bundle,
+            "experiment": {
+                **bundle["experiment"],
+                "firmware": {
+                    **bundle["experiment"]["firmware"],
+                    "artifact": Path(artifact_override).as_posix(),
+                },
+            },
+        }
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
     configure_preset = args.configure_preset or args.build_preset
@@ -2906,6 +2918,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--configure-preset",
         default=None,
         help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    build_parser.add_argument(
+        "--artifact",
+        default=None,
+        type=Path,
+        help=(
+            "Repository-relative expected ELF path for this build. "
+            "Defaults to the experiment firmware artifact and is intended for "
+            "provenance-recorded alternate presets such as RelocatedDebug."
+        ),
     )
     build_parser.add_argument(
         "--force",

@@ -301,6 +301,7 @@ The aggregation command is read-only with respect to benchmark evidence. It scan
 - `status`: loads and validates an experiment bundle; no build, flash, SSH, UART, or hardware access.
 - `create-run`: creates `results/<run_id>/manifest.json` and `notes.md`; no build, flash, SSH, UART, or hardware access.
 - `build`: runs local CMake configure/build unless safe rebuild skipping applies; creates compatibility run evidence and first-class build records; no SSH, UART, or hardware access.
+  For alternate presets, use `--configure-preset`, `--build-preset`, and `--artifact` together so the expected ELF and generated-state scope match the selected preset.
 - `flash`: validates artifact provenance through `--build-run` or explicit `--allow-untracked-artifact`; then uses SCP/SSH to flash; UART only with `--capture-uart`.
 - `build-flash`: performs build then flash in one result run; skips flash if build fails; UART only with `--capture-uart`.
 - `run`: direct-flash baseline orchestration: build or reuse a build record, flash, capture UART, and set pass/fail from boot/tick markers.
@@ -523,7 +524,7 @@ GitHub Actions CI is defined in `.github/workflows/ci.yml`. The workflow keeps t
 Python unit tests
 Safe framework status validation with no build, flash, SSH, UART, broker, or hardware access
 STM32 Debug configure/build
-STM32 RelocatedDebug configure/build
+STM32 RelocatedDebug configure/build through the framework build command so generated-state provenance is recorded before signing
 wolfBoot ECDSA P-256 build profile
 Relocated application signing for the ECDSA P-256 profile using runtime-generated or runtime-mounted workspace material only
 Targeted local-build integration tests for `test_local_build.py` and `test_wolfboot_build_integration.py`

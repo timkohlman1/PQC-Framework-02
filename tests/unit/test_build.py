@@ -460,6 +460,7 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
             results_dir=tmp_path / "results",
             configure_preset=None,
             build_preset="Debug",
+            artifact=None,
             capture_uart=False,
             uart_duration_seconds=10,
         )
@@ -1451,3 +1452,82 @@ def test_run_command_reuses_verified_build_number_without_building(tmp_path, mon
     assert manifest["run"]["build_return_code"] is None
     assert manifest["run"]["referenced_build_number"] == 7
     assert manifest["run"]["referenced_build_artifact_sha256"] == firmware_sha256
+
+
+def test_run_build_command_applies_artifact_override_for_relocated_provenance(
+    tmp_path, monkeypatch
+):
+    experiment_cli = load_experiment_module()
+    original_bundle = {
+        "experiment": {
+            "id": "baseline_direct_uart",
+            "firmware": {
+                "mode": "direct_flash",
+                "artifact": "build/Debug/stm32_basic_hal1.elf",
+            },
+        },
+        "board": {},
+        "host": {},
+        "boot": {},
+    }
+    captured = {}
+
+    monkeypatch.setattr(
+        experiment_cli, "load_experiment_bundle", lambda _path: original_bundle
+    )
+    monkeypatch.setattr(
+        experiment_cli,
+        "create_result_folder",
+        lambda bundle, _results_dir: (
+            captured.setdefault("bundle", bundle) or tmp_path / "results" / "run",
+            {"run_id": "run"},
+        ),
+    )
+    # The lambda above cannot return both values after setdefault cleanly; replace it.
+    def fake_create_result_folder(bundle, _results_dir):
+        captured["bundle"] = bundle
+        result_dir = tmp_path / "results" / "run"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        return result_dir, {"run_id": "run"}
+
+    monkeypatch.setattr(experiment_cli, "create_result_folder", fake_create_result_folder)
+    monkeypatch.setattr(
+        experiment_cli, "repo_root_from_experiment_path", lambda _path: tmp_path
+    )
+
+    class FakeBuildResult:
+        return_code = 0
+        duration_seconds = 0.1
+        elf_path = tmp_path / "build/RelocatedDebug/stm32_basic_hal1.elf"
+        log_path = tmp_path / "results/run/build.log"
+        build_skipped = False
+        build_skip_reason = None
+        build_number = 1
+        build_record_dir = tmp_path / "results/builds/1"
+
+    def fake_execute_build(**kwargs):
+        captured["execute_bundle"] = kwargs["bundle"]
+        assert kwargs["configure_preset"] == "RelocatedDebug"
+        assert kwargs["build_preset"] == "RelocatedDebug"
+        return FakeBuildResult()
+
+    monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+
+    exit_code = experiment_cli.run_build_command(
+        Namespace(
+            experiment=Path("configs/experiments/baseline_direct_uart.yaml"),
+            results_dir=tmp_path / "results",
+            configure_preset="RelocatedDebug",
+            build_preset="RelocatedDebug",
+            artifact=Path("build/RelocatedDebug/stm32_basic_hal1.elf"),
+            force=False,
+        )
+    )
+
+    assert exit_code == 0
+    expected = "build/RelocatedDebug/stm32_basic_hal1.elf"
+    assert captured["bundle"]["experiment"]["firmware"]["artifact"] == expected
+    assert captured["execute_bundle"]["experiment"]["firmware"]["artifact"] == expected
+    assert original_bundle["experiment"]["firmware"]["artifact"] == (
+        "build/Debug/stm32_basic_hal1.elf"
+    )
