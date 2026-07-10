@@ -54,14 +54,17 @@ Implemented framework scope as of Phase 11.7:
 - Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
 - Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
 - Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable; firmware also emits a non-network lwIP runtime smoke UART marker using version, IPv4 formatting, and checksum helpers only
+- Phase M6.2 project-owned STM32 lwIP network-interface boundary: `pqc_network_interface` owns an unattached local lwIP netif, derives interface/link/IP/TCP observations from lwIP netif and IPv4 state, and reports transport, Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect/publish, reconnect, and end-to-end status as explicitly unavailable
 - Phase M6.1 STM32-local wolfSSL TLS-context lifecycle preparation: selected wolfSSL client-context and supporting wolfCrypt sources are built from `tools/wolfboot/lib/wolfssl`, linked into direct and relocated firmware builds, and exercised through `pqc_wolfssl_build_only`; wolfSSL initialization, TLS 1.2 client `WOLFSSL_CTX` creation/free, and cleanup are supported, while certificate loading, private keys, runtime transport, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success remain explicitly unavailable
 
 Important status constraints:
 
+- wolfBoot signing state is managed as a reusable local tuple: canonical private key, matching wolfBoot-local private key, generated public key, and `tools/wolfboot/src/keystore.c`. Existing matching tuples are preserved. Missing or mismatched tuple state must fail before `make`; do not silently regenerate a keystore from an existing private key or replace a canonical key.
+
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
 - Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- STM32 MQTT client firmware runtime integration, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, real wolfSSL TLS handshakes, wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests beyond the Phase M6.1 TLS context lifecycle smoke marker, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- STM32 MQTT client firmware runtime integration, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, real wolfSSL TLS handshakes, wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests beyond the Phase M6.1 TLS context lifecycle and Phase M6.2 unavailable-boundary markers, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
 
 ## 4. Hardware and Gateway Context
 
@@ -497,6 +500,12 @@ USER_BUTTON PF15 Arduino D2, EXTI15 through EXTI15_10_IRQn
 The generated clock preparation currently targets a 120 MHz SYSCLK/HCLK with SPI1 prescaler 4, yielding a compile-time configured SPI baud of approximately 30 Mbit/s if SPI1 is fed from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. Phase M5 filters generated lwIP application/demo files and optional nonessential ST67W6X demo/protocol utilities out of the compile-only CMake path while compiling the CMSIS-RTOS v2 lwIP sys_arch port; runtime networking remains deferred. The expected UART smoke line begins with `lwIP runtime smoke:` and includes `network=unavailable`.
 
 CI and local verification for this phase are non-hardware checks only: static/unit validation plus direct and relocated firmware builds. Hardware, gateway, UART, broker, Wi-Fi-module, TLS, MQTT, and secret-dependent workflows remain outside the default CI path.
+
+### Phase M6.2 lwIP network-interface boundary and unavailable status
+
+Phase M6.2 adds `Core/Inc/pqc_network_interface.h` and `Core/Src/pqc_network_interface.c` as a project-owned boundary for future ST67W61M1-backed lwIP integration. The current backend initializes an unattached local lwIP `struct netif`, clears its IPv4 storage with lwIP helpers, and derives interface-up, link-up, IPv4-any, IP-availability, and TCP-readiness observations from lwIP netif/IP state. Firmware emits an `lwIP network interface:` marker labelled `evidence=lwip-netif-state-only` with both raw lwIP observations and mapped unavailable states. Transport, Wi-Fi module detection, ST67W61M1 use, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end network success remain unavailable.
+
+The boundary uses lwIP netif/IP state locally but does not register a netif, bring an interface or link up, start DHCP, open TCP, invoke wolfSSL or wolfMQTT, or access network hardware. Direct and relocated builds plus static unit coverage are the non-hardware verification path. A dedicated known-image hardware UART assertion remains capability-gated and deferred in `docs/007_framework_architecture.md` until the supplied hardware helper can build and flash the image before capture.
 
 ### Phase M6.1 wolfSSL TLS context lifecycle preparation
 

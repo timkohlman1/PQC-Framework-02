@@ -80,3 +80,80 @@ def test_stm32_lwip_runtime_smoke_is_limited_to_non_network_helpers():
 
     for fragment in forbidden_fragments:
         assert fragment not in source
+
+
+def test_phase_m6_2_network_interface_boundary_uses_lwip_netif_state():
+    root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_network_interface.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_network_interface.c").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "Core/Src/pqc_network_interface.c" in root_cmake
+    assert "PQC_NetworkInterfaceStatus" in header
+    assert "lwip_netif_up" in header
+    assert "lwip_link_up" in header
+    assert "lwip_ipv4_any" in header
+    assert "struct netif s_pqc_unavailable_netif" in source
+    assert "netif_is_up(&s_pqc_unavailable_netif)" in source
+    assert "netif_is_link_up(&s_pqc_unavailable_netif)" in source
+    assert "ip4_addr_isany_val(*netif_ip4_addr(&s_pqc_unavailable_netif))" in source
+    assert "ip4addr_ntoa_r(" in source
+    assert "availability_from_bool(link_up)" in source
+    assert "availability_from_bool(ip_available)" in source
+    assert "availability_from_bool(tcp_ready)" in source
+    assert "evidence=lwip-netif-state-only" in source
+    assert "lwip_netif_up=%u" in source
+    assert "lwip_link_up=%u" in source
+    assert "lwip_ipv4_any=%u" in source
+    assert "lwip_ipv4=%s" in source
+    assert "PQC_NetworkInterface_Init" in main_c
+    assert "PQC_NetworkInterface_StatusLine" in main_c
+    assert "APP_PrintNetworkInterfaceStatus();" in main_c
+
+
+def test_phase_m6_2_network_interface_boundary_maps_unconfigured_lwip_state_to_unavailable():
+    source = Path("Core/Src/pqc_network_interface.c").read_text(encoding="utf-8")
+
+    assert "memset(&s_pqc_unavailable_netif, 0" in source
+    assert "netif_set_addr(" not in source
+    assert "sys_now(" not in source
+    assert "const bool ip_available = netif_up && !ipv4_any;" in source
+    assert "const bool tcp_ready = netif_up && link_up && ip_available;" in source
+    assert 'return "unavailable";' in source
+    assert "link=%s" in source
+    assert "ip=%s" in source
+    assert "tcp=%s" in source
+    assert "transport=%s" in source
+
+
+def test_phase_m6_2_network_interface_boundary_does_not_bring_up_networking():
+    source = Path("Core/Src/pqc_network_interface.c").read_text(encoding="utf-8")
+
+    forbidden_fragments = (
+        "netif_add(",
+        "netif_set_up(",
+        "netif_set_link_up(",
+        "dhcp_start(",
+        "tcp_new(",
+        "tcp_connect(",
+        "wolfSSL_connect(",
+        "MQTTConnect(",
+        "W6X_Init(",
+        "W6X_WiFi_Connect(",
+    )
+
+    for fragment in forbidden_fragments:
+        assert fragment not in source
+
+    required_unavailable_fields = (
+        "wifi_module=unavailable",
+        "st67w61m1=unavailable",
+        "tls_handshake=unavailable",
+        "mqtt_connect=unavailable",
+        "mqtt_publish=unavailable",
+        "reconnect=unavailable",
+        "end_to_end=unavailable",
+    )
+
+    for fragment in required_unavailable_fields:
+        assert fragment in source

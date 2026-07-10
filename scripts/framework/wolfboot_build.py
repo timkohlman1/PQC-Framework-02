@@ -650,6 +650,74 @@ def _remove_wolfboot_generated_signing_artifacts(
     return removed
 
 
+def _prepare_wolfboot_signing_artifacts(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+    signing_key_path: Path | None,
+    wolfboot_private_key_path: Path | None,
+) -> tuple[list[Path], str | None]:
+    """Prepare wolfBoot signing artifacts without breaking reusable key state.
+
+    When no canonical key exists, generated wolfBoot signing artifacts are
+    removed so wolfBoot can create a fresh key and matching keystore. When a
+    canonical key already exists, the local private key and generated keystore
+    must already form a reusable tuple. The wrapper cannot safely reconstruct a
+    keystore from a private key alone, so missing or mismatched state is reported
+    before invoking make.
+    """
+
+    if signing_key_path is None or not signing_key_path.is_file():
+        return (
+            _remove_wolfboot_generated_signing_artifacts(
+                profile=profile,
+                repo_root=repo_root,
+                source_dir=source_dir,
+            ),
+            None,
+        )
+
+    generated_keystore = _optional_profile_path(profile, "build.generated_keystore")
+    keystore_path = (
+        repo_root / generated_keystore
+        if generated_keystore is not None
+        else source_dir / "src" / "keystore.c"
+    )
+
+    if wolfboot_private_key_path is None or not wolfboot_private_key_path.is_file():
+        return [], (
+            "The configured canonical signing key exists, but the matching "
+            "wolfBoot private key is missing. The framework cannot safely "
+            "reconstruct the generated keystore from the private key alone. "
+            "Restore the matching wolfBoot key/keystore tuple or rotate the "
+            "local benchmark key by backing up and removing the canonical key, "
+            "then rerun build-wolfboot so wolfBoot generates a fresh tuple."
+        )
+
+    canonical_sha256 = calculate_file_sha256(signing_key_path)
+    wolfboot_sha256 = calculate_file_sha256(wolfboot_private_key_path)
+    if canonical_sha256 != wolfboot_sha256:
+        return [], (
+            "The configured canonical signing key and wolfBoot private key "
+            "differ, so the existing generated keystore cannot be trusted. "
+            "Restore the matching local key/keystore tuple or rotate the local "
+            "benchmark key explicitly before rebuilding."
+        )
+
+    if not keystore_path.is_file():
+        return [], (
+            "The configured canonical signing key matches the wolfBoot private "
+            "key, but the generated wolfBoot keystore is missing: "
+            f"{keystore_path}. wolfBoot v2.9.0 cannot regenerate keystore.c "
+            "from an existing private key alone. Restore the matching keystore "
+            "or rotate the local benchmark key by backing up and removing the "
+            "canonical key and wolfBoot-local key, then rerun build-wolfboot."
+        )
+
+    return [], None
+
+
 def _decode_wolfboot_command_output(output: bytes | str | None) -> str:
     """Decode captured wolfBoot command output without failing on toolchain bytes.
 
@@ -1171,17 +1239,26 @@ def execute_wolfboot_build(
                         else:
                             try:
                                 _remove_wolfboot_host_tool_outputs(source_dir)
-                                generated_signing_artifact_cleanup_paths = _remove_wolfboot_generated_signing_artifacts(
+                                (
+                                    generated_signing_artifact_cleanup_paths,
+                                    signing_artifact_error,
+                                ) = _prepare_wolfboot_signing_artifacts(
                                     profile=profile,
                                     repo_root=repo_root_path,
                                     source_dir=source_dir,
-                                )
-                                key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
                                     signing_key_path=signing_key_path,
                                     wolfboot_private_key_path=wolfboot_private_key_path,
                                 )
-                                execution = runner(command, working_directory)
-                                return_code = execution.return_code
+                                if signing_artifact_error is not None:
+                                    return_code = PROFILE_ERROR_RETURN_CODE
+                                    failure_reason = signing_artifact_error
+                                else:
+                                    key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
+                                        signing_key_path=signing_key_path,
+                                        wolfboot_private_key_path=wolfboot_private_key_path,
+                                    )
+                                    execution = runner(command, working_directory)
+                                    return_code = execution.return_code
                             except FileNotFoundError as exc:
                                 missing_executable = command[0] if command else "configured build tool"
                                 return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE

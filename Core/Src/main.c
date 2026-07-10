@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pqc_lwip_build_only.h"
+#include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
 /* USER CODE END Includes */
 
@@ -124,6 +125,22 @@ static void APP_PrintLwIPRuntimeSmoke(void)
   else
   {
     APP_UART_WriteString("lwIP runtime smoke: unavailable reason=format_failed network=unavailable\r\n");
+  }
+}
+
+static void APP_PrintNetworkInterfaceStatus(void)
+{
+  char status_line[384];
+
+  PQC_NetworkInterface_Init();
+
+  if (PQC_NetworkInterface_StatusLine(status_line, (uint32_t)sizeof(status_line)))
+  {
+    APP_UART_WriteString(status_line);
+  }
+  else
+  {
+    APP_UART_WriteString("lwIP network interface: evidence=lwip-netif-state-only backend=unavailable boundary=present lwip_netif_up=0 lwip_link_up=0 lwip_ipv4_any=1 lwip_ipv4=0.0.0.0 link=unavailable ip=unavailable tcp=unavailable transport=unavailable wifi_module=unavailable st67w61m1=unavailable tls_handshake=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable end_to_end=unavailable reason=format_failed\r\n");
   }
 }
 
@@ -250,6 +267,7 @@ int main(void)
 #endif
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
   APP_PrintLwIPRuntimeSmoke();
+  APP_PrintNetworkInterfaceStatus();
   APP_PrintWolfSSLRuntimeSmoke();
 
   /* USER CODE END 2 */
