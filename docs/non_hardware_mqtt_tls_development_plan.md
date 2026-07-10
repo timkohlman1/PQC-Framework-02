@@ -319,7 +319,7 @@ Requirement: Implement Phase M6.1 of the attached development plan - wolfSSL TLS
 
 ### Implementation Status
 
-Implementation complete and validated
+Implementation may be in progress, but completion requires explicit test evidence. Do not mark this phase complete until unit/build tests and any selected capability-gated UART smoke tests pass and the evidence remains labelled as TLS context lifecycle evidence only.
 
 ---
 
