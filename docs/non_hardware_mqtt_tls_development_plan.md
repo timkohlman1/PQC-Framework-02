@@ -361,6 +361,38 @@ Requirement: Implement Phase M6.2 of the attached development plan - lwIP Networ
 
 ---
 
+
+## Phase M6.2.1 — Generated Build-State Isolation and Stale-Artifact Preflight
+
+### Goal
+
+Add a framework-level preflight that prevents stale, cross-profile, cross-toolchain, and cross-host/container generated state from being reused by STM32 CMake builds, wolfBoot builds, application signing, integration tests, and artifact-consuming experiment commands.
+
+### Outcomes
+
+- Project-owned generated-state manifests bind reusable state to workflow, profile, source/config fingerprint, toolchain identity, host/container identity, applicable key tuple, and successful artifact hashes.
+- Compatible profile-scoped state may be retained; incompatible state and stale final artifacts are removed or quarantined deterministically before execution.
+- Canonical local signing keys and other secrets are never cleanup targets.
+- The wolfBoot-local private key, generated public key, and generated keystore are treated as one tuple and are not silently reconstructed from an existing private key.
+- Downstream signing and flashing require successful provenance records and matching artifact hashes rather than filesystem existence alone.
+- Direct command preflight is independent of pytest session-start cleanup.
+- CubeMX-generated folders remain in place and Phase M6.3 transport work is not introduced.
+
+### Expected Evidence
+
+- Unit coverage for same-profile reuse, profile switching, host/container mismatch, failed-build stale artifact prevention, key/keystore mismatch, secret-path protection, and downstream provenance enforcement.
+- Integration coverage that invokes the preflight directly without pytest startup cleanup.
+- Direct and relocated builds, wolfBoot build, and signing verification using the normal container workflow.
+
+### Pass Criteria
+
+- Stale generated state cannot produce a trusted successful artifact after a failed command.
+- Compatible same-profile state remains reusable.
+- Cross-profile and cross-host/container state is rejected and cleaned deterministically.
+- Canonical keys are preserved.
+- Signing and secure-boot flashing reject unrecorded or hash-mismatched inputs before tool or gateway execution.
+
+
 ## Phase M6.3 — wolfSSL Transport Boundary Without Network
 
 ### Goal

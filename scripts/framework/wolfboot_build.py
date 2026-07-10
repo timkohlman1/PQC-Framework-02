@@ -19,6 +19,13 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.generated_state import (
+    build_identity,
+    detect_execution_identity,
+    key_tuple_fingerprint,
+    preflight_generated_state,
+    record_generated_state_success,
+)
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -1164,6 +1171,7 @@ def execute_wolfboot_build(
     artifact_sha256: str | None = None
     retained_artifact_path: Path | None = None
     failure_reason: str | None = None
+    wolfboot_state_identity: dict[str, Any] | None = None
     fingerprint_evidence: dict[str, Any] = {
         "status": "unavailable",
         "fingerprint": None,
@@ -1194,6 +1202,38 @@ def execute_wolfboot_build(
                 profile=profile,
                 source_dir=source_dir,
                 config_template_path=config_template_path,
+            )
+            public_key_path = source_dir / "wolfboot_signing_public_key.der"
+            generated_keystore_config = _optional_profile_path(profile, "build.generated_keystore")
+            generated_keystore_path = (
+                repo_root_path / generated_keystore_config
+                if generated_keystore_config is not None
+                else source_dir / "src" / "keystore.c"
+            )
+            wolfboot_state_identity = build_identity(
+                workflow="wolfboot_build",
+                profile=profile_id,
+                input_fingerprint=fingerprint_evidence,
+                toolchain={"command": command, "target": profile.get("target")},
+                execution=detect_execution_identity(),
+                key_tuple=key_tuple_fingerprint(
+                    private_key=wolfboot_private_key_path,
+                    public_key=public_key_path,
+                    keystore=generated_keystore_path,
+                ),
+                extra={"signature_algorithm": profile.get("signature_algorithm")},
+            )
+            generated_cleanup_paths = [
+                path
+                for pattern in WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS
+                for path in source_dir.glob(pattern)
+            ]
+            preflight_generated_state(
+                repo_root=repo_root_path,
+                scope=f"wolfboot-{profile_id}",
+                expected_identity=wolfboot_state_identity,
+                cleanup_paths=generated_cleanup_paths,
+                final_artifact_paths=[artifact_path],
             )
             try:
                 (
@@ -1326,6 +1366,15 @@ def execute_wolfboot_build(
         signing_key_path=signing_key_path,
         wolfboot_private_key_path=wolfboot_private_key_path,
     )
+
+    if return_code == 0 and wolfboot_state_identity is not None:
+        record_generated_state_success(
+            repo_root=repo_root_path,
+            scope=f"wolfboot-{profile_id}",
+            identity=wolfboot_state_identity,
+            artifacts=[artifact_path],
+            record_refs={"wolfboot_build_manifest": str(result_dir / "manifest.json")},
+        )
 
     duration_seconds = perf_counter() - start
     artifact_exists = artifact_path.is_file()

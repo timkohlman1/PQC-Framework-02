@@ -331,3 +331,25 @@ and allow wolfBoot to generate a fresh local benchmark key and matching keystore
 After a successful build, the generated private key is synchronized to the
 canonical ignored path. Rotating a local benchmark key invalidates compatibility
 with artifacts signed by the previous key and must be performed deliberately.
+
+## Phase M6.2.1 — Generated Build-State Isolation and Stale-Artifact Preflight
+
+Framework commands that create or consume generated firmware, wolfBoot, and signed-image artifacts use `scripts/framework/generated_state.py`. The module stores project-owned scope manifests under `.pqc-generated-state/scopes/` and binds generated state to the workflow, profile, source/config fingerprint, toolchain command identity, host/container identity, and applicable signing-key tuple.
+
+Before a build or signing command starts, the preflight compares the current identity with the last successful scope record. Demonstrably compatible state may be retained. Missing, malformed, cross-profile, cross-toolchain, or cross-host/container state causes deterministic cleanup of only the configured generated paths and stale final artifacts. Cleanup refuses paths outside the repository and refuses all paths under `secrets/`. CubeMX-generated source folders are not moved or deleted.
+
+STM32 CMake builds use profile-scoped `build/<preset>/` directories. wolfBoot retains its upstream source layout, so the framework records a project-owned scope manifest and cleans only known host-tool outputs and final build artifacts. The wolfBoot-local private key, generated public key, and generated `src/keystore.c` are treated as one tuple; an incomplete or mismatched tuple is not silently repaired from an existing private key. Canonical keys under `secrets/wolfboot/` are never preflight cleanup targets.
+
+Successful commands write artifact hashes and references to their build or signing records. Application signing can require the relocated ELF to match a successful CMake generated-state record. Secure-boot flashing requires the wolfBoot ELF and original signed application to match successful wolfBoot-build and application-signing records; filesystem existence alone is insufficient. A failed command does not write a success record, and stale final artifacts are removed before execution so they cannot be mistaken for new output.
+
+The canonical non-hardware MQTT/TLS phase plan is `docs/non_hardware_mqtt_tls_development_plan.md`.
+
+### Deferred test coverage
+
+No hardware test is added for Phase M6.2.1 because the behavior is framework-side artifact selection and preflight, not a firmware-runtime feature. Existing capability-gated flashing tests should validate provenance refusal before gateway access when their fixtures are updated to create successful build/signing records. Verification command: `./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware`.
+
+### Phase M6.2.1 secure-boot hardware profile selection and tuple preservation
+
+The secure-boot algorithm benchmark hardware test now implements the documented profile-selection environment variables. ML-DSA-65 is selected by default. `PQC_HARDWARE_SECURE_BOOT_PROFILES` adds named profiles to that default, and `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` selects the complete matrix. Unselected parameter cases are collected but skipped with an explicit reason.
+
+Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup cleanup must not remove `wolfboot_signing_private_key.der`, `wolfboot_signing_public_key.der`, or `src/keystore.c`. Those files form reusable local signing state with the canonical key and are validated by the framework preflight. The hardware test removes only its directly managed relocated CMake output; wolfBoot stale-output handling remains owned by `build-wolfboot` generated-state preflight.

@@ -140,6 +140,22 @@ def sample_bundle():
 
 def write_manifest(result_dir: Path):
     result_dir.mkdir(parents=True)
+    repo_root = result_dir.parent.parent / "repo"
+    from framework.generated_state import build_identity, record_generated_state_success
+    wolfboot = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
+    signed = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    if wolfboot.is_file():
+        record_generated_state_success(
+            repo_root=repo_root, scope="wolfboot-test",
+            identity=build_identity(workflow="wolfboot_build", profile="test", input_fingerprint={"fingerprint":"test"}, toolchain={"command":["make"]}, execution={"host_system":"test"}),
+            artifacts=[wolfboot],
+        )
+    if signed.is_file():
+        record_generated_state_success(
+            repo_root=repo_root, scope="signing-test",
+            identity=build_identity(workflow="application_signing", profile="test", input_fingerprint={"fingerprint":"test"}, toolchain={"command":["sign"]}, execution={"host_system":"test"}),
+            artifacts=[signed],
+        )
     (result_dir / "manifest.json").write_text(
         json.dumps(
             {

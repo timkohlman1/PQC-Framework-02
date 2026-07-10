@@ -22,6 +22,14 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.generated_state import (
+    build_identity,
+    detect_execution_identity,
+    fingerprint_paths,
+    preflight_generated_state,
+    record_generated_state_success,
+    require_recorded_artifact,
+)
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -817,8 +825,48 @@ def execute_application_signing(
     return_code = 0
     failure_reason: str | None = None
     fingerprint_evidence = _fingerprint_evidence(repo_root=repo_root_path, profile=profile)
+    input_provenance_error: str | None = None
+    if _optional_bool(profile, "require_input_build_provenance") and input_elf_path is not None and input_elf_path.is_file():
+        input_scope = f"cmake-{str(profile.get('build_preset', 'RelocatedDebug'))}"
+        try:
+            require_recorded_artifact(
+                repo_root=repo_root_path,
+                scope=input_scope,
+                artifact_path=input_elf_path,
+            )
+        except Exception as exc:
+            input_provenance_error = str(exc)
 
-    if binary_conversion_enabled and input_elf_path is not None and input_elf_path.is_file():
+    signing_identity = build_identity(
+        workflow="application_signing",
+        profile=profile_id,
+        input_fingerprint=fingerprint_paths(
+            [path for path in (input_elf_path, input_image_path) if path is not None],
+            repo_root=repo_root_path,
+        ),
+        toolchain={"sign_command": signing_command, "binary_conversion_command": binary_conversion_command},
+        execution=detect_execution_identity(),
+        key_tuple={
+            "private_key_path": str(private_key_path),
+            "private_key_sha256": calculate_file_sha256(private_key_path) if private_key_path.is_file() else None,
+        },
+    )
+    preflight_generated_state(
+        repo_root=repo_root_path,
+        scope=f"signing-{profile_id}",
+        expected_identity=signing_identity,
+        cleanup_paths=[],
+        final_artifact_paths=[signed_image_path],
+    )
+
+    if input_provenance_error is not None:
+        return_code = MISSING_INPUT_IMAGE_RETURN_CODE
+        failure_reason = (
+            "Refusing application signing because the configured input ELF is not backed by "
+            f"a successful compatible build record: {input_provenance_error}"
+        )
+
+    if return_code == 0 and binary_conversion_enabled and input_elf_path is not None and input_elf_path.is_file():
         input_image_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             binary_conversion_execution = _run_with_environment(runner, binary_conversion_command or [], binary_conversion_working_dir, binary_conversion_stdin, binary_conversion_environment)
@@ -921,6 +969,15 @@ def execute_application_signing(
                 "application signing command returned success, but the configured signed image was not found: "
                 f"{signed_image_path}"
             )
+
+    if return_code == 0:
+        record_generated_state_success(
+            repo_root=repo_root_path,
+            scope=f"signing-{profile_id}",
+            identity=signing_identity,
+            artifacts=[signed_image_path],
+            record_refs={"signing_result_dir": str(result_dir)},
+        )
 
     duration_seconds = perf_counter() - start
     private_key_present_after = private_key_path.is_file()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -173,8 +174,63 @@ def _benchmark_profile_param(profile: SecureBootBenchmarkProfile):
     return pytest.param(profile, id=profile.name, marks=pytest.mark.long)
 
 
+HARDWARE_PROFILE_SELECTION_ENV = "PQC_HARDWARE_SECURE_BOOT_PROFILES"
+HARDWARE_ALL_PROFILES_ENV = "PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES"
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _selected_benchmark_profile_names(environment: dict[str, str] | None = None) -> set[str]:
+    """Return the benchmark profiles selected for this hardware run.
+
+    ML-DSA-65 is always selected for routine coverage. The named-profile
+    environment variable adds comma-separated profiles, while the all-profile
+    environment variable selects the complete matrix.
+    """
+
+    env = os.environ if environment is None else environment
+    available = {profile.name for profile in BENCHMARK_PROFILES}
+    if _truthy(env.get(HARDWARE_ALL_PROFILES_ENV)):
+        return available
+
+    requested = {
+        item.strip().lower()
+        for item in env.get(HARDWARE_PROFILE_SELECTION_ENV, "").split(",")
+        if item.strip()
+    }
+    unknown = sorted(requested - available)
+    if unknown:
+        raise pytest.UsageError(
+            f"Unknown secure-boot hardware profile(s): {', '.join(unknown)}. "
+            f"Available profiles: {', '.join(sorted(available))}."
+        )
+    return {"mldsa65", *requested}
+
+
 def _benchmark_profile_params() -> tuple[object, ...]:
-    return tuple(_benchmark_profile_param(profile) for profile in BENCHMARK_PROFILES)
+    selected = _selected_benchmark_profile_names()
+    params: list[object] = []
+    for profile in BENCHMARK_PROFILES:
+        parameter = _benchmark_profile_param(profile)
+        if profile.name not in selected:
+            parameter = pytest.param(
+                profile,
+                id=profile.name,
+                marks=(
+                    pytest.mark.long,
+                    pytest.mark.skip(
+                        reason=(
+                            "secure-boot hardware profile not selected; set "
+                            f"{HARDWARE_PROFILE_SELECTION_ENV} or "
+                            f"{HARDWARE_ALL_PROFILES_ENV}=1"
+                        )
+                    ),
+                ),
+            )
+        params.append(parameter)
+    return tuple(params)
 
 
 def _assert_freertos_uart_markers(uart_log: str) -> None:
@@ -207,40 +263,14 @@ def _skip_if_missing(path: Path, reason: str) -> None:
 
 
 def _clean_generated_secure_boot_outputs(repo_root: Path) -> None:
-    """Clean generated outputs using the same scope as the manual benchmark run.
+    """Remove only the relocated CMake output used directly by this test.
 
-    The benchmark hardware test intentionally leaves result evidence under
-    results/. It only removes generated wolfBoot and relocated application
-    outputs that can otherwise make a profile switch reuse stale build state.
+    wolfBoot generated-state cleanup is owned by the build-wolfboot preflight.
+    The hardware test must not invoke ``keysclean`` or remove any private key,
+    public key, or generated keystore member from the reusable local tuple.
     """
 
-    wolfboot_dir = repo_root / "tools" / "wolfboot"
-    _skip_if_missing(wolfboot_dir, "wolfBoot source tree is missing")
-    if shutil.which("make") is None:
-        pytest.skip("make is unavailable; wolfBoot keysclean cannot run")
-
-    keysclean_completed = _run_command(
-        repo_root,
-        ["make", "WOLFBOOT_ROOT=.", "keysclean"],
-        cwd=wolfboot_dir,
-    )
-    assert keysclean_completed.returncode == 0, (
-        f"wolfBoot keysclean stdout:\n{keysclean_completed.stdout}\n"
-        f"wolfBoot keysclean stderr:\n{keysclean_completed.stderr}"
-    )
-
-    for relative_path in (
-        "tools/wolfboot/wolfboot.elf",
-        "tools/wolfboot/wolfboot.bin",
-        "tools/wolfboot/wolfboot.hex",
-        "tools/wolfboot/wolfboot.map",
-        "tools/wolfboot/.config",
-    ):
-        path = repo_root / relative_path
-        if path.exists():
-            path.unlink()
-
-    shutil.rmtree(repo_root / "build", ignore_errors=True)
+    shutil.rmtree(repo_root / "build" / "RelocatedDebug", ignore_errors=True)
 
 
 def _parse_result_directory(repo_root: Path, stdout: str) -> Path:

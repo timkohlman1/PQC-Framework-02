@@ -527,3 +527,7 @@ Run the gateway MQTT broker integration test when Docker is available on the gat
 The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to keep gateway temporary deployments removable by the normal gateway user.
 
 MQTT broker note: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+
+### Generated-state preflight
+
+Build and signing commands maintain local compatibility/provenance records under `.pqc-generated-state/`. The directory is generated and ignored by Git. A command may remove incompatible generated build directories or stale final artifacts before execution, but it will not remove canonical keys or other files under `secrets/`. Secure-boot flashing requires successful wolfBoot-build and application-signing provenance rather than accepting artifacts based only on their presence on disk.

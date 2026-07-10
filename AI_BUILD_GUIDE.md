@@ -678,3 +678,15 @@ The profile remains an experimental protocol-evaluation path, not a production T
 
 
 MQTT OQS implementation note: The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to avoid container-owned bind-mount artifacts in gateway and pytest temporary deployments.
+
+## Phase M6.2.1 Generated-State Preflight Update
+
+The reusable generated-state preflight is implemented in `scripts/framework/generated_state.py`. Project-owned manifests are stored under `.pqc-generated-state/` and are generated local state that must not be committed. STM32 CMake, wolfBoot, application-signing, integration-test, and artifact-consuming experiment paths must use direct preflight/provenance checks rather than relying on pytest session-start cleanup. Successful build/signing records and matching artifact hashes are required for downstream signing and secure-boot flashing where configured.
+
+The canonical MQTT/TLS development plan path is `docs/non_hardware_mqtt_tls_development_plan.md`. Future context-package commands must use that repository-relative path.
+
+### Phase M6.2.1 hardware benchmark cleanup correction
+
+`tests/hardware/test_secure_boot_algorithm_benchmarks.py` must not invoke wolfBoot `keysclean`. The benchmark test relies on `build-wolfboot` generated-state preflight for wolfBoot cleanup and may remove only its directly managed relocated CMake output. Pytest startup cleanup must not delete the wolfBoot-local private key, public key, or generated keystore because they are members of the reusable local signing tuple.
+
+The profile-selection contract is executable: ML-DSA-65 runs by default, `PQC_HARDWARE_SECURE_BOOT_PROFILES` adds comma-separated named profiles, and `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` selects all profiles. Unknown profile names are rejected during collection.

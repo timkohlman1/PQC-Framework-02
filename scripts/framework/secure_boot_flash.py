@@ -19,6 +19,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
+from framework.generated_state import GeneratedStateError, require_any_recorded_artifact
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -812,6 +813,31 @@ def execute_secure_boot_flash(
         return_code = SECURE_BOOT_KEY_MISMATCH_RETURN_CODE
         failure_stage = "signing_key_consistency"
         failure_reason = str(key_consistency["message"])
+
+    if return_code == 0:
+        for required in (wolfboot, signed_application):
+            if not required.artifact_exists:
+                return_code = SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE
+                failure_stage = f"{required.name}_artifact"
+                failure_reason = f"Required artifact not found: {required.artifact_path}"
+                break
+
+    if return_code == 0:
+        try:
+            require_any_recorded_artifact(
+                repo_root=repo_root_path,
+                artifact_path=wolfboot.artifact_path,
+                workflow="wolfboot_build",
+            )
+            require_any_recorded_artifact(
+                repo_root=repo_root_path,
+                artifact_path=original_signed_application_path,
+                workflow="application_signing",
+            )
+        except GeneratedStateError as exc:
+            return_code = SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE
+            failure_stage = "artifact_provenance"
+            failure_reason = f"Secure-boot flashing requires successful build/signing provenance: {exc}"
 
     if return_code == 0:
         artifacts_to_flash = [wolfboot, signed_application]
