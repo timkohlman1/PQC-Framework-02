@@ -27,7 +27,7 @@ Implemented:
 Planned but not implemented:
 
 1. STM32 MQTT client firmware integration.
-2. STM32-local lwIP, wolfSSL, and wolfMQTT build/runtime integration.
+2. STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration.
 3. ST67W61M1 network-interface backend validation.
 4. Classical STM32 MQTT-over-TLS runtime validation.
 5. PQC or hybrid MQTT/TLS experiments after classical MQTT/TLS is stable and library support is confirmed.
@@ -302,3 +302,8 @@ Docker-hosted framework checkout
 This broker path is broker-side and host-side validation infrastructure. Phase M4 labels broker validation manifests and command output as `host-side/broker-side MQTT/TLS compatibility evidence`, with `host_side` evidence class and explicit false claims for STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless success. It is not STM32 MQTT/TLS client evidence unless a later STM32 firmware phase records explicit board and broker evidence together. The classical profile uses Eclipse Mosquitto with TLS 1.3, client-certificate authentication, and an ACL file. The runner-compatible Docker runtime test exercises this classical container locally from a pytest temporary copy of the compose project, so generated certificates, data, and logs are not written to the repository tree. The experimental OQS profile uses the Open Quantum Safe Mosquitto image for post-quantum TLS protocol evaluation. Each profile overrides the image entrypoint, copies its bind-mounted ACL file to a container-local `/tmp/mosquitto-aclfile`, sets ownership and restrictive permissions for the runtime user there, and configures Mosquitto to read that copy. The top-level `mqtt-broker-experiment` command wraps certificate provisioning, deployment, profile start, validation, broker validation retries during startup, live step progress, bounded per-step subprocess timeouts, log capture even after validation failures, result manifest creation, and optional stop. OQS runtime behaviour must be confirmed with explicit broker/client logs before claiming PQC TLS success.
 
 MQTT broker OQS image compatibility: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+
+
+## Deferred test coverage — Phase M6.1 wolfSSL TLS context lifecycle
+
+The Phase M6.1 implementation includes static unit coverage and existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes the known Phase M6.1 image and asserts the `wolfSSL TLS context smoke:` UART marker is deferred because the supplied test context only included the ad hoc monitor test, which does not flash a known image before capture. Complete this when the baseline build/flash/UART result helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=tls-context-lifecycle-only`, `client_ctx=created`, and all handshake/certificate/transport/MQTT/Wi-Fi/ST67W61M1 fields to remain unavailable.

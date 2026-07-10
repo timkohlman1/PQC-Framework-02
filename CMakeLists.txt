@@ -60,30 +60,46 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
-# Phase M6 wolfSSL source build integration.
+# Phase M6.1 wolfSSL TLS-context lifecycle source integration.
 #
-# Reuse the wolfSSL source tree carried by the wolfBoot submodule, but keep all
-# project-specific configuration in Core/Inc/user_settings.h and the
-# pqc_wolfssl_build_only boundary. This target intentionally builds only the
-# wolfCrypt SHA-256 source needed by the STM32 build-only smoke check. It does
-# not build or run a TLS transport, certificate loader, MQTT client, or
-# ST67W61M1 backend.
+# Reuse the wolfSSL source tree carried by the wolfBoot submodule. The selected
+# source set is limited to wolfSSL client-context and supporting wolfCrypt code
+# needed to initialize wolfSSL, create/free a TLS 1.2 client WOLFSSL_CTX, and
+# clean up global state. No transport, certificate loading, handshake, MQTT,
+# Wi-Fi, or ST67W61M1 backend is enabled by this target.
 set(PQC_WOLFSSL_SOURCE_DIR
     "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
     CACHE PATH
-    "Repository-local wolfSSL source directory used for Phase M6 STM32 build-only smoke coverage"
+    "Repository-local wolfSSL source directory used for Phase M6.1 STM32 TLS-context smoke coverage"
 )
 
-set(PQC_WOLFSSL_SHA256_SOURCE "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c")
-if(NOT EXISTS "${PQC_WOLFSSL_SHA256_SOURCE}")
-    message(FATAL_ERROR
-        "Phase M6 wolfSSL source file not found: ${PQC_WOLFSSL_SHA256_SOURCE}. "
-        "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
-    )
-endif()
+set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/internal.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/keys.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/ssl.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/tls.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/wolfio.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/aes.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/logging.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
+)
+
+foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
+    if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
+        message(FATAL_ERROR
+            "Phase M6.1 wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
+            "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+        )
+    endif()
+endforeach()
 
 add_library(pqc_wolfssl_stm32_build_only STATIC
-    "${PQC_WOLFSSL_SHA256_SOURCE}"
+    ${PQC_WOLFSSL_TLS_CONTEXT_SOURCES}
 )
 
 target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC

@@ -21,7 +21,9 @@ Each sub-phase is intentionally scoped as a small AI-driven change request.
 - Do not fake runtime success.
 - Record unavailable metrics explicitly.
 - Keep hardware tests capability-gated.
-- Keep broker-side, host-side, fake-transport, STM32 build-only, and STM32 hardware evidence clearly separated.
+- Keep broker-side, host-side, fake-transport, STM32 build-only, pre-scheduler STM32 smoke, FreeRTOS task-context STM32 smoke, and STM32 hardware evidence clearly separated.
+- Distinguish pre-scheduler firmware smoke evidence from post-scheduler FreeRTOS task-context evidence.
+- Do not report compile-time timing conversion constants as measured CPU-frequency evidence.
 - Do not implement future PQC/hybrid TLS phases until classical MQTT/TLS architecture is stable.
 - Do not move CubeMX-generated folders unless explicitly requested.
 - Do not commit private keys, real credentials, `.env` files, private certificates, or production secrets.
@@ -233,6 +235,10 @@ Requirement: Implement Phase M5 of the attached development plan - STM32 lwIP Bu
 - Runtime networking remains explicitly unavailable.
 - No Wi-Fi hardware is required.
 
+### Implementation Status
+
+Implemented to the current evidence boundary. The STM32 firmware emits a pre-scheduler lwIP runtime smoke marker for local deterministic helpers, while network hardware, link-up, IP assignment, TCP, TLS, MQTT, and end-to-end success remain unavailable. This is not FreeRTOS task-context networking evidence.
+
 ---
 
 ## Phase M6 — wolfSSL Build-Only Skeleton
@@ -268,6 +274,10 @@ Requirement: Implement Phase M6 of the attached development plan - wolfSSL Build
 - Firmware builds with wolfSSL integration boundary.
 - TLS runtime success is not claimed.
 - Secret-handling rules are preserved.
+
+### Implementation Status
+
+Implemented to the current evidence boundary. The STM32 firmware builds and invokes wolfSSL/wolfCrypt source in a pre-scheduler build/runtime smoke using deterministic local SHA-256 evidence. The evidence does not claim TLS context creation, TLS handshake, certificate loading, transport, MQTT, Wi-Fi, or end-to-end network success. wolfBoot and STM32 application wolfSSL settings must remain isolated so the application `user_settings.h` does not contaminate wolfBoot secure-boot builds.
 
 ---
 
@@ -306,6 +316,10 @@ Requirement: Implement Phase M6.1 of the attached development plan - wolfSSL TLS
 - Firmware builds with the selected wolfSSL TLS source and user settings.
 - TLS context lifecycle evidence is clearly separated from TLS handshake success.
 - No certificates, private keys, transport, MQTT, Wi-Fi, or end-to-end network success are claimed.
+
+### Implementation Status
+
+Implementation complete and validated
 
 ---
 
@@ -390,8 +404,6 @@ Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Tra
 
 Replace the hard-coded wolfBoot timing CPU-frequency assumption with explicit secure-boot timing evidence that records raw verification cycles and reported bootloader clock state separately from any derived milliseconds value.
 
-Minor wording note: this phase is not really MQTT/TLS-specific, but placing it at M6.4 makes sense because the issue was exposed during the current wolfBoot/M6-era test cleanup and affects the hardware benchmark evidence used around these phases.
-
 ### Outcomes
 
 - The wolfBoot verification timing instrumentation no longer treats a hard-coded `80000000` Hz constant as measured CPU frequency.
@@ -423,6 +435,97 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 Requirement: Implement Phase M6.4 of the attached development plan - Secure-Boot Timing Clock Evidence Cleanup. Update the wolfBoot secure-boot timing instrumentation and experiment framework so timing evidence no longer depends on a hard-coded 80000000 Hz CPU-frequency constant. The UART output and manifest should record raw DWT verification cycles as the primary timing metric and should report actual bootloader clock values available from the MCU/HAL/CMSIS clock model separately. Remove or relabel firmware-side cycle-to-millisecond conversion so any milliseconds value is clearly derived from an explicitly named clock source rather than treated as measured evidence. Update UART parsing, manifest schema, aggregate benchmark reporting, unit tests, integration tests, hardware tests, and documentation so they no longer hard-code 80000000 Hz. Do not introduce RTC or wall-clock timing in this phase. Keep hardware tests capability-gated and do not claim timing accuracy beyond explicit UART, manifest, or hardware evidence.
 ```
 
+### Pass Criteria
+
+- UART output no longer reports a hard-coded `wolfBoot verification cpu_hz: 80000000` value as if it were a measured runtime frequency.
+- Raw DWT verification cycles remain available in UART logs and manifests.
+- Bootloader clock values are reported separately where available.
+- Manifest fields distinguish raw cycle evidence from reported clock state and derived milliseconds.
+- Tests no longer assert `verification_cpu_hz == 80000000`.
+- Hardware tests validate the new markers without assuming a fixed 80 MHz clock.
+- Documentation clearly states the evidence boundary for cycles, clock reporting, and any derived time values.
+
+---
+
+## Phase M6.5 — FreeRTOS Task-Context Runtime Smoke
+
+### Goal
+
+Add post-scheduler STM32 runtime smoke evidence for the lwIP and wolfSSL preparation layers so pre-scheduler boot smoke evidence is clearly separated from FreeRTOS task-context evidence.
+
+### Outcomes
+
+- The existing pre-scheduler smoke markers remain available as early boot/build sanity evidence.
+- A FreeRTOS task-context smoke path runs after the scheduler starts.
+- UART output identifies the execution context for each marker, such as `context=pre_scheduler` or `context=freertos_task`.
+- The post-scheduler smoke may exercise the same local deterministic lwIP and wolfSSL/wolfCrypt checks where safe.
+- The work does not introduce real network transport, TCP connection, TLS handshake, certificate loading, MQTT connect, MQTT publish, Wi-Fi, or end-to-end success.
+- wolfSSL may remain single-threaded for this phase if access is serialized and no concurrent wolfSSL use is tested.
+- Any future wolfSSL FreeRTOS mutex/threading support remains a separate, explicit change unless required by inspected code.
+
+### Expected Evidence
+
+- Unit/build tests for the new marker text, task-context wiring, and execution-context labels.
+- Direct and relocated firmware builds.
+- Capability-gated UART hardware test confirming the FreeRTOS scheduler starts before the task-context smoke marker is emitted.
+- Documentation explaining that task-context smoke evidence is distinct from pre-scheduler evidence and still does not claim network/TLS/MQTT runtime success.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.5 of the attached development plan - FreeRTOS Task-Context Runtime Smoke. Add a post-scheduler STM32 runtime smoke path for the existing lwIP and wolfSSL preparation layers. Preserve the existing pre-scheduler smoke evidence, but add FreeRTOS task-context UART markers that explicitly state the scheduler is running and identify the smoke context as freertos_task. The task-context smoke may run deterministic local lwIP and wolfSSL/wolfCrypt checks, but it must not perform or claim Wi-Fi, link-up, IP assignment, TCP connection, TLS handshake, certificate loading, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Keep hardware tests capability-gated and do not introduce wolfSSL multithreaded support unless the inspected implementation requires it.
+```
+
+### Pass Criteria
+
+- Pre-scheduler and FreeRTOS task-context smoke markers are both clearly labelled.
+- Hardware UART evidence confirms task-context smoke occurs after scheduler start.
+- The phase does not claim network, TLS handshake, MQTT, Wi-Fi, or end-to-end success.
+- Tests distinguish task-context evidence from pre-scheduler evidence.
+
+---
+
+## Phase M6.6 — lwIP Local Loopback Runtime Smoke Without Network Hardware
+
+### Goal
+
+Validate a controlled STM32-local lwIP runtime path using loopback without requiring the ST67W61M1 Wi-Fi module or external network hardware.
+
+### Outcomes
+
+- lwIP loopback support is configured only where appropriate for the selected build.
+- A FreeRTOS task-context loopback smoke can send and receive local traffic through lwIP without external network hardware.
+- UDP loopback is preferred as the first implementation target; TCP loopback may be deferred unless required by inspected code.
+- UART output clearly labels the evidence as local loopback only.
+- The result does not claim Wi-Fi module detection, link-up, external IP connectivity, external ping response, broker access, TLS handshake, MQTT connect, MQTT publish, reconnect, or end-to-end network success.
+- The loopback evidence can inform later transport and wolfMQTT work without coupling MQTT logic directly to the ST67W61M1 backend.
+
+### Expected Evidence
+
+- Unit/build tests for lwIP loopback configuration and marker wording.
+- Direct and relocated firmware builds.
+- Capability-gated UART hardware test confirming local loopback success and explicit external-network unavailability.
+- Manifest or result schema updates where needed to distinguish local loopback evidence from real network evidence.
+- Documentation recording that loopback is internal STM32/lwIP evidence only.
+
+### Suggested AI Prompt
+
+```text
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Requirement: Implement Phase M6.6 of the attached development plan - lwIP Local Loopback Runtime Smoke Without Network Hardware. Add or validate a STM32-local lwIP loopback runtime smoke that runs after FreeRTOS scheduler start and does not require the ST67W61M1 Wi-Fi module or external network hardware. Prefer a deterministic UDP loopback send/receive smoke unless inspected code shows a safer alternative. UART and manifest evidence must clearly state that loopback is local-only and must not claim Wi-Fi module detection, link-up, IP acquisition over hardware, external ping, TCP external connectivity, TLS handshake, MQTT connect, MQTT publish, reconnect, broker access, or end-to-end network success. Keep hardware tests capability-gated.
+```
+
+### Pass Criteria
+
+- STM32 firmware can produce explicit local lwIP loopback evidence without network hardware.
+- Loopback evidence is not confused with ST67W61M1, external network, TLS, MQTT, or broker evidence.
+- Tests remain capability-gated and distinguish local loopback from real network validation.
+
+---
+
 ## Phase M7 — wolfMQTT Build-Only Skeleton
 
 ### Goal
@@ -441,7 +544,7 @@ Add or validate wolfMQTT build integration and bind it to an abstract transport 
 
 - Direct and relocated firmware builds.
 - Unit/build tests for relevant wiring.
-- Optional UART marker planning, if hardware runtime is included later, must distinguish initialization from network success.
+- Optional UART marker planning, if hardware runtime is included later, must distinguish initialization from network success and should identify whether evidence is pre-scheduler or FreeRTOS task-context.
 
 ### Suggested AI Prompt
 
@@ -681,7 +784,8 @@ The non-hardware MQTT/TLS preparation path is complete when:
 - Fake/no-network transport behavior is testable.
 - Host/broker validation is available and clearly separated from STM32 evidence.
 - STM32 firmware can build with the planned lwIP/wolfSSL/wolfMQTT boundaries where implemented.
-- Intermediate lwIP network-interface, wolfSSL TLS-context, and wolfSSL transport-boundary work remains clearly separated from real network and TLS handshake success.
-- STM32 can provide fake/no-network initialization evidence without the Wi-Fi module where implemented.
+- Intermediate lwIP network-interface, wolfSSL TLS-context, wolfSSL transport-boundary, FreeRTOS task-context smoke, and local lwIP loopback work remain clearly separated from real network and TLS handshake success.
+- STM32 can provide fake/no-network initialization and local-only runtime evidence without the Wi-Fi module where implemented.
+- Secure-boot timing evidence does not treat compile-time CPU-frequency assumptions as measured clock values.
 - ST67W61M1-dependent work remains deferred until the hardware is available.
 - No runtime success is claimed without explicit supporting evidence.

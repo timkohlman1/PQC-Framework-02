@@ -129,7 +129,7 @@ static void APP_PrintLwIPRuntimeSmoke(void)
 
 static void APP_PrintWolfSSLRuntimeSmoke(void)
 {
-  char smoke_line[256];
+  char smoke_line[384];
 
   PQC_WolfSSL_BuildOnly_Init();
 
@@ -139,7 +139,7 @@ static void APP_PrintWolfSSLRuntimeSmoke(void)
   }
   else
   {
-    APP_UART_WriteString("wolfSSL build-only smoke: unavailable reason=format_failed tls_handshake=unavailable transport=unavailable certs=not-loaded secrets=not-compiled-in\r\n");
+    APP_UART_WriteString("wolfSSL TLS context smoke: evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt=unavailable wifi=unavailable st67w61m1=unavailable secrets=not-compiled-in\r\n");
   }
 }
 

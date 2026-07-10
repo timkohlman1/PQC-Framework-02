@@ -37,6 +37,13 @@ STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
 STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
 DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.der")
+WOLFBOOT_GENERATED_SIGNING_ARTIFACT_RELATIVE_PATHS = (
+    Path("src/keystore.c"),
+    DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH,
+    Path("wolfboot_signing_public_key.der"),
+    Path("wolfboot_signing_private_key.pem"),
+    Path("wolfboot_signing_public_key.pem"),
+)
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
     "tools/bin-assemble/*.o",
@@ -597,6 +604,52 @@ def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
     return removed
 
 
+def _remove_wolfboot_generated_signing_artifacts(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+) -> list[Path]:
+    """Remove generated wolfBoot signing artifacts before each profile build.
+
+    wolfBoot generates ``src/keystore.c`` and local signing-key material inside
+    its source tree. The project reuses one wolfBoot checkout for several
+    signing algorithms, so stale generated artifacts from a previous profile can
+    make the next non-interactive build fail with a key-algorithm mismatch. Only
+    files under the wolfBoot source directory are removed here; canonical
+    project signing keys under ``secrets/`` are never deleted.
+    """
+
+    candidate_paths: set[Path] = {
+        source_dir / relative_path
+        for relative_path in WOLFBOOT_GENERATED_SIGNING_ARTIFACT_RELATIVE_PATHS
+    }
+
+    generated_keystore = _optional_profile_path(profile, "build.generated_keystore")
+    if generated_keystore is not None:
+        candidate_paths.add(repo_root / generated_keystore)
+
+    wolfboot_private_key = _resolve_wolfboot_private_key_path(
+        repo_root=repo_root,
+        source_dir=source_dir,
+        profile=profile,
+    )
+    if wolfboot_private_key is not None:
+        candidate_paths.add(wolfboot_private_key)
+
+    removed: list[Path] = []
+    for path in sorted(candidate_paths):
+        try:
+            path.relative_to(source_dir)
+        except ValueError:
+            continue
+        if not path.exists() or path.is_dir():
+            continue
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
 def _decode_wolfboot_command_output(output: bytes | str | None) -> str:
     """Decode captured wolfBoot command output without failing on toolchain bytes.
 
@@ -698,12 +751,10 @@ def _coordinate_wolfboot_signing_key_before_build(
 ) -> str | None:
     if signing_key_path is None or wolfboot_private_key_path is None:
         return "No canonical signing key coordination was configured for this wolfBoot build profile."
-    if signing_key_path.is_file() and wolfboot_private_key_path.is_file():
+    if signing_key_path.is_file():
         wolfboot_private_key_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(signing_key_path, wolfboot_private_key_path)
-        return "Copied the configured canonical signing key over the existing wolfBoot private key before build."
-    if signing_key_path.is_file():
-        return "Configured canonical signing key exists, but wolfBoot private key is absent; wolfBoot will regenerate key/keystore material and the canonical key will be synchronized after a successful build."
+        return "Copied the configured canonical signing key into the wolfBoot private key path before build."
     return "Configured canonical signing key was absent before build; wolfBoot may generate local key material, which will be copied back to the canonical path after a successful build if present."
 
 
@@ -830,6 +881,7 @@ def _write_log(
     key_consistency_message: str | None = None,
     key_sync_before_build_message: str | None = None,
     key_sync_after_build_message: str | None = None,
+    generated_signing_artifact_cleanup_paths: list[Path] | None = None,
 ) -> None:
     lines = [
         "wolfBoot build log",
@@ -855,6 +907,8 @@ def _write_log(
         f"Signing key sync before build: {key_sync_before_build_message if key_sync_before_build_message is not None else 'none'}",
         f"Signing key sync after build: {key_sync_after_build_message if key_sync_after_build_message is not None else 'none'}",
         "Private signing keys are local-only evidence inputs and are not copied into the result directory.",
+        f"Generated wolfBoot signing artifact cleanup count: {len(generated_signing_artifact_cleanup_paths or [])}",
+        f"Generated wolfBoot signing artifact cleanup paths: {', '.join(str(path) for path in (generated_signing_artifact_cleanup_paths or [])) if generated_signing_artifact_cleanup_paths else 'none'}",
         f"Input fingerprint status: {fingerprint_evidence.get('status') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint algorithm: {fingerprint_evidence.get('fingerprint_algorithm') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint: {fingerprint_evidence.get('fingerprint') if fingerprint_evidence else 'unavailable'}",
@@ -1036,6 +1090,7 @@ def execute_wolfboot_build(
         profile=profile,
     )
     key_sync_before_build_message: str | None = None
+    generated_signing_artifact_cleanup_paths: list[Path] = []
 
     execution: WolfBootCommandExecution | None = None
     artifact_sha256: str | None = None
@@ -1116,6 +1171,11 @@ def execute_wolfboot_build(
                         else:
                             try:
                                 _remove_wolfboot_host_tool_outputs(source_dir)
+                                generated_signing_artifact_cleanup_paths = _remove_wolfboot_generated_signing_artifacts(
+                                    profile=profile,
+                                    repo_root=repo_root_path,
+                                    source_dir=source_dir,
+                                )
                                 key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
                                     signing_key_path=signing_key_path,
                                     wolfboot_private_key_path=wolfboot_private_key_path,
@@ -1229,6 +1289,7 @@ def execute_wolfboot_build(
         key_consistency_message=key_consistency_message,
         key_sync_before_build_message=key_sync_before_build_message,
         key_sync_after_build_message=key_sync_after_build_message,
+        generated_signing_artifact_cleanup_paths=generated_signing_artifact_cleanup_paths,
     )
 
     manifest = {
@@ -1258,6 +1319,11 @@ def execute_wolfboot_build(
             "key_consistency_message": key_consistency_message,
             "key_sync_before_build_message": key_sync_before_build_message,
             "key_sync_after_build_message": key_sync_after_build_message,
+            "generated_signing_artifact_cleanup": {
+                "enabled": True,
+                "removed_count": len(generated_signing_artifact_cleanup_paths),
+                "removed_paths": [str(path) for path in generated_signing_artifact_cleanup_paths],
+            },
             "key_material_copied_to_results": False,
             "fingerprint": fingerprint_evidence.get("fingerprint"),
             "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),

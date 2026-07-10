@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define PQC_WOLFSSL_BUILD_ONLY_SCHEMA_VERSION 2U
+#define PQC_WOLFSSL_BUILD_ONLY_SCHEMA_VERSION 3U
 #define PQC_WOLFSSL_SHA256_DIGEST_HEX_LENGTH 64U
 
 typedef struct
@@ -19,6 +19,8 @@ typedef struct
   bool wolfssl_source_build_enabled;
   bool wolfcrypt_sha256_smoke_available;
   bool wolfcrypt_sha256_smoke_passed;
+  bool tls_context_lifecycle_available;
+  bool tls_context_lifecycle_passed;
   bool tls_handshake_available;
   bool runtime_transport_available;
   bool certificate_store_configured;
@@ -32,6 +34,7 @@ const char *PQC_WolfSSL_BuildOnly_EvidenceLabel(void);
 const char *PQC_WolfSSL_BuildOnly_UnavailableReason(void);
 const char *PQC_WolfSSL_BuildOnly_Version(void);
 bool PQC_WolfSSL_BuildOnly_RunSourceSmoke(void);
+bool PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke(void);
 bool PQC_WolfSSL_BuildOnly_SmokeDigestHex(char *buffer, uint32_t buffer_length);
 bool PQC_WolfSSL_BuildOnly_BuildInfoLine(char *buffer, uint32_t buffer_length);
 bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length);

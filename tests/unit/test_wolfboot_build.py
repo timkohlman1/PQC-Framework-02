@@ -521,3 +521,66 @@ def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_
     assert result.return_code == 0
     for stale_path in stale_paths:
         assert not stale_path.exists()
+
+
+def test_execute_wolfboot_build_removes_stale_generated_keystore_before_make(tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
+    generated_keystore = source_dir / "src" / "keystore.c"
+    generated_public_key = source_dir / "wolfboot_signing_public_key.der"
+
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
+    signing_key.parent.mkdir(parents=True)
+    signing_key.write_bytes(b"canonical ecdsa p256 private key")
+
+    generated_keystore.parent.mkdir(parents=True, exist_ok=True)
+    generated_keystore.write_text(
+        "#error Key algorithm mismatch. Remove old keys via 'make keysclean'\n",
+        encoding="utf-8",
+    )
+    wolfboot_key.write_bytes(b"stale wolfboot private key from another profile")
+    generated_public_key.write_bytes(b"stale wolfboot public key from another profile")
+
+    def fake_runner(command: list[str], cwd: Path):
+        assert command == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]
+        assert cwd == source_dir
+        assert not generated_keystore.exists()
+        assert not generated_public_key.exists()
+        assert wolfboot_key.read_bytes() == b"canonical ecdsa p256 private key"
+        artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    build_log = result.log_path.read_text(encoding="utf-8")
+    cleanup = manifest["wolfboot_build"]["generated_signing_artifact_cleanup"]
+
+    assert result.return_code == 0
+    assert not generated_keystore.exists()
+    assert not generated_public_key.exists()
+    assert wolfboot_key.read_bytes() == b"canonical ecdsa p256 private key"
+    assert signing_key.read_bytes() == b"canonical ecdsa p256 private key"
+    assert cleanup["enabled"] is True
+    assert cleanup["removed_count"] == 3
+    assert str(generated_keystore) in cleanup["removed_paths"]
+    assert str(wolfboot_key) in cleanup["removed_paths"]
+    assert str(generated_public_key) in cleanup["removed_paths"]
+    assert "Generated wolfBoot signing artifact cleanup count: 3" in build_log
+    assert "Copied the configured canonical signing key into the wolfBoot private key path before build." in build_log
