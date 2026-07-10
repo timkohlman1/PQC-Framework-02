@@ -16,7 +16,6 @@ def test_clean_generated_build_artifacts_removes_only_generated_outputs(tmp_path
         repo_root / "tools" / "wolfboot" / "wolfboot.bin",
         repo_root / "tools" / "wolfboot" / "wolfboot.hex",
         repo_root / "tools" / "wolfboot" / "wolfboot.map",
-        repo_root / "tools" / "wolfboot" / "wolfboot_signing_private_key.der",
         repo_root / "tools" / "wolfboot" / "src" / "image.o",
         repo_root / "tools" / "wolfboot" / "src" / "image.d",
         repo_root / "tools" / "wolfboot" / "hal" / "stm32l4.o",
@@ -26,10 +25,15 @@ def test_clean_generated_build_artifacts_removes_only_generated_outputs(tmp_path
         repo_root / "tools" / "wolfboot" / "tools" / "keytools" / "keygen.exe",
         repo_root / "tools" / "wolfboot" / "tools" / "keytools" / "sign.exe",
     ]
+    preserved_tuple_files = [
+        repo_root / "tools" / "wolfboot" / "wolfboot_signing_private_key.der",
+        repo_root / "tools" / "wolfboot" / "wolfboot_signing_public_key.der",
+        repo_root / "tools" / "wolfboot" / "src" / "keystore.c",
+    ]
     source_file = repo_root / "tools" / "wolfboot" / "src" / "image.c"
     canonical_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
 
-    for path in [*generated_files, source_file, canonical_key]:
+    for path in [*generated_files, *preserved_tuple_files, source_file, canonical_key]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("test", encoding="utf-8")
 
@@ -38,6 +42,8 @@ def test_clean_generated_build_artifacts_removes_only_generated_outputs(tmp_path
     assert removed
     for path in generated_files:
         assert not path.exists()
+    for path in preserved_tuple_files:
+        assert path.is_file()
     assert source_file.is_file()
     assert canonical_key.is_file()
 
