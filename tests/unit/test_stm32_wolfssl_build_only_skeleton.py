@@ -14,6 +14,7 @@ def test_stm32_wolfssl_source_build_is_wired_into_firmware():
     assert "target_link_libraries(${CMAKE_PROJECT_NAME}" in root_cmake
     assert "pqc_wolfssl_stm32_build_only" in root_cmake
     assert "WOLFSSL_USER_SETTINGS" in root_cmake
+    assert "PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1" in root_cmake
     assert "PQC_WOLFSSL_SOURCE_BUILD=1" in root_cmake
     assert '"${PQC_WOLFSSL_SOURCE_DIR}"' in root_cmake
 
@@ -30,6 +31,7 @@ def test_stm32_wolfssl_user_settings_keep_phase_m6_scope_narrow():
     assert "WOLFSSL_NO_MALLOC" in settings
     assert "NO_WOLFSSL_MEMORY" in settings
     assert "USE_SLOW_SHA256" in settings
+    assert "PQC_STM32_APP_WOLFSSL_USER_SETTINGS" in wrapper
     assert '#include "pqc_wolfssl_user_settings.h"' in wrapper
 
 

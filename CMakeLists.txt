@@ -93,6 +93,7 @@ target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC
 
 target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
     WOLFSSL_USER_SETTINGS
+    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
     PQC_WOLFSSL_SOURCE_BUILD=1
 )
 
@@ -118,6 +119,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_WOLFSSL_BUILD_ONLY=1
+    WOLFSSL_USER_SETTINGS
+    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
     PQC_WOLFSSL_SOURCE_BUILD=1
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}

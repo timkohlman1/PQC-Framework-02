@@ -360,6 +360,26 @@ def test_project_local_wolfboot_config_selects_stm32l4r5_header():
 
     assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
     assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
+    assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
+
+    wolfboot_user_settings = (repo_root / "tools" / "wolfboot" / "include" / "user_settings.h").read_text(
+        encoding="utf-8"
+    )
+    assert "#define CTYPE_USER" in wolfboot_user_settings
+    for duplicated_wolfboot_setting in (
+        "NO_CTYPE_H",
+        "NO_CTYPE",
+        "NO_FILESYSTEM",
+        "NO_WOLFSSL_DIR",
+        "WOLFSSL_NO_CURRDIR",
+        "NO_WRITEV",
+        "SINGLE_THREADED",
+        "ECC_TIMING_RESISTANT",
+        "TFM_TIMING_RESISTANT",
+        "WC_RSA_BLINDING",
+    ):
+        assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
+
     assert "IMAGE_HEADER_SIZE=8192" in config_text
     assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
     assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
@@ -373,6 +393,7 @@ def test_project_local_wolfboot_config_selects_stm32l4r5_header():
     assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
     assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
     assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
+    assert config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx") < config_text.index("CFLAGS_EXTRA+=-I../../Drivers/STM32L4xx_HAL_Driver/Inc")
 
 
 def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
