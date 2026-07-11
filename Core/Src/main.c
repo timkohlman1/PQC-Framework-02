@@ -115,19 +115,20 @@ static void APP_UART_WriteUint32(uint32_t value)
   }
 }
 
-static void APP_PrintLwIPRuntimeSmoke(void)
+static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_running)
 {
-  char smoke_line[128];
+  static char smoke_line[512];
 
   PQC_LwIP_BuildOnly_Init();
 
-  if (PQC_LwIP_BuildOnly_RuntimeSmokeLine(smoke_line, (uint32_t)sizeof(smoke_line)))
+  if (PQC_LwIP_BuildOnly_RuntimeSmokeLineForContext(
+          smoke_line, (uint32_t)sizeof(smoke_line), context, scheduler_running))
   {
     APP_UART_WriteString(smoke_line);
   }
   else
   {
-    APP_UART_WriteString("lwIP runtime smoke: unavailable reason=format_failed network=unavailable\r\n");
+    APP_UART_WriteString("lwIP runtime smoke: context=unavailable scheduler=unavailable reason=format_failed network=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n");
   }
 }
 
@@ -147,19 +148,18 @@ static void APP_PrintNetworkInterfaceStatus(void)
   }
 }
 
-static void APP_PrintWolfSSLRuntimeSmoke(void)
+static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_running)
 {
-  char smoke_line[384];
+  static char smoke_line[640];
 
-  PQC_WolfSSL_BuildOnly_Init();
-
-  if (PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(smoke_line, (uint32_t)sizeof(smoke_line)))
+  if (PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
+          smoke_line, (uint32_t)sizeof(smoke_line), context, scheduler_running))
   {
     APP_UART_WriteString(smoke_line);
   }
   else
   {
-    APP_UART_WriteString("wolfSSL TLS context smoke: evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt=unavailable wifi=unavailable st67w61m1=unavailable secrets=not-compiled-in\r\n");
+    APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
   }
 }
 
@@ -364,9 +364,9 @@ int main(void)
   const char boot_msg[] = "\r\nstm32-basic_hal1 boot v0.1.0\r\n";
 #endif
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
-  APP_PrintLwIPRuntimeSmoke();
+  APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);
   APP_PrintNetworkInterfaceStatus();
-  APP_PrintWolfSSLRuntimeSmoke();
+  APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);
   APP_PrintWolfSSLTransportStatus();
 
   /* USER CODE END 2 */
@@ -897,6 +897,10 @@ void StartDefaultTask(void *argument)
   BaseType_t runtime_checkpoint_reported = pdFALSE;
 
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
+  APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
+  APP_PrintLwIPRuntimeSmoke("freertos_task", true);
+  APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
+  APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=unavailable tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("default_task_start", pdTRUE);
 

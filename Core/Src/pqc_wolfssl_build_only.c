@@ -172,14 +172,26 @@ bool PQC_WolfSSL_BuildOnly_BuildInfoLine(char *buffer, uint32_t buffer_length)
   return true;
 }
 
-bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
+bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
+    char *buffer,
+    uint32_t buffer_length,
+    const char *context,
+    bool scheduler_running)
 {
   char digest_hex[PQC_WOLFSSL_SHA256_DIGEST_HEX_LENGTH + 1U];
-  if ((buffer == NULL) || (buffer_length == 0U)) return false;
+  if ((buffer == NULL) || (buffer_length == 0U) || (context == NULL)) return false;
+
+  /* Each context performs its own deterministic local smoke. Calls are serialized
+   * by the application: pre-scheduler first, then once from defaultTask. */
+  (void)PQC_WolfSSL_BuildOnly_RunSourceSmoke();
+  (void)PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke();
+
   const PQC_WolfSSLBuildOnlyStatus status = PQC_WolfSSL_BuildOnly_GetStatus();
   if (!PQC_WolfSSL_BuildOnly_SmokeDigestHex(digest_hex, (uint32_t)sizeof(digest_hex))) digest_hex[0] = '\0';
   const int written = snprintf(buffer, (size_t)buffer_length,
-      "wolfSSL TLS context smoke: evidence=tls-context-lifecycle-only source=%s version=%s sha256=%s digest=%s init=%s client_ctx=%s free=done cleanup=done tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt=unavailable wifi=unavailable st67w61m1=unavailable secrets=not-compiled-in\r\n",
+      "wolfSSL TLS context smoke: context=%s scheduler=%s evidence=tls-context-lifecycle-only source=%s version=%s sha256=%s digest=%s init=%s client_ctx=%s free=done cleanup=done tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n",
+      context,
+      scheduler_running ? "running" : "not_started",
       status.wolfssl_source_build_enabled ? "enabled" : "disabled",
       PQC_WolfSSL_BuildOnly_Version(),
       status.wolfcrypt_sha256_smoke_passed ? "ok" : "failed",
@@ -189,3 +201,13 @@ bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length
   if ((written < 0) || ((uint32_t)written >= buffer_length)) { buffer[0] = '\0'; return false; }
   return true;
 }
+
+bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
+{
+  return PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
+      buffer,
+      buffer_length,
+      "pre_scheduler",
+      false);
+}
+

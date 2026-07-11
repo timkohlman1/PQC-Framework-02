@@ -255,6 +255,10 @@ _STACK_HIGH_WATER_PATTERNS = [
     ),
 ]
 _HEAP_USED_PATTERNS = [
+    re.compile(
+        r"\bwolfBoot verification heap used:\s*(?P<value>\d+)\s+bytes\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bheap_peak_used_bytes\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
     re.compile(r"\bheap_used_bytes\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
 ]

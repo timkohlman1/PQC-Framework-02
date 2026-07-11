@@ -540,3 +540,8 @@ Build and signing commands maintain local compatibility/provenance records under
 Secure-boot verification timing uses the DWT cycle counter as the primary firmware-side evidence. The wolfBoot instrumentation mailbox records raw elapsed cycles, verification result, stack high-water evidence, and bootloader clock values derived from the active STM32 RCC register model: SYSCLK, HCLK, PCLK1, and PCLK2. Firmware does not convert cycles to milliseconds and does not report a hard-coded CPU frequency.
 
 The framework may derive `derived_verification_time_ms` as `verification_cycles * 1000 / hclk_hz` only when both explicit UART values are present. The manifest records `derived_time_clock_source: hclk_hz` and keeps the raw cycles and reported clocks separate. This derived value is not RTC, wall-clock, host-duration, UART-latency, or independently calibrated timing evidence. Hardware assertions remain capability-gated and require explicit UART/manifest evidence.
+
+
+### Phase M6.5 FreeRTOS task-context runtime smoke
+
+The existing deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke remain available before `osKernelStart()` with `context=pre_scheduler scheduler=not_started`. After `defaultTask` starts, the same local checks run once in serialized task context and emit `context=freertos_task scheduler=running`. The task-context path does not initialize a network interface, bring a link up, assign an IP address, open TCP, load certificates, perform a TLS handshake, connect or publish MQTT, reconnect, use ST67W61M1/Wi-Fi hardware, or claim end-to-end success. No wolfSSL multithreaded integration is enabled because both smoke invocations are serialized and there is no concurrent wolfSSL use.

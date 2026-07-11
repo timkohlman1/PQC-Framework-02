@@ -534,6 +534,13 @@ def test_uart_parses_explicit_runtime_stack_high_water_marker_only():
     assert uart.parse_max_stack_used_bytes(output) == 2048
     assert uart.parse_max_stack_used_bytes("capture duration: 10 seconds") is None
     assert uart.parse_heap_used_bytes("wolfBoot verification heap used: 512 bytes") == 512
+    assert (
+        uart.parse_heap_used_bytes(
+            "FreeRTOS scheduler starting: heap_bytes=40000 "
+            "default_task_stack_words=512"
+        )
+        is None
+    )
 
 
 

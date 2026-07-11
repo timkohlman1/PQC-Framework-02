@@ -25,6 +25,11 @@ PQC_LwIPBuildOnlyStatus PQC_LwIP_BuildOnly_GetStatus(void);
 const char *PQC_LwIP_BuildOnly_EvidenceLabel(void);
 const char *PQC_LwIP_BuildOnly_UnavailableReason(void);
 bool PQC_LwIP_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length);
+bool PQC_LwIP_BuildOnly_RuntimeSmokeLineForContext(
+    char *buffer,
+    uint32_t buffer_length,
+    const char *context,
+    bool scheduler_running);
 
 #ifdef __cplusplus
 }

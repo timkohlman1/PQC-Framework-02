@@ -124,3 +124,18 @@ def test_freertos_tick_runs_from_default_task_not_main_loop():
     assert "osDelay(1000);" in task_body
     assert "HAL_Delay(1000);" not in task_body
 
+
+
+def test_phase_m6_5_task_context_smoke_is_after_task_start_and_separate_from_pre_scheduler_smoke():
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    task_start = main_c.rindex("void StartDefaultTask(void *argument)")
+    task_body = main_c[task_start:]
+
+    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:task_start]
+    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:task_start]
+    started_index = task_body.index("FreeRTOS defaultTask started: periodic tick task active")
+    phase_index = task_body.index("FreeRTOS task-context smoke starting:")
+    lwip_index = task_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
+    wolfssl_index = task_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
+    complete_index = task_body.index("FreeRTOS task-context smoke complete:")
+    assert started_index < phase_index < lwip_index < wolfssl_index < complete_index

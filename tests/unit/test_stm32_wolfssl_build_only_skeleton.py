@@ -208,3 +208,30 @@ def test_stm32_wolfssl_transport_boundary_performs_no_network_tls_or_mqtt_work()
     )
     for fragment in forbidden_fragments:
         assert fragment not in source
+
+
+def test_phase_m6_5_wolfssl_smoke_runs_serialized_in_freertos_task_without_threading_support():
+    header = Path("Core/Inc/pqc_wolfssl_build_only.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfssl_build_only.c").read_text(encoding="utf-8")
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext" in header
+    assert "context=%s scheduler=%s" in source
+    assert "PQC_WolfSSL_BuildOnly_RunSourceSmoke();" in source
+    assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke();" in source
+    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c
+    assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in main_c
+    assert "serialized=true" in main_c
+    assert "WOLFSSL_FREERTOS" not in settings
+    assert "WOLFSSL_CMSIS_RTOS" not in settings
+    assert "#define SINGLE_THREADED" in settings
+    for fragment in (
+        "tls_handshake=unavailable", "certs=not-loaded",
+        "transport=unavailable", "mqtt_connect=unavailable",
+        "mqtt_publish=unavailable", "reconnect=unavailable",
+        "wifi=unavailable", "link=unavailable", "ip=unavailable",
+        "tcp=unavailable", "st67w61m1=unavailable",
+        "end_to_end=unavailable",
+    ):
+        assert fragment in source

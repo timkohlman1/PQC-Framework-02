@@ -47,9 +47,13 @@ const char *PQC_LwIP_BuildOnly_UnavailableReason(void)
 }
 
 
-bool PQC_LwIP_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
+bool PQC_LwIP_BuildOnly_RuntimeSmokeLineForContext(
+    char *buffer,
+    uint32_t buffer_length,
+    const char *context,
+    bool scheduler_running)
 {
-  if ((buffer == NULL) || (buffer_length == 0U))
+  if ((buffer == NULL) || (buffer_length == 0U) || (context == NULL))
   {
     return false;
   }
@@ -71,7 +75,9 @@ bool PQC_LwIP_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
   const int written = snprintf(
       buffer,
       (size_t)buffer_length,
-      "lwIP runtime smoke: version=%u.%u.%u ip4_format=%s checksum=0x%04x network=unavailable\r\n",
+      "lwIP runtime smoke: context=%s scheduler=%s version=%u.%u.%u ip4_format=%s checksum=0x%04x network=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n",
+      context,
+      scheduler_running ? "running" : "not_started",
       (unsigned)LWIP_VERSION_MAJOR,
       (unsigned)LWIP_VERSION_MINOR,
       (unsigned)LWIP_VERSION_REVISION,
@@ -86,3 +92,13 @@ bool PQC_LwIP_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
 
   return true;
 }
+
+bool PQC_LwIP_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length)
+{
+  return PQC_LwIP_BuildOnly_RuntimeSmokeLineForContext(
+      buffer,
+      buffer_length,
+      "pre_scheduler",
+      false);
+}
+

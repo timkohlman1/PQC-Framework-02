@@ -18,6 +18,10 @@ FREERTOS_UART_MARKERS = (
     "FreeRTOS defaultTask created: name=defaultTask",
     "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask",
     "FreeRTOS defaultTask started: periodic tick task active",
+    "FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true",
+    "lwIP runtime smoke: context=freertos_task scheduler=running",
+    "wolfSSL TLS context smoke: context=freertos_task scheduler=running",
+    "FreeRTOS task-context smoke complete: context=freertos_task scheduler=running",
 )
 
 
@@ -447,6 +451,19 @@ def _assert_profile_benchmark_manifest(
         assert "Secure-boot marker present: true" in uart_log
         assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
         _assert_freertos_uart_markers(uart_log)
+        task_started_index = uart_log.index("FreeRTOS defaultTask started: periodic tick task active")
+        lwip_task_index = uart_log.index("lwIP runtime smoke: context=freertos_task scheduler=running")
+        wolfssl_task_index = uart_log.index("wolfSSL TLS context smoke: context=freertos_task scheduler=running")
+        assert task_started_index < lwip_task_index < wolfssl_task_index
+        assert "lwIP runtime smoke: context=pre_scheduler scheduler=not_started" in uart_log
+        assert "wolfSSL TLS context smoke: context=pre_scheduler scheduler=not_started" in uart_log
+        for unavailable in (
+            "network=unavailable", "tls_handshake=unavailable",
+            "certs=not-loaded", "mqtt_connect=unavailable",
+            "mqtt_publish=unavailable", "reconnect=unavailable",
+            "st67w61m1=unavailable", "end_to_end=unavailable",
+        ):
+            assert unavailable in uart_log
 
     assert (result_dir / "secure_boot_flash.log").is_file()
     return manifest

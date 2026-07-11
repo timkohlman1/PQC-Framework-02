@@ -514,6 +514,11 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 Requirement: Implement Phase M6.5 of the attached development plan - FreeRTOS Task-Context Runtime Smoke. Add a post-scheduler STM32 runtime smoke path for the existing lwIP and wolfSSL preparation layers. Preserve the existing pre-scheduler smoke evidence, but add FreeRTOS task-context UART markers that explicitly state the scheduler is running and identify the smoke context as freertos_task. The task-context smoke may run deterministic local lwIP and wolfSSL/wolfCrypt checks, but it must not perform or claim Wi-Fi, link-up, IP assignment, TCP connection, TLS handshake, certificate loading, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Keep hardware tests capability-gated and do not introduce wolfSSL multithreaded support unless the inspected implementation requires it.
 ```
 
+
+### Implementation Status
+
+Implemented with separate pre-scheduler and post-scheduler evidence. The deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke retain `context=pre_scheduler scheduler=not_started` markers and run once again from `defaultTask` with `context=freertos_task scheduler=running`. The calls are serialized; no wolfSSL multithreaded support is introduced. All Wi-Fi, link, IP, TCP, certificate, TLS-handshake, MQTT, reconnect, ST67W61M1, and end-to-end states remain explicitly unavailable.
+
 ### Pass Criteria
 
 - Pre-scheduler and FreeRTOS task-context smoke markers are both clearly labelled.

@@ -140,7 +140,8 @@ def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
         for fragment in runtime_entrypoints:
             assert fragment not in source
 
-    assert "APP_PrintLwIPRuntimeSmoke();" in main_c
+    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c
+    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' in main_c
     assert "lwIP runtime smoke:" in main_c
     assert "network=unavailable" in main_c
     assert "PQC_LwIP_BuildOnly_RuntimeSmokeLine" not in freertos_c
@@ -164,11 +165,13 @@ def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
     assert "LWIP_VERSION_MAJOR" in source
     assert "ip4addr_ntoa_r" in source
     assert "inet_chksum" in source
-    assert "lwIP runtime smoke: version=" in source
+    assert "lwIP runtime smoke: context=%s scheduler=%s version=" in source
     assert "ip4_format=%s" in source
     assert "IP4_ADDR(&example_addr, 192, 0, 2, 1)" in source
     assert "network=unavailable" in source
-    assert "APP_PrintLwIPRuntimeSmoke();" in main_c
+    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c
+    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' in main_c
+    assert 'scheduler_running ? "running" : "not_started"' in source
 
     forbidden_runtime_network_fragments = (
         "lwip_init(",

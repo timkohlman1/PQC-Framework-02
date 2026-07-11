@@ -157,3 +157,23 @@ def test_phase_m6_2_network_interface_boundary_does_not_bring_up_networking():
 
     for fragment in required_unavailable_fields:
         assert fragment in source
+
+
+def test_phase_m6_5_lwip_smoke_distinguishes_pre_scheduler_and_freertos_task_contexts():
+    header = Path("Core/Inc/pqc_lwip_build_only.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_lwip_build_only.c").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "PQC_LwIP_BuildOnly_RuntimeSmokeLineForContext" in header
+    assert "context=%s scheduler=%s" in source
+    assert '"pre_scheduler"' in source
+    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c
+    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' in main_c
+    for fragment in (
+        "network=unavailable", "wifi=unavailable", "link=unavailable",
+        "ip=unavailable", "tcp=unavailable", "tls_handshake=unavailable",
+        "certs=not-loaded", "mqtt_connect=unavailable",
+        "mqtt_publish=unavailable", "reconnect=unavailable",
+        "st67w61m1=unavailable", "end_to_end=unavailable",
+    ):
+        assert fragment in source

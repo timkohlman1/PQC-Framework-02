@@ -38,6 +38,11 @@ bool PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke(void);
 bool PQC_WolfSSL_BuildOnly_SmokeDigestHex(char *buffer, uint32_t buffer_length);
 bool PQC_WolfSSL_BuildOnly_BuildInfoLine(char *buffer, uint32_t buffer_length);
 bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLine(char *buffer, uint32_t buffer_length);
+bool PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
+    char *buffer,
+    uint32_t buffer_length,
+    const char *context,
+    bool scheduler_running);
 
 #ifdef __cplusplus
 }
