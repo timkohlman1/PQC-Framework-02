@@ -26,6 +26,8 @@
 #include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -186,6 +188,77 @@ static void APP_PrintFreeRTOSSchedulerStarting(void)
   APP_UART_WriteString(" default_task_stack_words=512\r\n");
 }
 
+static void APP_PrintUnavailable(void)
+{
+  APP_UART_WriteString("unavailable");
+}
+
+static void APP_PrintApplicationMemoryCheckpoint(const char *stage, BaseType_t include_task_stack)
+{
+  size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
+  size_t heap_free_bytes = xPortGetFreeHeapSize();
+  size_t heap_min_ever_free_bytes = xPortGetMinimumEverFreeHeapSize();
+  size_t heap_current_used_bytes = heap_total_bytes - heap_free_bytes;
+  size_t heap_peak_used_bytes = heap_total_bytes - heap_min_ever_free_bytes;
+
+  APP_UART_WriteString("application memory checkpoint: stage=");
+  APP_UART_WriteString(stage);
+  APP_UART_WriteString(" heap_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_total_bytes);
+  APP_UART_WriteString(" heap_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_free_bytes);
+  APP_UART_WriteString(" heap_min_ever_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_min_ever_free_bytes);
+  APP_UART_WriteString(" heap_current_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_current_used_bytes);
+  APP_UART_WriteString(" heap_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_peak_used_bytes);
+  APP_UART_WriteString(" task_stack_total_bytes=");
+
+  if (include_task_stack != pdFALSE)
+  {
+    UBaseType_t stack_high_water_words = uxTaskGetStackHighWaterMark(NULL);
+    uint32_t stack_total_bytes = (uint32_t)defaultTask_attributes.stack_size;
+    uint32_t stack_high_water_bytes = (uint32_t)stack_high_water_words * (uint32_t)sizeof(StackType_t);
+    uint32_t stack_used_bytes =
+        (stack_high_water_bytes <= stack_total_bytes) ?
+        (stack_total_bytes - stack_high_water_bytes) : 0U;
+
+    APP_UART_WriteUint32(stack_total_bytes);
+    APP_UART_WriteString(" task_stack_high_water_bytes=");
+    APP_UART_WriteUint32(stack_high_water_bytes);
+    APP_UART_WriteString(" task_stack_used_bytes=");
+    APP_UART_WriteUint32(stack_used_bytes);
+  }
+  else
+  {
+    APP_PrintUnavailable();
+    APP_UART_WriteString(" task_stack_high_water_bytes=");
+    APP_PrintUnavailable();
+    APP_UART_WriteString(" task_stack_used_bytes=");
+    APP_PrintUnavailable();
+  }
+
+  APP_UART_WriteString("\r\n");
+}
+
+static void APP_PrintApplicationClock(const char *name, uint32_t value)
+{
+  APP_UART_WriteString("application clock ");
+  APP_UART_WriteString(name);
+  APP_UART_WriteString(": ");
+  APP_UART_WriteUint32(value);
+  APP_UART_WriteString("\r\n");
+}
+
+static void APP_PrintApplicationClockConfiguration(void)
+{
+  APP_PrintApplicationClock("sysclk_hz", HAL_RCC_GetSysClockFreq());
+  APP_PrintApplicationClock("hclk_hz", HAL_RCC_GetHCLKFreq());
+  APP_PrintApplicationClock("pclk1_hz", HAL_RCC_GetPCLK1Freq());
+  APP_PrintApplicationClock("pclk2_hz", HAL_RCC_GetPCLK2Freq());
+}
+
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
@@ -281,10 +354,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 #ifdef SECURE_BOOT_APPLICATION
-  const char secure_boot_msg[] = "\r\nstm32-basic_hal1 secure-boot app v0.1.0\r\n";
-  HAL_UART_Transmit(&hlpuart1, (uint8_t *)secure_boot_msg, sizeof(secure_boot_msg) - 1, HAL_MAX_DELAY);
-
   APP_PrintWolfBootVerificationTiming();
+
+  const char secure_boot_msg[] = "stm32-basic_hal1 secure-boot app v0.1.0\r\n";
+  HAL_UART_Transmit(&hlpuart1, (uint8_t *)secure_boot_msg, sizeof(secure_boot_msg) - 1, HAL_MAX_DELAY);
 
   const char boot_msg[] = "stm32-basic_hal1 boot v0.1.0\r\n";
 #else
@@ -328,6 +401,7 @@ int main(void)
     Error_Handler();
   }
   APP_UART_WriteString("FreeRTOS defaultTask created: name=defaultTask priority=osPriorityNormal stack_words=512\r\n");
+  APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -820,7 +894,11 @@ void StartDefaultTask(void *argument)
   const char task_started_msg[] = "FreeRTOS defaultTask started: periodic tick task active\r\n";
   const char tick_msg[] = "tick\r\n";
 
+  BaseType_t runtime_checkpoint_reported = pdFALSE;
+
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
+  APP_PrintApplicationClockConfiguration();
+  APP_PrintApplicationMemoryCheckpoint("default_task_start", pdTRUE);
 
   /* Infinite loop */
   for(;;)
@@ -828,6 +906,12 @@ void StartDefaultTask(void *argument)
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
     HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
     osDelay(1000);
+
+    if (runtime_checkpoint_reported == pdFALSE)
+    {
+      APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE);
+      runtime_checkpoint_reported = pdTRUE;
+    }
   }
   /* USER CODE END 5 */
 }

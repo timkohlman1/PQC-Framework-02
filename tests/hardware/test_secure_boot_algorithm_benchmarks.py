@@ -414,6 +414,19 @@ def _assert_profile_benchmark_manifest(
         assert sample["valid_for_statistics"] is True
         assert sample["verification_result_code"] == 0
         assert sample["bootloader_hclk_hz"] > 0
+        application_clock = manifest["application_clock"]["clock_hz"]
+        assert application_clock["sysclk_hz"] == 120000000
+        assert application_clock["hclk_hz"] == 120000000
+        assert application_clock["pclk1_hz"] == 120000000
+        assert application_clock["pclk2_hz"] == 120000000
+        assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
+        checkpoints = manifest["runtime_memory"]["application_checkpoints"]
+        checkpoint_by_stage = {checkpoint["stage"]: checkpoint for checkpoint in checkpoints}
+        assert {"pre_scheduler", "default_task_start", "default_task_runtime"}.issubset(checkpoint_by_stage)
+        assert checkpoint_by_stage["pre_scheduler"]["task_stack_used_bytes"] is None
+        assert checkpoint_by_stage["default_task_start"]["heap_peak_used_bytes"] >= 0
+        assert checkpoint_by_stage["default_task_runtime"]["task_stack_used_bytes"] >= 0
+        assert manifest["runtime_memory"]["heap_used_bytes"] >= checkpoint_by_stage["pre_scheduler"]["heap_peak_used_bytes"]
         assert sample["verification_time_source"] == "uart_explicit_verification_time_marker"
         assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"
         assert sample["derived_verification_time_ms"] > 0

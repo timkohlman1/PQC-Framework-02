@@ -207,14 +207,14 @@ Benchmark evidence is grouped by source and interpretation:
 
 - Build-time metrics are static wolfBoot artifact measurements. They include `.text`, `.data`, `.bss`, flash-relevant bytes, and static RAM estimate. Static RAM is calculated from `.data + .bss`; it is not runtime stack usage.
 - Signed-artifact metrics describe the application image after signing. They include signed size, unsigned size where available, signature size, overhead bytes, and overhead percentage.
-- Runtime verification metrics describe firmware-reported verification evidence. Verification time, cycles, CPU-Hz, result code, and marker sources must come from explicit UART markers.
+- Runtime verification metrics describe firmware-reported verification evidence. Verification time, cycles, bootloader HCLK, result code, and marker sources must come from explicit UART markers.
 - Runtime memory metrics describe firmware-reported memory evidence. Stack high-water data is valid only when explicit firmware-side stack markers are present. Heap remains unavailable unless explicit heap evidence is added.
 - Repeated-run samples record one verification sample per secure-boot reset/capture. Aggregate statistics use only samples marked valid for statistics.
 - Derived metrics such as cycles per KB and time per KB are calculated only when the required source values are available.
 
 Median verification time and cycles are the primary headline metrics for cross-profile comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation support repeatability and outlier review. Unavailable fields and limitations are intentional evidence and must remain visible in manifests and aggregated summaries.
 
-Profiles should be compared only when they use the same board, relocated HAL payload, CPU-Hz assumption, UART marker model, repeated-run model, image-header reserve, and measurement sources. Timing, stack, heap, or pass/fail status must not be inferred from host-side duration, SSH duration, reset delay, build logs, ELF files alone, or marker ordering alone.
+Profiles should be compared only when they use the same board, relocated HAL payload, bootloader clock evidence model, UART marker model, repeated-run model, image-header reserve, and measurement sources. Timing, stack, heap, or pass/fail status must not be inferred from host-side duration, SSH duration, reset delay, build logs, ELF files alone, or marker ordering alone.
 
 The aggregation command reads existing manifests and writes:
 
@@ -362,6 +362,17 @@ Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup 
 
 The Phase M6.3 implementation includes static unit coverage and existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes a known Phase M6.3 image and asserts the `wolfSSL transport boundary:` UART marker is deferred because the supplied hardware test only monitors the currently running image and does not build or flash a known artifact before capture. Complete this when the baseline known-image build/flash/UART helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=unavailable-transport-only`, `boundary=present`, `callbacks=present`, `network_boundary=present`, `socket_io=not-performed`, and connect, read, write, TLS handshake, certificates, MQTT connect, MQTT publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end fields to remain unavailable.
 
+
+
+### Application handoff ordering and runtime memory checkpoints
+
+After wolfBoot verifies the signed image and transfers control, the application initializes only the hardware required to expose UART evidence. The first application UART output is the preserved wolfBoot mailbox block: raw verification cycles, bootloader SYSCLK/HCLK/PCLK values, verification result, and wolfBoot stack evidence. The secure-boot application marker and other application initialization markers follow that mailbox evidence. This output ordering does not imply that application code ran before verification; the mailbox is populated by wolfBoot and printed only after verified handoff.
+
+Application clock evidence is emitted from the running FreeRTOS default task after the scheduler starts. It records HAL-reported SYSCLK, HCLK, PCLK1, and PCLK2 separately from the bootloader clock evidence. The application HCLK must not be used to derive wolfBoot verification time.
+
+Application memory evidence uses bounded UART checkpoints rather than configuration values alone. The current checkpoints are `pre_scheduler`, `default_task_start`, and `default_task_runtime`. Each records FreeRTOS heap total, current free heap, minimum-ever free heap, derived current used heap, and derived peak used heap. Task-stage checkpoints additionally record the default task's configured stack bytes, stack high-water bytes, and derived used bytes. The pre-scheduler checkpoint reports task-stack fields as unavailable because no task is executing at that point.
+
+FreeRTOS heap evidence covers only allocations managed by the configured FreeRTOS heap implementation. Default-task stack evidence covers only that task at the named checkpoint. wolfBoot verification stack evidence remains a separate metric and must not be merged with application task-stack evidence. Configured heap size, configured task stack size, linker sections, host timing, and UART duration are not runtime usage measurements by themselves.
 
 ### Phase M6.4 secure-boot timing clock evidence
 
