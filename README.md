@@ -545,3 +545,8 @@ The framework may derive `derived_verification_time_ms` as `verification_cycles 
 ### Phase M6.5 FreeRTOS task-context runtime smoke
 
 The existing deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke remain available before `osKernelStart()` with `context=pre_scheduler scheduler=not_started`. After `defaultTask` starts, the same local checks run once in serialized task context and emit `context=freertos_task scheduler=running`. The task-context path does not initialize a network interface, bring a link up, assign an IP address, open TCP, load certificates, perform a TLS handshake, connect or publish MQTT, reconnect, use ST67W61M1/Wi-Fi hardware, or claim end-to-end success. No wolfSSL multithreaded integration is enabled because both smoke invocations are serialized and there is no concurrent wolfSSL use.
+
+
+### STM32-local lwIP loopback smoke
+
+The firmware performs a one-shot UDP loopback send/receive check from `defaultTask` after the FreeRTOS scheduler starts. The UART line begins with `lwIP local loopback smoke:` and is explicitly labelled `evidence=stm32-local-lwip-loopback-only`. It validates only the internal lwIP loop interface on the STM32; Wi-Fi, ST67W61M1, hardware IP acquisition, external ping/TCP, TLS, MQTT, broker, reconnect, and end-to-end network states remain unavailable.

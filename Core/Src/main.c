@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pqc_lwip_build_only.h"
+#include "pqc_lwip_loopback.h"
 #include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
@@ -129,6 +130,22 @@ static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_runnin
   else
   {
     APP_UART_WriteString("lwIP runtime smoke: context=unavailable scheduler=unavailable reason=format_failed network=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n");
+  }
+}
+
+static void APP_RunLwIPLocalLoopbackSmoke(void)
+{
+  char status_line[768];
+  const PQC_LwIPLoopbackStatus status = PQC_LwIP_Loopback_RunUdpSmoke();
+
+  if (PQC_LwIP_Loopback_StatusLine(
+          status_line, (uint32_t)sizeof(status_line), &status))
+  {
+    APP_UART_WriteString(status_line);
+  }
+  else
+  {
+    APP_UART_WriteString("lwIP local loopback smoke: context=freertos_task scheduler=running evidence=stm32-local-lwip-loopback-only protocol=udp address=127.0.0.1 result=format_failed wifi_module=unavailable link=unavailable hardware_ip_acquisition=unavailable external_ping=unavailable external_tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable broker_access=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n");
   }
 }
 
@@ -899,6 +916,7 @@ void StartDefaultTask(void *argument)
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
   APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
+  APP_RunLwIPLocalLoopbackSmoke();
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
   APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=unavailable tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();

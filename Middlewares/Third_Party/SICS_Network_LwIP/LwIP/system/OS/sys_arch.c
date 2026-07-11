@@ -83,6 +83,20 @@ static osThreadId_t lwip_tcpip_thread;
 #endif /* LWIP_CHECK_MULTITHREADING */
 
 /*-----------------------------------------------------------------------------------*/
+/*
+  Returns the current system time in milliseconds for lwIP timeout processing.
+
+  This CMSIS-RTOS v2 port already uses osKernelGetTickCount() directly for
+  mailbox and semaphore elapsed-time values, so sys_now() uses the same clock
+  and unit contract. The project FreeRTOS configuration uses a 1 kHz kernel
+  tick, making one kernel tick equal to one millisecond.
+*/
+u32_t sys_now(void)
+{
+  return (u32_t)osKernelGetTickCount();
+}
+
+/*-----------------------------------------------------------------------------------*/
 //  Creates an empty mailbox.
 err_t sys_mbox_new(sys_mbox_t *mbox, int size)
 {

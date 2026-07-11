@@ -121,6 +121,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
+    Core/Src/pqc_lwip_loopback.c
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfssl_build_only.c
     Core/Src/pqc_wolfssl_transport.c

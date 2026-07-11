@@ -71,3 +71,57 @@ def test_baseline_uart_monitor(tmp_path, pqc_require_capabilities):
     assert EXPECTED_UART_DEVICE in log_text
     assert "Data captured: true" in log_text
     assert "stdout:" in log_text
+
+
+def _single_run_uart_log(results_dir: Path) -> Path:
+    logs = sorted(results_dir.glob("*/uart.log"))
+    assert len(logs) == 1, f"expected one run UART log, found: {logs}"
+    return logs[0]
+
+
+@pytest.mark.hardware
+def test_baseline_known_image_reports_local_lwip_udp_loopback(tmp_path, pqc_require_capabilities):
+    """Build, flash, and capture a known image before asserting M6.6 evidence."""
+
+    pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
+
+    repo_root = _repo_root()
+    results_dir = tmp_path / "results"
+    completed = _run_cli(
+        repo_root,
+        [
+            "run",
+            "--experiment",
+            EXPERIMENT_CONFIG,
+            "--results-dir",
+            str(results_dir),
+        ],
+    )
+    assert completed.returncode == 0, (
+        f"run stdout:\n{completed.stdout}\nrun stderr:\n{completed.stderr}"
+    )
+
+    log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
+    scheduler_marker = "FreeRTOS defaultTask started: periodic tick task active"
+    loopback_marker = "lwIP local loopback smoke:"
+
+    assert scheduler_marker in log_text
+    assert loopback_marker in log_text
+    assert log_text.index(scheduler_marker) < log_text.index(loopback_marker)
+    assert "evidence=stm32-local-lwip-loopback-only" in log_text
+    assert "protocol=udp" in log_text
+    assert "address=127.0.0.1" in log_text
+    assert "result=passed" in log_text
+    assert "sent=1" in log_text
+    assert "received=1" in log_text
+    assert "payload_match=1" in log_text
+    assert "wifi_module=unavailable" in log_text
+    assert "hardware_ip_acquisition=unavailable" in log_text
+    assert "external_ping=unavailable" in log_text
+    assert "external_tcp=unavailable" in log_text
+    assert "tls_handshake=unavailable" in log_text
+    assert "mqtt_connect=unavailable" in log_text
+    assert "mqtt_publish=unavailable" in log_text
+    assert "reconnect=unavailable" in log_text
+    assert "broker_access=unavailable" in log_text
+    assert "end_to_end=unavailable" in log_text

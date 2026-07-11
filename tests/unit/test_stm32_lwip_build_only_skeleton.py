@@ -177,3 +177,73 @@ def test_phase_m6_5_lwip_smoke_distinguishes_pre_scheduler_and_freertos_task_con
         "st67w61m1=unavailable", "end_to_end=unavailable",
     ):
         assert fragment in source
+
+
+def test_phase_m6_6_udp_loopback_is_compiled_and_runs_only_from_freertos_task():
+    root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    sys_arch = Path(
+        "Middlewares/Third_Party/SICS_Network_LwIP/LwIP/system/OS/sys_arch.c"
+    ).read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_lwip_loopback.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_lwip_loopback.c").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "Core/Src/pqc_lwip_loopback.c" in root_cmake
+    assert "u32_t sys_now(void)" in sys_arch
+    assert "return (u32_t)osKernelGetTickCount();" in sys_arch
+    assert "PQC_LwIPLoopbackStatus" in header
+    assert "PQC_LwIP_Loopback_RunUdpSmoke" in header
+    assert "tcpip_init(" in source
+    assert "udp_new_ip_type(IPADDR_TYPE_V4)" in source
+    assert "udp_bind(" in source
+    assert "udp_recv(" in source
+    assert "udp_sendto(" in source
+    assert "IPADDR4_INIT_BYTES(127, 0, 0, 1)" in source
+    assert "APP_RunLwIPLocalLoopbackSmoke();" in main_c
+
+    task_definition = main_c.index("void StartDefaultTask(void *argument)\n{")
+    loopback_call = main_c.index("APP_RunLwIPLocalLoopbackSmoke();", task_definition)
+    scheduler_start = main_c.index("osKernelStart();")
+    assert scheduler_start < task_definition < loopback_call
+
+
+def test_phase_m6_6_loopback_marker_is_local_only_and_external_network_claims_are_unavailable():
+    source = Path("Core/Src/pqc_lwip_loopback.c").read_text(encoding="utf-8")
+    lwipopts = Path("LWIP/Target/lwipopts.h").read_text(encoding="utf-8")
+
+    assert "#define LWIP_NETIF_LOOPBACK           1" in lwipopts
+    assert "#define LWIP_HAVE_LOOPIF              1" in lwipopts
+    assert "evidence=stm32-local-lwip-loopback-only" in source
+    assert "protocol=udp" in source
+    assert "address=127.0.0.1" in source
+
+    for fragment in (
+        "wifi_module=unavailable",
+        "link=unavailable",
+        "hardware_ip_acquisition=unavailable",
+        "external_ping=unavailable",
+        "external_tcp=unavailable",
+        "tls_handshake=unavailable",
+        "mqtt_connect=unavailable",
+        "mqtt_publish=unavailable",
+        "reconnect=unavailable",
+        "broker_access=unavailable",
+        "st67w61m1=unavailable",
+        "end_to_end=unavailable",
+    ):
+        assert fragment in source
+
+
+def test_phase_m6_6_loopback_does_not_use_wifi_driver_or_external_endpoints():
+    source = Path("Core/Src/pqc_lwip_loopback.c").read_text(encoding="utf-8")
+
+    for fragment in (
+        "W6X_Init(",
+        "W6X_WiFi_Connect(",
+        "dhcp_start(",
+        "dns_gethostbyname(",
+        "tcp_connect(",
+        "wolfSSL_connect(",
+        "MQTTConnect(",
+    ):
+        assert fragment not in source

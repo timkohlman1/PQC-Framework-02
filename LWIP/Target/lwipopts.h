@@ -33,6 +33,9 @@ extern "C" {
 
 /* USER CODE BEGIN Options */
 
+/* Phase M6.6: deterministic STM32-local UDP loopback smoke. */
+#define LWIP_LOOPIF_MULTICAST 0
+
 /* USER CODE END Options */
 
 #define LWIP_STATS                    1
