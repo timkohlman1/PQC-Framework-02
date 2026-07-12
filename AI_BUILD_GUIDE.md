@@ -63,7 +63,7 @@ Implemented framework scope as of Phase 11.7:
 
 Important status constraints:
 
-- wolfBoot signing state is managed as a reusable local tuple: canonical private key, matching wolfBoot-local private key, generated public key, and `tools/wolfboot/src/keystore.c`. Existing matching tuples are preserved. Missing or mismatched tuple state must fail before `make`; do not silently regenerate a keystore from an existing private key or replace a canonical key.
+- wolfBoot signing state is managed as a reusable local tuple: canonical private key, matching wolfBoot-local private key, generated public key, and `tools/wolfboot/src/keystore.c`. A completely absent tuple may be created by the owning workflow when profile configuration permits generation. A complete matching tuple is preserved and reused. Partially missing or mismatched tuple state must fail before `make`; do not silently reconstruct tuple members from partial state or replace a canonical key.
 
 - `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
 - wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
@@ -481,7 +481,7 @@ reachable gateway network path, including any required host VPN outside the imag
 
 The wrapper commands `experiment-gateway`, `pytest-gateway`, and `pytest-hardware` set `PQC_CONTAINER_ENABLE_GATEWAY=1`, mount the configured SSH directory read-only at `/host-ssh`, and copy it into the temporary container filesystem with Linux permissions for that single run. Raw `docker run` invocations may still be used for manual diagnosis.
 
-Pytest removes generated cross-platform build state at session start when running inside the container, or when `--pqc-clean-generated-build-artifacts` or `PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` is used. The cleanup covers generated `build/Debug`, `build/RelocatedDebug`, wolfBoot `.config`, wolfBoot artifacts, and wolfBoot object/dependency/host-tool outputs that can contain host-specific absolute paths after switching between Windows-native and Linux-container builds. It does not remove source files or canonical signing keys under `secrets/wolfboot/`. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress the default container cleanup.
+Generated-state preflight is the primary mechanism for build/signing compatibility, artifact provenance, and safe stale-output handling. Pytest session-start cleanup is supplementary cross-platform hygiene when running inside the container, or when `--pqc-clean-generated-build-artifacts` or `PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` is used. It removes selected host-specific CMake and wolfBoot object/dependency/host-tool outputs, but it does not establish downstream provenance and must not remove source files, canonical signing keys under `secrets/wolfboot/`, or reusable signing-tuple members. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress the default container hygiene cleanup.
 
 Containerised application signing must use the runtime-mounted workspace or locally generated signing material only. Private signing keys, generated wolfBoot signing material, SSH keys, VPN keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, and production credentials must not be committed, copied into result artifacts, included in replacement ZIPs, sent in build contexts, or baked into container images.
 

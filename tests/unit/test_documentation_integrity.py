@@ -88,3 +88,59 @@ def test_supported_ai_entry_points_are_consistent() -> None:
     for path, content in documents.items():
         if path != "docs/008_chatgpt_project_prompt.md":
             assert "docs/008_chatgpt_project_prompt.md" in content
+
+
+SIGNING_STATE_DOCUMENTS = (
+    "AI_BUILD_GUIDE.md",
+    "README.md",
+    "docs/005_remote_flash_workflow.md",
+    "docs/006_security_and_secrets.md",
+    "docs/007_framework_architecture.md",
+)
+
+
+def test_active_docs_define_safe_signing_tuple_lifecycle() -> None:
+    combined = "\n".join(_read(path).lower() for path in SIGNING_STATE_DOCUMENTS)
+
+    required = (
+        "completely absent tuple",
+        "complete matching tuple",
+        "partially missing tuple",
+        "mismatched tuple",
+        "canonical private key",
+    )
+    for phrase in required:
+        assert phrase in combined, f"Missing signing-state lifecycle wording: {phrase}"
+
+    assert "silently replace" in combined
+    assert "silently reconstruct" in combined or "silently regenerated" in combined
+
+
+def test_generated_state_preflight_is_primary_and_pytest_cleanup_is_supplementary() -> None:
+    for path in SIGNING_STATE_DOCUMENTS:
+        content = _read(path).lower()
+        assert "generated-state preflight" in content, (
+            f"{path} must identify generated-state preflight"
+        )
+
+    combined = "\n".join(_read(path).lower() for path in SIGNING_STATE_DOCUMENTS)
+    assert "primary mechanism" in combined
+    assert "supplementary cross-platform hygiene" in combined
+    assert "must not remove" in combined
+
+
+def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
+    command_fragment = (
+        "experiment build --experiment configs/experiments/baseline_direct_uart.yaml "
+        "--configure-preset relocateddebug --build-preset relocateddebug "
+        "--artifact build/relocateddebug/stm32_basic_hal1.elf"
+    )
+    for path in ("AI_BUILD_GUIDE.md", "README.md", "docs/005_remote_flash_workflow.md"):
+        content = _read(path).lower()
+        build_index = content.find(command_fragment)
+        signing_index = content.find("experiment sign-application", build_index + 1)
+        assert build_index >= 0, f"{path} is missing the framework-recorded relocated build"
+        assert signing_index > build_index, f"{path} must show relocated build before signing"
+
+    architecture = _read("docs/007_framework_architecture.md").lower()
+    assert "direct wrapped cmake remains a diagnostic fallback only" in architecture

@@ -64,9 +64,16 @@ Normal command pattern:
 .\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
 
-The relocated application build is run through the framework so generated-state provenance is recorded before signing. The wolfBoot build, application-signing, and secure-boot flashing commands validate compatible generated state and recorded artifact provenance.
+The relocated application build is run through the framework so generated-state provenance is recorded before signing. This framework-recorded `RelocatedDebug` build is the canonical normal path. The wolfBoot build, application-signing, and secure-boot flashing commands use generated-state preflight as the primary compatibility and provenance mechanism and validate recorded artifact hashes before consuming outputs.
 
-Do not run wolfBoot `keysclean`, delete canonical signing keys, or manually remove the wolfBoot-local private key, generated public key, or generated `src/keystore.c` as routine cleanup. These files form reusable signing state. Generated-state preflight owns stale generated-output handling and must fail safely when the tuple is incomplete or mismatched.
+The reusable wolfBoot signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`. Treat its lifecycle explicitly:
+
+- Completely absent tuple: the owning workflow may create a new local tuple when the selected profile permits generation.
+- Complete matching tuple: preserve and reuse it unchanged.
+- Partially missing tuple: fail before build or signing; do not reconstruct missing members from the remaining state.
+- Mismatched tuple: fail before build or signing; do not replace the canonical private key or overwrite tuple members.
+
+Do not run wolfBoot `keysclean`, delete canonical signing keys, or manually remove tuple members as routine cleanup. Pytest startup cleanup is supplementary cross-platform hygiene only and must not remove reusable tuple members or be treated as proof of build/signing compatibility.
 
 Supported profile stems:
 

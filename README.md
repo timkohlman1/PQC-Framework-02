@@ -121,7 +121,7 @@ The Docker-hosted Linux workflow is the default path for framework commands, fir
 
 Gateway, UART, broker, flashing, and hardware workflows remain capability-gated. Inside the container, gateway probing is disabled unless `PQC_CONTAINER_ENABLE_GATEWAY=1` is set and SSH configuration is supplied at runtime. The wrapper scripts set this flag for `experiment-gateway`, `pytest-gateway`, and `pytest-hardware`, and mount the host SSH directory read-only before copying it into the temporary container filesystem with Linux permissions for that single run.
 
-Pytest cleans generated cross-platform build state at session start when running inside the container. It removes generated `build/Debug`, `build/RelocatedDebug`, and wolfBoot object/dependency/tool outputs that can contain host-specific absolute paths after switching between Windows-native and Linux-container builds. It does not remove source files or canonical signing keys under `secrets/wolfboot/`. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress this default container cleanup, or use `--pqc-clean-generated-build-artifacts`/`PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` to request the cleanup explicitly in any environment.
+Generated-state preflight is the primary mechanism for deciding whether build and signing outputs are compatible, reusable, and supported by provenance records. Pytest session-start cleanup is supplementary cross-platform hygiene for stale host-specific CMake and wolfBoot object/dependency/tool outputs; it does not establish compatibility or provenance for downstream signing or flashing. It does not remove source files, canonical signing keys under `secrets/wolfboot/`, or reusable wolfBoot signing-tuple members. Set `PQC_SKIP_CONTAINER_GENERATED_BUILD_CLEANUP=1` to suppress the default container hygiene cleanup, or use `--pqc-clean-generated-build-artifacts`/`PQC_CLEAN_GENERATED_BUILD_ARTIFACTS=1` to request it explicitly in any environment.
 
 Build the image from the repository root:
 
@@ -187,7 +187,7 @@ Build one wolfBoot profile inside the container:
 .\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
 ```
 
-Sign the relocated application inside the container after the relocated build exists. The signing workflow uses `secrets/wolfboot/` from the runtime-mounted workspace and may locally generate missing profile keys there; those files remain host-local generated material and must not be committed or baked into the image:
+Sign the relocated application only after the framework-recorded relocated build succeeds. The signing workflow uses `secrets/wolfboot/` from the runtime-mounted workspace. A completely absent profile signing tuple may be created by the owning workflow when the profile permits local key generation. A complete matching tuple is reused unchanged. Partial or mismatched tuple state fails safely; the workflow must not silently replace an existing canonical private key or reconstruct missing tuple members from partial state. All signing material remains host-local generated state and must not be committed or baked into the image:
 
 ```powershell
 .\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
@@ -233,7 +233,7 @@ The normal secure-boot profile workflow uses Docker wrappers and records relocat
 ./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
 
-Do not run wolfBoot `keysclean` or manually delete signing-tuple members. The generated-state preflight owns compatible stale-output handling and fails safely when reusable signing state is incomplete or mismatched. Host-native commands are diagnostic fallback only and are not the reproducible validation path.
+Do not run wolfBoot `keysclean` or manually delete signing-tuple members. Signing state has four validly distinguished conditions: a completely absent tuple may be created by the owning workflow; a complete matching tuple is preserved and reused; a partially missing tuple fails before build/signing; and a mismatched tuple fails before build/signing. Existing canonical private keys must never be silently replaced, and missing public-key or keystore members must not be silently regenerated from partial state. Generated-state preflight is the primary compatibility and provenance mechanism. Host-native commands are diagnostic fallback only and are not the reproducible validation path.
 
 Implemented profile stems:
 

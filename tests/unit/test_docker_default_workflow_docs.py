@@ -101,3 +101,22 @@ def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() ->
     assert "normal project workflow is Docker-hosted" in local_commands
     assert "generated-state preflight" in local_commands
     assert "not the reproducible validation gate" in local_commands
+
+
+def test_signing_docs_do_not_describe_partial_key_generation_as_normal() -> None:
+    readme = _read("README.md").lower()
+    assert "may locally generate missing profile keys" not in readme
+    assert "completely absent profile signing tuple" in readme
+    assert "partial or mismatched tuple state fails safely" in readme
+
+
+def test_pytest_cleanup_is_documented_as_supplementary_hygiene() -> None:
+    for path in (
+        "AI_BUILD_GUIDE.md",
+        "README.md",
+        "docs/005_remote_flash_workflow.md",
+        "docs/006_security_and_secrets.md",
+        "docs/007_framework_architecture.md",
+    ):
+        content = _read(path).lower()
+        assert "supplementary cross-platform hygiene" in content

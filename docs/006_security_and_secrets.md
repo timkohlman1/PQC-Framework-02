@@ -39,6 +39,10 @@ Build and signing manifests may record non-secret SHA-256 key fingerprints to pr
 
 `flash-secure-boot` refuses hardware flashing when available canonical and wolfBoot working-tree private-key fingerprints differ. This prevents flashing a bootloader and application signed with inconsistent key material.
 
+The reusable wolfBoot signing tuple contains the canonical private key, the matching wolfBoot-local private key, the generated public key, and generated `tools/wolfboot/src/keystore.c`. A completely absent tuple may be created only by the owning workflow when profile configuration permits local generation. A complete matching tuple is preserved and reused. Partial state or any fingerprint mismatch must fail safely before build or signing. Existing canonical private keys must not be silently replaced, and missing public-key or keystore members must not be silently reconstructed from partial state.
+
+Generated-state preflight is the primary mechanism for validating build/signing compatibility, artifact hashes, and provenance. Pytest session-start cleanup is supplementary cross-platform hygiene only; it must not remove canonical keys or reusable signing-tuple members and must not be treated as signing-state validation.
+
 
 ## Containerised workflow secret handling
 

@@ -96,7 +96,7 @@ Software-build evidence from the container includes Python test results, safe co
 
 Application signing inside the container uses the runtime-mounted workspace. Private signing keys and generated signing material must remain local generated state, such as under `secrets/wolfboot/`, and must not be committed, sent in build contexts, copied into replacement artifacts, or baked into images. The container includes an SSH client but no SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Gateway-capable checks require `PQC_CONTAINER_ENABLE_GATEWAY=1` plus runtime-provided SSH configuration, known-hosts data, and credentials; the wrapper commands set this flag only for gateway and hardware subcommands.
 
-Pytest performs generated-artifact cleanup at session start inside the container, and on native hosts when stale foreign build paths are detected. The cleanup scope is limited to generated `build/Debug`, `build/RelocatedDebug`, wolfBoot artifacts, `.config`, and wolfBoot object/dependency/host-tool outputs. It prevents CMake cache and wolfBoot dependency files from reusing absolute paths from a different build host while preserving source files and canonical signing keys under `secrets/wolfboot/`.
+Generated-state preflight is the primary compatibility and provenance mechanism for framework build, wolfBoot build, application-signing, and artifact-consuming workflows. Pytest session-start cleanup is supplementary cross-platform hygiene for stale host-specific CMake and wolfBoot object/dependency/host-tool outputs. It does not establish compatibility or provenance and must not remove source files, canonical signing keys under `secrets/wolfboot/`, or reusable wolfBoot signing-tuple members.
 
 ## Firmware scheduler model
 
@@ -321,19 +321,24 @@ The Phase M6.2 implementation includes static unit coverage and the existing dir
 
 ### wolfBoot signing-key and generated-keystore lifecycle
 
-The wolfBoot build wrapper treats the local private key, generated public key, and
-`src/keystore.c` as one reusable local signing tuple. When a canonical signing
-key already exists, the wrapper preserves the tuple only when the wolfBoot-local
-private key matches the canonical key and the generated keystore is present. It
-must stop before invoking `make` if the local key differs or the keystore is
-missing, because wolfBoot v2.9.0 cannot reconstruct `src/keystore.c` from an
-existing private key alone.
+The wolfBoot build wrapper treats the canonical private key, matching wolfBoot-local
+private key, generated public key, and generated `src/keystore.c` as one reusable
+local signing tuple. Its lifecycle is explicit:
 
-When no canonical key exists, the wrapper may remove generated signing artifacts
-and allow wolfBoot to generate a fresh local benchmark key and matching keystore.
-After a successful build, the generated private key is synchronized to the
-canonical ignored path. Rotating a local benchmark key invalidates compatibility
-with artifacts signed by the previous key and must be performed deliberately.
+- **Completely absent tuple:** when no tuple member exists, the owning workflow may
+  create a new local benchmark tuple if the selected profile permits generation.
+- **Complete matching tuple:** when all members exist and the private-key
+  fingerprints match, the tuple is preserved and reused unchanged.
+- **Partially missing tuple:** when only some members exist, the workflow fails
+  before invoking `make`; it does not reconstruct a public key or keystore from
+  the remaining private key.
+- **Mismatched tuple:** when canonical and wolfBoot-local private-key fingerprints
+  differ, the workflow fails before invoking `make`; it does not overwrite the
+  canonical key or silently rotate either key.
+
+A deliberate local benchmark-key rotation requires explicit operator action and
+invalidates compatibility with artifacts signed by the previous tuple. Routine
+preflight and cleanup must never perform that rotation.
 
 ## Phase M6.2.1 — Generated Build-State Isolation and Stale-Artifact Preflight
 
@@ -343,7 +348,7 @@ Before a build or signing command starts, the preflight compares the current ide
 
 STM32 CMake builds use profile-scoped `build/<preset>/` directories. wolfBoot retains its upstream source layout, so the framework records a project-owned scope manifest and cleans only known host-tool outputs and final build artifacts. The wolfBoot-local private key, generated public key, and generated `src/keystore.c` are treated as one tuple; an incomplete or mismatched tuple is not silently repaired from an existing private key. Canonical keys under `secrets/wolfboot/` are never preflight cleanup targets.
 
-Successful commands write artifact hashes and references to their build or signing records. Application signing can require the relocated ELF to match a successful CMake generated-state record. Secure-boot flashing requires the wolfBoot ELF and original signed application to match successful wolfBoot-build and application-signing records; filesystem existence alone is insufficient. A failed command does not write a success record, and stale final artifacts are removed before execution so they cannot be mistaken for new output.
+Successful commands write artifact hashes and references to their build or signing records. The canonical normal signing path first creates the relocated ELF through the framework `experiment build` command with `RelocatedDebug`, so application signing can require that ELF to match a successful CMake generated-state record. Direct wrapped CMake remains a diagnostic fallback only and does not create the framework provenance required by downstream signing. Secure-boot flashing requires the wolfBoot ELF and original signed application to match successful wolfBoot-build and application-signing records; filesystem existence alone is insufficient. A failed command does not write a success record, and stale final artifacts are removed before execution so they cannot be mistaken for new output.
 
 The canonical non-hardware MQTT/TLS phase plan is `docs/non_hardware_mqtt_tls_development_plan.md`.
 
