@@ -19,7 +19,7 @@ The repository currently contains:
 - STM32 build-only boundaries for lwIP/ST67W6X preparation and wolfSSL source-build preparation, including wolfCrypt SHA-256, wolfSSL client TLS-context lifecycle, and an unavailable wolfSSL transport boundary, with socket I/O, certificate loading, TLS handshake, MQTT, Wi-Fi, and end-to-end success explicitly unavailable
 - a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
-Not implemented yet: STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, STM32-local wolfMQTT integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, STM32-local wolfMQTT runtime integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -550,3 +550,8 @@ The existing deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context l
 ### STM32-local lwIP loopback smoke
 
 The firmware performs a one-shot UDP loopback send/receive check from `defaultTask` after the FreeRTOS scheduler starts. The UART line begins with `lwIP local loopback smoke:` and is explicitly labelled `evidence=stm32-local-lwip-loopback-only`. It validates only the internal lwIP loop interface on the STM32; Wi-Fi, ST67W61M1, hardware IP acquisition, external ping/TCP, TLS, MQTT, broker, reconnect, and end-to-end network states remain unavailable.
+
+
+### Phase M7 wolfMQTT build-only integration
+
+wolfMQTT is pinned as the `Middlewares/Third_Party/wolfMQTT` submodule. Both direct and relocated STM32 builds compile the wolfMQTT client, packet, and callback transport layers. Project-owned `pqc_wolfmqtt_build_only` code initializes a wolfMQTT client against an unavailable fake/no-network `MqttNet` backend and keeps the future ST67W61M1 backend selection outside MQTT client logic. Phase M7 does not run this initializer from firmware and does not connect to a broker, perform TLS, publish, reconnect, use Wi-Fi, or claim end-to-end success.

@@ -113,6 +113,51 @@ target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
     PQC_WOLFSSL_SOURCE_BUILD=1
 )
 
+
+
+# Phase M7 wolfMQTT build-only source integration.
+#
+# wolfMQTT is maintained as its own pinned repository submodule. The project
+# builds the core MQTT client, packet, and socket callback layers only. TLS is
+# intentionally disabled here; the existing project-owned wolfSSL transport
+# boundary remains unavailable until a later network-backed phase.
+set(PQC_WOLFMQTT_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfMQTT"
+    CACHE PATH
+    "Repository-local wolfMQTT source directory used for Phase M7 STM32 build-only coverage"
+)
+
+set(PQC_WOLFMQTT_BUILD_ONLY_SOURCES
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_client.c"
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_packet.c"
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_socket.c"
+)
+
+foreach(PQC_WOLFMQTT_SOURCE IN LISTS PQC_WOLFMQTT_BUILD_ONLY_SOURCES)
+    if(NOT EXISTS "${PQC_WOLFMQTT_SOURCE}")
+        message(FATAL_ERROR
+            "Phase M7 wolfMQTT source file not found: ${PQC_WOLFMQTT_SOURCE}. "
+            "Initialise the Middlewares/Third_Party/wolfMQTT submodule."
+        )
+    endif()
+endforeach()
+
+add_library(pqc_wolfmqtt_stm32_build_only STATIC
+    ${PQC_WOLFMQTT_BUILD_ONLY_SOURCES}
+)
+
+target_include_directories(pqc_wolfmqtt_stm32_build_only PUBLIC
+    Core/Inc
+    "${PQC_WOLFMQTT_SOURCE_DIR}"
+    "${PQC_WOLFSSL_SOURCE_DIR}"
+)
+
+target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
+    BUILDING_WOLFMQTT
+    WOLFMQTT_USER_SETTINGS
+    WOLFMQTT_NO_STDIO
+)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -125,6 +170,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfssl_build_only.c
     Core/Src/pqc_wolfssl_transport.c
+    Core/Src/pqc_wolfmqtt_build_only.c
     # Add user sources here
 )
 
@@ -132,6 +178,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc
     "${PQC_WOLFSSL_SOURCE_DIR}"
+    "${PQC_WOLFMQTT_SOURCE_DIR}"
     # Add user defined include paths
 )
 
@@ -141,6 +188,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     WOLFSSL_USER_SETTINGS
     PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
     PQC_WOLFSSL_SOURCE_BUILD=1
+    WOLFMQTT_USER_SETTINGS
+    WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
@@ -163,6 +212,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
     pqc_wolfssl_stm32_build_only
+    pqc_wolfmqtt_stm32_build_only
 
     # Add user defined libraries
 )

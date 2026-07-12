@@ -395,3 +395,14 @@ Phase M6.6 adds `Core/Inc/pqc_lwip_loopback.h` and `Core/Src/pqc_lwip_loopback.c
 The UART marker begins with `lwIP local loopback smoke:` and labels the evidence as `stm32-local-lwip-loopback-only`. A passing marker requires `result=passed`, `sent=1`, `received=1`, and `payload_match=1`. This is internal STM32/lwIP runtime evidence only. It does not prove ST67W61M1 detection, Wi-Fi association, link-up, address acquisition from hardware, external ping, external TCP connectivity, broker access, TLS handshake, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Those fields remain explicitly unavailable in the marker.
 
 The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The ordinary monitor-only test remains non-assertive because it cannot establish which firmware image is already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
+
+
+## Phase M7 — wolfMQTT build-only skeleton
+
+Phase M7 adds wolfMQTT as the dedicated `Middlewares/Third_Party/wolfMQTT` Git submodule and builds its core client, packet, and socket-callback sources into both STM32 firmware profiles. `Core/Inc/pqc_wolfmqtt_build_only.h` and `Core/Src/pqc_wolfmqtt_build_only.c` provide the project-owned integration boundary. The boundary uses wolfMQTT's native `MqttNet` callbacks and exposes backend selection independently from MQTT client initialization. The current selectable implementation is `fake_no_network`; the `st67w61m1` value is reserved and rejected until its later hardware-backed phase.
+
+The build-only initializer constructs an unavailable `MqttNet`, calls `MqttClient_Init`, and deinitializes the client. It does not call network connect, MQTT CONNECT, publish, subscribe, wait-message, TLS, socket, lwIP external transport, or Wi-Fi APIs. No UART marker is emitted and no runtime success is claimed in Phase M7. Broker connection, TLS handshake, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end states remain unavailable.
+
+### Deferred test coverage — Phase M7 wolfMQTT build-only skeleton
+
+Static unit coverage validates dependency wiring, backend separation, callback assignment, initialization-only behavior, and forbidden runtime calls. Existing local-build integration coverage compiles both `Debug` and `RelocatedDebug`. A hardware UART test is intentionally deferred to Phase M8 because Phase M7 adds no firmware runtime invocation or marker. Phase M8 should add capability-gated fake/no-network initialization evidence and verify it with `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`.

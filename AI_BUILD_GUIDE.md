@@ -59,6 +59,7 @@ Implemented framework scope as of Phase 11.7:
 - Phase M6.5 FreeRTOS task-context runtime smoke: existing deterministic lwIP and wolfSSL/wolfCrypt smokes remain labelled `context=pre_scheduler scheduler=not_started`, and serialized one-shot copies run from `defaultTask` with `context=freertos_task scheduler=running`; all Wi-Fi/link/IP/TCP/TLS-handshake/certificate/MQTT/reconnect/ST67W61M1/end-to-end claims remain unavailable and wolfSSL multithreaded support is not enabled.
 - Phase M6.6 STM32-local lwIP UDP loopback smoke: a serialized one-shot check runs from `defaultTask` after scheduler start, initializes the lwIP TCP/IP core, sends a deterministic UDP payload to `127.0.0.1`, and validates the returned payload through the lwIP loop interface; UART evidence is labelled `stm32-local-lwip-loopback-only`, while Wi-Fi/ST67W61M1/link/hardware-IP/external-ping/external-TCP/TLS/MQTT/broker/reconnect/end-to-end claims remain unavailable.
 - Phase M6.1 STM32-local wolfSSL TLS-context lifecycle preparation: selected wolfSSL client-context and supporting wolfCrypt sources are built from `tools/wolfboot/lib/wolfssl`, linked into direct and relocated firmware builds, and exercised through `pqc_wolfssl_build_only`; wolfSSL initialization, TLS 1.2 client `WOLFSSL_CTX` creation/free, and cleanup are supported, while certificate loading, private keys, runtime transport, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success remain explicitly unavailable
+- Phase M7 STM32-local wolfMQTT build-only skeleton: wolfMQTT is pinned as `Middlewares/Third_Party/wolfMQTT`, its client/packet/socket callback layers build in direct and relocated firmware, and project-owned `pqc_wolfmqtt_build_only` initializes a client against an unavailable fake/no-network `MqttNet`; runtime invocation, broker connection, TLS handshake, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end success remain unavailable
 
 Important status constraints:
 
@@ -117,6 +118,8 @@ Core/Inc/pqc_wolfssl_build_only.h
 Core/Src/pqc_wolfssl_build_only.c
 Core/Inc/pqc_wolfssl_transport.h
 Core/Src/pqc_wolfssl_transport.c
+Core/Inc/pqc_wolfmqtt_build_only.h
+Core/Src/pqc_wolfmqtt_build_only.c
 configs/
 scripts/
 tests/
@@ -195,6 +198,7 @@ tests/unit/test_mqtt_broker_compose.py
 tests/unit/test_docker_default_workflow_docs.py
 tests/unit/test_stm32_lwip_build_only_skeleton.py
 tests/unit/test_stm32_wolfssl_build_only_skeleton.py
+tests/unit/test_stm32_wolfmqtt_build_only_skeleton.py
 tests/integration/test_gateway_flash_helper.py
 tests/integration/test_local_build.py
 tests/integration/test_wolfboot_build_integration.py
@@ -720,3 +724,10 @@ Pre-scheduler and task-context smoke evidence are distinct. The task-context lwI
 The project-owned loopback boundary lives in `Core/Inc/pqc_lwip_loopback.h` and `Core/Src/pqc_lwip_loopback.c`. It runs once from `defaultTask` after scheduler start and uses the configured lwIP loop interface to send and receive a deterministic UDP payload at `127.0.0.1`. The UART marker is local-only STM32/lwIP evidence. It must not be interpreted as Wi-Fi module detection, link-up, hardware-backed IP acquisition, external ping, external TCP connectivity, TLS handshake, MQTT connect/publish/reconnect, broker access, ST67W61M1 use, or end-to-end network success.
 
 Non-hardware verification consists of static unit coverage plus direct and relocated builds. The capability-gated known-image hardware test builds, flashes, captures UART, and requires the scheduler marker to precede a passing local-loopback marker. No new manifest field is introduced in this phase; detailed loopback evidence remains in the captured UART log.
+
+
+### Phase M7 wolfMQTT build-only skeleton
+
+wolfMQTT is a dedicated pinned submodule at `Middlewares/Third_Party/wolfMQTT`. The STM32 build compiles `src/mqtt_client.c`, `src/mqtt_packet.c`, and `src/mqtt_socket.c` into `pqc_wolfmqtt_stm32_build_only`. `Core/Inc/pqc_wolfmqtt_build_only.h` and `Core/Src/pqc_wolfmqtt_build_only.c` use wolfMQTT's native `MqttNet` callback boundary, expose fake/no-network and reserved future ST67W61M1 backend selection, and initialize/deinitialize a client without performing network or MQTT protocol operations.
+
+Phase M7 has no firmware runtime invocation or UART marker. It is build-only evidence. Broker connection, TLS handshake, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end success remain unavailable. Static unit coverage and direct/relocated local-build integration are the verification path. Hardware UART coverage is deferred to Phase M8, where a known image may explicitly emit fake/no-network initialization evidence.
