@@ -21,6 +21,13 @@ OQS_IMAGE = "openquantumsafe/mosquitto:latest"
 OQS_KEM_GROUP = "mlkem768"
 OQS_CA_ALGORITHM = "mldsa65"
 OQS_LEAF_ALGORITHM = "falcon512"
+HOST_BROKER_EVIDENCE_CLASS = "host_side"
+HOST_BROKER_EVIDENCE_LABEL = "host-side/broker-side MQTT/TLS compatibility evidence"
+HOST_BROKER_EVIDENCE_BOUNDARY = (
+    "host-side client container and broker-side Docker validation only; "
+    "does not claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, "
+    "wolfMQTT-on-STM32, or end-to-end wireless success"
+)
 
 
 @dataclass(frozen=True)
@@ -481,6 +488,10 @@ def validate_oqs_tls(args: argparse.Namespace) -> None:
     port = str(args.oqs_port or 8884)
     validation_script = (
         "set -eu; "
+        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'; "
+        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'; "
+        "echo 'Evidence profile: oqs'; "
+        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'; "
         "rm -f /tmp/pqc-oqs-tls-validate.log; "
         "echo | openssl s_client "
         f"-connect 127.0.0.1:{port} "
@@ -510,6 +521,15 @@ def docker_safe_name(value: str) -> str:
     return "".join(safe).strip("-_") or "pqc-mqtt"
 
 
+def host_broker_evidence_preamble(profile: str) -> list[str]:
+    return [
+        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'",
+        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'",
+        f"echo 'Evidence profile: {profile}'",
+        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'",
+    ]
+
+
 def validate_mqtt_pubsub(
     args: argparse.Namespace,
     *,
@@ -535,6 +555,7 @@ def validate_mqtt_pubsub(
     ])
     validation_script = "\n".join([
         "set -eu",
+        *host_broker_evidence_preamble(profile),
         f"subscriber={shlex.quote(subscriber_name)}",
         f"topic={shlex.quote(topic)}",
         f"message={shlex.quote(message)}",

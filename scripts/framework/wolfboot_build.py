@@ -19,6 +19,13 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.generated_state import (
+    build_identity,
+    detect_execution_identity,
+    key_tuple_fingerprint,
+    preflight_generated_state,
+    record_generated_state_success,
+)
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -37,6 +44,13 @@ STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
 STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
 DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.der")
+WOLFBOOT_GENERATED_SIGNING_ARTIFACT_RELATIVE_PATHS = (
+    Path("src/keystore.c"),
+    DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH,
+    Path("wolfboot_signing_public_key.der"),
+    Path("wolfboot_signing_private_key.pem"),
+    Path("wolfboot_signing_public_key.pem"),
+)
 STM32L4_HAL_CONF_PWR_MODULE_DEFINE = "#define HAL_PWR_MODULE_ENABLED"
 WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
     "tools/bin-assemble/*.o",
@@ -333,7 +347,11 @@ def _temporarily_patch_boot_timing_instrumentation(
     mailbox. The relocated HAL application reads that mailbox after its UART is
     initialized and emits the framework-parsed line:
 
-        wolfBoot verification time: <N> ms
+        wolfBoot verification cycles: <N> cycles
+        wolfBoot clock sysclk_hz: <N>
+        wolfBoot clock hclk_hz: <N>
+        wolfBoot clock pclk1_hz: <N>
+        wolfBoot clock pclk2_hz: <N>
 
     The wolfBoot source is restored after the build command runs.
     """
@@ -374,9 +392,6 @@ def _temporarily_patch_boot_timing_instrumentation(
 
         wrapper_marker = "#endif\n\n/**\n * @brief Peek at the content of the image at a specific offset."
         wrapper = """\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)
-#ifndef WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ
-#define WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ 80000000UL
-#endif
 #ifndef WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR
 #define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
 #endif
@@ -387,20 +402,101 @@ def _temporarily_patch_boot_timing_instrumentation(
 #define PQC_BOOT_TIMING_DEMCR_TRCENA (1UL << 24)
 #define PQC_BOOT_TIMING_DWT_CYCCNTENA (1UL << 0)
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION 1UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 2UL
 #define PQC_BOOT_STACK_SENTINEL 0xA5U
 #define PQC_BOOT_STACK_SCAN_GUARD_BYTES 256U
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
+#define PQC_BOOT_HSI_HZ 16000000UL
+#define PQC_BOOT_MSI_HZ 4000000UL
+#define PQC_BOOT_HSE_HZ 0UL
+#define PQC_BOOT_RCC_BASE 0x40021000UL
+#define PQC_BOOT_RCC_CFGR (*(volatile uint32_t *)(PQC_BOOT_RCC_BASE + 0x08UL))
+#define PQC_BOOT_RCC_PLLCFGR (*(volatile uint32_t *)(PQC_BOOT_RCC_BASE + 0x0CUL))
+#define PQC_BOOT_RCC_CFGR_SWS_MASK (0x3UL << 2)
+#define PQC_BOOT_RCC_CFGR_SWS_MSI (0x0UL << 2)
+#define PQC_BOOT_RCC_CFGR_SWS_HSI (0x1UL << 2)
+#define PQC_BOOT_RCC_CFGR_SWS_HSE (0x2UL << 2)
+#define PQC_BOOT_RCC_CFGR_SWS_PLL (0x3UL << 2)
+#define PQC_BOOT_RCC_CFGR_HPRE_MASK (0xFUL << 4)
+#define PQC_BOOT_RCC_CFGR_HPRE_POS 4U
+#define PQC_BOOT_RCC_CFGR_PPRE1_MASK (0x7UL << 8)
+#define PQC_BOOT_RCC_CFGR_PPRE1_POS 8U
+#define PQC_BOOT_RCC_CFGR_PPRE2_MASK (0x7UL << 11)
+#define PQC_BOOT_RCC_CFGR_PPRE2_POS 11U
+#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_MASK 0x3UL
+#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_MSI 0x1UL
+#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSI 0x2UL
+#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSE 0x3UL
+#define PQC_BOOT_RCC_PLLCFGR_PLLM_MASK (0x7UL << 4)
+#define PQC_BOOT_RCC_PLLCFGR_PLLM_POS 4U
+#define PQC_BOOT_RCC_PLLCFGR_PLLN_MASK (0x7FUL << 8)
+#define PQC_BOOT_RCC_PLLCFGR_PLLN_POS 8U
+#define PQC_BOOT_RCC_PLLCFGR_PLLR_MASK (0x3UL << 25)
+#define PQC_BOOT_RCC_PLLCFGR_PLLR_POS 25U
 
 struct pqc_boot_timing_mailbox {
     uint32_t magic;
     uint32_t version;
-    uint32_t verification_time_ms;
     uint32_t elapsed_cycles;
-    uint32_t cpu_hz;
     uint32_t verification_result;
     uint32_t max_stack_used_bytes;
+    uint32_t sysclk_hz;
+    uint32_t hclk_hz;
+    uint32_t pclk1_hz;
+    uint32_t pclk2_hz;
 };
+
+static uint32_t pqc_boot_decode_ahb_divider(uint32_t hpre)
+{
+    static const uint16_t dividers[16] = {1U,1U,1U,1U,1U,1U,1U,1U,2U,4U,8U,16U,64U,128U,256U,512U};
+    return dividers[hpre & 0xFU];
+}
+
+static uint32_t pqc_boot_decode_apb_divider(uint32_t ppre)
+{
+    static const uint8_t dividers[8] = {1U,1U,1U,1U,2U,4U,8U,16U};
+    return dividers[ppre & 0x7U];
+}
+
+static uint32_t pqc_boot_pll_source_hz(uint32_t pllcfgr)
+{
+    switch (pllcfgr & PQC_BOOT_RCC_PLLCFGR_PLLSRC_MASK) {
+        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_MSI: return PQC_BOOT_MSI_HZ;
+        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSI: return PQC_BOOT_HSI_HZ;
+        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSE: return PQC_BOOT_HSE_HZ;
+        default: return 0U;
+    }
+}
+
+static uint32_t pqc_boot_reported_sysclk_hz(void)
+{
+    uint32_t cfgr = PQC_BOOT_RCC_CFGR;
+    uint32_t sws = cfgr & PQC_BOOT_RCC_CFGR_SWS_MASK;
+    if (sws == PQC_BOOT_RCC_CFGR_SWS_HSI) return PQC_BOOT_HSI_HZ;
+    if (sws == PQC_BOOT_RCC_CFGR_SWS_MSI) return PQC_BOOT_MSI_HZ;
+    if (sws == PQC_BOOT_RCC_CFGR_SWS_HSE) return PQC_BOOT_HSE_HZ;
+    if (sws == PQC_BOOT_RCC_CFGR_SWS_PLL) {
+        uint32_t pll = PQC_BOOT_RCC_PLLCFGR;
+        uint32_t source_hz = pqc_boot_pll_source_hz(pll);
+        uint32_t m = ((pll & PQC_BOOT_RCC_PLLCFGR_PLLM_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLM_POS) + 1U;
+        uint32_t n = (pll & PQC_BOOT_RCC_PLLCFGR_PLLN_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLN_POS;
+        uint32_t r = ((((pll & PQC_BOOT_RCC_PLLCFGR_PLLR_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLR_POS) + 1U) * 2U);
+        if (source_hz == 0U || m == 0U || r == 0U) return 0U;
+        return (uint32_t)((((uint64_t)source_hz / m) * n) / r);
+    }
+    return 0U;
+}
+
+static void pqc_boot_reported_clocks(uint32_t *sysclk_hz, uint32_t *hclk_hz, uint32_t *pclk1_hz, uint32_t *pclk2_hz)
+{
+    uint32_t cfgr = PQC_BOOT_RCC_CFGR;
+    uint32_t sysclk = pqc_boot_reported_sysclk_hz();
+    uint32_t hclk = sysclk / pqc_boot_decode_ahb_divider((cfgr & PQC_BOOT_RCC_CFGR_HPRE_MASK) >> PQC_BOOT_RCC_CFGR_HPRE_POS);
+    *sysclk_hz = sysclk;
+    *hclk_hz = hclk;
+    *pclk1_hz = hclk / pqc_boot_decode_apb_divider((cfgr & PQC_BOOT_RCC_CFGR_PPRE1_MASK) >> PQC_BOOT_RCC_CFGR_PPRE1_POS);
+    *pclk2_hz = hclk / pqc_boot_decode_apb_divider((cfgr & PQC_BOOT_RCC_CFGR_PPRE2_MASK) >> PQC_BOOT_RCC_CFGR_PPRE2_POS);
+}
 
 static void pqc_boot_timing_counter_start(uint32_t *start_cycles)
 {
@@ -412,8 +508,7 @@ static void pqc_boot_timing_counter_start(uint32_t *start_cycles)
 
 static uint32_t pqc_boot_timing_counter_elapsed(uint32_t start_cycles)
 {
-    uint32_t end_cycles = PQC_BOOT_TIMING_DWT_CYCCNT;
-    return end_cycles - start_cycles;
+    return PQC_BOOT_TIMING_DWT_CYCCNT - start_cycles;
 }
 
 static uintptr_t pqc_boot_current_stack_pointer(void)
@@ -423,89 +518,56 @@ static uintptr_t pqc_boot_current_stack_pointer(void)
     return sp;
 }
 
-static uint8_t *pqc_boot_stack_paint_start(void)
-{
-    extern uint8_t _end;
-    return &_end;
-}
-
+static uint8_t *pqc_boot_stack_paint_start(void) { extern uint8_t _end; return &_end; }
 static uint8_t *pqc_boot_stack_paint_end(void)
 {
     uintptr_t sp = pqc_boot_current_stack_pointer();
-    if (sp <= PQC_BOOT_STACK_SCAN_GUARD_BYTES) {
-        return pqc_boot_stack_paint_start();
-    }
+    if (sp <= PQC_BOOT_STACK_SCAN_GUARD_BYTES) return pqc_boot_stack_paint_start();
     return (uint8_t *)(sp - PQC_BOOT_STACK_SCAN_GUARD_BYTES);
 }
-
 static void pqc_boot_stack_paint(uint8_t *start, uint8_t *end)
 {
-    uint8_t *cursor;
-    if (end <= start) {
-        return;
-    }
-    for (cursor = start; cursor < end; cursor++) {
-        *cursor = PQC_BOOT_STACK_SENTINEL;
-    }
+    uint8_t *cursor; if (end <= start) return;
+    for (cursor = start; cursor < end; cursor++) *cursor = PQC_BOOT_STACK_SENTINEL;
 }
-
 static uint32_t pqc_boot_stack_high_water(uint8_t *start, uint8_t *end)
 {
-    uint8_t *cursor;
-    if (end <= start) {
-        return PQC_BOOT_STACK_UNAVAILABLE;
-    }
-    for (cursor = start; cursor < end; cursor++) {
-        if (*cursor != PQC_BOOT_STACK_SENTINEL) {
-            return (uint32_t)(end - cursor);
-        }
-    }
+    uint8_t *cursor; if (end <= start) return PQC_BOOT_STACK_UNAVAILABLE;
+    for (cursor = start; cursor < end; cursor++) if (*cursor != PQC_BOOT_STACK_SENTINEL) return (uint32_t)(end - cursor);
     return 0U;
 }
 
-static void pqc_boot_timing_write_mailbox(
-    unsigned long elapsed_ms,
-    uint32_t elapsed_cycles,
-    int verification_result,
-    uint32_t max_stack_used_bytes
-)
+static void pqc_boot_timing_write_mailbox(uint32_t elapsed_cycles, int verification_result, uint32_t max_stack_used_bytes)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
         (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
-
+    uint32_t sysclk_hz, hclk_hz, pclk1_hz, pclk2_hz;
+    pqc_boot_reported_clocks(&sysclk_hz, &hclk_hz, &pclk1_hz, &pclk2_hz);
     mailbox->magic = 0U;
     mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
-    mailbox->verification_time_ms = (uint32_t)elapsed_ms;
     mailbox->elapsed_cycles = elapsed_cycles;
-    mailbox->cpu_hz = (uint32_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ;
     mailbox->verification_result = (uint32_t)verification_result;
     mailbox->max_stack_used_bytes = max_stack_used_bytes;
+    mailbox->sysclk_hz = sysclk_hz;
+    mailbox->hclk_hz = hclk_hz;
+    mailbox->pclk1_hz = pclk1_hz;
+    mailbox->pclk2_hz = pclk2_hz;
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
 int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 {
-    uint32_t start_cycles;
-    uint32_t elapsed_cycles;
-    uint32_t max_stack_used_bytes;
-    unsigned long elapsed_ms;
-    uint8_t *stack_paint_start;
-    uint8_t *stack_paint_end;
+    uint32_t start_cycles, elapsed_cycles, max_stack_used_bytes;
+    uint8_t *stack_paint_start, *stack_paint_end;
     int ret;
-
     stack_paint_start = pqc_boot_stack_paint_start();
     stack_paint_end = pqc_boot_stack_paint_end();
     pqc_boot_stack_paint(stack_paint_start, stack_paint_end);
-
     pqc_boot_timing_counter_start(&start_cycles);
     ret = wolfBoot_verify_authenticity_impl(img);
     elapsed_cycles = pqc_boot_timing_counter_elapsed(start_cycles);
     max_stack_used_bytes = pqc_boot_stack_high_water(stack_paint_start, stack_paint_end);
-    elapsed_ms = (unsigned long)((((uint64_t)elapsed_cycles) * 1000ULL +
-        ((uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ / 2ULL)) /
-        (uint64_t)WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ);
-
-    pqc_boot_timing_write_mailbox(elapsed_ms, elapsed_cycles, ret, max_stack_used_bytes);
+    pqc_boot_timing_write_mailbox(elapsed_cycles, ret, max_stack_used_bytes);
     return ret;
 }
 #endif
@@ -597,6 +659,136 @@ def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
     return removed
 
 
+def _remove_wolfboot_generated_signing_artifacts(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+) -> list[Path]:
+    """Remove generated wolfBoot signing artifacts before each profile build.
+
+    wolfBoot generates ``src/keystore.c`` and local signing-key material inside
+    its source tree. The project reuses one wolfBoot checkout for several
+    signing algorithms, so stale generated artifacts from a previous profile can
+    make the next non-interactive build fail with a key-algorithm mismatch. Only
+    files under the wolfBoot source directory are removed here; canonical
+    project signing keys under ``secrets/`` are never deleted.
+    """
+
+    candidate_paths: set[Path] = {
+        source_dir / relative_path
+        for relative_path in WOLFBOOT_GENERATED_SIGNING_ARTIFACT_RELATIVE_PATHS
+    }
+
+    generated_keystore = _optional_profile_path(profile, "build.generated_keystore")
+    if generated_keystore is not None:
+        candidate_paths.add(repo_root / generated_keystore)
+
+    wolfboot_private_key = _resolve_wolfboot_private_key_path(
+        repo_root=repo_root,
+        source_dir=source_dir,
+        profile=profile,
+    )
+    if wolfboot_private_key is not None:
+        candidate_paths.add(wolfboot_private_key)
+
+    removed: list[Path] = []
+    for path in sorted(candidate_paths):
+        try:
+            path.relative_to(source_dir)
+        except ValueError:
+            continue
+        if not path.exists() or path.is_dir():
+            continue
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
+def _prepare_wolfboot_signing_artifacts(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+    signing_key_path: Path | None,
+    wolfboot_private_key_path: Path | None,
+) -> tuple[list[Path], str | None]:
+    """Prepare wolfBoot signing artifacts without breaking reusable key state.
+
+    When no canonical key exists, generated wolfBoot signing artifacts are
+    removed so wolfBoot can create a fresh key and matching keystore. When a
+    canonical key already exists, the local private key and generated keystore
+    must already form a reusable tuple. The wrapper cannot safely reconstruct a
+    keystore from a private key alone, so missing or mismatched state is reported
+    before invoking make.
+    """
+
+    if signing_key_path is None or not signing_key_path.is_file():
+        return (
+            _remove_wolfboot_generated_signing_artifacts(
+                profile=profile,
+                repo_root=repo_root,
+                source_dir=source_dir,
+            ),
+            None,
+        )
+
+    generated_keystore = _optional_profile_path(profile, "build.generated_keystore")
+    keystore_path = (
+        repo_root / generated_keystore
+        if generated_keystore is not None
+        else source_dir / "src" / "keystore.c"
+    )
+
+    if wolfboot_private_key_path is None or not wolfboot_private_key_path.is_file():
+        return [], (
+            "The configured canonical signing key exists, but the matching "
+            "wolfBoot private key is missing. The framework cannot safely "
+            "reconstruct the generated keystore from the private key alone. "
+            "Restore the matching wolfBoot key/keystore tuple or rotate the "
+            "local benchmark key by backing up and removing the canonical key, "
+            "then rerun build-wolfboot so wolfBoot generates a fresh tuple."
+        )
+
+    canonical_sha256 = calculate_file_sha256(signing_key_path)
+    wolfboot_sha256 = calculate_file_sha256(wolfboot_private_key_path)
+    if canonical_sha256 != wolfboot_sha256:
+        return [], (
+            "The configured canonical signing key and wolfBoot private key "
+            "differ, so the existing generated keystore cannot be trusted. "
+            "Restore the matching local key/keystore tuple or rotate the local "
+            "benchmark key explicitly before rebuilding."
+        )
+
+    if not keystore_path.is_file():
+        return [], (
+            "The configured canonical signing key matches the wolfBoot private "
+            "key, but the generated wolfBoot keystore is missing: "
+            f"{keystore_path}. wolfBoot v2.9.0 cannot regenerate keystore.c "
+            "from an existing private key alone. Restore the matching keystore "
+            "or rotate the local benchmark key by backing up and removing the "
+            "canonical key and wolfBoot-local key, then rerun build-wolfboot."
+        )
+
+    return [], None
+
+
+def _decode_wolfboot_command_output(output: bytes | str | None) -> str:
+    """Decode captured wolfBoot command output without failing on toolchain bytes.
+
+    wolfBoot builds invoke host tools and cross-compilers through ``make``. Some
+    environments can emit non-UTF-8 bytes in diagnostic output. Build evidence
+    should preserve the command output as text, but invalid byte sequences must
+    not crash the framework before the build result and log are recorded.
+    """
+
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    return output.decode("utf-8", errors="replace")
+
+
 def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExecution:
     """Run a wolfBoot build command and capture stdout, stderr, and timing."""
 
@@ -604,15 +796,15 @@ def default_wolfboot_runner(command: list[str], cwd: Path) -> WolfBootCommandExe
     completed = subprocess.run(
         command,
         cwd=cwd,
-        text=True,
+        text=False,
         capture_output=True,
         check=False,
     )
     return WolfBootCommandExecution(
         command=command,
         return_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        stdout=_decode_wolfboot_command_output(completed.stdout),
+        stderr=_decode_wolfboot_command_output(completed.stderr),
         duration_seconds=perf_counter() - start,
     )
 
@@ -682,12 +874,10 @@ def _coordinate_wolfboot_signing_key_before_build(
 ) -> str | None:
     if signing_key_path is None or wolfboot_private_key_path is None:
         return "No canonical signing key coordination was configured for this wolfBoot build profile."
-    if signing_key_path.is_file() and wolfboot_private_key_path.is_file():
+    if signing_key_path.is_file():
         wolfboot_private_key_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(signing_key_path, wolfboot_private_key_path)
-        return "Copied the configured canonical signing key over the existing wolfBoot private key before build."
-    if signing_key_path.is_file():
-        return "Configured canonical signing key exists, but wolfBoot private key is absent; wolfBoot will regenerate key/keystore material and the canonical key will be synchronized after a successful build."
+        return "Copied the configured canonical signing key into the wolfBoot private key path before build."
     return "Configured canonical signing key was absent before build; wolfBoot may generate local key material, which will be copied back to the canonical path after a successful build if present."
 
 
@@ -814,6 +1004,7 @@ def _write_log(
     key_consistency_message: str | None = None,
     key_sync_before_build_message: str | None = None,
     key_sync_after_build_message: str | None = None,
+    generated_signing_artifact_cleanup_paths: list[Path] | None = None,
 ) -> None:
     lines = [
         "wolfBoot build log",
@@ -839,6 +1030,8 @@ def _write_log(
         f"Signing key sync before build: {key_sync_before_build_message if key_sync_before_build_message is not None else 'none'}",
         f"Signing key sync after build: {key_sync_after_build_message if key_sync_after_build_message is not None else 'none'}",
         "Private signing keys are local-only evidence inputs and are not copied into the result directory.",
+        f"Generated wolfBoot signing artifact cleanup count: {len(generated_signing_artifact_cleanup_paths or [])}",
+        f"Generated wolfBoot signing artifact cleanup paths: {', '.join(str(path) for path in (generated_signing_artifact_cleanup_paths or [])) if generated_signing_artifact_cleanup_paths else 'none'}",
         f"Input fingerprint status: {fingerprint_evidence.get('status') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint algorithm: {fingerprint_evidence.get('fingerprint_algorithm') if fingerprint_evidence else 'unavailable'}",
         f"Input fingerprint: {fingerprint_evidence.get('fingerprint') if fingerprint_evidence else 'unavailable'}",
@@ -1020,11 +1213,13 @@ def execute_wolfboot_build(
         profile=profile,
     )
     key_sync_before_build_message: str | None = None
+    generated_signing_artifact_cleanup_paths: list[Path] = []
 
     execution: WolfBootCommandExecution | None = None
     artifact_sha256: str | None = None
     retained_artifact_path: Path | None = None
     failure_reason: str | None = None
+    wolfboot_state_identity: dict[str, Any] | None = None
     fingerprint_evidence: dict[str, Any] = {
         "status": "unavailable",
         "fingerprint": None,
@@ -1055,6 +1250,38 @@ def execute_wolfboot_build(
                 profile=profile,
                 source_dir=source_dir,
                 config_template_path=config_template_path,
+            )
+            public_key_path = source_dir / "wolfboot_signing_public_key.der"
+            generated_keystore_config = _optional_profile_path(profile, "build.generated_keystore")
+            generated_keystore_path = (
+                repo_root_path / generated_keystore_config
+                if generated_keystore_config is not None
+                else source_dir / "src" / "keystore.c"
+            )
+            wolfboot_state_identity = build_identity(
+                workflow="wolfboot_build",
+                profile=profile_id,
+                input_fingerprint=fingerprint_evidence,
+                toolchain={"command": command, "target": profile.get("target")},
+                execution=detect_execution_identity(),
+                key_tuple=key_tuple_fingerprint(
+                    private_key=wolfboot_private_key_path,
+                    public_key=public_key_path,
+                    keystore=generated_keystore_path,
+                ),
+                extra={"signature_algorithm": profile.get("signature_algorithm")},
+            )
+            generated_cleanup_paths = [
+                path
+                for pattern in WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS
+                for path in source_dir.glob(pattern)
+            ]
+            preflight_generated_state(
+                repo_root=repo_root_path,
+                scope=f"wolfboot-{profile_id}",
+                expected_identity=wolfboot_state_identity,
+                cleanup_paths=generated_cleanup_paths,
+                final_artifact_paths=[artifact_path],
             )
             try:
                 (
@@ -1100,12 +1327,26 @@ def execute_wolfboot_build(
                         else:
                             try:
                                 _remove_wolfboot_host_tool_outputs(source_dir)
-                                key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
+                                (
+                                    generated_signing_artifact_cleanup_paths,
+                                    signing_artifact_error,
+                                ) = _prepare_wolfboot_signing_artifacts(
+                                    profile=profile,
+                                    repo_root=repo_root_path,
+                                    source_dir=source_dir,
                                     signing_key_path=signing_key_path,
                                     wolfboot_private_key_path=wolfboot_private_key_path,
                                 )
-                                execution = runner(command, working_directory)
-                                return_code = execution.return_code
+                                if signing_artifact_error is not None:
+                                    return_code = PROFILE_ERROR_RETURN_CODE
+                                    failure_reason = signing_artifact_error
+                                else:
+                                    key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
+                                        signing_key_path=signing_key_path,
+                                        wolfboot_private_key_path=wolfboot_private_key_path,
+                                    )
+                                    execution = runner(command, working_directory)
+                                    return_code = execution.return_code
                             except FileNotFoundError as exc:
                                 missing_executable = command[0] if command else "configured build tool"
                                 return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
@@ -1174,6 +1415,15 @@ def execute_wolfboot_build(
         wolfboot_private_key_path=wolfboot_private_key_path,
     )
 
+    if return_code == 0 and wolfboot_state_identity is not None:
+        record_generated_state_success(
+            repo_root=repo_root_path,
+            scope=f"wolfboot-{profile_id}",
+            identity=wolfboot_state_identity,
+            artifacts=[artifact_path],
+            record_refs={"wolfboot_build_manifest": str(result_dir / "manifest.json")},
+        )
+
     duration_seconds = perf_counter() - start
     artifact_exists = artifact_path.is_file()
     _write_log(
@@ -1213,6 +1463,7 @@ def execute_wolfboot_build(
         key_consistency_message=key_consistency_message,
         key_sync_before_build_message=key_sync_before_build_message,
         key_sync_after_build_message=key_sync_after_build_message,
+        generated_signing_artifact_cleanup_paths=generated_signing_artifact_cleanup_paths,
     )
 
     manifest = {
@@ -1242,6 +1493,11 @@ def execute_wolfboot_build(
             "key_consistency_message": key_consistency_message,
             "key_sync_before_build_message": key_sync_before_build_message,
             "key_sync_after_build_message": key_sync_after_build_message,
+            "generated_signing_artifact_cleanup": {
+                "enabled": True,
+                "removed_count": len(generated_signing_artifact_cleanup_paths),
+                "removed_paths": [str(path) for path in generated_signing_artifact_cleanup_paths],
+            },
             "key_material_copied_to_results": False,
             "fingerprint": fingerprint_evidence.get("fingerprint"),
             "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),

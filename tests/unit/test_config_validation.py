@@ -677,3 +677,154 @@ def test_validate_application_signing_profile_accepts_mldsa_header_fit_algorithm
     }
 
     experiment_cli.validate_application_signing_profile_config(config)
+
+
+def minimal_mqtt_experiment_config() -> dict[str, object]:
+    return {
+        "id": "mqtt_tls_schema_fake",
+        "description": "Phase M2 MQTT/TLS schema-only experiment.",
+        "board": "board_a",
+        "host": "gateway",
+        "boot": "direct_flash",
+        "firmware": {
+            "mode": "direct_flash",
+            "artifact": "build/Debug/stm32_basic_hal1.elf",
+        },
+        "uart": {
+            "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+            "expected_tick_message": "tick",
+        },
+        "mqtt": {
+            "schema_version": 1,
+            "evidence_class": "fake_no_network",
+            "transport_backend": "fake_no_network",
+            "tls": {
+                "mode": "not_applicable",
+            },
+            "result_schema": {
+                "unavailable_metrics": {
+                    "wifi_association": "Fake/no-network transport does not use Wi-Fi hardware.",
+                    "ip_address": "Fake/no-network transport does not acquire an IP address.",
+                    "tcp_connect": "Fake/no-network transport does not open a TCP socket.",
+                    "tls_handshake": "Phase M2 does not perform a TLS handshake.",
+                    "mqtt_connect": "Phase M2 does not connect to an MQTT broker.",
+                    "mqtt_publish": "Phase M2 does not publish MQTT messages.",
+                    "mqtt_reconnect": "Phase M2 does not exercise reconnect behaviour.",
+                    "latency_ms": "Phase M2 has no runtime latency evidence.",
+                    "throughput_bytes_per_second": "Phase M2 has no throughput evidence.",
+                }
+            },
+        },
+    }
+
+
+def test_validate_mqtt_tls_config_accepts_fake_no_network_schema_only_config():
+    experiment_cli = load_experiment_module()
+
+    experiment_cli.validate_experiment_config(minimal_mqtt_experiment_config())
+
+
+def test_validate_mqtt_tls_config_accepts_host_side_schema_with_broker_reference():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["evidence_class"] = "host_side"
+    config["mqtt"]["transport_backend"] = "host_socket"
+    config["mqtt"]["tls"] = {
+        "mode": "classical_tls",
+        "certificate_refs": {
+            "ca_certificate": "experiment/mqtt-broker/runtime/classical/ca.crt",
+            "client_certificate": "experiment/mqtt-broker/runtime/classical/client.crt",
+        },
+    }
+    config["mqtt"]["broker"] = {
+        "host": "pqc-gateway1",
+        "port": 8883,
+    }
+
+    experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_backend_evidence_mismatch():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["transport_backend"] = "host_socket"
+
+    with pytest.raises(experiment_cli.ConfigError, match="not compatible"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_missing_unavailable_runtime_metrics_for_build_only():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["evidence_class"] = "stm32_build_only"
+    config["mqtt"]["transport_backend"] = "stm32_build_only"
+    del config["mqtt"]["result_schema"]["unavailable_metrics"]["mqtt_publish"]
+
+    with pytest.raises(experiment_cli.ConfigError, match="runtime metrics unavailable"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_private_key_references():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["evidence_class"] = "host_side"
+    config["mqtt"]["transport_backend"] = "host_socket"
+    config["mqtt"]["broker"] = {
+        "host": "pqc-gateway1",
+        "port": 8883,
+    }
+    config["mqtt"]["tls"] = {
+        "mode": "classical_tls",
+        "certificate_refs": {
+            "client_private_key": "secrets/mqtt/client.key",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="private key"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_accepts_fake_transport_harness_fields():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["fake_transport"] = {
+        "scenario": "publish_timeout_then_disconnect",
+        "connect_outcome": "success",
+        "publish_outcome": "timeout",
+        "disconnect_outcome": "success",
+        "reconnect_outcome": "success",
+        "reconnect_attempts": 1,
+        "topic": "pqc/fake/no-network",
+        "message": "fake payload",
+    }
+
+    experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_invalid_fake_transport_outcome():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["fake_transport"] = {
+        "connect_outcome": "real_socket_connect",
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="connect_outcome"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend():
+    experiment_cli = load_experiment_module()
+    config = minimal_mqtt_experiment_config()
+    config["mqtt"]["evidence_class"] = "host_side"
+    config["mqtt"]["transport_backend"] = "host_socket"
+    config["mqtt"]["broker"] = {
+        "host": "pqc-gateway1",
+        "port": 8883,
+    }
+    config["mqtt"]["tls"] = {"mode": "classical_tls"}
+    config["mqtt"]["fake_transport"] = {
+        "connect_outcome": "success",
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="fake_transport requires"):
+        experiment_cli.validate_experiment_config(config)

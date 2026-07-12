@@ -408,6 +408,9 @@ def test_mqtt_control_script_has_provision_and_validation_subcommands():
     assert oqs_mqtt.topic == "pqc/test/e2e"
     assert callable(oqs_mqtt.func)
     assert not isinstance(oqs_mqtt.func, type(parser))
+    assert module.HOST_BROKER_EVIDENCE_CLASS == "host_side"
+    assert module.HOST_BROKER_EVIDENCE_LABEL == "host-side/broker-side MQTT/TLS compatibility evidence"
+    assert "does not claim STM32" in module.HOST_BROKER_EVIDENCE_BOUNDARY
 
 
 
@@ -572,6 +575,11 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
     assert '-t "$topic" -C 1' in command_text
     assert '-t "$topic" -m "$message"' in command_text
     assert 'grep -Fx -- "$message"' in command_text
+    assert "Evidence class: host_side" in command_text
+    assert "host-side/broker-side MQTT/TLS compatibility evidence" in command_text
+    assert "does not claim STM32" in command_text
+    assert "Wi-Fi module" in command_text
+    assert "wolfMQTT-on-STM32" in command_text
 
 
 def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
@@ -615,3 +623,35 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
     assert '-t "$topic" -C 1' in command_text
     assert '-t "$topic" -m "$message"' in command_text
     assert 'grep -Fx -- "$message"' in command_text
+
+
+def test_mqtt_oqs_tls_validation_labels_host_and_broker_side_evidence(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+
+    args = module.build_parser().parse_args([
+        "validate-oqs-tls",
+        "--host-config",
+        str(host_config),
+        "--remote-dir",
+        "~/pqc-framework-02/tmp/pytest-mqtt-broker-test",
+        "--oqs-port",
+        "28884",
+        "--dry-run",
+    ])
+    module.validate_oqs_tls(args)
+
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "Evidence class: host_side" in command_text
+    assert "host-side/broker-side MQTT/TLS compatibility evidence" in command_text
+    assert "does not claim STM32" in command_text
+    assert "Wi-Fi module" in command_text
+    assert "lwIP-on-STM32" in command_text
+    assert "wolfSSL-on-STM32" in command_text
+    assert "wolfMQTT-on-STM32" in command_text
+    assert "end-to-end wireless success" in command_text

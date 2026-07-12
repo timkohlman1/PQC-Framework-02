@@ -112,4 +112,16 @@ The MQTT broker compose project uses generated local TLS material under `experim
 
 Do not commit MQTT broker private keys, client private keys, password files, real `.env` files, production certificates, or private CA material. The committed files are limited to compose files, Mosquitto configuration templates, documentation, tests, and scripts.
 
+## STM32 wolfSSL build-only boundary
+
+The Phase M6 STM32 wolfSSL boundary is build-only. It may compile project-owned wolfSSL preparation code and non-secret configuration/status strings, but it must not embed private keys, MQTT passwords, real `.env` values, private certificates, private CA material, production certificates, or bearer tokens. Certificate handling in this phase is limited to future path/reference configuration; no certificate store is configured and no private key material is compiled into firmware.
+
+Do not treat a successful Phase M6 firmware build as TLS runtime evidence. TLS handshake, certificate validation, MQTT connect, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end network success require explicit later logs, manifests, UART output, broker output, or equivalent evidence.
+
+
 The classical profile uses local test X.509 certificates for TLS development. The OQS profile is experimental and uses Open Quantum Safe tooling or images for PQC TLS evaluation; it must not be treated as production TLS infrastructure.
+
+
+## Phase M6 wolfSSL source-build smoke
+
+The Phase M6 wolfSSL smoke path builds a minimal wolfCrypt SHA-256 source target from `tools/wolfboot/lib/wolfssl` and runs it over a fixed non-secret test message. This path must not embed private keys, CA private keys, client keys, broker credentials, MQTT passwords, real `.env` files, private certificates, or production TLS material. The UART marker may report source-build and SHA-256 smoke status only; it must continue to mark certificate loading, compiled-in secrets, runtime transport, TLS handshake, MQTT, Wi-Fi, and end-to-end network success as unavailable until later evidence-backed phases implement them.

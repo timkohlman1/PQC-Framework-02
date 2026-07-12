@@ -60,6 +60,104 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+# Phase M6.1 wolfSSL TLS-context lifecycle source integration.
+#
+# Reuse the wolfSSL source tree carried by the wolfBoot submodule. The selected
+# source set is limited to wolfSSL client-context and supporting wolfCrypt code
+# needed to initialize wolfSSL, create/free a TLS 1.2 client WOLFSSL_CTX, and
+# clean up global state. No transport, certificate loading, handshake, MQTT,
+# Wi-Fi, or ST67W61M1 backend is enabled by this target.
+set(PQC_WOLFSSL_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
+    CACHE PATH
+    "Repository-local wolfSSL source directory used for Phase M6.1 STM32 TLS-context smoke coverage"
+)
+
+set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/internal.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/keys.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/ssl.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/tls.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/src/wolfio.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/aes.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/logging.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
+)
+
+foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
+    if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
+        message(FATAL_ERROR
+            "Phase M6.1 wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
+            "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+        )
+    endif()
+endforeach()
+
+add_library(pqc_wolfssl_stm32_build_only STATIC
+    ${PQC_WOLFSSL_TLS_CONTEXT_SOURCES}
+)
+
+target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC
+    Core/Inc
+    "${PQC_WOLFSSL_SOURCE_DIR}"
+)
+
+target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
+    WOLFSSL_USER_SETTINGS
+    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
+    PQC_WOLFSSL_SOURCE_BUILD=1
+)
+
+
+
+# Phase M7 wolfMQTT build-only source integration.
+#
+# wolfMQTT is maintained as its own pinned repository submodule. The project
+# builds the core MQTT client, packet, and socket callback layers only. TLS is
+# intentionally disabled here; the existing project-owned wolfSSL transport
+# boundary remains unavailable until a later network-backed phase.
+set(PQC_WOLFMQTT_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfMQTT"
+    CACHE PATH
+    "Repository-local wolfMQTT source directory used for Phase M7 STM32 build-only coverage"
+)
+
+set(PQC_WOLFMQTT_BUILD_ONLY_SOURCES
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_client.c"
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_packet.c"
+    "${PQC_WOLFMQTT_SOURCE_DIR}/src/mqtt_socket.c"
+)
+
+foreach(PQC_WOLFMQTT_SOURCE IN LISTS PQC_WOLFMQTT_BUILD_ONLY_SOURCES)
+    if(NOT EXISTS "${PQC_WOLFMQTT_SOURCE}")
+        message(FATAL_ERROR
+            "Phase M7 wolfMQTT source file not found: ${PQC_WOLFMQTT_SOURCE}. "
+            "Initialise the Middlewares/Third_Party/wolfMQTT submodule."
+        )
+    endif()
+endforeach()
+
+add_library(pqc_wolfmqtt_stm32_build_only STATIC
+    ${PQC_WOLFMQTT_BUILD_ONLY_SOURCES}
+)
+
+target_include_directories(pqc_wolfmqtt_stm32_build_only PUBLIC
+    Core/Inc
+    "${PQC_WOLFMQTT_SOURCE_DIR}"
+    "${PQC_WOLFSSL_SOURCE_DIR}"
+)
+
+target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
+    BUILDING_WOLFMQTT
+    WOLFMQTT_USER_SETTINGS
+    WOLFMQTT_NO_STDIO
+)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -67,16 +165,31 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/pqc_lwip_build_only.c
+    Core/Src/pqc_lwip_loopback.c
+    Core/Src/pqc_network_interface.c
+    Core/Src/pqc_wolfssl_build_only.c
+    Core/Src/pqc_wolfssl_transport.c
+    Core/Src/pqc_wolfmqtt_build_only.c
     # Add user sources here
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Inc
+    "${PQC_WOLFSSL_SOURCE_DIR}"
+    "${PQC_WOLFMQTT_SOURCE_DIR}"
     # Add user defined include paths
 )
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    PQC_WOLFSSL_BUILD_ONLY=1
+    WOLFSSL_USER_SETTINGS
+    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
+    PQC_WOLFSSL_SOURCE_BUILD=1
+    WOLFMQTT_USER_SETTINGS
+    WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
@@ -98,6 +211,8 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
+    pqc_wolfssl_stm32_build_only
+    pqc_wolfmqtt_stm32_build_only
 
     # Add user defined libraries
 )

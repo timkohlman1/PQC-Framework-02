@@ -61,9 +61,13 @@ class UartResult:
     tick_present: bool
     secure_boot_marker_present: bool | None
     data_captured: bool
-    verification_time_ms: float | None
     verification_cycles: int | None
-    verification_cpu_hz: int | None
+    derived_verification_time_ms: float | None
+    derived_time_clock_source: str | None
+    bootloader_clock_hz: dict[str, int | None]
+    bootloader_hclk_hz: int | None
+    application_clock_hz: dict[str, int | None]
+    application_memory_checkpoints: list[dict[str, Any]]
     verification_result_code: int | None
     verification_time_source: str
     verification_time_measurement_method: str
@@ -182,21 +186,19 @@ def _capture_completed(return_code: int) -> bool:
     return return_code in {0, TIMEOUT_RETURN_CODE}
 
 
-DEFAULT_VERIFICATION_TIME_SOURCE = "uart_explicit_verification_time_marker"
+DEFAULT_VERIFICATION_TIME_SOURCE = "framework_derived_from_uart_cycles_and_reported_hclk"
 DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE = "unavailable"
 DEFAULT_VERIFICATION_TIME_METHOD = (
     "Parse explicit wolfBoot verification timing lines from captured UART output."
 )
 DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS = (
-    "No explicit wolfBoot verification-time line was present in the captured UART output; "
-    "verification_time_ms and verification_cycles are intentionally null rather than estimated."
+    "Raw DWT verification cycles or reported HCLK were unavailable; derived_verification_time_ms is intentionally null."
 )
 DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS = (
-    "Timing is reported by firmware over UART and includes only the values emitted by wolfBoot or the instrumented boot path; "
-    "host-side UART capture latency is not used to derive these values."
+    "Raw DWT cycles and RCC-derived clock state are reported by firmware over UART. Milliseconds are derived by the framework from cycles and reported HCLK; no RTC, wall clock, UART duration, or reset delay is used."
 )
 DEFAULT_STACK_MEMORY_SOURCE = "uart_explicit_stack_high_water_marker"
-DEFAULT_HEAP_MEMORY_SOURCE = "uart_explicit_heap_marker"
+DEFAULT_HEAP_MEMORY_SOURCE = "uart_explicit_application_memory_checkpoint"
 DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE = "unavailable"
 DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS = (
     "No explicit firmware-side stack high-water mark line was present in the captured UART output; "
@@ -209,16 +211,6 @@ DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS = (
 DEFAULT_HEAP_MEMORY_UNAVAILABLE_LIMITATIONS = (
     "Heap usage is not recorded because no explicit firmware-side heap measurement evidence was emitted."
 )
-_VERIFICATION_TIME_PATTERNS = [
-    re.compile(
-        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification(?: time)?[^\r\n]*?[:=]\s*(?P<value>\d+(?:\.\d+)?)\s*ms\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\bverification_time_ms\s*[:=]\s*(?P<value>\d+(?:\.\d+)?)\b",
-        re.IGNORECASE,
-    ),
-]
 _VERIFICATION_CYCLE_PATTERNS = [
     re.compile(
         r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+cycles\s*[:=]\s*(?P<value>\d+)\s*(?:cycles)?\b",
@@ -229,16 +221,18 @@ _VERIFICATION_CYCLE_PATTERNS = [
         re.IGNORECASE,
     ),
 ]
-_VERIFICATION_CPU_HZ_PATTERNS = [
-    re.compile(
-        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+(?:cpu[-_ ]?hz|clock)\s*[:=]\s*(?P<value>\d+)\s*(?:hz)?\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\bverification_cpu_hz\s*[:=]\s*(?P<value>\d+)\b",
-        re.IGNORECASE,
-    ),
-]
+_BOOTLOADER_CLOCK_PATTERNS = {
+    "sysclk_hz": re.compile(r"\bwolfBoot clock sysclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "hclk_hz": re.compile(r"\bwolfBoot clock hclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk1_hz": re.compile(r"\bwolfBoot clock pclk1_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk2_hz": re.compile(r"\bwolfBoot clock pclk2_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+}
+_APPLICATION_CLOCK_PATTERNS = {
+    "sysclk_hz": re.compile(r"application clock sysclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "hclk_hz": re.compile(r"application clock hclk_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk1_hz": re.compile(r"application clock pclk1_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    "pclk2_hz": re.compile(r"application clock pclk2_hz\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+}
 _VERIFICATION_RESULT_PATTERNS = [
     re.compile(
         r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*verification\s+(?:result|return(?: code)?)\s*[:=]\s*(?P<value>-?\d+)\b",
@@ -262,31 +256,26 @@ _STACK_HIGH_WATER_PATTERNS = [
 ]
 _HEAP_USED_PATTERNS = [
     re.compile(
-        r"\b(?:wolfboot|secure[-_ ]?boot)?[^\r\n]*heap(?:\s+used)?[^\r\n]*[:=]\s*(?P<value>\d+)\s*(?:bytes|B)?\b",
+        r"\bwolfBoot verification heap used:\s*(?P<value>\d+)\s+bytes\b",
         re.IGNORECASE,
     ),
-    re.compile(
-        r"\bheap_used_bytes\s*[:=]\s*(?P<value>\d+)\b",
-        re.IGNORECASE,
-    ),
+    re.compile(r"\bheap_peak_used_bytes\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
+    re.compile(r"\bheap_used_bytes\s*[:=]\s*(?P<value>\d+)\b", re.IGNORECASE),
 ]
+_APPLICATION_MEMORY_CHECKPOINT_PATTERN = re.compile(
+    r"application memory checkpoint:\s*"
+    r"stage=(?P<stage>[a-z0-9_]+)\s+"
+    r"heap_total_bytes=(?P<heap_total_bytes>\d+)\s+"
+    r"heap_free_bytes=(?P<heap_free_bytes>\d+)\s+"
+    r"heap_min_ever_free_bytes=(?P<heap_min_ever_free_bytes>\d+)\s+"
+    r"heap_current_used_bytes=(?P<heap_current_used_bytes>\d+)\s+"
+    r"heap_peak_used_bytes=(?P<heap_peak_used_bytes>\d+)\s+"
+    r"task_stack_total_bytes=(?P<task_stack_total_bytes>\d+|unavailable)\s+"
+    r"task_stack_high_water_bytes=(?P<task_stack_high_water_bytes>\d+|unavailable)\s+"
+    r"task_stack_used_bytes=(?P<task_stack_used_bytes>\d+|unavailable)",
+    re.IGNORECASE,
+)
 
-
-def parse_verification_time_ms(uart_output: str) -> float | None:
-    """Parse an explicit wolfBoot verification-time value from UART output.
-
-    The parser intentionally accepts only lines that contain explicit
-    verification-time wording and a millisecond unit, or an explicit
-    ``verification_time_ms`` key. It does not infer timing from host-side
-    command duration or marker ordering.
-    """
-
-    for pattern in _VERIFICATION_TIME_PATTERNS:
-        match = pattern.search(uart_output)
-        if match is not None:
-            value = float(match.group("value"))
-            return int(value) if value.is_integer() else value
-    return None
 
 
 def _parse_first_int(patterns: list[re.Pattern[str]], uart_output: str) -> int | None:
@@ -303,10 +292,23 @@ def parse_verification_cycles(uart_output: str) -> int | None:
     return _parse_first_int(_VERIFICATION_CYCLE_PATTERNS, uart_output)
 
 
-def parse_verification_cpu_hz(uart_output: str) -> int | None:
-    """Parse explicit CPU frequency used for cycle-to-ms conversion."""
+def parse_bootloader_clock_hz(uart_output: str) -> dict[str, int | None]:
+    """Parse separately reported bootloader clock values from UART output."""
+    result: dict[str, int | None] = {}
+    for name, pattern in _BOOTLOADER_CLOCK_PATTERNS.items():
+        match = pattern.search(uart_output)
+        result[name] = int(match.group("value")) if match is not None else None
+    return result
 
-    return _parse_first_int(_VERIFICATION_CPU_HZ_PATTERNS, uart_output)
+
+def parse_application_clock_hz(uart_output: str) -> dict[str, int | None]:
+    """Parse application clocks reported after SystemClock_Config and UART initialization."""
+
+    result: dict[str, int | None] = {}
+    for name, pattern in _APPLICATION_CLOCK_PATTERNS.items():
+        match = pattern.search(uart_output)
+        result[name] = int(match.group("value")) if match is not None else None
+    return result
 
 
 def parse_verification_result_code(uart_output: str) -> int | None:
@@ -321,6 +323,28 @@ def parse_max_stack_used_bytes(uart_output: str) -> int | None:
     return _parse_first_int(_STACK_HIGH_WATER_PATTERNS, uart_output)
 
 
+def parse_application_memory_checkpoints(uart_output: str) -> list[dict[str, Any]]:
+    """Parse bounded application heap and task-stack lifecycle checkpoints."""
+
+    checkpoints: list[dict[str, Any]] = []
+    for match in _APPLICATION_MEMORY_CHECKPOINT_PATTERN.finditer(uart_output):
+        checkpoint: dict[str, Any] = {"stage": match.group("stage").lower()}
+        for field in (
+            "heap_total_bytes",
+            "heap_free_bytes",
+            "heap_min_ever_free_bytes",
+            "heap_current_used_bytes",
+            "heap_peak_used_bytes",
+            "task_stack_total_bytes",
+            "task_stack_high_water_bytes",
+            "task_stack_used_bytes",
+        ):
+            raw = match.group(field)
+            checkpoint[field] = None if raw.lower() == "unavailable" else int(raw)
+        checkpoints.append(checkpoint)
+    return checkpoints
+
+
 def parse_heap_used_bytes(uart_output: str) -> int | None:
     """Parse explicit firmware-side heap usage evidence from UART output."""
 
@@ -329,49 +353,51 @@ def parse_heap_used_bytes(uart_output: str) -> int | None:
 
 def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
     max_stack_used_bytes = parse_max_stack_used_bytes(uart_output)
-    heap_used_bytes = parse_heap_used_bytes(uart_output)
-    if max_stack_used_bytes is None:
-        return {
-            "max_stack_used_bytes": None,
-            "stack_metric_source": DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
-            "heap_used_bytes": heap_used_bytes,
-            "heap_metric_source": DEFAULT_HEAP_MEMORY_SOURCE if heap_used_bytes is not None else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
-            "limitations": DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS,
-        }
+    checkpoints = parse_application_memory_checkpoints(uart_output)
+    heap_used_bytes = max(
+        (checkpoint["heap_peak_used_bytes"] for checkpoint in checkpoints),
+        default=None,
+    )
     return {
         "max_stack_used_bytes": max_stack_used_bytes,
-        "stack_metric_source": DEFAULT_STACK_MEMORY_SOURCE,
+        "stack_metric_source": DEFAULT_STACK_MEMORY_SOURCE
+        if max_stack_used_bytes is not None
+        else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
         "heap_used_bytes": heap_used_bytes,
-        "heap_metric_source": DEFAULT_HEAP_MEMORY_SOURCE if heap_used_bytes is not None else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
-        "limitations": DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS
+        "heap_metric_source": DEFAULT_HEAP_MEMORY_SOURCE
         if heap_used_bytes is not None
-        else f"{DEFAULT_RUNTIME_MEMORY_REPORTED_LIMITATIONS} {DEFAULT_HEAP_MEMORY_UNAVAILABLE_LIMITATIONS}",
+        else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
+        "application_checkpoints": checkpoints,
+        "limitations": (
+            "wolfBoot maximum stack usage and application FreeRTOS memory checkpoints are separate UART evidence. "
+            "Application heap values cover only the FreeRTOS heap implementation; task stack values cover only "
+            "the default task at the named checkpoint. Host timing, linker output, and configured sizes alone are not runtime usage evidence."
+            if checkpoints or max_stack_used_bytes is not None
+            else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS
+        ),
     }
 
 
 def _boot_timing_evidence(uart_output: str) -> dict[str, Any]:
-    verification_time_ms = parse_verification_time_ms(uart_output)
     verification_cycles = parse_verification_cycles(uart_output)
-    verification_cpu_hz = parse_verification_cpu_hz(uart_output)
+    clocks = parse_bootloader_clock_hz(uart_output)
+    hclk_hz = clocks.get("hclk_hz")
+    derived_time = None
+    if verification_cycles is not None and hclk_hz not in (None, 0):
+        derived_time = (verification_cycles * 1000.0) / hclk_hz
     verification_result_code = parse_verification_result_code(uart_output)
-    if verification_time_ms is None:
-        return {
-            "verification_time_ms": None,
-            "verification_cycles": verification_cycles,
-            "verification_cpu_hz": verification_cpu_hz,
-            "verification_result_code": verification_result_code,
-            "verification_time_source": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE,
-            "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
-            "limitations": DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS,
-        }
     return {
-        "verification_time_ms": verification_time_ms,
         "verification_cycles": verification_cycles,
-        "verification_cpu_hz": verification_cpu_hz,
+        "verification_cycles_source": "uart_explicit_dwt_cycles_marker" if verification_cycles is not None else "unavailable",
+        "bootloader_clock_hz": clocks,
+        "bootloader_hclk_hz": hclk_hz,
+        "bootloader_clock_source": "uart_reported_rcc_register_model" if any(v is not None for v in clocks.values()) else "unavailable",
+        "derived_verification_time_ms": derived_time,
+        "derived_time_clock_source": "hclk_hz" if derived_time is not None else None,
         "verification_result_code": verification_result_code,
-        "verification_time_source": DEFAULT_VERIFICATION_TIME_SOURCE,
+        "verification_time_source": DEFAULT_VERIFICATION_TIME_SOURCE if derived_time is not None else DEFAULT_VERIFICATION_TIME_UNAVAILABLE_SOURCE,
         "measurement_method": DEFAULT_VERIFICATION_TIME_METHOD,
-        "limitations": DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS,
+        "limitations": DEFAULT_VERIFICATION_TIME_REPORTED_LIMITATIONS if derived_time is not None else DEFAULT_VERIFICATION_TIME_UNAVAILABLE_LIMITATIONS,
     }
 
 
@@ -405,6 +431,7 @@ def _write_uart_capture_log(
     return_code: int,
     duration_seconds: float,
     boot_timing: dict[str, Any],
+    application_clock_hz: dict[str, int | None],
     runtime_memory: dict[str, Any],
 ) -> None:
     lines = [
@@ -432,13 +459,25 @@ def _write_uart_capture_log(
         "",
         "Boot timing evidence",
         "--------------------",
-        f"verification_time_ms: {boot_timing['verification_time_ms'] if boot_timing['verification_time_ms'] is not None else 'unavailable'}",
+        f"derived_verification_time_ms: {boot_timing['derived_verification_time_ms'] if boot_timing['derived_verification_time_ms'] is not None else 'unavailable'}",
         f"verification_cycles: {boot_timing['verification_cycles'] if boot_timing['verification_cycles'] is not None else 'unavailable'}",
-        f"verification_cpu_hz: {boot_timing['verification_cpu_hz'] if boot_timing['verification_cpu_hz'] is not None else 'unavailable'}",
+        f"derived_time_clock_source: {boot_timing['derived_time_clock_source'] or 'unavailable'}",
+        f"bootloader_sysclk_hz: {boot_timing['bootloader_clock_hz']['sysclk_hz'] if boot_timing['bootloader_clock_hz']['sysclk_hz'] is not None else 'unavailable'}",
+        f"bootloader_hclk_hz: {boot_timing['bootloader_clock_hz']['hclk_hz'] if boot_timing['bootloader_clock_hz']['hclk_hz'] is not None else 'unavailable'}",
+        f"bootloader_pclk1_hz: {boot_timing['bootloader_clock_hz']['pclk1_hz'] if boot_timing['bootloader_clock_hz']['pclk1_hz'] is not None else 'unavailable'}",
+        f"bootloader_pclk2_hz: {boot_timing['bootloader_clock_hz']['pclk2_hz'] if boot_timing['bootloader_clock_hz']['pclk2_hz'] is not None else 'unavailable'}",
         f"verification_result_code: {boot_timing['verification_result_code'] if boot_timing['verification_result_code'] is not None else 'unavailable'}",
         f"verification_time_source: {boot_timing['verification_time_source']}",
         f"Measurement method: {boot_timing['measurement_method']}",
         f"Limitations: {boot_timing['limitations']}",
+        "",
+        "Application clock evidence",
+        "--------------------------",
+        f"application_sysclk_hz: {application_clock_hz['sysclk_hz'] if application_clock_hz['sysclk_hz'] is not None else 'unavailable'}",
+        f"application_hclk_hz: {application_clock_hz['hclk_hz'] if application_clock_hz['hclk_hz'] is not None else 'unavailable'}",
+        f"application_pclk1_hz: {application_clock_hz['pclk1_hz'] if application_clock_hz['pclk1_hz'] is not None else 'unavailable'}",
+        f"application_pclk2_hz: {application_clock_hz['pclk2_hz'] if application_clock_hz['pclk2_hz'] is not None else 'unavailable'}",
+        "application_clock_source: uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "application_clock_source: unavailable",
         "",
         "Runtime memory evidence",
         "-----------------------",
@@ -447,6 +486,14 @@ def _write_uart_capture_log(
         f"heap_used_bytes: {runtime_memory['heap_used_bytes'] if runtime_memory['heap_used_bytes'] is not None else 'unavailable'}",
         f"heap_metric_source: {runtime_memory['heap_metric_source']}",
         f"runtime_memory_limitations: {runtime_memory['limitations']}",
+        "application_memory_checkpoints:",
+        *[
+            "  " + " ".join(
+                f"{key}={value if value is not None else 'unavailable'}"
+                for key, value in checkpoint.items()
+            )
+            for checkpoint in runtime_memory["application_checkpoints"]
+        ],
         "",
         "Capture command",
         "---------------",
@@ -613,6 +660,7 @@ def execute_uart_capture(
     )
     capture_completed = _capture_completed(capture_execution.return_code)
     boot_timing = _boot_timing_evidence(capture_execution.stdout)
+    application_clock_hz = parse_application_clock_hz(capture_execution.stdout)
     runtime_memory = _runtime_memory_evidence(capture_execution.stdout)
 
     if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
@@ -643,6 +691,7 @@ def execute_uart_capture(
         return_code=return_code,
         duration_seconds=duration,
         boot_timing=boot_timing,
+        application_clock_hz=application_clock_hz,
         runtime_memory=runtime_memory,
     )
 
@@ -669,9 +718,15 @@ def execute_uart_capture(
                 "restart_command": restart_command,
                 "restart_during_capture": restart_command is not None,
                 "skipped": False,
-                "verification_time_ms": boot_timing["verification_time_ms"],
+                "derived_verification_time_ms": boot_timing["derived_verification_time_ms"],
+                "derived_time_clock_source": boot_timing["derived_time_clock_source"],
+                "bootloader_clock_hz": boot_timing["bootloader_clock_hz"],
+                "bootloader_hclk_hz": boot_timing["bootloader_hclk_hz"],
+                "bootloader_clock_source": boot_timing["bootloader_clock_source"],
+                "application_clock_hz": application_clock_hz,
+                "application_clock_source": "uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "unavailable",
                 "verification_cycles": boot_timing["verification_cycles"],
-                "verification_cpu_hz": boot_timing["verification_cpu_hz"],
+                
                 "verification_result_code": boot_timing["verification_result_code"],
                 "verification_time_source": boot_timing["verification_time_source"],
                 "verification_time_measurement_method": boot_timing["measurement_method"],
@@ -681,8 +736,14 @@ def execute_uart_capture(
                 "heap_used_bytes": runtime_memory["heap_used_bytes"],
                 "heap_metric_source": runtime_memory["heap_metric_source"],
                 "runtime_memory_limitations": runtime_memory["limitations"],
+                "application_memory_checkpoints": runtime_memory["application_checkpoints"],
             },
             "boot_timing": boot_timing,
+            "application_clock": {
+                "clock_hz": application_clock_hz,
+                "source": "uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "unavailable",
+                "measurement_point": "after FreeRTOS scheduler start in defaultTask",
+            },
             "runtime_memory": runtime_memory,
         },
     )
@@ -702,9 +763,13 @@ def execute_uart_capture(
         tick_present=tick_present,
         secure_boot_marker_present=secure_boot_marker_present,
         data_captured=data_captured,
-        verification_time_ms=boot_timing["verification_time_ms"],
+        derived_verification_time_ms=boot_timing["derived_verification_time_ms"],
+        derived_time_clock_source=boot_timing["derived_time_clock_source"],
+        bootloader_clock_hz=boot_timing["bootloader_clock_hz"],
+        bootloader_hclk_hz=boot_timing["bootloader_hclk_hz"],
+        application_clock_hz=application_clock_hz,
+        application_memory_checkpoints=runtime_memory["application_checkpoints"],
         verification_cycles=boot_timing["verification_cycles"],
-        verification_cpu_hz=boot_timing["verification_cpu_hz"],
         verification_result_code=boot_timing["verification_result_code"],
         verification_time_source=boot_timing["verification_time_source"],
         verification_time_measurement_method=boot_timing["measurement_method"],

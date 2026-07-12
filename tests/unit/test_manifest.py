@@ -319,9 +319,9 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
         signed_application_artifact_path="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
         signed_application_sha256="def",
         signed_application_size_bytes=54321,
-        verification_time_ms=17,
+        derived_verification_time_ms=17,
         verification_cycles=1360000,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -340,7 +340,7 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["signed_artifact_metrics"]["signed_application_size_bytes"] == 54321
     assert benchmark["signed_artifact_metrics"]["unsigned_application_size_unavailable"]["status"] == "unavailable"
     assert benchmark["runtime_verification_metrics"]["status"] == "available"
-    assert benchmark["runtime_verification_metrics"]["verification_time_ms"] == 17
+    assert benchmark["runtime_verification_metrics"]["derived_verification_time_ms"] == 17
     assert benchmark["runtime_memory_metrics"]["status"] == "unavailable"
     assert benchmark["runtime_memory_metrics"]["max_stack_used_bytes"] is None
     assert benchmark["repeated_run_samples"]["status"] == "not_configured"
@@ -348,7 +348,7 @@ def test_build_secure_boot_benchmark_model_records_phase_11_1_schema_and_unavail
     assert benchmark["repeated_run_samples"]["sample_schema"]["verification_time_source"] is None
     assert benchmark["repeated_run_samples"]["sample_schema"]["verification_cycles_source"] is None
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
-    assert benchmark["aggregate_statistics"]["verification_time_ms"]["median"] is None
+    assert benchmark["aggregate_statistics"]["derived_verification_time_ms"]["median"] is None
 
 
 def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samples_only():
@@ -369,9 +369,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=1,
             timestamp="2026-06-30T10:00:00+10:00",
-            verification_time_ms=17,
+            derived_verification_time_ms=17,
             verification_cycles=1360000,
-            verification_cpu_hz=80000000,
+            bootloader_hclk_hz=80000000,
             verification_result_code=0,
             verification_time_source="uart_explicit_verification_time_marker",
             verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -382,9 +382,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=2,
             timestamp="2026-06-30T10:01:00+10:00",
-            verification_time_ms=19,
+            derived_verification_time_ms=19,
             verification_cycles=1520000,
-            verification_cpu_hz=80000000,
+            bootloader_hclk_hz=80000000,
             verification_result_code=0,
             verification_time_source="uart_explicit_verification_time_marker",
             verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -395,9 +395,9 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
         manifest.build_secure_boot_benchmark_sample(
             run_index=3,
             timestamp="2026-06-30T10:02:00+10:00",
-            verification_time_ms=None,
+            derived_verification_time_ms=None,
             verification_cycles=None,
-            verification_cpu_hz=None,
+            bootloader_hclk_hz=None,
             verification_result_code=None,
             verification_time_source="unavailable",
             verification_cycles_source="unavailable",
@@ -419,17 +419,17 @@ def test_phase_11_2_repeated_run_samples_and_aggregate_statistics_use_valid_samp
     assert aggregate["sample_count"] == 3
     assert aggregate["valid_sample_count"] == 2
     assert aggregate["failed_sample_count"] == 1
-    assert aggregate["verification_time_ms"]["minimum"] == 17
-    assert aggregate["verification_time_ms"]["mean"] == 18
-    assert aggregate["verification_time_ms"]["median"] == 18.0
-    assert aggregate["verification_time_ms"]["maximum"] == 19
-    assert round(aggregate["verification_time_ms"]["standard_deviation"], 6) == 1.414214
-    assert aggregate["verification_time_ms"]["range"] == 2
-    assert round(aggregate["verification_time_ms"]["coefficient_of_variation_percent"], 6) == 7.856742
+    assert aggregate["derived_verification_time_ms"]["minimum"] == 17
+    assert aggregate["derived_verification_time_ms"]["mean"] == 18
+    assert aggregate["derived_verification_time_ms"]["median"] == 18.0
+    assert aggregate["derived_verification_time_ms"]["maximum"] == 19
+    assert round(aggregate["derived_verification_time_ms"]["standard_deviation"], 6) == 1.414214
+    assert aggregate["derived_verification_time_ms"]["range"] == 2
+    assert round(aggregate["derived_verification_time_ms"]["coefficient_of_variation_percent"], 6) == 7.856742
     assert aggregate["verification_cycles"]["median"] == 1440000.0
     assert aggregate["verification_cycles"]["range"] == 160000
     assert aggregate["headline_metrics"] == {
-        "primary_verification_time_ms": 18.0,
+        "primary_derived_verification_time_ms": 18.0,
         "primary_verification_cycles": 1440000.0,
         "primary_statistic": "median",
     }
@@ -446,9 +446,9 @@ def test_secure_boot_benchmark_sample_records_metric_sources_and_unavailable_mem
     sample = manifest.build_secure_boot_benchmark_sample(
         run_index=1,
         timestamp="2026-07-01T10:00:00+10:00",
-        verification_time_ms=12,
+        derived_verification_time_ms=12,
         verification_cycles=960000,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -550,9 +550,9 @@ def test_apply_repeated_run_samples_preserves_phase_11_3_static_metrics():
     sample = manifest.build_secure_boot_benchmark_sample(
         run_index=1,
         timestamp="2026-06-30T00:00:00+10:00",
-        verification_time_ms=41,
+        derived_verification_time_ms=41,
         verification_cycles=3253764,
-        verification_cpu_hz=80000000,
+        bootloader_hclk_hz=80000000,
         verification_result_code=0,
         verification_time_source="uart_explicit_verification_time_marker",
         verification_cycles_source="uart_explicit_verification_cycles_marker",
@@ -643,3 +643,144 @@ def test_build_secure_boot_benchmark_model_records_phase_11_5a_classical_profile
     assert profile["minimum_comparison_scope"]["required_algorithms"] == ["ED25519", "ECC256", "RSA2048"]
     assert profile["capability_status"]["ed25519"]["runnable"] is False
     assert profile["capability_status"]["rsa2048"]["runnable"] is False
+
+
+def test_build_mqtt_tls_result_model_records_unavailable_metrics_and_evidence_boundaries():
+    manifest = load_manifest_module()
+
+    result = manifest.build_mqtt_tls_result_model(
+        experiment_id="mqtt_tls_schema_fake",
+        evidence_class="fake_no_network",
+        transport_backend="fake_no_network",
+        tls_mode="not_applicable",
+        unavailable_metrics={
+            "wifi_association": "Fake/no-network transport does not use Wi-Fi hardware.",
+            "ip_address": "Fake/no-network transport does not acquire an IP address.",
+            "tcp_connect": "Fake/no-network transport does not open a TCP socket.",
+            "tls_handshake": "Phase M2 does not perform a TLS handshake.",
+            "mqtt_connect": "Phase M2 does not connect to an MQTT broker.",
+            "mqtt_publish": "Phase M2 does not publish MQTT messages.",
+            "mqtt_reconnect": "Phase M2 does not exercise reconnect behaviour.",
+            "latency_ms": "Phase M2 has no runtime latency evidence.",
+            "throughput_bytes_per_second": "Phase M2 has no throughput evidence.",
+        },
+    )
+
+    assert result["schema_version"] == 1
+    assert result["model_phase"] == "phase_m2_mqtt_tls_config_result_schema"
+    assert result["evidence_class"] == "fake_no_network"
+    assert result["transport_backend"] == "fake_no_network"
+    assert result["tls"]["mode"] == "not_applicable"
+    assert result["metrics"]["mqtt_publish"]["status"] == "unavailable"
+    assert result["metrics"]["mqtt_publish"]["source"] == "unavailable"
+    assert result["metric_summary"] == {
+        "available_count": 0,
+        "unavailable_count": 9,
+        "total_count": 9,
+    }
+    assert result["evidence_boundaries"]["claims_network_success"] is False
+    assert result["evidence_boundaries"]["claims_tls_success"] is False
+    assert result["evidence_boundaries"]["claims_mqtt_success"] is False
+
+
+def test_build_manifest_embeds_mqtt_tls_schema_when_experiment_configures_mqtt():
+    manifest = load_manifest_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["id"] = "mqtt_tls_schema_build_only"
+    bundle["experiment"]["mqtt"] = {
+        "schema_version": 1,
+        "evidence_class": "stm32_build_only",
+        "transport_backend": "stm32_build_only",
+        "tls": {
+            "mode": "unavailable",
+        },
+        "result_schema": {
+            "unavailable_metrics": {
+                "wifi_association": "STM32 build-only evidence does not include Wi-Fi hardware.",
+                "ip_address": "STM32 build-only evidence does not include IP assignment.",
+                "tcp_connect": "STM32 build-only evidence does not include TCP connection evidence.",
+                "tls_handshake": "STM32 build-only evidence does not include TLS runtime evidence.",
+                "mqtt_connect": "STM32 build-only evidence does not include MQTT connection evidence.",
+                "mqtt_publish": "STM32 build-only evidence does not include MQTT publish evidence.",
+                "mqtt_reconnect": "STM32 build-only evidence does not include reconnect evidence.",
+                "latency_ms": "STM32 build-only evidence does not include latency evidence.",
+                "throughput_bytes_per_second": "STM32 build-only evidence does not include throughput evidence.",
+            }
+        },
+    }
+
+    data = manifest.build_manifest(
+        bundle,
+        "2026-07-08_001_mqtt_tls_schema_build_only",
+        datetime(2026, 7, 8, 10, 30, tzinfo=timezone.utc),
+    )
+
+    assert data["mqtt_tls"]["model_phase"] == "phase_m2_mqtt_tls_config_result_schema"
+    assert data["mqtt_tls"]["evidence_class"] == "stm32_build_only"
+    assert data["mqtt_tls"]["metrics"]["tls_handshake"]["status"] == "unavailable"
+    assert data["mqtt_tls"]["evidence_boundaries"]["claims_mqtt_success"] is False
+
+
+def test_build_mqtt_fake_transport_manifest_evidence_labels_simulated_evidence():
+    manifest = load_manifest_module()
+
+    fake_result = {
+        "scenario_id": "publish_timeout",
+        "events": [
+            {
+                "index": 1,
+                "operation": "publish",
+                "outcome": "timeout",
+                "simulated": True,
+            }
+        ],
+        "summary": {
+            "timeout_operations": ["publish"],
+        },
+    }
+
+    evidence = manifest.build_mqtt_fake_transport_manifest_evidence(fake_result)
+
+    assert evidence["model_phase"] == "phase_m3_fake_no_network_transport_harness"
+    assert evidence["evidence_class"] == "fake_no_network"
+    assert evidence["evidence_label"] == "fake/no-network transport evidence"
+    assert evidence["transport_backend"] == "fake_no_network"
+    assert evidence["simulated"] is True
+    assert evidence["evidence_boundaries"]["claims_network_success"] is False
+    assert evidence["evidence_boundaries"]["claims_tls_success"] is False
+    assert evidence["evidence_boundaries"]["claims_mqtt_runtime_success"] is False
+
+
+def test_build_mqtt_tls_result_model_can_embed_fake_transport_without_runtime_claims():
+    manifest = load_manifest_module()
+
+    result = manifest.build_mqtt_tls_result_model(
+        experiment_id="mqtt_tls_schema_fake",
+        evidence_class="fake_no_network",
+        transport_backend="fake_no_network",
+        tls_mode="not_applicable",
+        unavailable_metrics={
+            "wifi_association": "Fake/no-network transport does not use Wi-Fi hardware.",
+            "ip_address": "Fake/no-network transport does not acquire an IP address.",
+            "tcp_connect": "Fake/no-network transport does not open a TCP socket.",
+            "tls_handshake": "Fake/no-network transport does not perform a TLS handshake.",
+            "mqtt_connect": "Simulated connect only.",
+            "mqtt_publish": "Simulated publish only.",
+            "mqtt_reconnect": "Simulated reconnect only.",
+            "latency_ms": "No real latency evidence.",
+            "throughput_bytes_per_second": "No real throughput evidence.",
+        },
+        fake_transport_evidence={
+            "scenario_id": "connect_publish_disconnect_success",
+            "simulated": True,
+            "summary": {
+                "control_flow_success": True,
+            },
+        },
+    )
+
+    assert result["fake_transport"]["scenario_id"] == "connect_publish_disconnect_success"
+    assert result["fake_transport"]["simulated"] is True
+    assert result["evidence_boundaries"]["claims_network_success"] is False
+    assert result["evidence_boundaries"]["claims_tls_success"] is False
+    assert result["evidence_boundaries"]["claims_mqtt_success"] is False

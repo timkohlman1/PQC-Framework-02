@@ -1,3 +1,6 @@
 [submodule "tools/wolfboot"]
 	path = tools/wolfboot
 	url = https://github.com/wolfSSL/wolfBoot.git
+[submodule "Middlewares/Third_Party/wolfMQTT"]
+	path = Middlewares/Third_Party/wolfMQTT
+	url = https://github.com/wolfSSL/wolfMQTT.git

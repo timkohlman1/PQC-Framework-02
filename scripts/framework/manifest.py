@@ -29,6 +29,155 @@ SECURE_BOOT_BENCHMARK_RUNTIME_MEMORY_MODEL_PHASE = "phase_11_4_runtime_memory_me
 SECURE_BOOT_BENCHMARK_CLASSICAL_PROFILE_MODEL_PHASE = "phase_11_5a_classical_profile_model"
 UNAVAILABLE_METRIC_SOURCE = "unavailable"
 
+MQTT_TLS_RESULT_SCHEMA_VERSION = 1
+MQTT_TLS_RESULT_MODEL_PHASE = "phase_m2_mqtt_tls_config_result_schema"
+MQTT_FAKE_TRANSPORT_MODEL_PHASE = "phase_m3_fake_no_network_transport_harness"
+MQTT_TLS_METRIC_NAMES = (
+    "wifi_association",
+    "ip_address",
+    "tcp_connect",
+    "tls_handshake",
+    "mqtt_connect",
+    "mqtt_publish",
+    "mqtt_reconnect",
+    "latency_ms",
+    "throughput_bytes_per_second",
+)
+MQTT_TLS_EVIDENCE_LABELS = {
+    "fake_no_network": "fake/no-network transport evidence",
+    "host_side": "host-side evidence",
+    "stm32_build_only": "STM32 build-only evidence",
+    "stm32_runtime": "STM32 runtime evidence",
+    "st67w61m1_backed": "future ST67W61M1-backed evidence",
+}
+
+
+def _mqtt_unavailable_metric(reason: str, *, source: str = UNAVAILABLE_METRIC_SOURCE) -> dict[str, Any]:
+    """Return an explicit unavailable MQTT/TLS metric record."""
+
+    return {
+        "status": "unavailable",
+        "source": source,
+        "reason": reason,
+    }
+
+
+def build_mqtt_tls_result_model(
+    *,
+    experiment_id: str,
+    evidence_class: str,
+    transport_backend: str,
+    tls_mode: str,
+    broker: dict[str, Any] | None = None,
+    certificate_refs: dict[str, Any] | None = None,
+    unavailable_metrics: dict[str, str] | None = None,
+    available_metrics: dict[str, dict[str, Any]] | None = None,
+    limitations: list[str] | None = None,
+    fake_transport_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the Phase M2 MQTT/TLS result schema.
+
+    The model is schema-first. It can record future MQTT/TLS evidence while
+    preserving explicit unavailable records for metrics that do not yet have
+    supporting firmware, host, broker, UART, or hardware evidence.
+    """
+
+    unavailable_reasons = dict(unavailable_metrics or {})
+    available = dict(available_metrics or {})
+    metric_records: dict[str, Any] = {}
+
+    for metric_name in MQTT_TLS_METRIC_NAMES:
+        if metric_name in available:
+            metric_record = dict(available[metric_name])
+            metric_record.setdefault("status", "available")
+            if not metric_record.get("source"):
+                raise ValueError(f"available MQTT/TLS metric '{metric_name}' must include a source")
+            metric_records[metric_name] = metric_record
+            continue
+
+        reason = unavailable_reasons.get(
+            metric_name,
+            "No explicit MQTT/TLS evidence was available for this metric in Phase M2.",
+        )
+        metric_records[metric_name] = _mqtt_unavailable_metric(reason)
+
+    unavailable_count = sum(
+        1 for metric in metric_records.values() if metric.get("status") == "unavailable"
+    )
+    available_count = sum(
+        1 for metric in metric_records.values() if metric.get("status") == "available"
+    )
+
+    result = {
+        "schema_version": MQTT_TLS_RESULT_SCHEMA_VERSION,
+        "model_phase": MQTT_TLS_RESULT_MODEL_PHASE,
+        "experiment_id": experiment_id,
+        "evidence_class": evidence_class,
+        "evidence_label": MQTT_TLS_EVIDENCE_LABELS.get(evidence_class, evidence_class),
+        "transport_backend": transport_backend,
+        "tls": {
+            "mode": tls_mode,
+            "certificate_refs": dict(certificate_refs or {}),
+        },
+        "broker": dict(broker or {}),
+        "metrics": metric_records,
+        "metric_summary": {
+            "available_count": available_count,
+            "unavailable_count": unavailable_count,
+            "total_count": len(metric_records),
+        },
+        "limitations": list(limitations or []),
+        "evidence_boundaries": {
+            "claims_runtime_success": available_count > 0,
+            "claims_network_success": any(
+                metric_records[name].get("status") == "available"
+                for name in ("wifi_association", "ip_address", "tcp_connect")
+            ),
+            "claims_tls_success": metric_records["tls_handshake"].get("status") == "available",
+            "claims_mqtt_success": any(
+                metric_records[name].get("status") == "available"
+                for name in ("mqtt_connect", "mqtt_publish", "mqtt_reconnect")
+            ),
+            "note": (
+                "MQTT/TLS runtime success claims require explicit real evidence from logs, manifests, "
+                "UART output, broker output, or equivalent records. Fake/no-network transport evidence "
+                "is simulated control-flow evidence only."
+            ),
+        },
+    }
+
+    if fake_transport_evidence is not None:
+        fake_evidence = dict(fake_transport_evidence)
+        fake_evidence.setdefault("model_phase", MQTT_FAKE_TRANSPORT_MODEL_PHASE)
+        fake_evidence.setdefault("simulated", True)
+        result["fake_transport"] = fake_evidence
+
+    return result
+
+
+def build_mqtt_fake_transport_manifest_evidence(fake_transport_result: dict[str, Any]) -> dict[str, Any]:
+    """Return a manifest-safe Phase M3 fake/no-network transport evidence block."""
+
+    evidence = dict(fake_transport_result)
+    evidence["simulated"] = True
+    evidence["evidence_class"] = "fake_no_network"
+    evidence["evidence_label"] = MQTT_TLS_EVIDENCE_LABELS["fake_no_network"]
+    evidence["transport_backend"] = "fake_no_network"
+    evidence.setdefault("model_phase", MQTT_FAKE_TRANSPORT_MODEL_PHASE)
+    evidence["evidence_boundaries"] = {
+        "claims_broker_success": False,
+        "claims_network_success": False,
+        "claims_tls_success": False,
+        "claims_mqtt_runtime_success": False,
+        "claims_stm32_runtime_success": False,
+        "note": (
+            "Phase M3 fake/no-network transport evidence is deterministic simulated "
+            "control-flow evidence only. It is not broker, TLS, network, STM32 runtime, "
+            "gateway, Wi-Fi, UART, or hardware evidence."
+        ),
+    }
+    return evidence
+
 
 def _unavailable_reason(reason: str) -> dict[str, Any]:
     return {
@@ -64,9 +213,9 @@ def build_secure_boot_benchmark_model(
     retained_wolfboot_artifact_size_bytes: int | None = None,
     static_metrics_source: str = UNAVAILABLE_METRIC_SOURCE,
     static_metrics_limitations: str | list[str] | None = None,
-    verification_time_ms: int | None = None,
+    derived_verification_time_ms: int | None = None,
     verification_cycles: int | None = None,
-    verification_cpu_hz: int | None = None,
+    bootloader_hclk_hz: int | None = None,
     verification_result_code: int | None = None,
     verification_time_source: str = UNAVAILABLE_METRIC_SOURCE,
     verification_cycles_source: str = UNAVAILABLE_METRIC_SOURCE,
@@ -183,7 +332,7 @@ def build_secure_boot_benchmark_model(
         overhead_unavailable = _unavailable_reason(unavailable_overhead_reason)
         signed_artifact_limitations.append(unavailable_overhead_reason)
 
-    runtime_status = "available" if verification_time_ms is not None else "unavailable"
+    runtime_status = "available" if derived_verification_time_ms is not None else "unavailable"
     cycles_status = "available" if verification_cycles is not None else "unavailable"
     runtime_memory_available = max_stack_used_bytes is not None
     runtime_memory_status = "available" if runtime_memory_available else "unavailable"
@@ -268,9 +417,9 @@ def build_secure_boot_benchmark_model(
         },
         "runtime_verification_metrics": {
             "status": runtime_status,
-            "verification_time_ms": verification_time_ms,
+            "derived_verification_time_ms": derived_verification_time_ms,
             "verification_cycles": verification_cycles,
-            "verification_cpu_hz": verification_cpu_hz,
+            "bootloader_hclk_hz": bootloader_hclk_hz,
             "verification_result_code": verification_result_code,
             "verification_time_source": verification_time_source,
             "verification_cycles_source": verification_cycles_source,
@@ -301,9 +450,9 @@ def build_secure_boot_benchmark_model(
             "sample_schema": {
                 "run_index": None,
                 "timestamp": None,
-                "verification_time_ms": None,
+                "derived_verification_time_ms": None,
                 "verification_cycles": None,
-                "verification_cpu_hz": None,
+                "bootloader_hclk_hz": None,
                 "verification_result_code": None,
                 "verification_time_source": None,
                 "verification_cycles_source": None,
@@ -326,7 +475,7 @@ def build_secure_boot_benchmark_model(
             "sample_count": 0,
             "valid_sample_count": 0,
             "failed_sample_count": 0,
-            "verification_time_ms": {
+            "derived_verification_time_ms": {
                 "minimum": None,
                 "mean": None,
                 "median": None,
@@ -460,9 +609,9 @@ def build_secure_boot_benchmark_sample(
     *,
     run_index: int,
     timestamp: str,
-    verification_time_ms: float | int | None,
+    derived_verification_time_ms: float | int | None,
     verification_cycles: int | None,
-    verification_cpu_hz: int | None,
+    bootloader_hclk_hz: int | None,
     verification_result_code: int | None,
     verification_time_source: str,
     verification_cycles_source: str,
@@ -480,16 +629,16 @@ def build_secure_boot_benchmark_sample(
     return {
         "run_index": int(run_index),
         "timestamp": timestamp,
-        "verification_time_ms": verification_time_ms,
+        "derived_verification_time_ms": derived_verification_time_ms,
         "verification_cycles": verification_cycles,
-        "verification_cpu_hz": verification_cpu_hz,
+        "bootloader_hclk_hz": bootloader_hclk_hz,
         "verification_result_code": verification_result_code,
         "verification_time_source": verification_time_source,
         "verification_cycles_source": verification_cycles_source,
         "uart_marker_detection_result": uart_marker_detection_result,
         "sample_verdict": sample_verdict,
         "valid_for_statistics": sample_verdict == "passed"
-        and verification_time_ms is not None
+        and derived_verification_time_ms is not None
         and verification_cycles is not None,
         "referenced_artifact_identity": referenced_artifact_identity,
         "runtime_memory_metrics": {
@@ -544,9 +693,9 @@ def calculate_secure_boot_benchmark_aggregate_statistics(
         if sample.get("valid_for_statistics") is not True
     ]
     time_values = [
-        sample["verification_time_ms"]
+        sample["derived_verification_time_ms"]
         for sample in valid_samples
-        if sample.get("verification_time_ms") is not None
+        if sample.get("derived_verification_time_ms") is not None
     ]
     cycle_values = [
         sample["verification_cycles"]
@@ -561,10 +710,10 @@ def calculate_secure_boot_benchmark_aggregate_statistics(
         "sample_count": len(samples),
         "valid_sample_count": len(valid_samples),
         "failed_sample_count": len(failed_samples),
-        "verification_time_ms": time_stats,
+        "derived_verification_time_ms": time_stats,
         "verification_cycles": cycle_stats,
         "headline_metrics": {
-            "primary_verification_time_ms": time_stats["median"],
+            "primary_derived_verification_time_ms": time_stats["median"],
             "primary_verification_cycles": cycle_stats["median"],
             "primary_statistic": "median",
         },
@@ -613,9 +762,9 @@ def apply_repeated_run_samples_to_benchmark_model(
         "sample_schema": {
             "run_index": None,
             "timestamp": None,
-            "verification_time_ms": None,
+            "derived_verification_time_ms": None,
             "verification_cycles": None,
-            "verification_cpu_hz": None,
+            "bootloader_hclk_hz": None,
             "verification_result_code": None,
             "verification_time_source": None,
             "verification_cycles_source": None,
@@ -733,7 +882,7 @@ def build_manifest(
     transport = experiment.get("transport", {})
     network = experiment.get("network", {})
 
-    return {
+    manifest = {
         "run_id": run_id,
         "timestamp": format_manifest_timestamp(timestamp),
         "experiment": experiment["id"],
@@ -744,6 +893,29 @@ def build_manifest(
         "network_profile": network.get("profile", DEFAULT_NETWORK_PROFILE),
         "result": result,
     }
+
+    mqtt_config = experiment.get("mqtt")
+    if isinstance(mqtt_config, dict):
+        tls_config = mqtt_config.get("tls", {})
+        result_schema = mqtt_config.get("result_schema", {})
+        manifest["mqtt_tls"] = build_mqtt_tls_result_model(
+            experiment_id=experiment["id"],
+            evidence_class=mqtt_config.get("evidence_class", "unknown"),
+            transport_backend=mqtt_config.get("transport_backend", "unknown"),
+            tls_mode=tls_config.get("mode", "unavailable") if isinstance(tls_config, dict) else "unavailable",
+            broker=mqtt_config.get("broker", {}) if isinstance(mqtt_config.get("broker", {}), dict) else {},
+            certificate_refs=tls_config.get("certificate_refs", {}) if isinstance(tls_config, dict) else {},
+            unavailable_metrics=(
+                result_schema.get("unavailable_metrics", {})
+                if isinstance(result_schema, dict) and isinstance(result_schema.get("unavailable_metrics", {}), dict)
+                else {}
+            ),
+            limitations=[
+                "Phase M2 records MQTT/TLS schema support only; no STM32 networking, broker deployment, UART capture, or hardware validation was performed by create-run/status schema handling."
+            ],
+        )
+
+    return manifest
 
 
 def write_manifest(path: Path | str, manifest: dict[str, Any]) -> None:

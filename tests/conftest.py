@@ -30,7 +30,6 @@ WOLFBOOT_GENERATED_FILES_TO_CLEAN = (
     Path("tools/wolfboot/wolfboot.bin"),
     Path("tools/wolfboot/wolfboot.hex"),
     Path("tools/wolfboot/wolfboot.map"),
-    Path("tools/wolfboot/wolfboot_signing_private_key.der"),
 )
 WOLFBOOT_GENERATED_GLOBS_TO_CLEAN = (
     "tools/wolfboot/*.o",

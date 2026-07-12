@@ -24,10 +24,10 @@ CSV_FIELDNAMES = [
     "sample_count",
     "valid_sample_count",
     "failed_sample_count",
-    "median_verification_time_ms",
-    "mean_verification_time_ms",
-    "minimum_verification_time_ms",
-    "maximum_verification_time_ms",
+    "median_derived_verification_time_ms",
+    "mean_derived_verification_time_ms",
+    "minimum_derived_verification_time_ms",
+    "maximum_derived_verification_time_ms",
     "verification_time_standard_deviation_ms",
     "median_verification_cycles",
     "mean_verification_cycles",
@@ -201,7 +201,7 @@ def build_benchmark_summary_row(manifest: dict[str, Any], *, source_manifest: Pa
     aggregate = benchmark.get("aggregate_statistics")
     if not isinstance(aggregate, dict):
         aggregate = {}
-    time_stats = aggregate.get("verification_time_ms")
+    time_stats = aggregate.get("derived_verification_time_ms")
     if not isinstance(time_stats, dict):
         time_stats = {}
     cycle_stats = aggregate.get("verification_cycles")
@@ -279,10 +279,10 @@ def build_benchmark_summary_row(manifest: dict[str, Any], *, source_manifest: Pa
         "sample_count": sample_count,
         "valid_sample_count": valid_sample_count,
         "failed_sample_count": failed_sample_count,
-        "median_verification_time_ms": _as_number(time_stats.get("median")),
-        "mean_verification_time_ms": _as_number(time_stats.get("mean")),
-        "minimum_verification_time_ms": _as_number(time_stats.get("minimum")),
-        "maximum_verification_time_ms": _as_number(time_stats.get("maximum")),
+        "median_derived_verification_time_ms": _as_number(time_stats.get("median")),
+        "mean_derived_verification_time_ms": _as_number(time_stats.get("mean")),
+        "minimum_derived_verification_time_ms": _as_number(time_stats.get("minimum")),
+        "maximum_derived_verification_time_ms": _as_number(time_stats.get("maximum")),
         "verification_time_standard_deviation_ms": _as_number(time_stats.get("standard_deviation")),
         "median_verification_cycles": median_verification_cycles,
         "mean_verification_cycles": _as_number(cycle_stats.get("mean")),

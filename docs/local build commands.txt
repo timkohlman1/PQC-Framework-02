@@ -60,3 +60,23 @@ python scripts/experiment.py sign-application --profile configs/signing/wolfboot
 python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml --repeat-count 2
 
 
+
+
+
+
+Push-Location .\tools\wolfboot
+make WOLFBOOT_ROOT=. keysclean
+Pop-Location
+Remove-Item -Force .\tools\wolfboot\wolfboot.elf -ErrorAction SilentlyContinue
+Remove-Item -Force .\tools\wolfboot\wolfboot.bin -ErrorAction SilentlyContinue
+Remove-Item -Force .\tools\wolfboot\wolfboot.hex -ErrorAction SilentlyContinue
+Remove-Item -Force .\tools\wolfboot\wolfboot.map -ErrorAction SilentlyContinue
+Remove-Item -Force .\tools\wolfboot\.config -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
+.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_mldsa65.yaml
+.\scripts\dev.ps1 cmake --preset RelocatedDebug
+.\scripts\dev.ps1 cmake --build --preset RelocatedDebug
+.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_mldsa65_app.yaml
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_mldsa65_uart.yaml
+
+

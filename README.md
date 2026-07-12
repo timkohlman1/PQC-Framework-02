@@ -15,9 +15,11 @@ The repository currently contains:
 - secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
+- an MQTT/TLS roadmap that separates hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation from future ST67W61M1-backed wireless validation
+- STM32 preparation boundaries for lwIP/ST67W6X, wolfSSL, and wolfMQTT, including a FreeRTOS task-context fake/no-network wolfMQTT initialization marker with transport, Wi-Fi, IP, TCP, TLS handshake, MQTT connect/publish/reconnect, ST67W61M1, and end-to-end status explicitly unavailable
 - a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
-Not implemented yet: STM32 MQTT client firmware integration, wolfSSL transport experiments, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: real STM32 MQTT protocol runtime, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -167,8 +169,7 @@ Build the direct-flash firmware preset inside the container:
 Build the relocated firmware preset inside the container:
 
 ```powershell
-.\scripts\dev.ps1 cmake --preset RelocatedDebug
-.\scripts\dev.ps1 cmake --build --preset RelocatedDebug
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 ```
 
 Build one wolfBoot profile inside the container:
@@ -193,6 +194,7 @@ Run gateway-capable integration checks through Docker with runtime-mounted SSH m
 
 ```powershell
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 ```
 
 The default SSH mount source is `${env:USERPROFILE}\.ssh` on PowerShell and `$HOME/.ssh` on POSIX shells. Set `PQC_DOCKER_SSH_DIR` to use a different host-side SSH directory. Set `PQC_DOCKER_IMAGE` to use a different image tag.
@@ -207,9 +209,9 @@ The containerisation track is now the default development path. Phase C2 establi
 
 ## Firmware scheduler model
 
-The STM32 application is CubeMX-generated HAL firmware with a CMSIS-RTOS v1 FreeRTOS template. Startup and secure-boot evidence markers are emitted after peripheral initialization and before `osKernelStart()`. The application also emits explicit FreeRTOS markers when `defaultTask` is created, when the scheduler is about to start, and when `defaultTask` starts running. The recurring `tick` marker and LED toggle run from the default FreeRTOS task using `osDelay(1000)`. The HAL timebase is generated on TIM6 so FreeRTOS can own SysTick.
+The STM32 application is CubeMX-generated HAL firmware with a CMSIS-RTOS v2 FreeRTOS template. Startup and secure-boot evidence markers are emitted after peripheral initialization and before `osKernelStart()`. The application also emits explicit FreeRTOS markers when `defaultTask` is created, when the scheduler is about to start, and when `defaultTask` starts running. The recurring `tick` marker and LED toggle run from the default FreeRTOS task using `osDelay(1000)`. The HAL timebase is generated on TIM1 so FreeRTOS can own SysTick.
 
-FreeRTOS regression coverage checks that generated CMake includes the middleware, `FreeRTOSConfig.h` preserves the baseline scheduler settings, the CubeMX `.ioc` keeps TIM6 as the HAL timebase, the scheduler-start marker is emitted before `osKernelStart()`, and the `tick` marker is owned by `StartDefaultTask()`. The local-build integration coverage also builds both `Debug` and `RelocatedDebug` presets so FreeRTOS source integration is checked for direct-flash and post-secureboot application builds.
+FreeRTOS regression coverage checks that generated CMake includes the middleware, `FreeRTOSConfig.h` preserves the baseline scheduler settings, the CubeMX `.ioc` keeps TIM1 as the HAL timebase, the scheduler-start marker is emitted before `osKernelStart()`, and the `tick` marker is owned by `StartDefaultTask()`. The local-build integration coverage also builds both `Debug` and `RelocatedDebug` presets so FreeRTOS source integration is checked for direct-flash and post-secureboot application builds.
 
 ## Secure-boot workflow
 
@@ -304,7 +306,7 @@ Supported metric groups:
 
 Interpretation rules:
 
-- Use median verification time and median verification cycles as the primary timing comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation are supporting values for repeatability and outlier checks.
+- Use median derived verification time and median raw verification cycles as the primary timing comparison. Mean, minimum, maximum, standard deviation, range, and coefficient of variation are supporting values for repeatability and outlier checks.
 - Compare algorithms across the same board, relocated HAL payload, CPU-Hz assumption, UART marker model, repeated-run count, and image-header reserve.
 - Treat build metrics as static properties of the bootloader image, not runtime memory evidence. `.data + .bss` is the static RAM estimate.
 - Treat stack and heap metrics as runtime metrics only when they come from explicit firmware-side evidence emitted over UART. Do not infer stack, heap, timing, or success from host-side capture duration, SSH duration, reset delay, ELF output alone, or build logs alone.
@@ -325,6 +327,7 @@ Strict capability checks:
 ```powershell
 .\scripts\dev.ps1 pytest tests/integration -m integration --pqc-require-local-build
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_lwip_runtime_smoke_uart.py -m integration --pqc-require-gateway
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware
 .\scripts\dev.ps1 pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks.py -m hardware --pqc-require-hardware
@@ -341,7 +344,7 @@ firmware-builds            Builds the Debug and RelocatedDebug CMake presets wit
 wolfboot-build-integration Runs the real wolfBoot build integration test when local tooling and the wolfBoot submodule are available.
 integration-tests          Runs tests/integration with --pqc-require-local-build after unit tests and firmware builds pass, including Docker Compose config rendering for the MQTT broker profiles.
 mqtt-broker-docker-runtime Starts the local classical Mosquitto container, provisions temporary TLS material, validates mutual TLS, and verifies MQTT publish/subscribe with client certificates.
-container-non-hardware     Default reproducible CI path: builds docker/python/Dockerfile and runs Python unit tests, safe status validation, Debug and RelocatedDebug builds, one wolfBoot profile build, relocated ECDSA P-256 application signing, and targeted local-build integration tests inside the project container.
+container-non-hardware     Default reproducible CI path: builds docker/python/Dockerfile and runs Python unit tests, safe status validation, a Debug build, a framework-recorded RelocatedDebug build with generated-state provenance, one wolfBoot profile build, relocated ECDSA P-256 application signing, and targeted local-build integration tests inside the project container.
 ```
 
 The default CI workflow intentionally does not run `tests/hardware` or require the gateway. Gateway flash-helper checks and MQTT broker gateway E2E tests remain skipped on GitHub-hosted runners because they require SSH access, Docker state on the gateway, network reachability, or explicit lab evidence. The wolfBoot build integration test is enabled because it is local-toolchain-only when the wolfBoot submodule is present. MQTT broker Docker Compose config tests run on the GitHub-hosted runner with `docker compose config`; they validate rendered compose structure without deploying to the gateway or running experiment orchestration. The MQTT broker Docker runtime job starts the classical local Mosquitto container against temporary test certificates and validates mutual-TLS MQTT publish/subscribe. The experimental OQS runtime path remains covered by the gateway E2E test rather than default GitHub-hosted CI.
@@ -377,6 +380,76 @@ For release-readiness reviews, use:
 
 ```text
 docs/009_chatgpt_project_prompt_release_readiness_review.md
+```
+
+
+## MQTT/TLS client roadmap and evidence boundaries
+
+The MQTT/TLS client roadmap is split so hardware-independent work can proceed before the X-NUCLEO-67W61M1 Wi-Fi module is installed or available.
+
+Target client architecture:
+
+```text
+STM32 application
+  -> wolfMQTT client logic on STM32
+  -> wolfSSL TLS endpoint on STM32
+  -> lwIP TCP/IP stack on STM32
+  -> network-interface boundary
+  -> future ST67W61M1 Wi-Fi module backend
+  -> gateway-hosted MQTT broker
+```
+
+The Wi-Fi module is the network interface backend. It is not the TLS endpoint and is not where MQTT client logic runs. Development phases must preserve that ownership boundary.
+
+Planned transport and validation modes:
+
+```text
+fake/no-network transport          deterministic control-flow tests; simulated evidence only
+host/socket validation path        host-side or broker-side compatibility evidence only
+STM32 build-only preparation        compile/link evidence only; no runtime network claim
+STM32 fake/no-network runtime       UART initialization evidence only; no network claim
+future ST67W61M1 backend           real Wi-Fi/network-interface evidence when hardware exists
+future STM32 MQTT-over-TLS          explicit STM32 + broker evidence for TLS/MQTT success
+```
+
+Evidence categories must stay separate:
+
+```text
+build-only evidence                 compiler/build output only
+fake transport evidence             labelled simulation output only
+host-side evidence                  host client or host utility output only
+broker-side evidence                broker status, logs, or local Docker runtime output only
+STM32 runtime evidence              explicit UART logs or manifests from the board
+end-to-end wireless evidence        explicit ST67W61M1, STM32, and broker evidence together
+```
+
+Do not claim Wi-Fi join, IP address acquisition, TCP connection, TLS handshake, MQTT connect, publish, reconnect, latency, memory, timing, or end-to-end wireless success unless explicit logs, manifests, UART output, broker logs, or equivalent evidence support that specific claim.
+
+Near-term MQTT/TLS work should remain in small phases: documentation split, configuration/result schema, fake transport harness, host/broker validation, STM32 lwIP build-only skeleton, wolfSSL build-only skeleton, wolfMQTT build-only skeleton, STM32 fake/no-network runtime markers, optional host-side wolfSSL/wolfMQTT validation, ST67W61M1 backend, classical STM32 MQTT-over-TLS, network degradation, and later PQC/hybrid TLS experiments.
+
+Phase M2 adds framework-side MQTT/TLS configuration and manifest schema support. MQTT experiment configs may include an `mqtt` mapping with `schema_version: 1`, an explicit `transport_backend`, an `evidence_class`, TLS mode, optional non-secret certificate references, optional broker endpoint for host-side validation, and explicit unavailable-metric reasons. Supported evidence classes are `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed`. Supported transport backends are `fake_no_network`, `host_socket`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1`.
+
+Phase M3 adds a deterministic fake/no-network MQTT transport harness for non-hardware control-flow testing. The `mqtt-fake-transport` command records simulated connect, publish, timeout, disconnect, and reconnect outcomes under the manifest `mqtt_tls.fake_transport` block. This evidence is labelled `fake/no-network transport evidence`; it is not broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or real network evidence.
+
+Phase M5 now compiles the STM32-local lwIP/ST67W6X preparation layer without enabling runtime networking. The earlier `Core/Inc/pqc_lwip_build_only.h` and `Core/Src/pqc_lwip_build_only.c` boundary remains present, and CubeMX-generated lwIP, SICS Network LwIP, SPI HAL, and ST67W6X driver sources are included in the direct and relocated firmware builds. This is compile/link evidence only, with one additional non-network lwIP runtime smoke marker emitted over UART. The smoke marker exercises deterministic lwIP version, IPv4 formatting, and checksum helpers only; it does not initialize a netif, use ST67W6X hardware, acquire an IP address, open TCP, run TLS, or perform MQTT. The generated ST67W6X hardware-facing code is present so interfaces can be inspected and future stubs can be scoped, but the firmware does not claim module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, network runtime success, or end-to-end wireless success.
+
+Phase M6.2 adds a project-owned STM32 network-interface boundary through `Core/Inc/pqc_network_interface.h` and `Core/Src/pqc_network_interface.c`. The boundary owns an unattached local lwIP `struct netif`, clears its lwIP IPv4 storage with lwIP address helpers, and derives interface-up, link-up, IPv4-any, IP-availability, and TCP-readiness observations from lwIP netif/IP state. Its `lwIP network interface:` marker is labelled `evidence=lwip-netif-state-only` and reports the raw lwIP observations alongside mapped `link`, `ip`, `tcp`, and `transport` availability. Because the netif remains unattached, down, link-down, and unaddressed, those mapped states remain `unavailable`. Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end status also remain explicitly unavailable. The boundary does not call `netif_add`, bring a link up, start DHCP, open TCP, or access the Wi-Fi driver.
+
+Phase M6.1 extends the STM32-local wolfSSL source boundary through `Core/Inc/pqc_wolfssl_build_only.h`, `Core/Src/pqc_wolfssl_build_only.c`, `Core/Inc/user_settings.h`, and `Core/Inc/pqc_wolfssl_user_settings.h`. CMake builds the selected wolfSSL client-context and supporting wolfCrypt sources from `tools/wolfboot/lib/wolfssl` and links them into direct and relocated firmware builds. The firmware emits a `wolfSSL TLS context smoke:` marker after wolfSSL initialization, TLS 1.2 client `WOLFSSL_CTX` creation/free, and wolfSSL cleanup. The marker is TLS context lifecycle evidence only. Certificate loading, private keys, TCP transport, TLS handshake, MQTT, Wi-Fi, ST67W61M1 backend use, and end-to-end network success remain unavailable.
+
+Phase M6.3 adds `Core/Inc/pqc_wolfssl_transport.h` and `Core/Src/pqc_wolfssl_transport.c` as the project-owned boundary between wolfSSL and the future lwIP/ST67W61M1 transport path. It exposes connect, read, write, receive-callback, and send-callback entry points, consumes the Phase M6.2 network-interface status, and returns explicit unavailable results without opening sockets or registering callbacks on a live wolfSSL session. Its `wolfSSL transport boundary:` marker is labelled `evidence=unavailable-transport-only` and records connect, read, write, TLS handshake, certificates, MQTT, reconnect, Wi-Fi, ST67W61M1, and end-to-end state as unavailable while `socket_io=not-performed`.
+
+
+The expected UART smoke marker begins with `lwIP runtime smoke:` and records `network=unavailable`; it is lwIP helper-call evidence only, not network-interface or wireless evidence. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` runs the baseline build/flash/UART flow and asserts that marker appears in `uart.log` alongside the existing boot, scheduler, default-task, and tick markers.
+
+The current compile-only ST67W61M1 shield pin preparation is `PA5/D13 SPI1_SCK`, `PA6/D12 SPI1_MISO`, `PA7/D11 SPI1_MOSI`, `PD14/D10 SPI_CS`, `PE11/D5 CHIP_EN`, `PE9/D6 BOOT`, `PE13/D3 SPI_RDY` through `EXTI15_10_IRQn`, and `PF15/D2 USER_BUTTON` through `EXTI15_10_IRQn`. The clock preparation targets 120 MHz SYSCLK/HCLK and SPI1 prescaler 4, which gives about 30 Mbit/s if SPI1 is clocked from the 120 MHz APB2/PCLK2 domain. FreeRTOS heap is increased to 40000 bytes for lwIP/ST67W6X preparation. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
+
+The fake/no-network example config is `configs/experiments/mqtt_tls_schema_fake.yaml`. When an experiment config includes MQTT/TLS schema fields, newly created manifests include an `mqtt_tls` result model. Metrics that do not have real evidence are recorded as `status: unavailable` with a reason instead of being omitted or inferred. Phase M2/M3 schema and fake-transport handling does not perform broker deployment, socket I/O, STM32 networking, UART capture, lwIP, wolfSSL, wolfMQTT, or hardware validation.
+
+```powershell
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml --publish-outcome timeout
+./scripts/dev.ps1 experiment mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml --connect-outcome failure --reconnect-attempts 2 --reconnect-outcome success
 ```
 
 ## MQTT broker compose project
@@ -456,3 +529,34 @@ Run the gateway MQTT broker integration test when Docker is available on the gat
 The OQS MQTT broker profile logs to Docker stdout and disables Mosquitto persistence to keep gateway temporary deployments removable by the normal gateway user.
 
 MQTT broker note: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+
+### Generated-state preflight
+
+Build and signing commands maintain local compatibility/provenance records under `.pqc-generated-state/`. The directory is generated and ignored by Git. A command may remove incompatible generated build directories or stale final artifacts before execution, but it will not remove canonical keys or other files under `secrets/`. Secure-boot flashing requires successful wolfBoot-build and application-signing provenance rather than accepting artifacts based only on their presence on disk.
+
+
+### Phase M6.4 secure-boot timing clock evidence
+
+Secure-boot verification timing uses the DWT cycle counter as the primary firmware-side evidence. The wolfBoot instrumentation mailbox records raw elapsed cycles, verification result, stack high-water evidence, and bootloader clock values derived from the active STM32 RCC register model: SYSCLK, HCLK, PCLK1, and PCLK2. Firmware does not convert cycles to milliseconds and does not report a hard-coded CPU frequency.
+
+The framework may derive `derived_verification_time_ms` as `verification_cycles * 1000 / hclk_hz` only when both explicit UART values are present. The manifest records `derived_time_clock_source: hclk_hz` and keeps the raw cycles and reported clocks separate. This derived value is not RTC, wall-clock, host-duration, UART-latency, or independently calibrated timing evidence. Hardware assertions remain capability-gated and require explicit UART/manifest evidence.
+
+
+### Phase M6.5 FreeRTOS task-context runtime smoke
+
+The existing deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke remain available before `osKernelStart()` with `context=pre_scheduler scheduler=not_started`. After `defaultTask` starts, the same local checks run once in serialized task context and emit `context=freertos_task scheduler=running`. The task-context path does not initialize a network interface, bring a link up, assign an IP address, open TCP, load certificates, perform a TLS handshake, connect or publish MQTT, reconnect, use ST67W61M1/Wi-Fi hardware, or claim end-to-end success. No wolfSSL multithreaded integration is enabled because both smoke invocations are serialized and there is no concurrent wolfSSL use.
+
+
+### STM32-local lwIP loopback smoke
+
+The firmware performs a one-shot UDP loopback send/receive check from `defaultTask` after the FreeRTOS scheduler starts. The UART line begins with `lwIP local loopback smoke:` and is explicitly labelled `evidence=stm32-local-lwip-loopback-only`. It validates only the internal lwIP loop interface on the STM32; Wi-Fi, ST67W61M1, hardware IP acquisition, external ping/TCP, TLS, MQTT, broker, reconnect, and end-to-end network states remain unavailable.
+
+
+### Phase M7 wolfMQTT build-only integration
+
+wolfMQTT is pinned as the `Middlewares/Third_Party/wolfMQTT` submodule. Both direct and relocated STM32 builds compile the wolfMQTT client, packet, and callback transport layers. Project-owned `pqc_wolfmqtt_build_only` code initializes a wolfMQTT client against an unavailable fake/no-network `MqttNet` backend and keeps the future ST67W61M1 backend selection outside MQTT client logic. Phase M7 does not run this initializer from firmware and does not connect to a broker, perform TLS, publish, reconnect, use Wi-Fi, or claim end-to-end success.
+
+
+### Phase M8 STM32 fake/no-network runtime evidence
+
+The firmware runs the existing wolfMQTT initialization boundary once from `defaultTask` with `backend=fake_no_network`. The `wolfMQTT runtime smoke:` UART line is initialization-only evidence from the STM32 board. It does not call a broker or network transport and explicitly records Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status as unavailable. The X-NUCLEO-67W61M1 is not required. The known-image UART assertion remains capability-gated under `tests/hardware/test_baseline_uart.py`.

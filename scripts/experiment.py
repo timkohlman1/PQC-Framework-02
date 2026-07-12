@@ -18,6 +18,7 @@ The initial supported commands are:
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+    python scripts/experiment.py mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
     python scripts/experiment.py aggregate-benchmarks
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
@@ -38,7 +39,7 @@ command builds firmware and, only if the build succeeds, flashes that artifact
 through the configured gateway in the same result run folder. The monitor
 command performs ad hoc bounded UART monitoring and writes timestamped logs
 under results/adhoc/. The aggregate-benchmarks command reads existing secure-boot
-benchmark manifests and writes JSON/CSV summaries without touching hardware.
+benchmark manifests and writes JSON/CSV summaries without touching hardware. The mqtt-fake-transport command records deterministic simulated fake/no-network MQTT control-flow evidence without broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access.
 """
 
 from __future__ import annotations
@@ -65,12 +66,19 @@ from framework.manifest import (
     apply_repeated_run_samples_to_benchmark_model,
     build_secure_boot_benchmark_model,
     build_secure_boot_benchmark_sample,
+    build_mqtt_fake_transport_manifest_evidence,
     create_result_folder,
     format_manifest_timestamp,
     read_manifest,
     update_manifest,
 )
 from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
+from framework.mqtt_fake_transport import (
+    FAKE_MQTT_VALID_OUTCOMES,
+    FakeMqttTransportConfigError,
+    scenario_from_config,
+    run_fake_mqtt_transport_scenario,
+)
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
@@ -188,6 +196,202 @@ def require_field(config: dict[str, Any], dotted_path: str, config_name: str) ->
     return current
 
 
+MQTT_TLS_SCHEMA_VERSION = 1
+MQTT_TLS_EVIDENCE_CLASSES = {
+    "fake_no_network",
+    "host_side",
+    "stm32_build_only",
+    "stm32_runtime",
+    "st67w61m1_backed",
+}
+MQTT_TLS_TRANSPORT_BACKENDS = {
+    "fake_no_network",
+    "host_socket",
+    "stm32_build_only",
+    "stm32_runtime",
+    "st67w61m1",
+}
+MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
+    "fake_no_network": {"fake_no_network"},
+    "host_socket": {"host_side"},
+    "stm32_build_only": {"stm32_build_only"},
+    "stm32_runtime": {"stm32_runtime"},
+    "st67w61m1": {"st67w61m1_backed"},
+}
+MQTT_TLS_MODES = {
+    "disabled",
+    "classical_tls",
+    "oqs_experimental_tls",
+    "not_applicable",
+    "unavailable",
+}
+MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
+    "wifi_association",
+    "ip_address",
+    "tcp_connect",
+    "tls_handshake",
+    "mqtt_connect",
+    "mqtt_publish",
+    "mqtt_reconnect",
+    "latency_ms",
+    "throughput_bytes_per_second",
+}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed"}
+
+
+def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
+    """Validate the Phase M2 MQTT/TLS experiment schema fragment.
+
+    This validates representational support only. It does not open sockets,
+    deploy brokers, access SSH, access UART, build firmware, or touch hardware.
+    """
+
+    mqtt_config = config.get("mqtt")
+    if mqtt_config is None:
+        return
+    if not isinstance(mqtt_config, dict):
+        raise ConfigError("experiment config mqtt field must be a mapping")
+
+    required_fields = [
+        "mqtt.schema_version",
+        "mqtt.evidence_class",
+        "mqtt.transport_backend",
+        "mqtt.tls.mode",
+        "mqtt.result_schema.unavailable_metrics",
+    ]
+    for field in required_fields:
+        require_field(config, field, "experiment config")
+
+    schema_version = require_field(config, "mqtt.schema_version", "experiment config")
+    if schema_version != MQTT_TLS_SCHEMA_VERSION:
+        raise ConfigError(f"mqtt.schema_version must be {MQTT_TLS_SCHEMA_VERSION}")
+
+    evidence_class = require_field(config, "mqtt.evidence_class", "experiment config")
+    if evidence_class not in MQTT_TLS_EVIDENCE_CLASSES:
+        raise ConfigError(
+            "mqtt.evidence_class must be one of: "
+            + ", ".join(sorted(MQTT_TLS_EVIDENCE_CLASSES))
+        )
+
+    transport_backend = require_field(config, "mqtt.transport_backend", "experiment config")
+    if transport_backend not in MQTT_TLS_TRANSPORT_BACKENDS:
+        raise ConfigError(
+            "mqtt.transport_backend must be one of: "
+            + ", ".join(sorted(MQTT_TLS_TRANSPORT_BACKENDS))
+        )
+
+    allowed_evidence = MQTT_TLS_TRANSPORT_EVIDENCE_MAP[transport_backend]
+    if evidence_class not in allowed_evidence:
+        raise ConfigError(
+            f"mqtt.transport_backend '{transport_backend}' is not compatible with "
+            f"mqtt.evidence_class '{evidence_class}'"
+        )
+
+    tls_config = mqtt_config.get("tls")
+    if not isinstance(tls_config, dict):
+        raise ConfigError("experiment config mqtt.tls field must be a mapping")
+    tls_mode = require_field(config, "mqtt.tls.mode", "experiment config")
+    if tls_mode not in MQTT_TLS_MODES:
+        raise ConfigError(
+            "mqtt.tls.mode must be one of: " + ", ".join(sorted(MQTT_TLS_MODES))
+        )
+
+    certificate_refs = tls_config.get("certificate_refs", {})
+    if certificate_refs and not isinstance(certificate_refs, dict):
+        raise ConfigError("experiment config mqtt.tls.certificate_refs field must be a mapping")
+    if certificate_refs and tls_mode in {"disabled", "not_applicable", "unavailable"}:
+        raise ConfigError(
+            "mqtt.tls.certificate_refs requires mqtt.tls.mode to be classical_tls or oqs_experimental_tls"
+        )
+    for ref_name, ref_value in certificate_refs.items():
+        if not isinstance(ref_value, str) or not ref_value.strip():
+            raise ConfigError(f"mqtt.tls.certificate_refs.{ref_name} must be a non-empty path reference")
+        lowered_ref_name = str(ref_name).lower()
+        lowered_ref_value = ref_value.lower()
+        if "private" in lowered_ref_name or "key" in lowered_ref_name:
+            raise ConfigError(
+                "mqtt.tls.certificate_refs must not include private key references in Phase M2"
+            )
+        if lowered_ref_value.endswith((".key", ".pem.key")):
+            raise ConfigError(
+                "mqtt.tls.certificate_refs must not reference private key files in Phase M2"
+            )
+
+    broker = mqtt_config.get("broker", {})
+    if broker and not isinstance(broker, dict):
+        raise ConfigError("experiment config mqtt.broker field must be a mapping")
+    if evidence_class == "host_side":
+        require_field(config, "mqtt.broker.host", "experiment config")
+        require_field(config, "mqtt.broker.port", "experiment config")
+    if evidence_class == "fake_no_network" and broker:
+        raise ConfigError("fake_no_network MQTT configs must not configure a real broker endpoint")
+
+    fake_transport = mqtt_config.get("fake_transport", {})
+    if fake_transport and not isinstance(fake_transport, dict):
+        raise ConfigError("experiment config mqtt.fake_transport field must be a mapping")
+    if fake_transport and transport_backend != "fake_no_network":
+        raise ConfigError("mqtt.fake_transport requires mqtt.transport_backend to be fake_no_network")
+    if fake_transport:
+        for outcome_field in (
+            "connect_outcome",
+            "publish_outcome",
+            "disconnect_outcome",
+            "reconnect_outcome",
+        ):
+            outcome_value = fake_transport.get(outcome_field)
+            if outcome_value is not None and outcome_value not in FAKE_MQTT_VALID_OUTCOMES:
+                raise ConfigError(
+                    f"mqtt.fake_transport.{outcome_field} must be one of: "
+                    + ", ".join(sorted(FAKE_MQTT_VALID_OUTCOMES))
+                )
+        reconnect_attempts = fake_transport.get("reconnect_attempts", 0)
+        if not isinstance(reconnect_attempts, int) or reconnect_attempts < 0:
+            raise ConfigError("mqtt.fake_transport.reconnect_attempts must be a non-negative integer")
+        for text_field in ("scenario", "topic", "message"):
+            text_value = fake_transport.get(text_field)
+            if text_value is not None and not isinstance(text_value, str):
+                raise ConfigError(f"mqtt.fake_transport.{text_field} must be a string")
+        if fake_transport.get("scenario") == "":
+            raise ConfigError("mqtt.fake_transport.scenario must be a non-empty string")
+        if fake_transport.get("topic") == "":
+            raise ConfigError("mqtt.fake_transport.topic must be a non-empty string")
+
+    result_schema = mqtt_config.get("result_schema")
+    if not isinstance(result_schema, dict):
+        raise ConfigError("experiment config mqtt.result_schema field must be a mapping")
+    unavailable_metrics = result_schema.get("unavailable_metrics")
+    if not isinstance(unavailable_metrics, dict):
+        raise ConfigError("mqtt.result_schema.unavailable_metrics field must be a mapping")
+
+    unknown_metrics = set(unavailable_metrics) - MQTT_TLS_UNAVAILABLE_METRIC_FIELDS
+    if unknown_metrics:
+        raise ConfigError(
+            "mqtt.result_schema.unavailable_metrics contains unsupported metric names: "
+            + ", ".join(sorted(unknown_metrics))
+        )
+
+    for metric_name, reason in unavailable_metrics.items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ConfigError(
+                f"mqtt.result_schema.unavailable_metrics.{metric_name} must provide a non-empty reason"
+            )
+
+    requires_unavailable_runtime = evidence_class not in MQTT_TLS_RUNTIME_EVIDENCE_CLASSES
+    runtime_metrics = {"tls_handshake", "mqtt_connect", "mqtt_publish", "mqtt_reconnect", "latency_ms"}
+    if requires_unavailable_runtime and not runtime_metrics.issubset(unavailable_metrics):
+        raise ConfigError(
+            "non-runtime MQTT evidence classes must explicitly mark TLS/MQTT runtime metrics unavailable"
+        )
+
+    requires_unavailable_network = evidence_class not in MQTT_TLS_NETWORK_EVIDENCE_CLASSES
+    network_metrics = {"wifi_association", "ip_address", "tcp_connect"}
+    if requires_unavailable_network and not network_metrics.issubset(unavailable_metrics):
+        raise ConfigError(
+            "non-network MQTT evidence classes must explicitly mark Wi-Fi/IP/TCP metrics unavailable"
+        )
+
+
 def validate_experiment_config(config: dict[str, Any]) -> None:
     """Validate required fields for the initial experiment config schema."""
 
@@ -205,6 +409,8 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
 
     for field in required_fields:
         require_field(config, field, "experiment config")
+
+    validate_mqtt_tls_config(config)
 
 
 def validate_board_config(config: dict[str, Any]) -> None:
@@ -723,6 +929,18 @@ def run_build_command(args: argparse.Namespace) -> int:
     """Run the build command."""
 
     bundle = load_experiment_bundle(args.experiment)
+    artifact_override = getattr(args, "artifact", None)
+    if artifact_override is not None:
+        bundle = {
+            **bundle,
+            "experiment": {
+                **bundle["experiment"],
+                "firmware": {
+                    **bundle["experiment"]["firmware"],
+                    "artifact": Path(artifact_override).as_posix(),
+                },
+            },
+        }
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
     configure_preset = args.configure_preset or args.build_preset
@@ -1673,15 +1891,15 @@ def _secure_boot_sample_from_uart_result(
     }
     sample_passed = (
         uart_result.return_code == 0
-        and uart_result.verification_time_ms is not None
+        and uart_result.derived_verification_time_ms is not None
         and uart_result.verification_cycles is not None
     )
     return build_secure_boot_benchmark_sample(
         run_index=run_index,
         timestamp=format_manifest_timestamp(),
-        verification_time_ms=uart_result.verification_time_ms,
+        derived_verification_time_ms=uart_result.derived_verification_time_ms,
         verification_cycles=uart_result.verification_cycles,
-        verification_cpu_hz=uart_result.verification_cpu_hz,
+        bootloader_hclk_hz=uart_result.bootloader_hclk_hz,
         verification_result_code=uart_result.verification_result_code,
         verification_time_source=uart_result.verification_time_source,
         verification_cycles_source=(
@@ -1818,9 +2036,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     )
     boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
     tick_present = None if uart_result is None else uart_result.tick_present
-    verification_time_ms = None if uart_result is None else uart_result.verification_time_ms
+    derived_verification_time_ms = None if uart_result is None else uart_result.derived_verification_time_ms
     verification_cycles = None if uart_result is None else uart_result.verification_cycles
-    verification_cpu_hz = None if uart_result is None else uart_result.verification_cpu_hz
+    bootloader_hclk_hz = None if uart_result is None else uart_result.bootloader_hclk_hz
     verification_result_code = None if uart_result is None else uart_result.verification_result_code
     verification_time_source = (
         "unavailable" if uart_result is None else uart_result.verification_time_source
@@ -1937,9 +2155,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
             },
             "boot_timing": {
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
@@ -2016,9 +2234,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         bootloader_static_ram_bytes=prior_build_time_metrics.get("bootloader_static_ram_bytes"),
         static_metrics_source=prior_build_time_metrics.get("source", "unavailable"),
         static_metrics_limitations=prior_build_time_metrics.get("limitations"),
-        verification_time_ms=verification_time_ms,
+        derived_verification_time_ms=derived_verification_time_ms,
         verification_cycles=verification_cycles,
-        verification_cpu_hz=verification_cpu_hz,
+        bootloader_hclk_hz=bootloader_hclk_hz,
         verification_result_code=verification_result_code,
         verification_time_source=verification_time_source,
         verification_cycles_source=(
@@ -2078,12 +2296,12 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "positive_boot_evidence_passed": positive_boot_evidence_passed,
                 "repeat_count_requested": repeat_count,
                 "repeated_run_sample_count": len(samples),
-                "primary_verification_time_ms": headline_metrics.get("primary_verification_time_ms"),
+                "primary_derived_verification_time_ms": headline_metrics.get("primary_derived_verification_time_ms"),
                 "primary_verification_cycles": headline_metrics.get("primary_verification_cycles"),
                 "primary_statistic": headline_metrics.get("primary_statistic") if headline_metrics else None,
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "verification_time_measurement_method": verification_time_measurement_method,
@@ -2095,9 +2313,9 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 "runtime_memory_limitations": runtime_memory_limitations,
             },
             "boot_timing": {
-                "verification_time_ms": verification_time_ms,
+                "derived_verification_time_ms": derived_verification_time_ms,
                 "verification_cycles": verification_cycles,
-                "verification_cpu_hz": verification_cpu_hz,
+                "bootloader_hclk_hz": bootloader_hclk_hz,
                 "verification_result_code": verification_result_code,
                 "verification_time_source": verification_time_source,
                 "measurement_method": verification_time_measurement_method,
@@ -2159,19 +2377,19 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             print(f"Benchmark sample count: {aggregate_statistics.get('sample_count', len(uart_results))}")
             print(f"Benchmark valid samples: {aggregate_statistics.get('valid_sample_count', 0)}")
             print(f"Benchmark failed samples: {aggregate_statistics.get('failed_sample_count', 0)}")
-        if headline_metrics.get("primary_verification_time_ms") is not None:
-            print(f"Primary verification time (median): {headline_metrics['primary_verification_time_ms']} ms")
-        elif verification_time_ms is None:
+        if headline_metrics.get("primary_derived_verification_time_ms") is not None:
+            print(f"Primary verification time (median): {headline_metrics['primary_derived_verification_time_ms']} ms")
+        elif derived_verification_time_ms is None:
             print("Verification time: unavailable")
         else:
-            print(f"Verification time: {verification_time_ms} ms")
+            print(f"Verification time: {derived_verification_time_ms} ms")
         if headline_metrics.get("primary_verification_cycles") is not None:
             print(f"Primary verification cycles (median): {headline_metrics['primary_verification_cycles']}")
         elif verification_cycles is None:
             print("Verification cycles: unavailable")
         else:
             print(f"Verification cycles: {verification_cycles}")
-        verification_time_stats = aggregate_statistics.get("verification_time_ms", {}) if isinstance(aggregate_statistics, dict) else {}
+        verification_time_stats = aggregate_statistics.get("derived_verification_time_ms", {}) if isinstance(aggregate_statistics, dict) else {}
         verification_cycle_stats = aggregate_statistics.get("verification_cycles", {}) if isinstance(aggregate_statistics, dict) else {}
         if verification_time_stats.get("median") is not None:
             print(
@@ -2195,10 +2413,10 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
                 f"range={verification_cycle_stats.get('range')}, "
                 f"cv_percent={verification_cycle_stats.get('coefficient_of_variation_percent')}"
             )
-        if verification_cpu_hz is None:
+        if bootloader_hclk_hz is None:
             print("Verification CPU Hz: unavailable")
         else:
-            print(f"Verification CPU Hz: {verification_cpu_hz}")
+            print(f"Verification CPU Hz: {bootloader_hclk_hz}")
         if verification_result_code is None:
             print("Verification result code: unavailable")
         else:
@@ -2408,6 +2626,28 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
             "validation_retry_delay_seconds": args.validation_retry_delay_seconds,
             "step_timeout_seconds": args.step_timeout_seconds,
         },
+        "evidence": {
+            "evidence_class": "host_side",
+            "evidence_label": "host-side/broker-side MQTT/TLS compatibility evidence",
+            "evidence_sources": [
+                "host-side MQTT/TLS client validation output",
+                "broker-side Docker Compose status and broker logs",
+            ],
+            "evidence_boundaries": {
+                "claims_host_side_broker_compatibility": not args.skip_validation,
+                "claims_broker_side_container_status": True,
+                "claims_stm32_success": False,
+                "claims_wifi_module_success": False,
+                "claims_lwip_on_stm32_success": False,
+                "claims_wolfssl_on_stm32_success": False,
+                "claims_wolfmqtt_on_stm32_success": False,
+                "claims_end_to_end_wireless_success": False,
+            },
+            "limitations": [
+                "Phase M4 broker validation is host-side and broker-side evidence only.",
+                "It does not exercise STM32 firmware, the ST67W61M1 Wi-Fi module, lwIP on STM32, wolfSSL on STM32, wolfMQTT on STM32, or end-to-end wireless operation.",
+            ],
+        },
         "steps": [],
     }
     _write_mqtt_manifest(result_dir, manifest)
@@ -2499,9 +2739,92 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
     print(f"Run ID: {run_id}")
     print(f"Result directory: {result_dir}")
     print(f"Profile: {args.profile}")
+    print("Evidence label: host-side/broker-side MQTT/TLS compatibility evidence")
+    print("Evidence boundary: host-side client and broker-side Docker validation only; no STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success is claimed")
     print(f"Manifest: {result_dir / 'manifest.json'}")
     print(f"Return code: {final_return_code}")
     return final_return_code
+
+
+def _mqtt_fake_transport_config_from_args(
+    *,
+    mqtt_config: dict[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Merge fake-transport config defaults with CLI overrides."""
+
+    config = dict(mqtt_config.get("fake_transport", {}) or {})
+    for attr, key in (
+        ("scenario", "scenario"),
+        ("connect_outcome", "connect_outcome"),
+        ("publish_outcome", "publish_outcome"),
+        ("disconnect_outcome", "disconnect_outcome"),
+        ("reconnect_outcome", "reconnect_outcome"),
+        ("reconnect_attempts", "reconnect_attempts"),
+        ("topic", "topic"),
+        ("message", "message"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            config[key] = value
+    return config
+
+
+def run_mqtt_fake_transport_command(args: argparse.Namespace) -> int:
+    """Run deterministic fake/no-network MQTT transport control-flow evidence."""
+
+    bundle = load_experiment_bundle(args.experiment)
+    experiment = bundle["experiment"]
+    mqtt_config = experiment.get("mqtt", {})
+    if not isinstance(mqtt_config, dict):
+        print("MQTT fake transport requires an experiment mqtt mapping.", file=sys.stderr)
+        return 2
+    if mqtt_config.get("evidence_class") != "fake_no_network" or mqtt_config.get("transport_backend") != "fake_no_network":
+        print(
+            "MQTT fake transport requires mqtt.evidence_class and mqtt.transport_backend to be fake_no_network.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        scenario_config = _mqtt_fake_transport_config_from_args(
+            mqtt_config=mqtt_config,
+            args=args,
+        )
+        scenario = scenario_from_config(scenario_config)
+        fake_result = run_fake_mqtt_transport_scenario(scenario)
+    except (FakeMqttTransportConfigError, ValueError) as exc:
+        print(f"MQTT fake transport configuration failed: {exc}", file=sys.stderr)
+        return 2
+
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    manifest_path = result_dir / "manifest.json"
+    mqtt_tls = dict(manifest.get("mqtt_tls", {}))
+    mqtt_tls["fake_transport"] = build_mqtt_fake_transport_manifest_evidence(fake_result)
+    mqtt_tls["limitations"] = list(mqtt_tls.get("limitations", [])) + [
+        "Phase M3 fake/no-network MQTT transport harness evidence is simulated control-flow evidence only; no broker, gateway, socket, TLS handshake, UART, STM32 runtime, Wi-Fi, or hardware access was performed."
+    ]
+
+    update_manifest(
+        manifest_path,
+        {
+            "result": "fake_mqtt_transport_completed",
+            "mqtt_tls": mqtt_tls,
+        },
+    )
+
+    print("MQTT fake/no-network transport completed")
+    print("----------------------------------------")
+    print(f"Run ID: {manifest['run_id']}")
+    print(f"Result directory: {result_dir}")
+    print(f"Scenario: {fake_result['scenario_id']}")
+    print(f"Evidence label: {fake_result['evidence_label']}")
+    print(f"Events: {fake_result['summary']['event_count']}")
+    print(f"Timeout operations: {', '.join(fake_result['summary']['timeout_operations']) or 'none'}")
+    print(f"Failed operations: {', '.join(fake_result['summary']['failed_operations']) or 'none'}")
+    print("No broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access was performed.")
+    return 0
+
 
 def run_aggregate_benchmarks_command(args: argparse.Namespace) -> int:
     """Aggregate secure-boot benchmark manifests into JSON and CSV summaries."""
@@ -2595,6 +2918,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--configure-preset",
         default=None,
         help="CMake configure preset to invoke. Defaults to --build-preset.",
+    )
+    build_parser.add_argument(
+        "--artifact",
+        default=None,
+        type=Path,
+        help=(
+            "Repository-relative expected ELF path for this build. "
+            "Defaults to the experiment firmware artifact and is intended for "
+            "provenance-recorded alternate presets such as RelocatedDebug."
+        ),
     )
     build_parser.add_argument(
         "--force",
@@ -2808,6 +3141,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run repeated post-flash secure-boot verification samples for the same benchmark profile. Each sample captures explicit UART timing evidence after reset.",
     )
     secure_boot_flash_parser.set_defaults(func=run_secure_boot_flash_command)
+
+
+    mqtt_fake_parser = subparsers.add_parser(
+        "mqtt-fake-transport",
+        help="Run deterministic fake/no-network MQTT client control-flow evidence without sockets or hardware.",
+    )
+    mqtt_fake_parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to a fake/no-network MQTT experiment YAML config.",
+    )
+    mqtt_fake_parser.add_argument(
+        "--results-dir",
+        default=Path("results"),
+        type=Path,
+        help="Directory where result run folders are created.",
+    )
+    mqtt_fake_parser.add_argument("--scenario", default=None, help="Scenario identifier recorded in fake evidence.")
+    mqtt_fake_parser.add_argument("--connect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated connect outcome.")
+    mqtt_fake_parser.add_argument("--publish-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated publish outcome.")
+    mqtt_fake_parser.add_argument("--disconnect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated disconnect outcome.")
+    mqtt_fake_parser.add_argument("--reconnect-outcome", choices=sorted(FAKE_MQTT_VALID_OUTCOMES), default=None, help="Simulated reconnect outcome.")
+    mqtt_fake_parser.add_argument("--reconnect-attempts", type=int, default=None, help="Number of simulated reconnect attempts.")
+    mqtt_fake_parser.add_argument("--topic", default=None, help="Simulated MQTT topic recorded in fake evidence.")
+    mqtt_fake_parser.add_argument("--message", default=None, help="Simulated MQTT payload used only for message-size evidence.")
+    mqtt_fake_parser.set_defaults(func=run_mqtt_fake_transport_command)
 
 
     mqtt_parser = subparsers.add_parser(

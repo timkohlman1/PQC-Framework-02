@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,8 +16,12 @@ REPEAT_COUNT = 2
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 FREERTOS_UART_MARKERS = (
     "FreeRTOS defaultTask created: name=defaultTask",
-    "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask",
+    "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask",
     "FreeRTOS defaultTask started: periodic tick task active",
+    "FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true",
+    "lwIP runtime smoke: context=freertos_task scheduler=running",
+    "wolfSSL TLS context smoke: context=freertos_task scheduler=running",
+    "FreeRTOS task-context smoke complete: context=freertos_task scheduler=running",
 )
 
 
@@ -173,8 +178,63 @@ def _benchmark_profile_param(profile: SecureBootBenchmarkProfile):
     return pytest.param(profile, id=profile.name, marks=pytest.mark.long)
 
 
+HARDWARE_PROFILE_SELECTION_ENV = "PQC_HARDWARE_SECURE_BOOT_PROFILES"
+HARDWARE_ALL_PROFILES_ENV = "PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES"
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _selected_benchmark_profile_names(environment: dict[str, str] | None = None) -> set[str]:
+    """Return the benchmark profiles selected for this hardware run.
+
+    ML-DSA-65 is always selected for routine coverage. The named-profile
+    environment variable adds comma-separated profiles, while the all-profile
+    environment variable selects the complete matrix.
+    """
+
+    env = os.environ if environment is None else environment
+    available = {profile.name for profile in BENCHMARK_PROFILES}
+    if _truthy(env.get(HARDWARE_ALL_PROFILES_ENV)):
+        return available
+
+    requested = {
+        item.strip().lower()
+        for item in env.get(HARDWARE_PROFILE_SELECTION_ENV, "").split(",")
+        if item.strip()
+    }
+    unknown = sorted(requested - available)
+    if unknown:
+        raise pytest.UsageError(
+            f"Unknown secure-boot hardware profile(s): {', '.join(unknown)}. "
+            f"Available profiles: {', '.join(sorted(available))}."
+        )
+    return {"mldsa65", *requested}
+
+
 def _benchmark_profile_params() -> tuple[object, ...]:
-    return tuple(_benchmark_profile_param(profile) for profile in BENCHMARK_PROFILES)
+    selected = _selected_benchmark_profile_names()
+    params: list[object] = []
+    for profile in BENCHMARK_PROFILES:
+        parameter = _benchmark_profile_param(profile)
+        if profile.name not in selected:
+            parameter = pytest.param(
+                profile,
+                id=profile.name,
+                marks=(
+                    pytest.mark.long,
+                    pytest.mark.skip(
+                        reason=(
+                            "secure-boot hardware profile not selected; set "
+                            f"{HARDWARE_PROFILE_SELECTION_ENV} or "
+                            f"{HARDWARE_ALL_PROFILES_ENV}=1"
+                        )
+                    ),
+                ),
+            )
+        params.append(parameter)
+    return tuple(params)
 
 
 def _assert_freertos_uart_markers(uart_log: str) -> None:
@@ -207,40 +267,14 @@ def _skip_if_missing(path: Path, reason: str) -> None:
 
 
 def _clean_generated_secure_boot_outputs(repo_root: Path) -> None:
-    """Clean generated outputs using the same scope as the manual benchmark run.
+    """Remove only the relocated CMake output used directly by this test.
 
-    The benchmark hardware test intentionally leaves result evidence under
-    results/. It only removes generated wolfBoot and relocated application
-    outputs that can otherwise make a profile switch reuse stale build state.
+    wolfBoot generated-state cleanup is owned by the build-wolfboot preflight.
+    The hardware test must not invoke ``keysclean`` or remove any private key,
+    public key, or generated keystore member from the reusable local tuple.
     """
 
-    wolfboot_dir = repo_root / "tools" / "wolfboot"
-    _skip_if_missing(wolfboot_dir, "wolfBoot source tree is missing")
-    if shutil.which("make") is None:
-        pytest.skip("make is unavailable; wolfBoot keysclean cannot run")
-
-    keysclean_completed = _run_command(
-        repo_root,
-        ["make", "WOLFBOOT_ROOT=.", "keysclean"],
-        cwd=wolfboot_dir,
-    )
-    assert keysclean_completed.returncode == 0, (
-        f"wolfBoot keysclean stdout:\n{keysclean_completed.stdout}\n"
-        f"wolfBoot keysclean stderr:\n{keysclean_completed.stderr}"
-    )
-
-    for relative_path in (
-        "tools/wolfboot/wolfboot.elf",
-        "tools/wolfboot/wolfboot.bin",
-        "tools/wolfboot/wolfboot.hex",
-        "tools/wolfboot/wolfboot.map",
-        "tools/wolfboot/.config",
-    ):
-        path = repo_root / relative_path
-        if path.exists():
-            path.unlink()
-
-    shutil.rmtree(repo_root / "build", ignore_errors=True)
+    shutil.rmtree(repo_root / "build" / "RelocatedDebug", ignore_errors=True)
 
 
 def _parse_result_directory(repo_root: Path, stdout: str) -> Path:
@@ -353,8 +387,8 @@ def _assert_profile_benchmark_manifest(
     assert run["repeated_run_sample_count"] == REPEAT_COUNT
     assert run["positive_boot_evidence_passed"] is True
     assert run["primary_statistic"] == "median"
-    assert isinstance(run["primary_verification_time_ms"], int | float)
-    assert run["primary_verification_time_ms"] > 0
+    assert isinstance(run["primary_derived_verification_time_ms"], int | float)
+    assert run["primary_derived_verification_time_ms"] > 0
     assert isinstance(run["primary_verification_cycles"], int | float)
     assert run["primary_verification_cycles"] > 0
 
@@ -369,9 +403,9 @@ def _assert_profile_benchmark_manifest(
     assert aggregate["valid_sample_count"] == REPEAT_COUNT
     assert aggregate["failed_sample_count"] == 0
     assert aggregate["headline_metrics"]["primary_statistic"] == "median"
-    assert aggregate["headline_metrics"]["primary_verification_time_ms"] == run["primary_verification_time_ms"]
+    assert aggregate["headline_metrics"]["primary_derived_verification_time_ms"] == run["primary_derived_verification_time_ms"]
     assert aggregate["headline_metrics"]["primary_verification_cycles"] == run["primary_verification_cycles"]
-    assert aggregate["verification_time_ms"]["median"] == run["primary_verification_time_ms"]
+    assert aggregate["derived_verification_time_ms"]["median"] == run["primary_derived_verification_time_ms"]
     assert aggregate["verification_cycles"]["median"] == run["primary_verification_cycles"]
 
     repeated = benchmark["repeated_run_samples"]
@@ -383,10 +417,23 @@ def _assert_profile_benchmark_manifest(
         assert sample["sample_verdict"] == "passed"
         assert sample["valid_for_statistics"] is True
         assert sample["verification_result_code"] == 0
-        assert sample["verification_cpu_hz"] == 80000000
+        assert sample["bootloader_hclk_hz"] > 0
+        application_clock = manifest["application_clock"]["clock_hz"]
+        assert application_clock["sysclk_hz"] == 120000000
+        assert application_clock["hclk_hz"] == 120000000
+        assert application_clock["pclk1_hz"] == 120000000
+        assert application_clock["pclk2_hz"] == 120000000
+        assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
+        checkpoints = manifest["runtime_memory"]["application_checkpoints"]
+        checkpoint_by_stage = {checkpoint["stage"]: checkpoint for checkpoint in checkpoints}
+        assert {"pre_scheduler", "default_task_start", "default_task_runtime"}.issubset(checkpoint_by_stage)
+        assert checkpoint_by_stage["pre_scheduler"]["task_stack_used_bytes"] is None
+        assert checkpoint_by_stage["default_task_start"]["heap_peak_used_bytes"] >= 0
+        assert checkpoint_by_stage["default_task_runtime"]["task_stack_used_bytes"] >= 0
+        assert manifest["runtime_memory"]["heap_used_bytes"] >= checkpoint_by_stage["pre_scheduler"]["heap_peak_used_bytes"]
         assert sample["verification_time_source"] == "uart_explicit_verification_time_marker"
         assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"
-        assert sample["verification_time_ms"] > 0
+        assert sample["derived_verification_time_ms"] > 0
         assert sample["verification_cycles"] > 0
 
         marker_result = sample["uart_marker_detection_result"]
@@ -404,6 +451,19 @@ def _assert_profile_benchmark_manifest(
         assert "Secure-boot marker present: true" in uart_log
         assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
         _assert_freertos_uart_markers(uart_log)
+        task_started_index = uart_log.index("FreeRTOS defaultTask started: periodic tick task active")
+        lwip_task_index = uart_log.index("lwIP runtime smoke: context=freertos_task scheduler=running")
+        wolfssl_task_index = uart_log.index("wolfSSL TLS context smoke: context=freertos_task scheduler=running")
+        assert task_started_index < lwip_task_index < wolfssl_task_index
+        assert "lwIP runtime smoke: context=pre_scheduler scheduler=not_started" in uart_log
+        assert "wolfSSL TLS context smoke: context=pre_scheduler scheduler=not_started" in uart_log
+        for unavailable in (
+            "network=unavailable", "tls_handshake=unavailable",
+            "certs=not-loaded", "mqtt_connect=unavailable",
+            "mqtt_publish=unavailable", "reconnect=unavailable",
+            "st67w61m1=unavailable", "end_to_end=unavailable",
+        ):
+            assert unavailable in uart_log
 
     assert (result_dir / "secure_boot_flash.log").is_file()
     return manifest

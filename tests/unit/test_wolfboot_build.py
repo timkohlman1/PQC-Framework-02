@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,6 +129,34 @@ def test_construct_wolfboot_build_command_uses_profile_scalars():
     ]
 
 
+
+
+def test_default_wolfboot_runner_tolerates_non_utf8_build_output(monkeypatch, tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+
+    def fake_run(command, cwd, text, capture_output, check):
+        assert command == ["make", "wolfboot.elf"]
+        assert cwd == tmp_path
+        assert text is False
+        assert capture_output is True
+        assert check is False
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=b"build output before invalid byte: \x86\n",
+            stderr=b"warning before invalid byte: \x86\n",
+        )
+
+    monkeypatch.setattr(wolfboot_build.subprocess, "run", fake_run)
+
+    execution = wolfboot_build.default_wolfboot_runner(["make", "wolfboot.elf"], tmp_path)
+
+    assert execution.return_code == 0
+    assert "build output before invalid byte" in execution.stdout
+    assert "warning before invalid byte" in execution.stderr
+    assert "�" in execution.stdout
+    assert "�" in execution.stderr
+
 def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path):
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
@@ -161,6 +190,16 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" in patched_image_source
         assert "elapsed_cycles" in patched_image_source
+        assert "PQC_BOOT_RCC_BASE" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_MSI" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSI" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSE" in patched_image_source
+        assert "#define PQC_BOOT_RCC_CFGR_SWS_PLL" in patched_image_source
+        assert "PQC_BOOT_PQC_BOOT_RCC_CFGR_SWS_" not in patched_image_source
+        assert "PQC_BOOT_RCC_CFGR" in patched_image_source
+        assert "RCC->" not in patched_image_source
+        assert "RCC_PLLCFGR_PLLSRC_Msk" not in patched_image_source
+        assert "RCC_PLLSOURCE_HSI" not in patched_image_source
         assert "verification_result" in patched_image_source
         assert "max_stack_used_bytes" in patched_image_source
         assert "pqc_boot_stack_high_water" in patched_image_source
@@ -323,27 +362,56 @@ def test_execute_wolfboot_build_records_missing_project_local_config_template(tm
     assert "config template not found" in result.failure_reason
 
 
-def test_project_local_wolfboot_config_selects_stm32l4r5_header():
+def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user_settings_leakage():
     repo_root = Path(__file__).resolve().parents[2]
-    config_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_paths = sorted((repo_root / "configs" / "wolfboot").glob("stm32l4r5_*.config"))
 
-    config_text = config_path.read_text(encoding="utf-8")
+    assert config_paths
 
-    assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
-    assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
-    assert "IMAGE_HEADER_SIZE=8192" in config_text
-    assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
-    assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
-    assert "CFLAGS_EXTRA+=-include" not in config_text
-    assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
-    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
-    assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_CPU_HZ=80000000UL" in config_text
-    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
-    assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
-    assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
-    assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
+    wolfboot_user_settings = (repo_root / "tools" / "wolfboot" / "include" / "user_settings.h").read_text(
+        encoding="utf-8"
+    )
+    assert "#define CTYPE_USER" in wolfboot_user_settings
+
+    duplicated_wolfboot_settings = (
+        "NO_CTYPE_H",
+        "NO_CTYPE",
+        "NO_FILESYSTEM",
+        "NO_WOLFSSL_DIR",
+        "WOLFSSL_NO_CURRDIR",
+        "NO_WRITEV",
+        "SINGLE_THREADED",
+        "ECC_TIMING_RESISTANT",
+        "TFM_TIMING_RESISTANT",
+        "WC_RSA_BLINDING",
+    )
+
+    for config_path in config_paths:
+        config_text = config_path.read_text(encoding="utf-8")
+
+        assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
+        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
+        assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
+        assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
+        assert "not the STM32 application wolfSSL smoke-test settings in Core/Inc" in config_text
+
+        for duplicated_wolfboot_setting in duplicated_wolfboot_settings:
+            assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
+
+        assert "IMAGE_HEADER_SIZE=8192" in config_text
+        assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
+        assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
+        assert "CFLAGS_EXTRA+=-include" not in config_text
+        assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
+        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
+        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
+        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
+        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
+        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
+        assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
+        assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
+        assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
+        assert config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx") < config_text.index("CFLAGS_EXTRA+=-I../../Drivers/STM32L4xx_HAL_Driver/Inc")
 
 
 def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
@@ -464,3 +532,95 @@ def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_
     assert result.return_code == 0
     for stale_path in stale_paths:
         assert not stale_path.exists()
+
+
+def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
+    generated_keystore = source_dir / "src" / "keystore.c"
+    generated_public_key = source_dir / "wolfboot_signing_public_key.der"
+
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
+    signing_key.parent.mkdir(parents=True)
+    signing_key.write_bytes(b"canonical ecdsa p256 private key")
+    wolfboot_key.write_bytes(b"canonical ecdsa p256 private key")
+    generated_keystore.parent.mkdir(parents=True, exist_ok=True)
+    generated_keystore.write_text("/* matching generated keystore */\n", encoding="utf-8")
+    generated_public_key.write_bytes(b"matching generated public key")
+
+    def fake_runner(command: list[str], cwd: Path):
+        assert command == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]
+        assert cwd == source_dir
+        assert generated_keystore.is_file()
+        assert generated_public_key.is_file()
+        assert wolfboot_key.read_bytes() == signing_key.read_bytes()
+        artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    cleanup = manifest["wolfboot_build"]["generated_signing_artifact_cleanup"]
+
+    assert result.return_code == 0
+    assert generated_keystore.is_file()
+    assert generated_public_key.is_file()
+    assert cleanup["removed_count"] == 0
+    assert cleanup["removed_paths"] == []
+
+
+def test_execute_wolfboot_build_rejects_existing_key_when_keystore_is_missing(tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
+    wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
+
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text("TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n", encoding="utf-8")
+    signing_key.parent.mkdir(parents=True)
+    signing_key.write_bytes(b"canonical ecdsa p256 private key")
+    wolfboot_key.write_bytes(b"canonical ecdsa p256 private key")
+
+    runner_called = False
+
+    def fake_runner(command: list[str], cwd: Path):
+        nonlocal runner_called
+        runner_called = True
+        return wolfboot_build.WolfBootCommandExecution(command, 0, "ok", "", 0.1)
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    assert result.return_code == wolfboot_build.PROFILE_ERROR_RETURN_CODE
+    assert runner_called is False
+    assert result.failure_reason is not None
+    assert "generated wolfBoot keystore is missing" in result.failure_reason
+    assert "cannot regenerate keystore.c from an existing private key alone" in result.failure_reason
+

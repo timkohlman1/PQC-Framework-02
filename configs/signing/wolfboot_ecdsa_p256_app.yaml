@@ -1,5 +1,6 @@
 id: wolfboot_ecdsa_p256_app
 description: Sign the relocated STM32 HAL application image for the planned wolfBoot ECDSA-P256 primary slot.
+require_input_build_provenance: true
 status: configured_phase_10g_signing_only_not_flashing_or_boot_validated
 boot_profile: wolfboot_ecdsa_p256
 relocated_build_preset: RelocatedDebug

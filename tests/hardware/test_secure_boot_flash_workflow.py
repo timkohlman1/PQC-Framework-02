@@ -211,27 +211,27 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["secure_boot_run"]["positive_boot_evidence_passed"] is True
 
     assert "boot_timing" in manifest
-    assert isinstance(manifest["boot_timing"]["verification_time_ms"], int)
-    assert manifest["boot_timing"]["verification_time_ms"] > 0
+    assert isinstance(manifest["boot_timing"]["derived_verification_time_ms"], int)
+    assert manifest["boot_timing"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["boot_timing"]["verification_cycles"], int)
     assert manifest["boot_timing"]["verification_cycles"] > 0
-    assert manifest["boot_timing"]["verification_cpu_hz"] == 80000000
+    assert manifest["boot_timing"]["bootloader_hclk_hz"] > 0
     assert manifest["boot_timing"]["verification_result_code"] == 0
     assert (
         manifest["boot_timing"]["verification_time_source"]
         == "uart_explicit_verification_time_marker"
     )
-    assert isinstance(manifest["uart"]["verification_time_ms"], int)
-    assert manifest["uart"]["verification_time_ms"] > 0
+    assert isinstance(manifest["uart"]["derived_verification_time_ms"], int)
+    assert manifest["uart"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["uart"]["verification_cycles"], int)
     assert manifest["uart"]["verification_cycles"] > 0
-    assert manifest["uart"]["verification_cpu_hz"] == 80000000
+    assert manifest["uart"]["bootloader_hclk_hz"] > 0
     assert manifest["uart"]["verification_result_code"] == 0
-    assert isinstance(manifest["secure_boot_run"]["verification_time_ms"], int)
-    assert manifest["secure_boot_run"]["verification_time_ms"] > 0
+    assert isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], int)
+    assert manifest["secure_boot_run"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["secure_boot_run"]["verification_cycles"], int)
     assert manifest["secure_boot_run"]["verification_cycles"] > 0
-    assert manifest["secure_boot_run"]["verification_cpu_hz"] == 80000000
+    assert manifest["secure_boot_run"]["bootloader_hclk_hz"] > 0
     assert manifest["secure_boot_run"]["verification_result_code"] == 0
 
     assert "runtime_memory" in manifest
@@ -351,7 +351,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     assert "Data captured: true" in uart_log
     assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
     assert "verification_cycles:" in uart_log
-    assert "verification_cpu_hz: 80000000" in uart_log
+    assert "bootloader_hclk_hz:" in uart_log
     assert "verification_result_code: 0" in uart_log
     assert "max_stack_used_bytes:" in uart_log
     _assert_freertos_uart_markers(uart_log)

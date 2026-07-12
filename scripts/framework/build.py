@@ -26,6 +26,12 @@ from framework.fingerprint import (
     calculate_default_build_fingerprint,
 )
 from framework.manifest import read_manifest, update_manifest
+from framework.generated_state import (
+    build_identity,
+    detect_execution_identity,
+    preflight_generated_state,
+    record_generated_state_success,
+)
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
 
 ARTIFACT_MISSING_RETURN_CODE = 3
@@ -446,6 +452,21 @@ def execute_build(
             build_skip_reason="fingerprint_error",
         )
 
+    generated_state_scope = f"cmake-{configure_preset}"
+    generated_state_identity = build_identity(
+        workflow="stm32_cmake",
+        profile=f"{configure_preset}:{build_preset}",
+        input_fingerprint={
+            "algorithm": build_fingerprint.algorithm,
+            "fingerprint": build_fingerprint.fingerprint,
+            "inputs": build_fingerprint.inputs,
+        },
+        toolchain={
+            "configure_command": construct_configure_command(configure_preset),
+            "build_command": construct_build_command(build_preset),
+        },
+        execution=detect_execution_identity(),
+    )
     state, state_error = _read_rebuild_state(repo_root_path)
     build_skipped, skip_reason, skip_detail = _rebuild_decision(
         current_fingerprint=build_fingerprint.fingerprint,
@@ -523,6 +544,18 @@ def execute_build(
                 build_log_path=log_path,
             )
             build_record_manifest_path = build_record_path / "manifest.json"
+        record_generated_state_success(
+            repo_root=repo_root_path,
+            scope=generated_state_scope,
+            identity=generated_state_identity,
+            artifacts=[elf_path],
+            record_refs={
+                "build_number": state_build_number if isinstance(state_build_number, int) else None,
+                "build_record_manifest": None if build_record_manifest_path is None else str(build_record_manifest_path),
+                "run_manifest": str(result_dir_path / "manifest.json"),
+                "source": "compatible_legacy_build_state",
+            },
+        )
         update_manifest(
             result_dir_path / "manifest.json",
             {
@@ -574,6 +607,14 @@ def execute_build(
             build_skipped=True,
             build_skip_reason=skip_reason,
         )
+
+    preflight_generated_state(
+        repo_root=repo_root_path,
+        scope=generated_state_scope,
+        expected_identity=generated_state_identity,
+        cleanup_paths=[Path("build") / configure_preset],
+        final_artifact_paths=[elf_path],
+    )
 
     try:
         build_number = reserve_next_build_number(repo_root_path)
@@ -770,6 +811,17 @@ def execute_build(
             firmware_artifact_path=str(elf_path),
             firmware_sha256=firmware_sha256,
             result_artifacts=result_artifacts,
+        )
+        record_generated_state_success(
+            repo_root=repo_root_path,
+            scope=generated_state_scope,
+            identity=generated_state_identity,
+            artifacts=[elf_path],
+            record_refs={
+                "build_number": build_number,
+                "build_record_manifest": None if build_record_manifest_path is None else str(build_record_manifest_path),
+                "run_manifest": str(result_dir_path / "manifest.json"),
+            },
         )
 
     return BuildResult(

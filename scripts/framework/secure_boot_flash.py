@@ -19,6 +19,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
+from framework.generated_state import GeneratedStateError, require_any_recorded_artifact
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -462,7 +463,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "benchmark_assumptions": {
             "application_payload": str(profile.get("application_payload", "same_relocated_hal_application_payload")),
             "board": str(profile.get("board", experiment.get("board", "unknown"))),
-            "cpu_hz": profile.get("cpu_hz"),
+            
             "measurement_method": str(profile.get("measurement_method", "uart_explicit_wolfboot_mailbox_markers")),
             "repeated_run_model": str(profile.get("repeated_run_model", "phase_11_2_repeat_count_samples")),
             "static_metrics_model": str(profile.get("static_metrics_model", "phase_11_3_elf_and_artifact_metrics")),
@@ -814,6 +815,31 @@ def execute_secure_boot_flash(
         failure_reason = str(key_consistency["message"])
 
     if return_code == 0:
+        for required in (wolfboot, signed_application):
+            if not required.artifact_exists:
+                return_code = SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE
+                failure_stage = f"{required.name}_artifact"
+                failure_reason = f"Required artifact not found: {required.artifact_path}"
+                break
+
+    if return_code == 0:
+        try:
+            require_any_recorded_artifact(
+                repo_root=repo_root_path,
+                artifact_path=wolfboot.artifact_path,
+                workflow="wolfboot_build",
+            )
+            require_any_recorded_artifact(
+                repo_root=repo_root_path,
+                artifact_path=original_signed_application_path,
+                workflow="application_signing",
+            )
+        except GeneratedStateError as exc:
+            return_code = SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE
+            failure_stage = "artifact_provenance"
+            failure_reason = f"Secure-boot flashing requires successful build/signing provenance: {exc}"
+
+    if return_code == 0:
         artifacts_to_flash = [wolfboot, signed_application]
     else:
         artifacts_to_flash = []
@@ -1017,7 +1043,7 @@ def execute_secure_boot_flash(
                     "secure_boot_marker_present": None,
                 },
                 "boot_timing": {
-                    "verification_time_ms": None,
+                    "derived_verification_time_ms": None,
                     "verification_time_source": "unavailable",
                 },
                 "artifact_freshness": fingerprint_evidence,

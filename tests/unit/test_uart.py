@@ -208,17 +208,82 @@ def test_constructs_monitor_with_delayed_restart_command():
 
 def test_parse_verification_timing_accepts_explicit_uart_markers():
     uart = load_uart_module()
+    output = (
+        "wolfBoot verification cycles: 1360000 cycles\n"
+        "wolfBoot clock sysclk_hz: 64000000\n"
+        "wolfBoot clock hclk_hz: 64000000\n"
+        "wolfBoot clock pclk1_hz: 64000000\n"
+        "wolfBoot clock pclk2_hz: 64000000\n"
+        "wolfBoot verification result: 0\n"
+        "application clock sysclk_hz: 120000000\n"
+        "application clock hclk_hz: 120000000\n"
+        "application clock pclk1_hz: 120000000\n"
+        "application clock pclk2_hz: 120000000\n"
+    )
+    assert uart.parse_verification_cycles(output) == 1360000
+    assert uart.parse_bootloader_clock_hz(output) == {
+        "sysclk_hz": 64000000,
+        "hclk_hz": 64000000,
+        "pclk1_hz": 64000000,
+        "pclk2_hz": 64000000,
+    }
+    assert uart.parse_application_clock_hz(output) == {
+        "sysclk_hz": 120000000,
+        "hclk_hz": 120000000,
+        "pclk1_hz": 120000000,
+        "pclk2_hz": 120000000,
+    }
+    evidence = uart._boot_timing_evidence(output)
+    assert evidence["derived_verification_time_ms"] == 21.25
+    assert evidence["derived_time_clock_source"] == "hclk_hz"
+    assert evidence["verification_cycles_source"] == "uart_explicit_dwt_cycles_marker"
+    assert uart.parse_verification_result_code(output) == 0
 
-    assert uart.parse_verification_time_ms("wolfBoot verification time: 17 ms\n") == 17
-    assert uart.parse_verification_time_ms("verification_time_ms=23.5\n") == 23.5
-    assert uart.parse_verification_cycles("wolfBoot verification cycles: 3280000 cycles\n") == 3280000
-    assert uart.parse_verification_cycles("verification_cycles=3280000\n") == 3280000
-    assert uart.parse_verification_cpu_hz("wolfBoot verification cpu_hz: 80000000\n") == 80000000
-    assert uart.parse_verification_cpu_hz("verification_cpu_hz=80000000\n") == 80000000
-    assert uart.parse_verification_result_code("wolfBoot verification result: 0\n") == 0
-    assert uart.parse_verification_result_code("verification_result_code=-1\n") == -1
-    assert uart.parse_verification_time_ms("stm32-basic_hal1 boot v0.1.0\ntick\n") is None
-    assert uart.parse_verification_cycles("stm32-basic_hal1 boot v0.1.0\ntick\n") is None
+
+def test_parse_application_clock_hz_tolerates_capture_starting_mid_line():
+    uart = load_uart_module()
+    output = (
+        "tapplication clock sysclk_hz: 120000000\n"
+        "application clock hclk_hz: 120000000\n"
+        "application clock pclk1_hz: 120000000\n"
+        "application clock pclk2_hz: 120000000\n"
+    )
+
+    assert uart.parse_application_clock_hz(output) == {
+        "sysclk_hz": 120000000,
+        "hclk_hz": 120000000,
+        "pclk1_hz": 120000000,
+        "pclk2_hz": 120000000,
+    }
+
+
+def test_parse_application_memory_checkpoints_uses_explicit_exact_markers():
+    uart = load_uart_module()
+    output = (
+        "FreeRTOS scheduler starting: heap_bytes=40000 default_task_stack_words=512\n"
+        "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400 task_stack_total_bytes=unavailable task_stack_high_water_bytes=unavailable task_stack_used_bytes=unavailable\n"
+        "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800 task_stack_total_bytes=2048 task_stack_high_water_bytes=1500 task_stack_used_bytes=548\n"
+    )
+
+    checkpoints = uart.parse_application_memory_checkpoints(output)
+    assert [checkpoint["stage"] for checkpoint in checkpoints] == [
+        "pre_scheduler",
+        "default_task_runtime",
+    ]
+    assert checkpoints[0]["task_stack_used_bytes"] is None
+    assert checkpoints[1]["heap_peak_used_bytes"] == 2800
+    assert checkpoints[1]["task_stack_used_bytes"] == 548
+    assert uart.parse_heap_used_bytes(output) == 2400
+    evidence = uart._runtime_memory_evidence(output)
+    assert evidence["heap_used_bytes"] == 2800
+    assert evidence["heap_metric_source"] == "uart_explicit_application_memory_checkpoint"
+
+
+def test_heap_parser_does_not_infer_usage_from_scheduler_configuration():
+    uart = load_uart_module()
+    output = "FreeRTOS scheduler starting: heap_bytes=40000 default_task_stack_words=512\n"
+    assert uart.parse_heap_used_bytes(output) is None
+    assert uart.parse_application_memory_checkpoints(output) == []
 
 
 def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
@@ -274,10 +339,21 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
             command=command,
             return_code=124,
             stdout=(
-                "wolfBoot verification time: 17 ms\n"
                 "wolfBoot verification cycles: 1360000 cycles\n"
-                "wolfBoot verification cpu_hz: 80000000\n"
+                "wolfBoot clock sysclk_hz: 64000000\n"
+                "wolfBoot clock hclk_hz: 64000000\n"
+                "wolfBoot clock pclk1_hz: 64000000\n"
+                "wolfBoot clock pclk2_hz: 64000000\n"
+                "wolfBoot verification cycles: 1360000 cycles\n"
+                "wolfBoot clock hclk_hz: 64000000\n"
                 "wolfBoot verification result: 0\n"
+                "application clock sysclk_hz: 120000000\n"
+                "application clock hclk_hz: 120000000\n"
+                "application clock pclk1_hz: 120000000\n"
+                "application clock pclk2_hz: 120000000\n"
+                "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400 task_stack_total_bytes=unavailable task_stack_high_water_bytes=unavailable task_stack_used_bytes=unavailable\n"
+                "application memory checkpoint: stage=default_task_start heap_total_bytes=40000 heap_free_bytes=37520 heap_min_ever_free_bytes=37440 heap_current_used_bytes=2480 heap_peak_used_bytes=2560 task_stack_total_bytes=2048 task_stack_high_water_bytes=1600 task_stack_used_bytes=448\n"
+                "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800 task_stack_total_bytes=2048 task_stack_high_water_bytes=1500 task_stack_used_bytes=548\n"
                 "stm32-basic_hal1 boot v0.1.0\n"
                 "tick\n"
                 "tick\n"
@@ -300,11 +376,23 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert result.boot_marker_present is True
     assert result.tick_present is True
     assert result.data_captured is True
-    assert result.verification_time_ms == 17
+    assert result.derived_verification_time_ms == 21.25
     assert result.verification_cycles == 1360000
-    assert result.verification_cpu_hz == 80000000
+    assert result.bootloader_hclk_hz == 64000000
+    assert result.application_clock_hz == {
+        "sysclk_hz": 120000000,
+        "hclk_hz": 120000000,
+        "pclk1_hz": 120000000,
+        "pclk2_hz": 120000000,
+    }
+    assert [checkpoint["stage"] for checkpoint in result.application_memory_checkpoints] == [
+        "pre_scheduler",
+        "default_task_start",
+        "default_task_runtime",
+    ]
+    assert result.heap_used_bytes == 2800
     assert result.verification_result_code == 0
-    assert result.verification_time_source == "uart_explicit_verification_time_marker"
+    assert result.verification_time_source == "framework_derived_from_uart_cycles_and_reported_hclk"
     assert len(calls) == 1
     assert manifest["result"] == "pass"
     assert manifest["uart"]["return_code"] == 0
@@ -312,18 +400,25 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert manifest["uart"]["boot_marker_present"] is True
     assert manifest["uart"]["tick_present"] is True
     assert manifest["uart"]["data_captured"] is True
-    assert manifest["uart"]["verification_time_ms"] == 17
+    assert manifest["uart"]["derived_verification_time_ms"] == 21.25
     assert manifest["uart"]["verification_cycles"] == 1360000
-    assert manifest["uart"]["verification_cpu_hz"] == 80000000
+    assert manifest["uart"]["bootloader_hclk_hz"] > 0
+    assert manifest["uart"]["application_clock_hz"]["hclk_hz"] == 120000000
+    assert manifest["application_clock"]["clock_hz"]["sysclk_hz"] == 120000000
+    assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
+    assert manifest["runtime_memory"]["application_checkpoints"][-1]["heap_peak_used_bytes"] == 2800
+    assert manifest["uart"]["application_memory_checkpoints"][-1]["task_stack_used_bytes"] == 548
     assert manifest["uart"]["verification_result_code"] == 0
-    assert manifest["boot_timing"]["verification_time_ms"] == 17
+    assert manifest["boot_timing"]["derived_verification_time_ms"] == 21.25
     assert manifest["boot_timing"]["verification_cycles"] == 1360000
-    assert manifest["boot_timing"]["verification_cpu_hz"] == 80000000
+    assert manifest["boot_timing"]["bootloader_hclk_hz"] > 0
     assert manifest["boot_timing"]["verification_result_code"] == 0
-    assert manifest["boot_timing"]["verification_time_source"] == "uart_explicit_verification_time_marker"
-    assert "verification_time_ms: 17" in log
+    assert manifest["boot_timing"]["verification_time_source"] == "framework_derived_from_uart_cycles_and_reported_hclk"
+    assert "derived_verification_time_ms: 21.25" in log
     assert "verification_cycles: 1360000" in log
-    assert "verification_cpu_hz: 80000000" in log
+    assert "bootloader_hclk_hz: 64000000" in log
+    assert "Application clock evidence" in log
+    assert "application_hclk_hz: 120000000" in log
     assert "verification_result_code: 0" in log
     assert "Boot marker present: true" in log
     assert "Tick marker present: true" in log
@@ -362,15 +457,22 @@ def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_pa
     assert missing_result.boot_marker_present is True
     assert missing_result.tick_present is True
     assert missing_result.secure_boot_marker_present is False
-    assert missing_result.verification_time_ms is None
+    assert missing_result.derived_verification_time_ms is None
     assert missing_result.verification_cycles is None
-    assert missing_result.verification_cpu_hz is None
+    assert missing_result.bootloader_hclk_hz is None
+    assert missing_result.application_clock_hz == {
+        "sysclk_hz": None,
+        "hclk_hz": None,
+        "pclk1_hz": None,
+        "pclk2_hz": None,
+    }
+    assert missing_result.application_memory_checkpoints == []
     assert missing_result.verification_result_code is None
     assert missing_result.verification_time_source == "unavailable"
     assert missing_manifest["uart"]["secure_boot_marker_present"] is False
-    assert missing_manifest["boot_timing"]["verification_time_ms"] is None
+    assert missing_manifest["boot_timing"]["derived_verification_time_ms"] is None
     assert missing_manifest["boot_timing"]["verification_cycles"] is None
-    assert missing_manifest["boot_timing"]["verification_cpu_hz"] is None
+    assert missing_manifest["boot_timing"]["bootloader_hclk_hz"] is None
     assert missing_manifest["boot_timing"]["verification_result_code"] is None
     assert missing_manifest["boot_timing"]["verification_time_source"] == "unavailable"
 

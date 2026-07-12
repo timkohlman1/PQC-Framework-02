@@ -221,6 +221,9 @@ jobs:
       - name: Run Python unit tests in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit
 
+      - name: Run lwIP/ST67 compile-only static validation in container
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit/test_stm32_lwip_st67_compile_only.py
+
       - name: Run safe framework status command in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
 
@@ -229,10 +232,14 @@ jobs:
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset Debug
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset Debug
 
-      - name: Build relocated firmware preset in container
+      - name: Build relocated firmware with framework provenance in container
         run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset RelocatedDebug
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset RelocatedDebug
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
+            python scripts/experiment.py build \
+              --experiment configs/experiments/baseline_direct_uart.yaml \
+              --configure-preset RelocatedDebug \
+              --build-preset RelocatedDebug \
+              --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 
       - name: Build wolfBoot profile in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml

@@ -36,6 +36,10 @@ def test_real_wolfboot_build_profile_records_evidence_when_tooling_is_available(
     if shutil.which("make") is None:
         pytest.skip("make is not available for the configured wolfBoot build profile")
 
+    # The ECDSA-P256 benchmark profile is explicitly disposable. The framework
+    # must self-heal an incomplete or mismatched local tuple by rotating the
+    # complete experimental tuple before invoking make.
+
     results_dir = tmp_path / "results"
     completed = subprocess.run(
         [

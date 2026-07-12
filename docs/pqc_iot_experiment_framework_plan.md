@@ -162,157 +162,272 @@ Pass criteria:
 
 ---
 
-## Phase 12 — Add MQTT Plain Baseline
+## Phase M — MQTT/TLS Architecture Split and Non-Hardware Preparation
 
-- [ ] Add simple MQTT firmware variant.
+This phase family replaces the previous single-step assumption that MQTT/TLS firmware work starts only after Wi-Fi hardware is available. It keeps the target architecture unchanged: lwIP, wolfSSL, and wolfMQTT run on the STM32, while the ST67W61M1 Wi-Fi module is a future network-interface backend.
 
-- [ ] Add broker configuration on `pqc-gateway1`.
+The phase family is evidence-bound. Build-only, fake transport, host-side, broker-side, STM32 runtime, and end-to-end wireless evidence must remain separate. Do not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, latency, runtime memory, or end-to-end success without explicit logs, manifests, UART output, broker logs, or equivalent evidence for that exact claim.
 
-- [ ] Add transport config:
-
-  ```text
-  configs/transport/mqtt_plain.yaml
-  ```
-
-- [ ] Add experiment config:
-
-  ```text
-  configs/experiments/mqtt_plain_baseline.yaml
-  ```
-
-- [ ] Capture:
-  - [ ] connect success
-  - [ ] publish success
-  - [ ] publish latency
-  - [ ] reconnect behaviour
-  - [ ] UART logs
-  - [ ] broker logs where useful
-
-- [ ] Save metrics:
-
-  ```text
-  results/<run_id>/metrics.json
-  ```
-
-- [ ] Add tests for:
-  - [ ] MQTT config parsing
-  - [ ] result schema
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
+Do not commit SSH private keys, VPN private keys, TLS private keys, MQTT passwords, real `.env` files, private certificates, private signing keys, wolfBoot private signing keys, generated signing material, tokens, or production credentials.
 
 ---
 
-## Phase 13 — Add Classical MQTT over TLS
+### Phase M1 — MQTT/TLS Architecture Split Without Wi-Fi Hardware
 
-- [ ] Add wolfSSL classical TLS firmware profile.
+Goal: Update the MQTT/TLS roadmap and architecture documentation so MQTT/TLS development is explicitly split into hardware-independent and ST67W61M1-dependent phases.
 
-- [ ] Add certificate handling.
+Outcomes:
 
-- [ ] Commit only:
-  - [ ] public CA certificates where appropriate
-  - [ ] example configs
-  - [ ] documentation
+- [x] Record that MQTT/TLS client development can proceed before the Wi-Fi module is installed or available.
+- [x] State that lwIP, wolfSSL, and wolfMQTT are intended to run on the STM32.
+- [x] State that the ST67W61M1 is a network-interface backend, not the TLS endpoint or MQTT client owner.
+- [x] Distinguish fake/no-network transport, host/socket validation, STM32 build-only preparation, STM32 fake/no-network runtime, and future ST67W61M1-backed validation.
+- [x] Separate build-only, fake transport, host-side, broker-side, STM32 runtime, and end-to-end wireless evidence categories.
+- [x] Avoid firmware, Docker, framework code, broker implementation, or test implementation changes in this phase.
 
-- [ ] Keep private keys in local secrets only.
+Pass criteria:
 
-- [ ] Add transport config:
-
-  ```text
-  configs/transport/mqtt_tls_classic.yaml
-  ```
-
-- [ ] Capture:
-  - [ ] TLS handshake time
-  - [ ] MQTT connect time
-  - [ ] first publish time
-  - [ ] repeat publish latency
-  - [ ] RAM usage if available
-  - [ ] firmware size
-  - [ ] network bytes if available
-
-- [ ] Add result metrics schema.
-
-- [ ] Add repeat-run support.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
+- [x] The roadmap no longer assumes Wi-Fi hardware is available before MQTT/TLS design work starts.
+- [x] STM32-local lwIP/wolfSSL/wolfMQTT ownership is explicit.
+- [x] Future implementation phases are small and evidence-bound.
+- [x] No MQTT, TLS, Wi-Fi, publish, latency, reconnect, or end-to-end success is claimed.
 
 ---
 
-## Phase 14 — Add Network Degradation
+### Phase M2 — MQTT Configuration and Result Schema
 
-- [ ] Add network profile configs:
+Goal: Add framework-side configuration and result schema support for future MQTT/TLS experiments before firmware transport implementation.
 
-  ```text
-  configs/network/normal.yaml
-  configs/network/latency_50ms.yaml
-  configs/network/loss_1pct.yaml
-  configs/network/jitter_20ms.yaml
-  ```
+Outcomes:
 
-- [ ] Add Linux `tc netem` wrapper on `pqc-gateway1`.
+- [ ] Represent MQTT experiment configuration and validate invalid combinations.
+- [ ] Represent transport backend selection.
+- [ ] Represent TLS mode and certificate references where appropriate.
+- [ ] Represent unavailable hardware/network metrics explicitly.
+- [ ] Distinguish fake/no-network, host-side, STM32 build-only, STM32 runtime, and future ST67W61M1-backed evidence.
+- [ ] Avoid STM32 firmware networking, lwIP integration, wolfSSL integration, wolfMQTT integration, broker deployment, and hardware tests in this sub-phase.
 
-- [ ] Add setup and cleanup behaviour:
-  - [ ] apply impairment before run
-  - [ ] verify impairment active
-  - [ ] run experiment
-  - [ ] clear impairment after run
-  - [ ] verify impairment cleared
+Pass criteria:
 
-- [ ] Make cleanup robust even if the experiment fails.
-
-- [ ] Add unit tests for generated `tc` commands.
-
-- [ ] Add opt-in integration tests for applying and clearing network impairment.
-
-- [ ] Record network profile in manifest.
-
-- [ ] Update documentation.
-
-- [ ] Update `AI_BUILD_GUIDE.md`.
-
-- [ ] Commit.
+- [ ] MQTT/TLS configs validate.
+- [ ] Invalid configs are rejected.
+- [ ] Unavailable hardware/network metrics are represented explicitly.
+- [ ] No network or hardware access is required.
 
 ---
 
-## Phase 15 — Add PQC/Hybrid Transport Experiments
+### Phase M3 — Fake/No-Network MQTT Transport Harness
 
-- [ ] Verify selected wolfSSL version.
+Goal: Provide deterministic non-network test coverage for MQTT client control-flow behaviour.
 
-- [ ] Confirm supported PQC/hybrid options.
+Outcomes:
 
-- [ ] Add build profiles for PQC/hybrid TLS only after support is confirmed.
+- [ ] Add a fake/no-network transport mode for tests.
+- [ ] Model connect success, connect failure, read timeout, write timeout, disconnect, and reconnect attempts.
+- [ ] Label simulated evidence as fake transport evidence.
+- [ ] Prevent fake transport results from being treated as real MQTT/TLS runtime success.
+- [ ] Avoid broker, gateway, Wi-Fi module, UART, and STM32 hardware requirements.
 
-- [ ] Add transport configs:
+Pass criteria:
 
-  ```text
-  configs/transport/mqtt_tls_pqc.yaml
-  configs/transport/mqtt_tls_hybrid.yaml
-  ```
+- [ ] Fake transport outcomes are deterministic and testable.
+- [ ] Simulated evidence is not confused with real broker, TLS, or STM32 runtime evidence.
+- [ ] No hardware or network dependency is introduced.
 
-- [ ] Capture the same metrics as classical TLS:
-  - [ ] firmware size
-  - [ ] RAM use
-  - [ ] handshake time
-  - [ ] MQTT connect time
-  - [ ] publish latency
-  - [ ] success/failure under degraded networks
-  - [ ] reconnect behaviour
+---
 
-- [ ] Add comparison scripts later.
+### Phase M4 — Host-Side Broker Compatibility Validation
 
-- [ ] Update documentation.
+Goal: Validate MQTT/TLS broker compatibility separately from STM32 firmware and Wi-Fi hardware.
 
-- [ ] Update `AI_BUILD_GUIDE.md`.
+Outcomes:
 
-- [ ] Commit.
+- [ ] Use or extend the existing MQTT broker scaffold for host-side validation.
+- [ ] Validate classical MQTT-over-TLS broker setup from a host-side client path where capability is available.
+- [ ] Label validation evidence as host-side and broker-side only.
+- [ ] Keep gateway/broker-dependent tests capability-gated.
+- [ ] Avoid STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success claims.
+
+Pass criteria:
+
+- [ ] Broker validation remains capability-gated.
+- [ ] Host/broker evidence is clearly separated from STM32 evidence.
+- [ ] No Wi-Fi module is required.
+
+---
+
+### Phase M5 — STM32 lwIP Build-Only Skeleton
+
+Goal: Introduce or validate STM32-local lwIP build integration without requiring the Wi-Fi module.
+
+Outcomes:
+
+- [ ] Build firmware with the intended lwIP structure or preparation layer.
+- [ ] Keep the network interface absent, stubbed, or explicitly unavailable.
+- [ ] Review generated-code impacts and preserve the CubeMX project layout unless a scoped inspected-file change requires otherwise.
+- [ ] Record build-only status and unavailable runtime metrics.
+- [ ] Avoid Wi-Fi join, IP address acquisition, TCP connection, TLS handshake, MQTT publish, and reconnect success claims.
+
+Pass criteria:
+
+- [ ] Firmware builds with the intended lwIP preparation.
+- [ ] Runtime networking remains explicitly unavailable.
+- [ ] No Wi-Fi hardware is required.
+
+---
+
+### Phase M6 — wolfSSL Build-Only Skeleton
+
+Goal: Add or validate wolfSSL build integration for STM32 without performing a real TLS handshake.
+
+Outcomes:
+
+- [ ] Build and link firmware with wolfSSL or the planned wolfSSL integration boundary.
+- [ ] Represent TLS configuration and certificate-handling boundaries.
+- [ ] Preserve private-key and credential rules.
+- [ ] Record TLS runtime metrics as unavailable until real transport evidence exists.
+- [ ] Avoid real network transport, ST67W61M1 backend, MQTT publish, and hardware tests in this sub-phase.
+
+Pass criteria:
+
+- [ ] Firmware builds with the wolfSSL integration boundary.
+- [ ] TLS runtime success is not claimed.
+- [ ] Secret-handling rules are preserved.
+
+---
+
+### Phase M7 — wolfMQTT Build-Only Skeleton
+
+Goal: Add or validate wolfMQTT build integration and bind it to an abstract transport boundary without requiring real networking.
+
+Outcomes:
+
+- [ ] Build and link firmware with wolfMQTT or the planned wolfMQTT integration layer.
+- [ ] Represent MQTT client initialization separately from MQTT connection success.
+- [ ] Isolate transport callbacks from MQTT client logic.
+- [ ] Keep fake/no-network and future ST67W61M1 backends selectable without changing MQTT logic.
+- [ ] Avoid broker connection, TLS handshake, publish, reconnect, Wi-Fi, and end-to-end success claims.
+
+Pass criteria:
+
+- [ ] Firmware builds with the wolfMQTT integration boundary.
+- [ ] MQTT client logic is not tightly coupled to ST67W61M1 hardware.
+- [ ] No broker or publish success is claimed.
+
+---
+
+### Phase M8 — STM32 Fake/No-Network Runtime Evidence
+
+Goal: Run STM32 firmware on the existing board with a fake/no-network backend to validate initialization evidence before Wi-Fi hardware is available.
+
+Outcomes:
+
+- [ ] Emit explicit initialization and unavailable-backend markers where implemented.
+- [ ] Label runtime output as fake/no-network mode where applicable.
+- [ ] Require the STM32 board only, not the X-NUCLEO-67W61M1.
+- [ ] Keep hardware tests capability-gated.
+- [ ] Avoid Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, and end-to-end success claims.
+
+Pass criteria:
+
+- [ ] UART evidence confirms initialization or unavailable-backend markers.
+- [ ] No Wi-Fi module is required.
+- [ ] No network, TLS, MQTT, or publish success is claimed.
+
+---
+
+### Phase M9 — Host-Side wolfMQTT/wolfSSL Prototype or Validation Utility
+
+Goal: Optionally validate MQTT/TLS semantics against the broker using wolfSSL and wolfMQTT on the host side while keeping the result separate from STM32 evidence.
+
+Outcomes:
+
+- [ ] Add host-side wolfSSL/wolfMQTT validation where supported.
+- [ ] Label evidence as host-side only.
+- [ ] Use results to inform later STM32 configuration without claiming STM32 runtime success.
+- [ ] Keep broker/gateway-dependent validation capability-gated.
+
+Pass criteria:
+
+- [ ] Host-side MQTT/TLS validation is useful but clearly separated from STM32 evidence.
+- [ ] No hardware or Wi-Fi module is required.
+- [ ] No STM32 runtime success is claimed.
+
+---
+
+### Deferred Phase M10 — ST67W61M1 Network Interface Backend
+
+Goal: Add the real Wi-Fi module backend once the X-NUCLEO-67W61M1 is installed and available.
+
+Outcomes:
+
+- [ ] Add the ST67W61M1 backend under the established transport/network-interface boundary.
+- [ ] Keep STM32 responsible for lwIP, TLS, and MQTT.
+- [ ] Validate module detection and network-interface bring-up separately from TLS and MQTT success.
+- [ ] Keep hardware tests capability-gated.
+
+Pass criteria:
+
+- [ ] ST67W61M1 backend can be built and tested with real hardware.
+- [ ] Evidence categories remain separated.
+- [ ] No TLS/MQTT success is inferred from module or network-interface bring-up alone.
+
+---
+
+### Deferred Phase M11 — Classical MQTT over TLS on STM32
+
+Goal: Validate actual STM32-to-broker MQTT-over-TLS with lwIP, wolfSSL, wolfMQTT, and the ST67W61M1 network interface.
+
+Outcomes:
+
+- [ ] Capture TLS handshake, MQTT connect, publish, reconnect, and relevant resource metrics from explicit evidence only.
+- [ ] Record STM32 UART logs, broker logs, manifests, and repeat-run metrics where implemented.
+- [ ] Keep private keys and credentials out of Git and generated replacement artifacts.
+- [ ] Keep tests capability-gated.
+
+Pass criteria:
+
+- [ ] Explicit STM32 and broker evidence confirms classical MQTT-over-TLS.
+- [ ] Metrics are captured without inference.
+- [ ] Hardware-dependent tests remain opt-in.
+
+---
+
+### Deferred Phase M12 — Network Degradation
+
+Goal: Evaluate MQTT/TLS behaviour under controlled network impairment after the real network path works.
+
+Outcomes:
+
+- [ ] Apply, verify, and clear network impairment profiles safely.
+- [ ] Record the active network profile in results.
+- [ ] Keep cleanup robust after failures.
+- [ ] Keep gateway-dependent tests capability-gated.
+
+Pass criteria:
+
+- [ ] Network impairment setup and cleanup are reliable.
+- [ ] Results are evidence-backed.
+- [ ] No degraded-network result is inferred.
+
+---
+
+### Deferred Phase M13 — PQC/Hybrid MQTT/TLS Experiments
+
+Goal: Add PQC or hybrid TLS experiments only after classical MQTT/TLS is stable and supported library capabilities are confirmed.
+
+Outcomes:
+
+- [ ] Confirm wolfSSL/wolfMQTT support before profiles are added.
+- [ ] Add PQC/hybrid configs only for supported modes.
+- [ ] Preserve comparable metrics with classical TLS runs.
+- [ ] Document experimental limitations.
+
+Pass criteria:
+
+- [ ] Supported PQC/hybrid modes are confirmed.
+- [ ] Profiles are evidence-backed.
+- [ ] Experimental limitations are documented.
 
 ---
 
