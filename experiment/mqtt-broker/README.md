@@ -129,6 +129,22 @@ After provisioning, deploying, and starting a profile, the broker utility can va
 
 The validation command output includes the evidence class, evidence label, profile, and evidence boundary before running the client checks. This output is broker/client compatibility evidence only.
 
+### Native host wolfMQTT validation
+
+For PowerShell, pass upstream wolfMQTT options after `--client-args` and quote each dash-prefixed token individually. Active PowerShell guidance does not use a standalone `--` forwarding boundary.
+
+```powershell
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py `
+  --result-json results/host-wolfmqtt/classical-gateway-validation.json `
+  run `
+  --client-args '-h' 10.1.1.18 '-p' 8883 '-t' `
+  '-A' /workspace/experiment/mqtt-broker/runtime/classical/certs/ca.crt `
+  '-K' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.key `
+  '-c' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.crt
+```
+
+This is native host wolfMQTT/wolfSSL compatibility evidence only. It does not prove wolfMQTT-on-STM32, ST67W61M1 operation, or end-to-end wireless behavior.
+
 ## Diagnostic fallback: local Docker smoke test
 
 After provisioning certificates, the classical profile can be run locally from this directory:

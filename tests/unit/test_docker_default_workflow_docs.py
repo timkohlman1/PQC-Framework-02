@@ -105,9 +105,13 @@ def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() ->
 
 def test_signing_docs_do_not_describe_partial_key_generation_as_normal() -> None:
     readme = _read("README.md").lower()
+    workflow = _read("docs/005_remote_flash_workflow.md").lower()
+
     assert "may locally generate missing profile keys" not in readme
-    assert "completely absent profile signing tuple" in readme
-    assert "partial or mismatched tuple state fails safely" in readme
+    assert "silently reconstruct partial signing state" in readme
+    assert "completely absent tuple" in workflow
+    assert "partially missing tuple: fail before build/signing" in workflow
+    assert "mismatched tuple: fail before build/signing" in workflow
 
 
 def test_pytest_cleanup_is_documented_as_supplementary_hygiene() -> None:

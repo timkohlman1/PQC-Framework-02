@@ -164,15 +164,16 @@ MQTT_COMMAND_DOCUMENTS = (
 
 
 def test_powershell_wolfmqtt_examples_use_named_client_argument_boundary() -> None:
-    root_readme = _read("README.md")
+    broker_readme = _read("experiment/mqtt-broker/README.md")
     architecture = _read("docs/007_framework_architecture.md")
-    guide = _read("AI_BUILD_GUIDE.md")
+    root_readme = _read("README.md")
 
-    assert "--client-args '-h'" in root_readme
-    assert "'-p'" in root_readme
-    assert "'-t'" in root_readme
+    assert "--client-args '-h'" in broker_readme
+    assert "'-p'" in broker_readme
+    assert "'-t'" in broker_readme
+    assert "PowerShell `--client-args` forwarding contract" in root_readme
 
-    combined = "\n".join((root_readme, architecture, guide)).lower()
+    combined = "\n".join((broker_readme, architecture)).lower()
     assert "after `--client-args`" in combined
     assert "active powershell guidance does not use a standalone `--`" in combined
     assert "pass the selected upstream wolfmqtt client arguments after `--`" not in combined
@@ -185,17 +186,13 @@ def test_gateway_and_localhost_certificate_examples_are_distinct() -> None:
     )
     localhost_command = "provision-certs --server-name localhost"
 
-    for path in ("README.md", "experiment/mqtt-broker/README.md"):
-        content = _read(path)
-        assert gateway_command in content, f"{path} is missing gateway IP-SAN provisioning"
+    broker_readme = _read("experiment/mqtt-broker/README.md")
+    assert gateway_command in broker_readme
+    assert localhost_command in broker_readme
+    assert "localhost-only" in broker_readme.lower()
 
-    guide = _read("AI_BUILD_GUIDE.md")
-    assert "experiment/mqtt-broker/README.md" in guide
-
-    for path in ("README.md", "experiment/mqtt-broker/README.md"):
-        content = _read(path)
-        assert localhost_command in content, f"{path} is missing the localhost-only example"
-        assert "localhost-only" in content.lower()
+    for path in ("README.md", "AI_BUILD_GUIDE.md"):
+        assert "experiment/mqtt-broker/README.md" in _read(path)
 
 
 def test_mqtt_command_docs_preserve_compose_path_and_evidence_boundary() -> None:
@@ -256,6 +253,52 @@ def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
     assert "ST67W61M1 hardware-backed network backend | Compile-time driver/interface preparation only | Unimplemented" in architecture
     assert "Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented" in architecture
     assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
+
+def test_readme_is_concise_and_routes_detail_to_canonical_owners() -> None:
+    readme = _read("README.md")
+
+    assert len(readme.splitlines()) <= 130
+    for heading in (
+        "## Current scope",
+        "## Documentation",
+        "## Default workflow",
+        "## Secure-boot example",
+        "## MQTT and broker orientation",
+        "## Safety and evidence",
+    ):
+        assert heading in readme
+
+    for owner in (
+        "docs/README.md",
+        "docs/005_remote_flash_workflow.md",
+        "docs/006_security_and_secrets.md",
+        "docs/007_framework_architecture.md",
+        "experiment/mqtt-broker/README.md",
+    ):
+        assert owner in readme
+
+    assert "## Containerised build/test/experiment environment" not in readme
+    assert "## Benchmark collection" not in readme
+    assert "### Phase" not in readme
+
+
+def test_architecture_is_capability_oriented_not_phase_structured() -> None:
+    architecture = _read("docs/007_framework_architecture.md")
+
+    required_headings = (
+        "## System capability overview",
+        "## Architectural organization",
+        "## Canonical current capability matrix",
+        "## Build and generated-state architecture",
+        "## Test architecture",
+        "## Consolidated deferred-test register",
+    )
+    for heading in required_headings:
+        assert heading in architecture
+    assert not re.search(r"(?m)^#{2,4} Phase ", architecture)
+    assert "docs/non_hardware_mqtt_tls_development_plan.md" in architecture
+    assert "docs/pqc_iot_experiment_framework_plan.md" in architecture
+
 
 ENTRY_DOCUMENTS = (
     "AI_BUILD_GUIDE.md",
