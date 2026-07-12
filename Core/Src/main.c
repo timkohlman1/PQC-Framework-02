@@ -27,6 +27,7 @@
 #include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
+#include "pqc_wolfmqtt_build_only.h"
 #include "FreeRTOS.h"
 #include "task.h"
 /* USER CODE END Includes */
@@ -177,6 +178,21 @@ static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_run
   else
   {
     APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
+  }
+}
+
+static void APP_PrintWolfMQTTRuntimeStatus(void)
+{
+  static char status_line[640];
+
+  if (PQC_WolfMQTT_RuntimeStatusLine(
+          status_line, (uint32_t)sizeof(status_line), "freertos_task", true))
+  {
+    APP_UART_WriteString(status_line);
+  }
+  else
+  {
+    APP_UART_WriteString("wolfMQTT runtime smoke: context=freertos_task scheduler=running evidence=stm32-fake-no-network-initialization-only backend=fake_no_network init_result=unavailable client_initialized=0 callbacks=unavailable transport=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable reason=format_failed\r\n");
   }
 }
 
@@ -918,6 +934,7 @@ void StartDefaultTask(void *argument)
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
   APP_RunLwIPLocalLoopbackSmoke();
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
+  APP_PrintWolfMQTTRuntimeStatus();
   APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=unavailable tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("default_task_start", pdTRUE);

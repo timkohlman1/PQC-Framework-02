@@ -629,7 +629,7 @@ Run the STM32 firmware on the existing board with a fake/no-network backend to v
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated.
+Requirement: Implement Phase M8 of the attached development plan - STM32 Fake/No-Network Runtime Evidence. Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated. Some of these features may already be present, don't re-implement these, instead check that it matches the requirements and report any inconsistencies for a decision on what to do.
 
 ```
 
@@ -638,6 +638,10 @@ Requirement: Implement Phase _ of the attached development plan - _. Add STM32 f
 - UART evidence confirms initialization or unavailable backend markers.
 - No Wi-Fi module is required.
 - No network, TLS, MQTT, or publish success is claimed.
+
+### Implementation Status
+
+Implemented by reusing the Phase M7 wolfMQTT boundary. A serialized one-shot initialization runs from `defaultTask` with `backend=fake_no_network`, emits `wolfMQTT runtime smoke:` as `stm32-fake-no-network-initialization-only` evidence, and deinitializes without network or MQTT protocol operations. Transport, Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end states remain unavailable. Direct and relocated builds plus static tests are the non-hardware evidence path; the known-image UART assertion is capability-gated and requires explicit user-provided output before hardware runtime success is claimed.
 
 ---
 
@@ -664,14 +668,14 @@ Optionally validate MQTT/TLS semantics against the broker using wolfSSL and wolf
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Add an optional host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated.
+Requirement: Implement Phase M9 of the attached development plan - Host side wolfmqtt/wolfssl prototype or validation utility. Add a host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated. Some of this requirement may already be partially implemented as part of the MQTT broker that runs on the gateway and associated validation tests.
 
 ```
 
 ### Pass Criteria
 
 - Host-side MQTT/TLS validation is useful but clearly separated from STM32 evidence.
-- No hardware or Wi-Fi module is required.
+- No STM32 hardware or Wi-Fi module is required.
 - No STM32 runtime success is claimed.
 
 ---

@@ -16,10 +16,10 @@ The repository currently contains:
 - benchmark aggregation to JSON and CSV
 - an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
 - an MQTT/TLS roadmap that separates hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation from future ST67W61M1-backed wireless validation
-- STM32 build-only boundaries for lwIP/ST67W6X preparation and wolfSSL source-build preparation, including wolfCrypt SHA-256, wolfSSL client TLS-context lifecycle, and an unavailable wolfSSL transport boundary, with socket I/O, certificate loading, TLS handshake, MQTT, Wi-Fi, and end-to-end success explicitly unavailable
+- STM32 preparation boundaries for lwIP/ST67W6X, wolfSSL, and wolfMQTT, including a FreeRTOS task-context fake/no-network wolfMQTT initialization marker with transport, Wi-Fi, IP, TCP, TLS handshake, MQTT connect/publish/reconnect, ST67W61M1, and end-to-end status explicitly unavailable
 - a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
 
-Not implemented yet: STM32 MQTT client firmware runtime integration, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, STM32-local wolfMQTT runtime integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+Not implemented yet: real STM32 MQTT protocol runtime, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
 
 Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
 
@@ -555,3 +555,8 @@ The firmware performs a one-shot UDP loopback send/receive check from `defaultTa
 ### Phase M7 wolfMQTT build-only integration
 
 wolfMQTT is pinned as the `Middlewares/Third_Party/wolfMQTT` submodule. Both direct and relocated STM32 builds compile the wolfMQTT client, packet, and callback transport layers. Project-owned `pqc_wolfmqtt_build_only` code initializes a wolfMQTT client against an unavailable fake/no-network `MqttNet` backend and keeps the future ST67W61M1 backend selection outside MQTT client logic. Phase M7 does not run this initializer from firmware and does not connect to a broker, perform TLS, publish, reconnect, use Wi-Fi, or claim end-to-end success.
+
+
+### Phase M8 STM32 fake/no-network runtime evidence
+
+The firmware runs the existing wolfMQTT initialization boundary once from `defaultTask` with `backend=fake_no_network`. The `wolfMQTT runtime smoke:` UART line is initialization-only evidence from the STM32 board. It does not call a broker or network transport and explicitly records Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status as unavailable. The X-NUCLEO-67W61M1 is not required. The known-image UART assertion remains capability-gated under `tests/hardware/test_baseline_uart.py`.

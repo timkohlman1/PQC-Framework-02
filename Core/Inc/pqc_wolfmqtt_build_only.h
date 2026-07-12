@@ -34,6 +34,13 @@ int PQC_WolfMQTT_BuildOnly_Initialize(
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend);
 
+bool PQC_WolfMQTT_RuntimeStatusLine(
+    char *buffer,
+    size_t buffer_size,
+    const char *context,
+    bool scheduler_running
+);
+
 #ifdef __cplusplus
 }
 #endif

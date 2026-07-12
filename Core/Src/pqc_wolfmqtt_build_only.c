@@ -1,5 +1,6 @@
 #include "pqc_wolfmqtt_build_only.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "wolfmqtt/mqtt_client.h"
@@ -126,4 +127,41 @@ int PQC_WolfMQTT_BuildOnly_Initialize(
     status->reconnect_complete = false;
 
     return result;
+}
+
+
+bool PQC_WolfMQTT_RuntimeStatusLine(
+    char *buffer,
+    size_t buffer_size,
+    const char *context,
+    bool scheduler_running
+)
+{
+    PQC_WolfMQTTBuildOnlyStatus status;
+    int result;
+    int written;
+
+    if ((buffer == NULL) || (buffer_size == 0U) || (context == NULL))
+    {
+        return false;
+    }
+
+    result = PQC_WolfMQTT_BuildOnly_Initialize(
+        PQC_WOLFMQTT_BACKEND_FAKE_NO_NETWORK,
+        &status
+    );
+
+    written = snprintf(
+        buffer,
+        buffer_size,
+        "wolfMQTT runtime smoke: context=%s scheduler=%s evidence=stm32-fake-no-network-initialization-only backend=%s init_result=%d client_initialized=%u callbacks=%s transport=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n",
+        context,
+        scheduler_running ? "running" : "not_started",
+        PQC_WolfMQTT_BackendName(status.backend),
+        result,
+        status.client_initialized ? 1U : 0U,
+        status.transport_callbacks_present ? "present" : "unavailable"
+    );
+
+    return (written >= 0) && ((size_t)written < buffer_size);
 }

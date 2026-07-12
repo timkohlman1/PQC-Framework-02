@@ -60,10 +60,40 @@ def test_phase_m7_performs_no_network_tls_or_mqtt_runtime_operations():
         assert field in source
 
 
-def test_phase_m7_is_build_only_and_not_called_from_firmware_runtime():
+def test_phase_m8_invokes_fake_no_network_initialization_from_freertos_task():
+    header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
-    assert "PQC_WolfMQTT_BuildOnly_Initialize" not in main_c
-    assert "wolfMQTT build-only" not in main_c
+
+    assert "PQC_WolfMQTT_RuntimeStatusLine" in header
+    assert "PQC_WolfMQTT_RuntimeStatusLine" in source
+    assert "PQC_WOLFMQTT_BACKEND_FAKE_NO_NETWORK" in source
+    assert "APP_PrintWolfMQTTRuntimeStatus();" in main_c
+    assert main_c.index("FreeRTOS defaultTask started:") < main_c.index("APP_PrintWolfMQTTRuntimeStatus();")
+
+
+def test_phase_m8_uart_marker_is_initialization_only_and_explicitly_unavailable():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    combined = source + main_c
+
+    assert "wolfMQTT runtime smoke:" in combined
+    assert "evidence=stm32-fake-no-network-initialization-only" in combined
+    assert "backend=fake_no_network" in combined
+    for field in (
+        "transport=unavailable",
+        "wifi=unavailable",
+        "link=unavailable",
+        "ip=unavailable",
+        "tcp=unavailable",
+        "tls_handshake=unavailable",
+        "mqtt_connect=unavailable",
+        "mqtt_publish=unavailable",
+        "reconnect=unavailable",
+        "st67w61m1=unavailable",
+        "end_to_end=unavailable",
+    ):
+        assert field in combined
 
 
 def test_phase_m7_uses_project_user_settings_without_generated_options_header():
