@@ -8,17 +8,15 @@ Update this file whenever repository structure, CLI behaviour, configuration mod
 
 ## 2. Project Purpose
 
-This repository is an STM32-based embedded security experiment framework. The current implementation covers direct-flash STM32 HAL/FreeRTOS baseline workflows, wolfBoot secure-boot workflows, classical signing-algorithm benchmark profiles, ML-DSA-44/ML-DSA-65 secure-boot signing profiles, repeated secure-boot measurements, runtime/static benchmark metrics, and cross-profile benchmark aggregation.
+This repository is an STM32-based embedded security experiment framework. It provides direct-flash HAL/FreeRTOS workflows, wolfBoot secure-boot workflows and benchmarks, and bounded MQTT/TLS preparation across distinct build-only, STM32-local, fake/no-network, host-side, broker-side, unavailable-transport, and future hardware-backed evidence classes.
 
-Longer-term areas remain planned unless implemented by later phases: STM32 MQTT client firmware integration, wolfSSL MQTT/TLS experiments, production PQC/hybrid cryptographic profiles, network-degradation automation, and broader analysis/reporting automation.
+The canonical detailed capability matrix is `docs/007_framework_architecture.md`. Do not promote evidence from one class into another.
 
 ## 3. Current Status
 
-Current known-good firmware baseline:
+Current known-good firmware markers include:
 
 ```text
-Board: NUCLEO-L4R5ZI-P / NUCLEO-L4R5ZI
-MCU: STM32L4R5 / STM32L4Rxxx
 Direct-flash UART marker: stm32-basic_hal1 boot v0.1.0
 Secure-boot app UART marker: stm32-basic_hal1 secure-boot app v0.1.0
 FreeRTOS scheduler marker: FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask ...
@@ -26,49 +24,26 @@ FreeRTOS task marker: FreeRTOS defaultTask started: periodic tick task active
 Tick marker: tick
 ```
 
-Implemented framework scope as of Phase 11.7:
+Concise capability summary:
 
-- direct-flash baseline build, flash, UART capture, and run workflows
-- CubeMX-generated CMSIS-RTOS v2 FreeRTOS application template using TIM1 as the HAL timebase
-- first-class build records under `results/builds/<build_number>/`
-- source/build fingerprinting and safe rebuild skipping
-- explicit direct-flash boot config under `configs/boot/direct_flash.yaml`
-- relocated HAL/FreeRTOS application build preset `RelocatedDebug`
-- wolfBoot build profiles using the local submodule at `tools/wolfboot`
-- application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
-- secure-boot two-artifact flash workflow with positive UART evidence
-- corrupted-application negative secure-boot test workflow
-- secure-boot timing, cycle, result-code, and stack high-water evidence from explicit firmware/UART markers
-- repeated secure-boot measurement samples and aggregate statistics
-- static wolfBoot ELF/resource metrics and signed-artifact overhead metrics
-- classical signing benchmark profiles: ECC256, ED25519, RSA2048, ECC384, ECC521, ED448, RSA3072, RSA4096
-- ML-DSA secure-boot signing benchmark profiles: ML-DSA-44 and ML-DSA-65
-- ML-DSA-87 is recorded as unavailable under the current 8192-byte image-header reserve
-- read-only benchmark aggregation output to JSON and CSV
-- consolidated Phase 11 documentation and unit coverage for benchmark schema, repeated-run statistics, unavailable metrics, manifest updates, and aggregation output
-- FreeRTOS regression coverage for generated CMake wiring, baseline FreeRTOSConfig settings, CubeMX TIM1 timebase configuration, UART marker ordering, and direct/relocated local CMake builds
-- gateway MQTT broker Docker Compose scaffold under `experiment/mqtt-broker/` with classical MQTT-over-TLS, an experimental OQS Mosquitto mutual-TLS profile, local classical certificate provisioning, remote OQS certificate provisioning, OQS TLS validation, and SSH/SCP deployment helpers
-- Docker-hosted Linux default path for Python validation, STM32 direct and relocated builds, wolfBoot builds, relocated application signing, pytest, gateway checks, and gateway-mediated hardware experiments
-- GitHub Actions CI preserving the existing runner-compatible jobs and MQTT broker Docker runtime validation while using the containerised non-hardware job as the default reproducible software-build validation path
-- Phase M2 framework-side MQTT/TLS experiment configuration and result schema support with explicit transport backend selection, evidence classes, and unavailable metrics
-- Phase M3 fake/no-network MQTT transport harness for deterministic simulated connect, publish, timeout, disconnect, and reconnect control-flow evidence
-- Phase M4 host-side and broker-side MQTT/TLS broker compatibility validation with explicit evidence labels and false STM32/Wi-Fi/end-to-end success claims
-- Phase M5 STM32-local lwIP/ST67W6X compile-only preparation: generated lwIP sources, SICS Network LwIP sources, SPI HAL support, and ST67W6X driver sources are included in direct and relocated firmware builds with runtime networking explicitly unavailable; firmware also emits a non-network lwIP runtime smoke UART marker using version, IPv4 formatting, and checksum helpers only
-- Phase M6.3 project-owned wolfSSL unavailable transport boundary: `pqc_wolfssl_transport` exposes connect/read/write wrappers and callback-shaped receive/send entry points, consumes the Phase M6.2 network-interface state, and reports all transport operations unavailable without socket I/O, TLS sessions, certificates, handshake, MQTT, Wi-Fi, ST67W61M1, or end-to-end success
-- Phase M6.2 project-owned STM32 lwIP network-interface boundary: `pqc_network_interface` owns an unattached local lwIP netif, derives interface/link/IP/TCP observations from lwIP netif and IPv4 state, and reports transport, Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect/publish, reconnect, and end-to-end status as explicitly unavailable
-- Phase M6.5 FreeRTOS task-context runtime smoke: existing deterministic lwIP and wolfSSL/wolfCrypt smokes remain labelled `context=pre_scheduler scheduler=not_started`, and serialized one-shot copies run from `defaultTask` with `context=freertos_task scheduler=running`; all Wi-Fi/link/IP/TCP/TLS-handshake/certificate/MQTT/reconnect/ST67W61M1/end-to-end claims remain unavailable and wolfSSL multithreaded support is not enabled.
-- Phase M6.6 STM32-local lwIP UDP loopback smoke: a serialized one-shot check runs from `defaultTask` after scheduler start, initializes the lwIP TCP/IP core, sends a deterministic UDP payload to `127.0.0.1`, and validates the returned payload through the lwIP loop interface; UART evidence is labelled `stm32-local-lwip-loopback-only`, while Wi-Fi/ST67W61M1/link/hardware-IP/external-ping/external-TCP/TLS/MQTT/broker/reconnect/end-to-end claims remain unavailable.
-- Phase M6.1 STM32-local wolfSSL TLS-context lifecycle preparation: selected wolfSSL client-context and supporting wolfCrypt sources are built from `tools/wolfboot/lib/wolfssl`, linked into direct and relocated firmware builds, and exercised through `pqc_wolfssl_build_only`; wolfSSL initialization, TLS 1.2 client `WOLFSSL_CTX` creation/free, and cleanup are supported, while certificate loading, private keys, runtime transport, TLS handshake, MQTT, Wi-Fi, ST67W61M1, and end-to-end network success remain explicitly unavailable
-- Phase M7/M8 STM32-local wolfMQTT preparation: wolfMQTT is pinned as `Middlewares/Third_Party/wolfMQTT`, its client/packet/socket callback layers build in direct and relocated firmware, and project-owned `pqc_wolfmqtt_build_only` performs a serialized FreeRTOS task-context client initialization against an unavailable fake/no-network `MqttNet`; UART evidence is initialization-only, while transport, broker connection, TLS handshake, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end success remain unavailable
+- Docker-hosted default workflows cover framework validation, direct and relocated STM32 builds, wolfBoot builds, application signing, pytest, and capability-gated gateway/hardware operations.
+- Direct-flash and wolfBoot secure-boot workflows include UART evidence, negative tests, repeated measurements, manifest-backed metrics, classical profiles, ML-DSA-44/ML-DSA-65, and benchmark aggregation. ML-DSA-87 is unavailable under the current 8192-byte image-header reserve.
+- MQTT/TLS framework schemas and deterministic fake/no-network transport tests are implemented, but simulated outcomes are not network evidence.
+- Classical and experimental OQS broker profiles and native host wolfMQTT/wolfSSL validation provide broker-side or `host_side` compatibility evidence only.
+- STM32 firmware builds include lwIP/ST67W6X preparation, selected wolfSSL sources, and wolfMQTT client/packet/socket layers.
+- STM32-local runtime evidence is constrained to helper smokes, unattached lwIP `netif` state, UDP loopback at `127.0.0.1`, wolfSSL TLS-context lifecycle, an unavailable wolfSSL transport boundary, and fake/no-network wolfMQTT initialization from `defaultTask`.
+- The wolfSSL transport boundary performs no socket I/O. The wolfMQTT STM32 smoke performs no broker connection, TLS handshake, publish, or reconnect.
+- Real ST67W61M1-backed networking, Wi-Fi association, hardware-backed IP, external TCP, certificate-backed STM32 TLS sessions/handshakes, real STM32 MQTT operations, and end-to-end classical or PQC/hybrid MQTT-over-TLS remain unimplemented.
 
-Important status constraints:
+Important evidence constraints:
 
-- wolfBoot signing state is managed as a reusable local tuple: canonical private key, matching wolfBoot-local private key, generated public key, and `tools/wolfboot/src/keystore.c`. A completely absent tuple may be created by the owning workflow when profile configuration permits generation. A complete matching tuple is preserved and reused. Partially missing or mismatched tuple state must fail before `make`; do not silently reconstruct tuple members from partial state or replace a canonical key.
-
-- `configs/boot/direct_flash.yaml` is the generic runnable boot profile for direct-flash workflows.
-- wolfBoot boot configs are used by `flash-secure-boot`; do not treat them as generic direct-flash profiles.
-- Hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success must only be claimed from explicit user-provided logs/manifests.
-- real STM32 MQTT protocol runtime, real lwIP network-interface bring-up, ST67W61M1 hardware/module validation, real wolfSSL TLS handshakes, wolfMQTT transport experiments, broker deployment from MQTT client configs, MQTT/TLS hardware tests beyond the Phase M6.1 TLS context lifecycle and Phase M6.2 unavailable-boundary markers, production PQC TLS, production hybrid profiles, ML-DSA-87 under the current 8192-byte image-header reserve, and network impairment are not implemented.
+- Build-only evidence proves compilation/linkage only.
+- Local-only loopback and helper smokes do not prove external network access.
+- Fake/no-network evidence is simulated or initialization-only.
+- Host-side and broker-side validation does not prove STM32 behavior.
+- Hardware, gateway, flashing, UART, runtime, timing, memory, MQTT/TLS, or benchmark success requires explicit logs or manifests.
+- wolfBoot signing state is a reusable local tuple. A completely absent tuple may be created by its owning workflow when allowed; a complete matching tuple is preserved; a partially missing tuple or mismatched tuple must fail before `make`. Never silently reconstruct tuple members or replace a canonical private key.
+- `configs/boot/direct_flash.yaml` is the generic direct-flash boot profile. wolfBoot boot configs belong to `flash-secure-boot` and are not generic direct-flash profiles.
 
 ## 4. Hardware and Gateway Context
 

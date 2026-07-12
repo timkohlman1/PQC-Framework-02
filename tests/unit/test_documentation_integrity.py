@@ -243,3 +243,69 @@ def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
     assert "ST67W61M1 hardware-backed network backend | Compile-time driver/interface preparation only | Unimplemented" in architecture
     assert "Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented" in architecture
     assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
+
+ENTRY_DOCUMENTS = (
+    "AI_BUILD_GUIDE.md",
+    "README.md",
+    "docs/000_project_overview.md",
+    "docs/004_baseline_hal_app.md",
+)
+
+
+def test_entry_documents_match_canonical_mqtt_evidence_boundaries() -> None:
+    combined = "\n".join(_read(path).lower() for path in ENTRY_DOCUMENTS)
+
+    for phrase in (
+        "build-only",
+        "local-only",
+        "fake/no-network",
+        "host-side",
+        "unavailable transport",
+        "st67w61m1",
+    ):
+        assert phrase in combined, f"Missing D2.2 capability-boundary wording: {phrase}"
+
+    assert "real st67w61m1-backed networking" in combined
+    assert "no socket i/o" in combined
+    assert "end-to-end" in combined
+
+
+def test_overview_does_not_describe_all_mqtt_or_wolfssl_work_as_unimplemented() -> None:
+    overview = _read("docs/000_project_overview.md").lower()
+
+    assert "mqtt transport experiments" not in overview
+    assert "tls/wolfssl transport experiments" not in overview
+    assert "framework and fake/no-network" in overview
+    assert "broker-side and host-side" in overview
+    assert "stm32 build-only" in overview
+    assert "stm32 local-only" in overview
+    assert "stm32 unavailable transport" in overview
+    assert "future hardware-backed" in overview
+
+
+def test_baseline_document_matches_scheduler_and_task_smoke_sequence() -> None:
+    baseline = _read("docs/004_baseline_hal_app.md")
+    representative = baseline.split("A representative sequence is:", maxsplit=1)[1]
+
+    ordered_markers = (
+        "stm32-basic_hal1 boot v0.1.0",
+        "lwIP runtime smoke: context=pre_scheduler scheduler=not_started",
+        "lwIP network interface: evidence=lwip-netif-state-only",
+        "wolfSSL TLS context smoke: context=pre_scheduler scheduler=not_started",
+        "wolfSSL transport boundary: evidence=unavailable-transport-only",
+        "FreeRTOS defaultTask created:",
+        "FreeRTOS scheduler starting:",
+        "FreeRTOS defaultTask started: periodic tick task active",
+        "FreeRTOS task-context smoke starting:",
+        "lwIP local loopback smoke:",
+        "wolfMQTT runtime smoke:",
+        "FreeRTOS task-context smoke complete:",
+        "\ntick\n",
+    )
+
+    positions = [representative.index(marker) for marker in ordered_markers]
+    assert positions == sorted(positions)
+    assert "evidence=stm32-local-lwip-loopback-only" in baseline
+    assert "evidence=stm32-fake-no-network-initialization-only" in baseline
+    assert "socket_io=not-performed" in baseline
+    assert "does not provide evidence of ST67W61M1 detection" in baseline

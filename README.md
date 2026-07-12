@@ -4,24 +4,21 @@ STM32-based embedded security experiment framework for direct-flash baseline exp
 
 ## Current implementation
 
-The repository currently contains:
+The repository currently provides:
 
-- a CubeMX-generated STM32 HAL/FreeRTOS firmware project for the NUCLEO-L4R5ZI-P / STM32L4R5 board
-- direct-flash baseline build, flash, UART, and run workflows
-- first-class build records and source/build fingerprinting
-- a relocated HAL/FreeRTOS application build for wolfBoot launch
-- wolfBoot build profiles using the local `tools/wolfboot` submodule
-- application-signing profiles for classical wolfBoot algorithms and ML-DSA-44/ML-DSA-65
-- secure-boot flash, UART evidence, negative-test, repeated-run, and benchmark workflows
-- benchmark aggregation to JSON and CSV
-- an MQTT broker Docker Compose project under `experiment/mqtt-broker/` with classical MQTT-over-TLS and an experimental OQS Mosquitto profile for post-quantum TLS experiments
-- an MQTT/TLS roadmap that separates hardware-independent STM32-local lwIP/wolfSSL/wolfMQTT preparation from future ST67W61M1-backed wireless validation
-- STM32 preparation boundaries for lwIP/ST67W6X, wolfSSL, and wolfMQTT, including a FreeRTOS task-context fake/no-network wolfMQTT initialization marker with transport, Wi-Fi, IP, TCP, TLS handshake, MQTT connect/publish/reconnect, ST67W61M1, and end-to-end status explicitly unavailable
-- a Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments
+- a CubeMX-generated STM32 HAL/CMSIS-RTOS v2 FreeRTOS application for the NUCLEO-L4R5ZI-P / STM32L4R5 platform
+- Docker-hosted default workflows for Python validation, direct and relocated STM32 builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware operations
+- direct-flash and wolfBoot secure-boot build, flash, UART, negative-test, repeated-run, benchmark, and aggregation workflows
+- classical wolfBoot signing profiles plus ML-DSA-44 and ML-DSA-65; ML-DSA-87 is unavailable under the current 8192-byte image-header reserve
+- an MQTT/TLS configuration and evidence schema, deterministic fake/no-network framework transport tests, classical and experimental OQS broker profiles, and native host-side wolfMQTT/wolfSSL broker-compatibility validation
+- STM32 build-only integration for lwIP/ST67W6X sources, wolfSSL, and wolfMQTT
+- constrained STM32-local runtime evidence: pre-scheduler and FreeRTOS task-context lwIP/wolfSSL helper smokes, an unattached lwIP network-interface status boundary, UDP loopback at `127.0.0.1`, a wolfSSL TLS-context lifecycle, an unavailable wolfSSL transport boundary, and fake/no-network wolfMQTT client initialization
 
-Not implemented yet: real STM32 MQTT protocol runtime, real lwIP network-interface integration, real STM32-local wolfSSL socket transport, TLS handshakes, or certificate integration, ST67W61M1 network-interface backend validation, production PQC TLS deployment, hybrid algorithm profiles, ML-DSA-87 under the current 8192-byte image-header reserve, network-degradation automation, and production release packaging.
+These evidence classes are not interchangeable. Build-only evidence proves compilation and linkage. Local-only loopback and helper smokes do not use external networking. Fake/no-network evidence does not use a broker or socket. Host-side and broker-side validation does not prove STM32 behavior. The STM32 wolfSSL transport boundary explicitly performs no socket I/O.
 
-Hardware success, gateway success, UART evidence, timing values, memory values, and benchmark values must only be claimed from explicit logs or manifests.
+Not implemented: an ST67W61M1-backed network interface, module detection, Wi-Fi association, hardware-backed IP acquisition, external TCP connectivity, certificate-backed wolfSSL sessions or TLS handshakes on STM32, real wolfMQTT broker operations on STM32, or end-to-end classical/PQC/hybrid STM32 MQTT-over-TLS. Hybrid signing profiles, network-degradation automation, and production release packaging also remain unavailable.
+
+Hardware, gateway, UART, runtime, timing, memory, MQTT/TLS, and benchmark success must only be claimed from explicit logs or manifests.
 
 ## Key files
 
@@ -218,9 +215,11 @@ The containerisation track is now the default development path. Phase C2 establi
 
 ## Firmware scheduler model
 
-The STM32 application is CubeMX-generated HAL firmware with a CMSIS-RTOS v2 FreeRTOS template. Startup and secure-boot evidence markers are emitted after peripheral initialization and before `osKernelStart()`. The application also emits explicit FreeRTOS markers when `defaultTask` is created, when the scheduler is about to start, and when `defaultTask` starts running. The recurring `tick` marker and LED toggle run from the default FreeRTOS task using `osDelay(1000)`. The HAL timebase is generated on TIM1 so FreeRTOS can own SysTick.
+The firmware emits its direct-flash or secure-boot application marker after peripheral initialization. Before scheduler startup it emits the constrained lwIP helper smoke, unattached lwIP network-interface state, wolfSSL TLS-context lifecycle, and unavailable wolfSSL transport markers. It then initializes the CMSIS-RTOS v2 kernel, creates `defaultTask`, emits the task-created and pre-scheduler memory markers, emits `FreeRTOS scheduler starting: ...`, and calls `osKernelStart()`.
 
-FreeRTOS regression coverage checks that generated CMake includes the middleware, `FreeRTOSConfig.h` preserves the baseline scheduler settings, the CubeMX `.ioc` keeps TIM1 as the HAL timebase, the scheduler-start marker is emitted before `osKernelStart()`, and the `tick` marker is owned by `StartDefaultTask()`. The local-build integration coverage also builds both `Debug` and `RelocatedDebug` presets so FreeRTOS source integration is checked for direct-flash and post-secureboot application builds.
+After the scheduler starts, `StartDefaultTask()` emits `FreeRTOS defaultTask started: periodic tick task active`, runs the serialized task-context local smokes, and then enters the periodic loop that toggles LD2, emits `tick`, and calls `osDelay(1000)`. The task-context sequence includes local lwIP helper evidence, UDP loopback at `127.0.0.1`, wolfSSL TLS-context lifecycle evidence, and fake/no-network wolfMQTT initialization. It does not establish Wi-Fi, hardware-backed IP, external TCP, certificate loading, TLS handshake, MQTT broker connection, publish, reconnect, ST67W61M1 use, or end-to-end wireless success. TIM1 remains the HAL timebase so FreeRTOS owns SysTick.
+
+Regression coverage checks the generated FreeRTOS wiring and marker ordering, while capability-gated known-image UART tests validate selected local-only and fake/no-network markers after the default-task marker. Build results alone are not UART or hardware evidence.
 
 ## Secure-boot workflow
 
