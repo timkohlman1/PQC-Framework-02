@@ -1,6 +1,6 @@
 # PQC IoT Experiment Framework — Step-by-Step Plan
 
-> **Lifecycle classification: Historical roadmap.** This document preserves the original framework goals, sequencing, checklists, and pass criteria. It is not the canonical current implementation-status source. Current architecture and evidence boundaries are owned by `docs/007_framework_architecture.md`; current MQTT phase status is owned by `docs/non_hardware_mqtt_tls_development_plan.md`. Last reconciled: 2026-07-12.
+> **Lifecycle classification: Historical roadmap.** This document preserves the original framework goals, sequencing, checklists, and pass criteria. It is not the canonical current implementation-status source. Current architecture and evidence boundaries are owned by `docs/007_framework_architecture.md`. Last reconciled: 2026-07-12.
 
 This historical checklist tracks the staged development of the STM32-based PQC IoT experiment framework. The project is broader than wolfBoot: it will eventually cover secure boot, MQTT, TLS, classical crypto, PQC/hybrid crypto, network degradation, benchmarking, result capture, documentation, and tests.
 
@@ -166,7 +166,7 @@ Pass criteria:
 
 ## Phase M — MQTT/TLS Architecture Split and Non-Hardware Preparation
 
-> **Historical goals and pass criteria only.** The checklist markers below have been converted to ordinary bullets so this document no longer acts as duplicate live MQTT status tracking. Use `docs/non_hardware_mqtt_tls_development_plan.md` for reconciled phase status and deferred-test references.
+> **Historical goals and pass criteria only.** The checklist markers below have been converted to ordinary bullets so this document no longer acts as duplicate live MQTT status tracking. This section preserves historical goals and pass criteria only; current capability and deferred-test status is maintained in `docs/007_framework_architecture.md`.
 
 This phase family replaced the previous single-step assumption that MQTT/TLS firmware work starts only after Wi-Fi hardware is available. It keeps the target architecture unchanged: lwIP, wolfSSL, and wolfMQTT run on the STM32, while the ST67W61M1 Wi-Fi module is a future network-interface backend.
 

@@ -115,6 +115,8 @@ docs/documentation_consistency_remediation_plan.md
 docs/local build commands.txt
 docs/non_hardware_mqtt_tls_development_plan.md
 docs/pqc_iot_experiment_framework_plan.md
+docs/README.md
+documentation-tracked-files.txt
 Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4r5xx.h
 Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4xx.h
 Drivers/CMSIS/Device/ST/STM32L4xx/Include/system_stm32l4xx.h

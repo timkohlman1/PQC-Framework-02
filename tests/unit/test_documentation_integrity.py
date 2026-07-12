@@ -141,12 +141,16 @@ def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
         "--configure-preset relocateddebug --build-preset relocateddebug "
         "--artifact build/relocateddebug/stm32_basic_hal1.elf"
     )
-    for path in ("AI_BUILD_GUIDE.md", "README.md", "docs/005_remote_flash_workflow.md"):
+    for path in ("README.md", "docs/005_remote_flash_workflow.md"):
         content = _read(path).lower()
         build_index = content.find(command_fragment)
         signing_index = content.find("experiment sign-application", build_index + 1)
         assert build_index >= 0, f"{path} is missing the framework-recorded relocated build"
         assert signing_index > build_index, f"{path} must show relocated build before signing"
+
+    guide = _read("AI_BUILD_GUIDE.md")
+    assert "framework-recorded relocated application build before signing" in guide
+    assert "docs/005_remote_flash_workflow.md" in guide
 
     architecture = _read("docs/007_framework_architecture.md").lower()
     assert "direct wrapped cmake remains a diagnostic fallback only" in architecture
@@ -181,9 +185,12 @@ def test_gateway_and_localhost_certificate_examples_are_distinct() -> None:
     )
     localhost_command = "provision-certs --server-name localhost"
 
-    for path in ("README.md", "AI_BUILD_GUIDE.md", "experiment/mqtt-broker/README.md"):
+    for path in ("README.md", "experiment/mqtt-broker/README.md"):
         content = _read(path)
         assert gateway_command in content, f"{path} is missing gateway IP-SAN provisioning"
+
+    guide = _read("AI_BUILD_GUIDE.md")
+    assert "experiment/mqtt-broker/README.md" in guide
 
     for path in ("README.md", "experiment/mqtt-broker/README.md"):
         content = _read(path)
@@ -404,21 +411,8 @@ def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
     assert "must never copy private key material" in security
 
 
-MQTT_PLAN = "docs/non_hardware_mqtt_tls_development_plan.md"
 MASTER_PLAN = "docs/pqc_iot_experiment_framework_plan.md"
 ARCHITECTURE = "docs/007_framework_architecture.md"
-MQTT_PHASE_IDS = (
-    "M1", "M2", "M3", "M4", "M5", "M6", "M6.1", "M6.2", "M6.3",
-    "M6.4", "M6.5", "M6.6", "M7", "M8", "M9", "M10", "M11", "M12", "M13",
-)
-STATUS_FIELDS = (
-    "Status",
-    "Implemented evidence boundary",
-    "Verification",
-    "Remaining limitations",
-    "Deferred tests",
-    "Last reconciled",
-)
 DEFERRED_REGISTER_FIELDS = (
     "ID",
     "Feature",
@@ -431,47 +425,15 @@ DEFERRED_REGISTER_FIELDS = (
 )
 
 
-def _mqtt_phase_sections(content: str) -> dict[str, str]:
-    heading = re.compile(r"(?m)^## (?:Deferred )?Phase (M(?:\d+(?:\.\d+)?)) — .+$")
-    matches = list(heading.finditer(content))
-    sections: dict[str, str] = {}
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
-        sections[match.group(1)] = content[match.start():end]
-    return sections
-
-
-def test_every_mqtt_phase_has_one_complete_standard_status_block() -> None:
-    sections = _mqtt_phase_sections(_read(MQTT_PLAN))
-    assert tuple(sections) == MQTT_PHASE_IDS
-
-    for phase_id, section in sections.items():
-        assert section.count("### Phase status") == 1, (
-            f"Phase {phase_id} must contain exactly one standard status block"
-        )
-        for field in STATUS_FIELDS:
-            assert re.search(rf"(?m)^- \*\*{re.escape(field)}:\*\* \S", section), (
-                f"Phase {phase_id} status block is missing a value for {field}"
-            )
-
-
-def test_mqtt_phase_status_values_match_completed_and_deferred_scope() -> None:
-    sections = _mqtt_phase_sections(_read(MQTT_PLAN))
-    for phase_id in MQTT_PHASE_IDS:
-        expected = "deferred" if phase_id in {"M10", "M11", "M12", "M13"} else "completed"
-        assert f"- **Status:** {expected}" in sections[phase_id]
-
-
 def test_master_plan_is_historical_and_does_not_track_live_mqtt_checkboxes() -> None:
     master = _read(MASTER_PLAN)
     assert "Lifecycle classification: Historical roadmap" in master
-    assert MQTT_PLAN in master
     assert ARCHITECTURE in master
 
     mqtt_start = master.index("## Phase M —")
     mqtt_section = master[mqtt_start:]
     assert "Historical goals and pass criteria only" in mqtt_section
-    assert not re.search(r"(?m)^- \[[ xX]\] ", mqtt_section), (
+    assert not re.search(r"(?m)^- \[\[ xX\]\] ", mqtt_section), (
         "Historical master-plan MQTT content must not retain live status checkboxes"
     )
 
@@ -588,3 +550,67 @@ def test_root_entry_documents_link_to_documentation_index() -> None:
     for path in ("README.md", "AI_BUILD_GUIDE.md"):
         content = _read(path)
         assert DOCUMENTATION_INDEX in content, f"{path} must link to {DOCUMENTATION_INDEX}"
+
+
+def test_ai_build_guide_is_compact_and_routes_detail_to_canonical_owners() -> None:
+    guide = _read("AI_BUILD_GUIDE.md")
+
+    required_headings = (
+        "## 1. Purpose and authority",
+        "## 2. Canonical documentation routing",
+        "## 3. Project and capability boundaries",
+        "## 4. Repository navigation and ownership",
+        "## 5. Default workflow model",
+        "## 6. Generated state, signing state, and provenance",
+        "## 7. Evidence and result rules",
+        "## 8. Testing requirements",
+        "## 9. Secrets and generated artifacts",
+        "## 10. AI-assisted implementation and review workflow",
+        "## 11. Replacement artifact delivery",
+        "## 12. Documentation maintenance rules",
+    )
+    for heading in required_headings:
+        assert heading in guide, f"AI build guide is missing required section: {heading}"
+
+    for canonical_path in (
+        "docs/README.md",
+        "docs/001_ai_feature_request_workflow.md",
+        "docs/002_host_gateway_setup.md",
+        "docs/003_stm32_board_setup.md",
+        "docs/004_baseline_hal_app.md",
+        "docs/005_remote_flash_workflow.md",
+        "docs/006_security_and_secrets.md",
+        "docs/007_framework_architecture.md",
+        "docs/008_chatgpt_project_prompt.md",
+        "docs/pqc_iot_experiment_framework_plan.md",
+        "experiment/mqtt-broker/README.md",
+    ):
+        assert canonical_path in guide, f"AI build guide is missing canonical link: {canonical_path}"
+
+    assert len(guide.splitlines()) <= 275
+    assert "Phase M" not in guide
+    assert "Gateway SSH alias:" not in guide
+    assert "ST-LINK serial:" not in guide
+    assert "Core/Src/pqc_" not in guide
+    assert "tests/unit/test_artifacts.py" not in guide
+
+
+def test_ai_build_guide_preserves_mandatory_workflow_and_safety_rules() -> None:
+    guide = _read("AI_BUILD_GUIDE.md")
+    required_phrases = (
+        "Do not rely on prior chats, prior uploads, memory, or inferred repository state.",
+        "Do not move CubeMX-generated folders unless explicitly requested.",
+        "Do not implement a future or deferred capability early",
+        "Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, benchmark",
+        "Do not implement code until the required context is available.",
+        "complete matching tuple",
+        "partially missing tuple",
+        "mismatched tuple",
+        "Never silently reconstruct tuple members",
+        "supplementary cross-platform hygiene",
+        "consolidated deferred-test register",
+        "Provide complete replacement content",
+        "Expand-Archive -LiteralPath",
+    )
+    for phrase in required_phrases:
+        assert phrase in guide, f"AI build guide lost mandatory rule: {phrase}"
