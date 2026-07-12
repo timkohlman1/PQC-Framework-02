@@ -500,3 +500,85 @@ def test_deferred_register_rows_have_all_required_values() -> None:
         assert all(cells), f"Deferred-test row contains an empty required field: {row}"
         assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
         assert "./scripts/dev.ps1" in cells[6], f"Verification command is not explicit: {row}"
+
+DOCUMENTATION_INDEX = "docs/README.md"
+PROJECT_DOCUMENT_PATTERNS = (
+    re.compile(r"^(?:README|AI_BUILD_GUIDE)\.md$"),
+    re.compile(r"^docs/.*\.(?:md|txt)$"),
+    re.compile(r"^experiment/mqtt-broker/(?:README\.md|config/oqs/README\.md)$"),
+)
+INDEXED_DOCUMENT_PATH = re.compile(r"(?m)^\| `([^`]+\.(?:md|txt))` \|")
+
+
+def _submodule_roots() -> tuple[str, ...]:
+    gitmodules = REPO_ROOT / ".gitmodules"
+    if not gitmodules.is_file():
+        return ()
+    roots = re.findall(r"(?m)^\s*path\s*=\s*(\S+)\s*$", gitmodules.read_text(encoding="utf-8"))
+    return tuple(f"{root.rstrip('/')}/" for root in roots)
+
+
+def _is_project_owned_document(path: str) -> bool:
+    if any(path.startswith(root) for root in _submodule_roots()):
+        return False
+    return any(pattern.fullmatch(path) for pattern in PROJECT_DOCUMENT_PATTERNS)
+
+
+def _indexed_document_paths() -> list[str]:
+    return INDEXED_DOCUMENT_PATH.findall(_read(DOCUMENTATION_INDEX))
+
+
+def test_documentation_index_covers_every_tracked_project_owned_document() -> None:
+    tracked = _tracked_files()
+    expected = sorted(path for path in tracked if _is_project_owned_document(path))
+    indexed = _indexed_document_paths()
+
+    assert indexed == sorted(indexed), "Documentation index paths must be sorted"
+    assert len(indexed) == len(set(indexed)), "Documentation index contains duplicate paths"
+    assert indexed == expected, (
+        "Project-owned documentation index coverage mismatch. "
+        f"Missing: {sorted(set(expected) - set(indexed))}; "
+        f"unexpected: {sorted(set(indexed) - set(expected))}"
+    )
+
+
+def test_every_indexed_document_exists_and_is_tracked() -> None:
+    tracked = _tracked_files()
+    for path in _indexed_document_paths():
+        assert (REPO_ROOT / path).is_file(), f"Indexed documentation file is missing: {path}"
+        assert path in tracked, f"Indexed documentation file is not tracked: {path}"
+
+
+def test_documentation_index_records_complete_ownership_metadata() -> None:
+    content = _read(DOCUMENTATION_INDEX)
+    header = (
+        "| Path | Classification | Lifecycle | Canonical subject ownership | "
+        "Intended audience |"
+    )
+    assert header in content
+
+    rows = [line for line in content.splitlines() if line.startswith("| `")]
+    assert rows
+    for row in rows:
+        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+        assert len(cells) == 5, f"Malformed documentation ownership row: {row}"
+        assert all(cells), f"Documentation ownership row has an empty field: {row}"
+
+
+def test_vendor_and_submodule_documentation_is_excluded_from_project_ownership() -> None:
+    content = _read(DOCUMENTATION_INDEX)
+    indexed = _indexed_document_paths()
+
+    assert "vendor or submodule trees is upstream-owned" in content
+    for root in _submodule_roots():
+        assert f"`{root}`" in content
+        assert not any(path.startswith(root) for path in indexed)
+
+    assert not any(path.startswith("Drivers/") for path in indexed)
+    assert not any(path.startswith("Middlewares/Third_Party/") for path in indexed)
+
+
+def test_root_entry_documents_link_to_documentation_index() -> None:
+    for path in ("README.md", "AI_BUILD_GUIDE.md"):
+        content = _read(path)
+        assert DOCUMENTATION_INDEX in content, f"{path} must link to {DOCUMENTATION_INDEX}"

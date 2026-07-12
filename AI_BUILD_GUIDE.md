@@ -184,9 +184,12 @@ tests/hardware/test_secure_boot_flash_workflow.py
 
 Documentation layout:
 
+The canonical project documentation index and ownership map is `docs/README.md`. It classifies every project-owned document by role, lifecycle, canonical subject ownership, and audience. Vendor and submodule documentation is upstream-owned and excluded from project-maintained consistency checks.
+
 ```text
 README.md
 AI_BUILD_GUIDE.md
+docs/README.md
 docs/000_project_overview.md
 docs/001_ai_feature_request_workflow.md
 docs/002_host_gateway_setup.md
@@ -614,6 +617,9 @@ Review-response sections:
 
 ## 13. Known Documentation Maintenance Rules
 
+- Use `docs/README.md` as the canonical project-owned documentation index and ownership map.
+- Update the index whenever a project-owned document is added, relocated, reclassified, or removed.
+- Exclude vendor and submodule documentation from project-maintained consistency checks.
 - Keep `AI_BUILD_GUIDE.md` concise and current; avoid accumulating full phase-by-phase implementation history.
 - Use `README.md` for user-facing command orientation.
 - Use `docs/007_framework_architecture.md` for current architecture and file map.

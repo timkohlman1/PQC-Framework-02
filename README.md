@@ -2,6 +2,10 @@
 
 STM32-based embedded security experiment framework for direct-flash baseline experiments, wolfBoot secure-boot experiments, and secure-boot benchmark collection.
 
+## Documentation
+
+The canonical project documentation index and ownership map is `docs/README.md`. It identifies each maintained document, its lifecycle, canonical subject ownership, intended audience, and the exclusion rules for vendor and submodule documentation.
+
 ## Current implementation
 
 The repository currently provides:
