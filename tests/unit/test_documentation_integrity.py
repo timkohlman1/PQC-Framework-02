@@ -309,3 +309,90 @@ def test_baseline_document_matches_scheduler_and_task_smoke_sequence() -> None:
     assert "evidence=stm32-fake-no-network-initialization-only" in baseline
     assert "socket_io=not-performed" in baseline
     assert "does not provide evidence of ST67W61M1 detection" in baseline
+
+OPERATIONAL_WORKFLOW_DOCUMENTS = (
+    "docs/002_host_gateway_setup.md",
+    "docs/003_stm32_board_setup.md",
+    "docs/005_remote_flash_workflow.md",
+    "docs/006_security_and_secrets.md",
+    "experiment/mqtt-broker/README.md",
+)
+
+
+def test_operational_workflow_docs_use_canonical_owners_and_evidence_boundaries() -> None:
+    combined = "\n".join(_read(path) for path in OPERATIONAL_WORKFLOW_DOCUMENTS)
+
+    for canonical_path in (
+        "configs/hosts/gateway.yaml",
+        "docs/002_host_gateway_setup.md",
+        "docs/003_stm32_board_setup.md",
+        "docs/005_remote_flash_workflow.md",
+        "docs/006_security_and_secrets.md",
+        "docs/007_framework_architecture.md",
+        "experiment/mqtt-broker/README.md",
+    ):
+        assert canonical_path in combined
+
+    for boundary in (
+        "host-side",
+        "broker-side",
+        "UART",
+        "ST67W61M1",
+        "end-to-end wireless",
+    ):
+        assert boundary in combined
+
+
+def test_operational_commands_use_docker_wrappers_by_default() -> None:
+    gateway = _read("docs/002_host_gateway_setup.md")
+    workflow = _read("docs/005_remote_flash_workflow.md")
+    broker = _read("experiment/mqtt-broker/README.md")
+
+    assert "Docker-wrapper" in workflow
+    assert "diagnostic fallback only" in workflow
+    assert ".\\scripts\\dev.ps1 experiment-gateway" in gateway
+    assert ".\\scripts\\dev.ps1 experiment build-wolfboot" in workflow
+    assert ".\\scripts\\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py" in broker
+    assert "Diagnostic fallback: local Docker smoke test" in broker
+    assert "Diagnostic fallback: raw gateway-capable container execution" in broker
+
+
+def test_operational_secure_boot_profiles_match_tracked_config_inventory() -> None:
+    workflow = _read("docs/005_remote_flash_workflow.md")
+    expected_stems = (
+        "ecdsa_p256",
+        "ecc384",
+        "ecc521",
+        "ed25519",
+        "ed448",
+        "rsa2048",
+        "rsa3072",
+        "rsa4096",
+        "mldsa44",
+        "mldsa65",
+    )
+
+    for stem in expected_stems:
+        assert stem in workflow
+        assert (REPO_ROOT / f"configs/builds/wolfboot_stm32l4_{stem}.yaml").is_file()
+        assert (REPO_ROOT / f"configs/signing/wolfboot_{stem}_app.yaml").is_file()
+        assert (REPO_ROOT / f"configs/experiments/wolfboot_{stem}_uart.yaml").is_file()
+        assert (REPO_ROOT / f"configs/wolfboot/stm32l4r5_{stem}.config").is_file()
+
+    assert "ML-DSA-87 is not a supported profile" in workflow
+
+
+def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
+    workflow = _read("docs/005_remote_flash_workflow.md").lower()
+    security = _read("docs/006_security_and_secrets.md").lower()
+
+    for content in (workflow, security):
+        assert "generated-state preflight" in content
+        assert "primary" in content
+        assert "supplementary cross-platform hygiene" in content
+        assert "keysclean" in content
+        assert "do not" in content
+
+    assert "partially missing tuple" in workflow
+    assert "mismatched tuple" in workflow
+    assert "must never copy private key material" in security
