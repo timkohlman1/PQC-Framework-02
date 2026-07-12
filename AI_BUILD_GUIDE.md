@@ -221,16 +221,15 @@ docs/005_remote_flash_workflow.md
 docs/006_security_and_secrets.md
 docs/007_framework_architecture.md
 docs/008_chatgpt_project_prompt.md
-docs/009_chatgpt_project_prompt_release_readiness_review.md
 docs/decisions/0001_keep_cubemx_project_at_repo_root.md
 docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
 docs/decisions/0003_secure_boot_flash_layout.md
-docs/phase11_plan.md
-docs/plase11_checklist.md
 docs/pqc_iot_experiment_framework_plan.md
 ```
 
 Historical plans and decision records may intentionally preserve phase history; keep current-state claims in `AI_BUILD_GUIDE.md`, `README.md`, and `docs/007_framework_architecture.md` concise and current.
+
+The supported AI entry points are `docs/001_ai_feature_request_workflow.md` and `docs/008_chatgpt_project_prompt.md`. Release-readiness assessments use the review-request path in the maintained workflow; there is no separate release-readiness prompt document. Obsolete Phase 11 plan and checklist paths are not active documentation entry points.
 
 ## 6. CLI Commands
 

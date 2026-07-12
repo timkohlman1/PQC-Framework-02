@@ -386,11 +386,13 @@ For feature-development chats, provide `AI_BUILD_GUIDE.md` first. The project pr
 docs/008_chatgpt_project_prompt.md
 ```
 
-For release-readiness reviews, use:
+For release-readiness reviews, use the same maintained AI workflow and classify the request as a review:
 
 ```text
-docs/009_chatgpt_project_prompt_release_readiness_review.md
+docs/001_ai_feature_request_workflow.md
 ```
+
+There is no separate release-readiness prompt document.
 
 
 ## MQTT/TLS client roadmap and evidence boundaries
