@@ -17,6 +17,25 @@ OBSOLETE_REFERENCES = (
     "docs/phase11_plan.md",
     "docs/plase11_checklist.md",
 )
+CANONICAL_DOCUMENTS = (
+    "README.md",
+    "AI_BUILD_GUIDE.md",
+    "docs/README.md",
+    "docs/001_ai_feature_request_workflow.md",
+    "docs/007_framework_architecture.md",
+    "docs/008_chatgpt_project_prompt.md",
+    "docs/non_hardware_mqtt_tls_development_plan.md",
+    "docs/pqc_iot_experiment_framework_plan.md",
+    "experiment/mqtt-broker/README.md",
+)
+CANONICAL_MQTT_PLAN = "docs/non_hardware_mqtt_tls_development_plan.md"
+PROHIBITED_UNSAFE_COMMANDS = (
+    "make wolfboot_root=. keysclean",
+    "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_private_key.der",
+    "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_public_key.der",
+    "remove-item -force .\\tools\\wolfboot\\src\\keystore.c",
+    "remove-item -recurse -force .\\secrets\\wolfboot",
+)
 PROJECT_DOCUMENT_REFERENCE = re.compile(
     r"(?<![A-Za-z0-9_./-])"
     r"(AI_BUILD_GUIDE\.md|README\.md|docs/[A-Za-z0-9_./-]+\.(?:md|txt))"
@@ -45,6 +64,13 @@ def _tracked_files() -> set[str]:
         for path in completed.stdout.split(b"\0")
         if path
     }
+
+
+def test_required_canonical_documents_exist_and_are_tracked() -> None:
+    tracked = _tracked_files()
+    for path in CANONICAL_DOCUMENTS:
+        assert path in tracked, f"Required canonical document is not tracked: {path}"
+        assert (REPO_ROOT / path).is_file(), f"Required canonical document is missing: {path}"
 
 
 def test_explicit_ai_documentation_references_exist_and_are_tracked() -> None:
@@ -468,6 +494,43 @@ DEFERRED_REGISTER_FIELDS = (
 )
 
 
+MQTT_PHASE_STATUS_FIELDS = (
+    "Status",
+    "Implemented evidence boundary",
+    "Verification",
+    "Remaining limitations",
+    "Deferred tests",
+    "Last reconciled",
+)
+
+
+def test_active_mqtt_plan_phases_have_complete_status_metadata() -> None:
+    plan = _read(CANONICAL_MQTT_PLAN)
+    phase_matches = list(re.finditer(r"(?m)^## (?:Deferred )?Phase M[^\n]+$", plan))
+    assert phase_matches, "Canonical MQTT plan contains no phase headings"
+
+    for index, match in enumerate(phase_matches):
+        end = phase_matches[index + 1].start() if index + 1 < len(phase_matches) else len(plan)
+        section = plan[match.start():end]
+        heading = match.group(0)
+        assert section.count("### Phase status") == 1, (
+            f"{heading} must contain exactly one Phase status block"
+        )
+        status = section.split("### Phase status", maxsplit=1)[1]
+        for field in MQTT_PHASE_STATUS_FIELDS:
+            assert re.search(rf"(?m)^- \*\*{re.escape(field)}:\*\* \S", status), (
+                f"{heading} is missing non-empty status metadata field: {field}"
+            )
+
+
+def test_historical_master_plan_has_lifecycle_notice() -> None:
+    master = _read(MASTER_PLAN)
+    opening = "\n".join(master.splitlines()[:8]).lower()
+    assert "lifecycle classification: historical roadmap" in opening
+    assert "not the canonical current implementation-status source" in opening
+    assert re.search(r"last reconciled: \d{4}-\d{2}-\d{2}", opening)
+
+
 def test_master_plan_is_historical_and_does_not_track_live_mqtt_checkboxes() -> None:
     master = _read(MASTER_PLAN)
     assert "Lifecycle classification: Historical roadmap" in master
@@ -539,6 +602,32 @@ def _indexed_document_paths() -> list[str]:
     return INDEXED_DOCUMENT_PATH.findall(_read(DOCUMENTATION_INDEX))
 
 
+def _documentation_index_rows() -> list[tuple[str, str, str, str, str]]:
+    rows: list[tuple[str, str, str, str, str]] = []
+    for line in _read(DOCUMENTATION_INDEX).splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        assert len(cells) == 5, f"Malformed documentation ownership row: {line}"
+        path = cells[0].strip("`")
+        rows.append((path, cells[1], cells[2], cells[3], cells[4]))
+    return rows
+
+
+def _active_project_owned_documents() -> list[str]:
+    active: list[str] = []
+    for path, classification, lifecycle, _owner, _audience in _documentation_index_rows():
+        metadata = f"{classification} {lifecycle}".lower()
+        if (
+            "historical" in metadata
+            or "decision record" in metadata
+            or "plan" in metadata
+        ):
+            continue
+        active.append(path)
+    return active
+
+
 def test_documentation_index_covers_every_tracked_project_owned_document() -> None:
     tracked = _tracked_files()
     expected = sorted(path for path in tracked if _is_project_owned_document(path))
@@ -568,12 +657,41 @@ def test_documentation_index_records_complete_ownership_metadata() -> None:
     )
     assert header in content
 
-    rows = [line for line in content.splitlines() if line.startswith("| `")]
+    rows = _documentation_index_rows()
     assert rows
     for row in rows:
-        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
-        assert len(cells) == 5, f"Malformed documentation ownership row: {row}"
-        assert all(cells), f"Documentation ownership row has an empty field: {row}"
+        assert all(row), f"Documentation ownership row has an empty field: {row}"
+
+
+def test_active_project_docs_reject_unsafe_wolfboot_cleanup_commands() -> None:
+    for path in _active_project_owned_documents():
+        content = _read(path).lower()
+        for command in PROHIBITED_UNSAFE_COMMANDS:
+            assert command not in content, (
+                f"Unsafe signing-state cleanup command found in {path}: {command}"
+            )
+
+
+def test_canonical_mqtt_plan_path_is_used_consistently() -> None:
+    tracked = _tracked_files()
+    assert CANONICAL_MQTT_PLAN in tracked
+    assert CANONICAL_MQTT_PLAN in _indexed_document_paths()
+
+    for source in (DOCUMENTATION_INDEX, ARCHITECTURE):
+        assert CANONICAL_MQTT_PLAN in _read(source), (
+            f"{source} must route MQTT roadmap status to {CANONICAL_MQTT_PLAN}"
+        )
+
+    stale_paths = (
+        "non_hardware_mqtt_tls_development_plan.md",
+        "docs/mqtt_tls_development_plan.md",
+    )
+    for source in ACTIVE_AI_DOCUMENTS + (ARCHITECTURE, MASTER_PLAN):
+        content = _read(source)
+        for stale in stale_paths:
+            if stale == "non_hardware_mqtt_tls_development_plan.md":
+                content = content.replace(CANONICAL_MQTT_PLAN, "")
+            assert stale not in content, f"{source} references non-canonical MQTT plan path: {stale}"
 
 
 def test_vendor_and_submodule_documentation_is_excluded_from_project_ownership() -> None:

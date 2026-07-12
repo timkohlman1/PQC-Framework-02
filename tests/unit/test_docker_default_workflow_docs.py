@@ -56,35 +56,6 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
     assert "--artifact build/RelocatedDebug/stm32_basic_hal1.elf" in workflow
 
 
-def test_active_documentation_rejects_unsafe_wolfboot_cleanup_guidance() -> None:
-    repo_root = _repo_root()
-    active_docs = [
-        repo_root / "AI_BUILD_GUIDE.md",
-        repo_root / "README.md",
-        repo_root / "docs" / "005_remote_flash_workflow.md",
-        repo_root / "docs" / "006_security_and_secrets.md",
-        repo_root / "docs" / "007_framework_architecture.md",
-        repo_root / "docs" / "local build commands.txt",
-    ]
-
-    prohibited_commands = (
-        "make wolfboot_root=. keysclean",
-        "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_private_key.der",
-        "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_public_key.der",
-        "remove-item -force .\\tools\\wolfboot\\src\\keystore.c",
-        "remove-item -recurse -force .\\secrets\\wolfboot",
-    )
-
-    for path in active_docs:
-        assert path.is_file(), f"Missing active documentation file: {path.relative_to(repo_root)}"
-        content = path.read_text(encoding="utf-8").lower()
-        for command in prohibited_commands:
-            assert command not in content, (
-                f"Unsafe signing-state cleanup command found in "
-                f"{path.relative_to(repo_root)}: {command}"
-            )
-
-
 def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() -> None:
     workflow = _read("docs/005_remote_flash_workflow.md")
     local_commands = _read("docs/local build commands.txt")
