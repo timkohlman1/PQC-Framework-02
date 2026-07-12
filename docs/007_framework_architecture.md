@@ -410,3 +410,25 @@ Phase M8 reuses the Phase M7 integration boundary rather than adding a second MQ
 The UART marker begins with `wolfMQTT runtime smoke:` and is labelled `evidence=stm32-fake-no-network-initialization-only`. It records the FreeRTOS task context, backend, initializer result, client-initialized state, and callback presence. Transport, Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status remain explicitly unavailable. This is initialization evidence from the STM32 board only; it is not broker or network evidence.
 
 Static unit coverage validates invocation, marker wording, backend selection, unavailable claims, and the continued absence of protocol/network calls. Existing local-build integration coverage compiles both `Debug` and `RelocatedDebug`. The capability-gated known-image hardware test builds, flashes, captures UART, and verifies that the Phase M8 marker occurs after `defaultTask` starts. Detailed evidence remains in `uart.log`; no new manifest field is introduced. Verify with `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`.
+
+### Phase M9 host wolfMQTT/wolfSSL compatibility boundary
+
+`experiment/mqtt-broker/host-wolfmqtt/CMakeLists.txt` defines a separate native-host build. It compiles the pinned wolfMQTT core and upstream MQTT client/network example sources and links them to the wolfSSL source carried by the wolfBoot submodule. This target is intentionally separate from the Arm/STM32 CMake presets and from `pqc_wolfmqtt_stm32_build_only`.
+
+`experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py` configures and builds the native executable and can pass arguments through to the upstream wolfMQTT client. Before invoking the client it emits an explicit `host_side` evidence label and false claims for STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless success. Optional JSON output preserves the same boundary. The utility may target the local or gateway-hosted classical broker, but gateway and broker availability remain capability requirements rather than assumptions.
+
+The canonical broker definition is `experiment/mqtt-broker/compose.yaml`. Phase M4 Mosquitto/OpenSSL checks and Phase M9 wolfMQTT/wolfSSL checks are complementary host-side paths. Neither is firmware evidence.
+
+#### Deferred test coverage
+
+- **Phase M9 gateway wolfMQTT/wolfSSL live validation — gateway integration layer:** the supplied implementation provides the host client, native build integration test, and command path, but a deterministic gateway run requires available gateway connectivity plus provisioned temporary broker certificates. Verify when that capability is intentionally enabled with `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway`, followed by the documented `host_wolfmqtt_validate.py run` command against the gateway endpoint. Evidence must remain `host_side`.
+
+
+#### Phase M9 PowerShell client-argument boundary
+
+The host validation wrapper accepts upstream wolfMQTT arguments after `--client-args`. This named boundary is used because `scripts/dev.ps1` is an advanced PowerShell script. Each dash-prefixed wolfMQTT argument must be quoted when invoked through that wrapper so PowerShell forwards it as a string rather than attempting parameter binding. Direct POSIX or Python invocation may also use the conventional `--` boundary.
+
+
+#### Phase M9 structured runtime evidence
+
+The host validation utility captures the wolfMQTT client output and records individual TLS/MQTT success markers in the JSON result. `broker_compatibility_confirmed` is true only when the process exits successfully and explicit markers confirm TLS socket connection, MQTT connection acknowledgement, subscription, successful publish, message receipt, MQTT disconnect, and socket disconnect. A zero process exit code alone is insufficient.

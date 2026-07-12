@@ -736,3 +736,19 @@ Phase M7 established build-only integration. Phase M8 reuses the same boundary f
 ### Phase M8 STM32 fake/no-network wolfMQTT runtime evidence
 
 The existing `pqc_wolfmqtt_build_only` boundary is invoked once from `defaultTask` after the FreeRTOS scheduler starts. It selects `fake_no_network`, initializes and deinitializes a wolfMQTT client against unavailable callbacks, and emits `wolfMQTT runtime smoke:` with `evidence=stm32-fake-no-network-initialization-only`. The marker records initialization state only. Transport, Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status remain unavailable. No X-NUCLEO-67W61M1 is required. Static unit coverage, direct/relocated builds, and a capability-gated known-image UART assertion are the verification path. Detailed runtime evidence remains in `uart.log`; no dedicated manifest field is added.
+
+### Phase M9 host-side wolfMQTT/wolfSSL validation
+
+Phase M9 adds `experiment/mqtt-broker/host-wolfmqtt/CMakeLists.txt` and `experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py`. The native target compiles the pinned wolfMQTT client/example network path against the wolfSSL source pinned through the wolfBoot submodule. It is independent of the STM32 cross-compiled targets. Unit coverage checks source pinning and evidence labels; capability-aware integration coverage builds the native client when CMake, Ninja, wolfMQTT, and wolfSSL are available.
+
+All Phase M9 output is `host_side` MQTT-over-TLS broker-compatibility evidence. It must keep STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless claims false. Live local or gateway broker checks require separately provisioned temporary certificates and available broker capability. The canonical broker Compose path is `experiment/mqtt-broker/compose.yaml`.
+
+
+### Phase M9 PowerShell argument forwarding
+
+The host wolfMQTT wrapper uses `--client-args` as the PowerShell-safe boundary between wrapper options and upstream wolfMQTT arguments. When invoked through `scripts/dev.ps1`, every dash-prefixed wolfMQTT token must be quoted individually, such as `'-h'`, `'-p'`, `'-t'`, and `'-i'`. A standalone `--` is not the documented PowerShell path, and unquoted client flags may be bound as parameters of the advanced `dev.ps1` script before Docker is invoked.
+
+
+### Phase M9 structured compatibility result
+
+The host wolfMQTT/wolfSSL utility captures client output and records explicit runtime-marker booleans. `broker_compatibility_confirmed` may be true only for `host_side` evidence when the command returns zero and the required TLS socket connect, MQTT connect/acknowledge, subscribe, successful publish, message receive, MQTT disconnect, and socket disconnect markers are all present. This field must never be used as STM32, Wi-Fi, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, ST67W61M1, or end-to-end wireless evidence.

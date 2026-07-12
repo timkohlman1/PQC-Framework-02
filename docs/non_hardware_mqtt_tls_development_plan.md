@@ -678,6 +678,10 @@ Requirement: Implement Phase M9 of the attached development plan - Host side wol
 - No STM32 hardware or Wi-Fi module is required.
 - No STM32 runtime success is claimed.
 
+### Implementation Status
+
+Implemented with a separate native-host CMake target and wrapper utility. The target builds the pinned wolfMQTT client/example network path against the wolfSSL source pinned through the wolfBoot submodule. Output and optional JSON records are labelled `host_side` and explicitly keep STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless claims false. Native build verification is capability-aware; live local or gateway broker validation requires separately available broker and temporary certificate capability. The broker Compose filename is `experiment/mqtt-broker/compose.yaml`.
+
 ---
 
 ## Deferred Phase M10 — ST67W61M1 Network Interface Backend

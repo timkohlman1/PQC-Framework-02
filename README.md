@@ -560,3 +560,31 @@ wolfMQTT is pinned as the `Middlewares/Third_Party/wolfMQTT` submodule. Both dir
 ### Phase M8 STM32 fake/no-network runtime evidence
 
 The firmware runs the existing wolfMQTT initialization boundary once from `defaultTask` with `backend=fake_no_network`. The `wolfMQTT runtime smoke:` UART line is initialization-only evidence from the STM32 board. It does not call a broker or network transport and explicitly records Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status as unavailable. The X-NUCLEO-67W61M1 is not required. The known-image UART assertion remains capability-gated under `tests/hardware/test_baseline_uart.py`.
+
+### Phase M9 host-side wolfMQTT/wolfSSL validation
+
+Phase M9 adds a host-only validation client under `experiment/mqtt-broker/host-wolfmqtt/`. It compiles the pinned `Middlewares/Third_Party/wolfMQTT` client and examples against the wolfSSL source pinned through `tools/wolfboot/lib/wolfssl`. The wrapper always labels output and optional JSON records as `host_side` evidence and explicitly keeps STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless claims false.
+
+Build the client and inspect the upstream client options:
+
+```powershell
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py build
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py help
+```
+
+Provision and start the existing classical mutual-TLS broker before a live validation. Pass the selected upstream wolfMQTT client arguments after `--` and use only certificate material under the ignored `experiment/mqtt-broker/runtime/` tree:
+
+```powershell
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py run --result-json results/host-wolfmqtt/validation.json --client-args '<wolfMQTT flag>' '<value>'
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+```
+
+The broker Compose file is canonically named `experiment/mqtt-broker/compose.yaml`. Gateway-dependent broker execution remains capability-gated. A successful host client run is broker-compatibility evidence only and is not STM32 or wireless evidence.
+
+
+PowerShell note: `scripts/dev.ps1` is an advanced script, so dash-prefixed wolfMQTT arguments must be passed after `--client-args` and quoted individually, for example `'-h'`, `'-p'`, and `'-i'`. The quotes ensure PowerShell treats those tokens as forwarded data rather than parameters of `dev.ps1`.
+
+
+Phase M9 runtime JSON records marker-level host evidence. `broker_compatibility_confirmed` becomes true only after explicit wolfMQTT output confirms the complete TLS connect, MQTT connect/acknowledge, subscribe, publish, receive, and disconnect sequence. It is not inferred from exit code alone.
