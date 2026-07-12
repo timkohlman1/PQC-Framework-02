@@ -201,18 +201,24 @@ The build server remains the orchestrator. It provisions local development certi
 Typical build-server commands from the repository root:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py `
+    provision-certs `
+    --server-name pqc-gateway1 `
+    --host-config configs/hosts/gateway.yaml
+
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
 The OQS profile uses gateway-generated mutual-TLS material from the OQS-enabled OpenSSL provider in `openquantumsafe/mosquitto:latest`:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py `
+    provision-oqs-certs `
+    --host-config configs/hosts/gateway.yaml
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
 ```

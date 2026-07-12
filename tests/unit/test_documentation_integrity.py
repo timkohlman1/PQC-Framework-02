@@ -144,3 +144,59 @@ def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
 
     architecture = _read("docs/007_framework_architecture.md").lower()
     assert "direct wrapped cmake remains a diagnostic fallback only" in architecture
+
+MQTT_COMMAND_DOCUMENTS = (
+    "AI_BUILD_GUIDE.md",
+    "README.md",
+    "docs/007_framework_architecture.md",
+    "experiment/mqtt-broker/README.md",
+)
+
+
+def test_powershell_wolfmqtt_examples_use_named_client_argument_boundary() -> None:
+    root_readme = _read("README.md")
+    architecture = _read("docs/007_framework_architecture.md")
+    guide = _read("AI_BUILD_GUIDE.md")
+
+    assert "--client-args '-h'" in root_readme
+    assert "'-p'" in root_readme
+    assert "'-t'" in root_readme
+
+    combined = "\n".join((root_readme, architecture, guide)).lower()
+    assert "after `--client-args`" in combined
+    assert "active powershell guidance does not use a standalone `--`" in combined
+    assert "pass the selected upstream wolfmqtt client arguments after `--`" not in combined
+
+
+def test_gateway_and_localhost_certificate_examples_are_distinct() -> None:
+    gateway_command = (
+        "provision-certs --server-name pqc-gateway1 "
+        "--host-config configs/hosts/gateway.yaml"
+    )
+    localhost_command = "provision-certs --server-name localhost"
+
+    for path in ("README.md", "AI_BUILD_GUIDE.md", "experiment/mqtt-broker/README.md"):
+        content = _read(path)
+        assert gateway_command in content, f"{path} is missing gateway IP-SAN provisioning"
+
+    for path in ("README.md", "experiment/mqtt-broker/README.md"):
+        content = _read(path)
+        assert localhost_command in content, f"{path} is missing the localhost-only example"
+        assert "localhost-only" in content.lower()
+
+
+def test_mqtt_command_docs_preserve_compose_path_and_evidence_boundary() -> None:
+    combined = "\n".join(_read(path) for path in MQTT_COMMAND_DOCUMENTS)
+
+    assert "experiment/mqtt-broker/compose.yaml" in combined
+    assert "host_side" in combined or "host-side" in combined
+    assert "wolfMQTT-on-STM32" in combined
+    assert "end-to-end wireless" in combined
+
+
+def test_host_wolfmqtt_wrapper_help_uses_client_args_contract() -> None:
+    source = _read("experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py")
+
+    assert "after --client-args" in source
+    assert "error=run requires explicit wolfMQTT client arguments after --client-args" in source
+    assert "PowerShell forwarding path" in source

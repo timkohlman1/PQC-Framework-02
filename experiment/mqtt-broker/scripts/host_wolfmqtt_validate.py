@@ -112,8 +112,9 @@ def usage_parser() -> argparse.ArgumentParser:
 def split_arguments(argv: Sequence[str] | None) -> tuple[list[str], list[str]]:
     """Split wrapper and client arguments at a preserved boundary token.
 
-    ``--client-args`` is the documented PowerShell-safe boundary. ``--`` is
-    retained for direct POSIX/Python invocation.
+    ``--client-args`` is the documented command boundary. The legacy ``--``
+    separator remains accepted for direct compatibility but is not presented
+    as the PowerShell forwarding path.
     """
     raw = list(argv) if argv is not None else list(sys.argv[1:])
     boundaries = [
@@ -188,7 +189,7 @@ def print_local_help() -> None:
         "Actions:\n"
         "  build  Configure and build the native host client. No client is executed.\n"
         "  help   Print this local-only help. No build or network access is performed.\n"
-        "  run    Build and execute the client with explicit arguments after --.\n"
+        "  run    Build and execute the client with explicit arguments after --client-args.\n"
         "\n"
         "Wrapper options may appear before or after the action:\n"
         "  --build-dir <path>\n"
@@ -266,7 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.action == "run" and not client_args:
         print_evidence(scope="rejected_before_execution")
         print(
-            "error=run requires explicit wolfMQTT client arguments after --; "
+            "error=run requires explicit wolfMQTT client arguments after --client-args; "
             "the upstream example defaults are intentionally not permitted"
         )
         write_result(

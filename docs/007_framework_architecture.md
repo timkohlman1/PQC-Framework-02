@@ -431,7 +431,7 @@ The canonical broker definition is `experiment/mqtt-broker/compose.yaml`. Phase 
 
 #### Phase M9 PowerShell client-argument boundary
 
-The host validation wrapper accepts upstream wolfMQTT arguments after `--client-args`. This named boundary is used because `scripts/dev.ps1` is an advanced PowerShell script. Each dash-prefixed wolfMQTT argument must be quoted when invoked through that wrapper so PowerShell forwards it as a string rather than attempting parameter binding. Direct POSIX or Python invocation may also use the conventional `--` boundary.
+The host validation wrapper accepts upstream wolfMQTT arguments after `--client-args`. This named boundary is the documented command contract because `scripts/dev.ps1` is an advanced PowerShell script. Each dash-prefixed wolfMQTT argument must be quoted individually when invoked through PowerShell so it is forwarded as data rather than bound as a `dev.ps1` parameter. Active PowerShell guidance does not use a standalone `--` forwarding path.
 
 
 #### Phase M9 structured runtime evidence

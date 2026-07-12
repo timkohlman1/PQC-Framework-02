@@ -33,13 +33,13 @@ experiment/mqtt-broker/log/
 experiment/mqtt-broker/.env
 ```
 
-## Provision local classical TLS material
+## Provision localhost-only classical TLS material
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
 
-This creates a local development CA, server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed.
+This creates a local development CA, localhost server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 ## Provision remote OQS TLS material
 

@@ -468,11 +468,13 @@ The fake/no-network example config is `configs/experiments/mqtt_tls_schema_fake.
 
 The gateway-hosted MQTT broker compose project lives under `experiment/mqtt-broker/`. It is orchestrated from the repository root on the build server and can provision local test certificates, deploy the compose project to `pqc-gateway1` with `scp`, and start or stop the broker with `ssh`.
 
-Provision local classical TLS material for development testing:
+Provision localhost-only classical TLS material for local development testing:
 
 ```powershell
-./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
+
+This localhost-only certificate does not provide a gateway IP SAN. Use the gateway provisioning command below before validation through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 Deploy the broker project to the gateway without committing secrets:
 
@@ -584,12 +586,12 @@ Build the client and inspect the upstream client options:
 ./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py help
 ```
 
-Provision and start the existing classical mutual-TLS broker before a live validation. Pass the selected upstream wolfMQTT client arguments after `--` and use only certificate material under the ignored `experiment/mqtt-broker/runtime/` tree:
+Provision and start the existing classical mutual-TLS broker before a live validation. Pass the selected upstream wolfMQTT client arguments after `--client-args`; through PowerShell, quote every dash-prefixed wolfMQTT token individually. Use only certificate material under the ignored `experiment/mqtt-broker/runtime/` tree:
 
 ```powershell
 ./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
-./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py run --result-json results/host-wolfmqtt/validation.json --client-args '<wolfMQTT flag>' '<value>'
+./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py run --result-json results/host-wolfmqtt/validation.json --client-args '-h' localhost '-p' 8883 '-t'
 ./scripts/dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
