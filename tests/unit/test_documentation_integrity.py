@@ -29,7 +29,13 @@ def _read(relative_path: str) -> str:
 
 def _tracked_files() -> set[str]:
     completed = subprocess.run(
-        ["git", "ls-files", "-z"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={REPO_ROOT}",
+            "ls-files",
+            "-z",
+        ],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
