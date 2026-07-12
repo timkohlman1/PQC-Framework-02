@@ -24,16 +24,46 @@ Implemented:
 14. Docker-hosted Linux default workflow for Python validation, STM32 direct/relocated builds, wolfBoot builds, application signing, pytest, and gateway-mediated hardware experiments.
 15. GitHub Actions CI preserving existing runner-compatible and MQTT broker Docker runtime jobs while using the containerised non-hardware job as the default reproducible software-build validation path.
 
-Planned but not implemented:
+Current boundaries not yet implemented:
 
-1. STM32 MQTT client firmware integration.
-2. STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration.
-3. ST67W61M1 network-interface backend validation.
-4. Classical STM32 MQTT-over-TLS runtime validation.
-5. PQC or hybrid MQTT/TLS experiments after classical MQTT/TLS is stable and library support is confirmed.
+1. Real ST67W61M1-backed network-interface bring-up, module detection, Wi-Fi association, hardware-backed IP acquisition, and external TCP connectivity.
+2. Real wolfSSL socket transport, certificate loading, TLS session creation, or TLS handshake on STM32.
+3. Real wolfMQTT broker connect, subscribe, publish, receive, disconnect, or reconnect on STM32.
+4. Classical or PQC/hybrid STM32 MQTT-over-TLS runtime validation and end-to-end wireless evidence.
+5. PQC or hybrid MQTT/TLS experiments after classical STM32 MQTT-over-TLS is stable and library support is confirmed.
 6. Hybrid signing profiles and ML-DSA-87 under the current 8192-byte image-header reserve.
 7. Network degradation automation.
 8. Production release packaging.
+
+The repository does contain MQTT/TLS preparation and compatibility capabilities: framework schema and fake transport, broker-side profiles, host-side wolfMQTT/wolfSSL validation, STM32 lwIP build/local-only runtime preparation, a wolfSSL TLS-context lifecycle, an explicit unavailable transport boundary, and wolfMQTT build-only plus fake/no-network task-context initialization. These capabilities are not evidence of real STM32 networking or MQTT-over-TLS.
+
+## Canonical current capability matrix
+
+This matrix is the canonical detailed implementation-status reference. A supported cell identifies the strongest evidence currently represented by inspected repository sources, configs, and tests; it does not promote that evidence into another layer.
+
+| Capability | Build-only | STM32-local runtime | Host-side | Broker-side | Gateway/hardware | Evidence class or boundary | Current limitation |
+|---|---|---|---|---|---|---|---|
+| Direct-flash HAL/FreeRTOS application | Supported | Supported through explicit boot, scheduler, task, and tick UART markers | Framework orchestration | Not applicable | Supported through gateway-mediated flash/UART workflows when capability is available | STM32 runtime and gateway/hardware evidence | Hardware success requires explicit logs or manifests; container builds alone are software-build evidence |
+| FreeRTOS scheduler and task execution | Supported | Supported through scheduler-start and default-task markers | Not applicable | Not applicable | Capability-gated UART validation | STM32-local runtime | No network capability follows from scheduler/task execution |
+| wolfBoot secure-boot build, signing, and flashing | Supported for configured profiles | Supported when explicit secure-boot UART evidence is captured | Build/sign orchestration | Not applicable | Gateway-mediated two-artifact flash and UART workflows | Build, signing, and secure-boot hardware evidence | Runtime success, timing, and memory require explicit firmware/UART/manifest evidence |
+| Classical secure-boot profiles | Supported: ECC256, ECC384, ECC521, ED25519, ED448, RSA2048, RSA3072, RSA4096 | Supported through capability-gated secure-boot runs | Build/sign/aggregation tooling | Not applicable | Capability-gated hardware benchmark workflows | Secure-boot benchmark evidence | Profile comparison is valid only under the documented common measurement model |
+| ML-DSA secure-boot profiles | Supported: ML-DSA-44 and ML-DSA-65 | Supported through capability-gated secure-boot runs | Build/sign/aggregation tooling | Not applicable | Capability-gated hardware benchmark workflows | Secure-boot benchmark evidence | ML-DSA-87 remains unavailable under the current 8192-byte image-header reserve |
+| Secure-boot benchmark collection and aggregation | Static build/sign metrics supported | Runtime timing/cycles/result/stack only when explicit markers exist | Aggregation to JSON/CSV | Not applicable | Hardware samples capability-gated | Manifest-backed benchmark evidence | Host duration, UART duration, linker output, or ELF output alone are not runtime evidence |
+| MQTT/TLS config and result schema | Supported | No protocol runtime implied | Supported by framework validation | Not applicable | Not applicable | `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed` schema classes | Schema acceptance is not network, TLS, MQTT, or hardware success |
+| Deterministic fake/no-network MQTT transport | Supported | Not an STM32 network path | Supported as simulated control-flow execution | No real broker used | No gateway/hardware required | `fake/no-network transport evidence` | Connect, publish, timeout, disconnect, and reconnect outcomes are simulated only |
+| Classical MQTT broker Compose profile | Supported | Not applicable | Host clients may validate it | Supported with temporary classical mutual-TLS material | Gateway deployment and validation are capability-gated | Broker-side and host-side evidence | Does not prove STM32, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, Wi-Fi, or end-to-end wireless success |
+| Experimental OQS MQTT broker profile | Supported | Not applicable | OQS-capable host validation supported where tooling is available | Supported as an experimental protocol-evaluation profile | Gateway deployment and validation are capability-gated | Broker-side and host-side experimental evidence | Not production TLS and not STM32 or wireless evidence |
+| Native host wolfMQTT/wolfSSL broker validation | Supported as a native host target | Not applicable | Supported, including structured compatibility markers | Uses the configured broker | Local or gateway broker checks are capability-gated | `host_side` MQTT-over-TLS compatibility evidence | Must keep all STM32, ST67W61M1, and end-to-end wireless claims false |
+| STM32 lwIP/ST67W6X source integration | Supported in direct and relocated firmware builds | Limited non-network helper smoke supported | Not applicable | Not applicable | Optional UART smoke is capability-gated | STM32 build-only plus constrained local runtime evidence | Generated driver presence and pin/clock preparation do not prove module detection, Wi-Fi, link, hardware IP, TCP, TLS, or MQTT |
+| STM32 lwIP network-interface boundary | Supported | Supported only as unattached local `netif` state observation | Not applicable | Not applicable | Optional UART evidence is capability-gated | `lwip-netif-state-only`; unavailable-boundary evidence | No `netif_add`, link-up, DHCP, socket, external network, or ST67W61M1 access |
+| STM32 lwIP UDP loopback | Supported | Supported after scheduler start at `127.0.0.1` | Not applicable | No broker used | Known-image UART assertion is capability-gated | `stm32-local-lwip-loopback-only` | Local loopback is not Wi-Fi, hardware-backed IP, external TCP, TLS, MQTT, or broker evidence |
+| STM32 wolfSSL source and TLS-context lifecycle | Supported in direct and relocated firmware builds | Supported for initialization, TLS 1.2 client `WOLFSSL_CTX` create/free, and cleanup | Not applicable | Not applicable | UART smoke is capability-gated | `tls-context-lifecycle-only` | No `WOLFSSL` session, certificates, private keys, socket transport, handshake, MQTT, Wi-Fi, or ST67W61M1 |
+| STM32 wolfSSL transport boundary | Supported | Boundary executes only to report unavailable operations | Not applicable | Not applicable | Optional UART evidence is capability-gated | `unavailable-transport-only` | Connect/read/write callbacks perform no socket I/O and transfer no data |
+| STM32 wolfMQTT integration | Supported: pinned wolfMQTT client, packet, and socket callback layers build and link | Supported only for serialized fake/no-network client initialization/deinitialization after scheduler start | Separate native host validation exists but is not STM32 evidence | No broker used by STM32 path | Known-image UART assertion is capability-gated | Build-only plus `stm32-fake-no-network-initialization-only` | No TCP, TLS handshake, MQTT connect, subscribe, publish, receive, disconnect, reconnect, Wi-Fi, or ST67W61M1 |
+| ST67W61M1 hardware-backed network backend | Compile-time driver/interface preparation only | Unimplemented | Not applicable | Not applicable | Unimplemented | Future hardware-backed capability | Real module detection, Wi-Fi association, link, DHCP/hardware IP, and external TCP require hardware-backed implementation and evidence |
+| Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented | Host-side compatibility exists separately | Broker profiles exist separately | Unimplemented end-to-end | Future hardware-backed STM32 runtime capability | Requires ST67W61M1 network bring-up, real wolfSSL transport/handshake, wolfMQTT protocol operations, UART/manifests, and broker corroboration |
+| PQC or hybrid STM32 MQTT-over-TLS | Broker-side OQS experimentation exists separately | Unimplemented | Experimental host/broker evaluation only | Experimental OQS profile | Unimplemented end-to-end | Future protocol and hardware-backed capability | Must follow successful classical STM32 MQTT-over-TLS and confirmed embedded library support |
+
 
 ## Source and configuration map
 
@@ -188,7 +218,7 @@ Supported planning modes are evidence-bound:
 
 Evidence categories must not be collapsed. Build-only evidence does not imply runtime success. Fake transport evidence does not imply broker, TLS, STM32, or Wi-Fi success. Host-side and broker-side evidence does not imply STM32 success. STM32 UART initialization evidence does not imply Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end wireless success.
 
-Small future implementation phases should preserve this boundary: MQTT/TLS config/result schema, fake/no-network transport harness, host-side broker compatibility validation, STM32 lwIP build-only skeleton, wolfSSL build-only skeleton, wolfMQTT build-only skeleton, STM32 fake/no-network runtime evidence, optional host-side wolfSSL/wolfMQTT validation, ST67W61M1 network-interface backend, classical STM32 MQTT-over-TLS validation, network degradation, and later PQC/hybrid MQTT/TLS experiments.
+Current implemented preparation and compatibility layers must preserve this boundary as later work adds the ST67W61M1 network-interface backend, classical STM32 MQTT-over-TLS validation, network degradation, and eventual PQC/hybrid MQTT/TLS experiments.
 
 ## Benchmark model
 

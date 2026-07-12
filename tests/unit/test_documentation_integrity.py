@@ -200,3 +200,46 @@ def test_host_wolfmqtt_wrapper_help_uses_client_args_contract() -> None:
     assert "after --client-args" in source
     assert "error=run requires explicit wolfMQTT client arguments after --client-args" in source
     assert "PowerShell forwarding path" in source
+
+
+def test_architecture_contains_canonical_current_capability_matrix() -> None:
+    architecture = _read("docs/007_framework_architecture.md")
+
+    assert "## Canonical current capability matrix" in architecture
+    required_rows = (
+        "Direct-flash HAL/FreeRTOS application",
+        "wolfBoot secure-boot build, signing, and flashing",
+        "MQTT/TLS config and result schema",
+        "Deterministic fake/no-network MQTT transport",
+        "Native host wolfMQTT/wolfSSL broker validation",
+        "STM32 lwIP UDP loopback",
+        "STM32 wolfSSL transport boundary",
+        "STM32 wolfMQTT integration",
+        "ST67W61M1 hardware-backed network backend",
+        "Real classical STM32 MQTT-over-TLS",
+        "PQC or hybrid STM32 MQTT-over-TLS",
+    )
+    for row in required_rows:
+        assert f"| {row} |" in architecture, f"Missing capability matrix row: {row}"
+
+    for heading in (
+        "Build-only",
+        "STM32-local runtime",
+        "Host-side",
+        "Broker-side",
+        "Gateway/hardware",
+        "Evidence class or boundary",
+        "Current limitation",
+    ):
+        assert heading in architecture
+
+
+def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
+    architecture = _read("docs/007_framework_architecture.md")
+
+    assert "STM32 wolfMQTT integration | Supported" in architecture
+    assert "stm32-fake-no-network-initialization-only" in architecture
+    assert "unavailable-transport-only" in architecture
+    assert "ST67W61M1 hardware-backed network backend | Compile-time driver/interface preparation only | Unimplemented" in architecture
+    assert "Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented" in architecture
+    assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
