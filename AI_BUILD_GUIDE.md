@@ -260,12 +260,11 @@ Direct-flash baseline:
 ./scripts/dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --restart
 ```
 
-Secure-boot profile pattern:
+Secure-boot profile pattern (normal Docker-wrapper path with framework-recorded relocated-build provenance):
 
 ```powershell
 ./scripts/dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
-./scripts/dev.ps1 cmake --preset RelocatedDebug
-./scripts/dev.ps1 cmake --build --preset RelocatedDebug
+./scripts/dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 ./scripts/dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
 ./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
@@ -284,6 +283,8 @@ rsa4096
 mldsa44
 mldsa65
 ```
+
+Do not run wolfBoot `keysclean` or manually remove any member of the reusable signing tuple. Generated-state preflight owns stale generated-output handling; incomplete or mismatched signing state must fail safely. Host-native build commands are diagnostic fallback only.
 
 ECC256 uses the historical file stem `wolfboot_stm32l4_ecdsa_p256.yaml` and signing stem `wolfboot_ecdsa_p256_app.yaml`; benchmark metadata identifies it as `ECC256` / `ecc256_reference`.
 

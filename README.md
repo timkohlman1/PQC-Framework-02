@@ -166,11 +166,20 @@ Build the direct-flash firmware preset inside the container:
 .\scripts\dev.ps1 cmake --build --preset Debug
 ```
 
-Build the relocated firmware preset inside the container:
+Build the relocated firmware preset through the framework so generated-state provenance is recorded:
 
 ```powershell
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 ```
+
+For diagnostic fallback only, the same container toolchain can run the relocated CMake preset directly:
+
+```powershell
+.\scripts\dev.ps1 cmake --preset RelocatedDebug
+.\scripts\dev.ps1 cmake --build --preset RelocatedDebug
+```
+
+Direct wrapped CMake does not create the framework build record required by provenance-sensitive downstream signing or flashing. After diagnosis, return to the framework `experiment build` command before signing.
 
 Build one wolfBoot profile inside the container:
 
@@ -215,15 +224,16 @@ FreeRTOS regression coverage checks that generated CMake includes the middleware
 
 ## Secure-boot workflow
 
-The secure-boot profile workflow is:
+The normal secure-boot profile workflow uses Docker wrappers and records relocated-build generated-state provenance before signing:
 
 ```powershell
 ./scripts/dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
-./scripts/dev.ps1 cmake --preset RelocatedDebug
-./scripts/dev.ps1 cmake --build --preset RelocatedDebug
+./scripts/dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 ./scripts/dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
 ./scripts/dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
+
+Do not run wolfBoot `keysclean` or manually delete signing-tuple members. The generated-state preflight owns compatible stale-output handling and fails safely when reusable signing state is incomplete or mismatched. Host-native commands are diagnostic fallback only and are not the reproducible validation path.
 
 Implemented profile stems:
 
