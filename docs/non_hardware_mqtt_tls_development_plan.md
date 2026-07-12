@@ -361,38 +361,6 @@ Requirement: Implement Phase M6.2 of the attached development plan - lwIP Networ
 
 ---
 
-
-## Phase M6.2.1 — Generated Build-State Isolation and Stale-Artifact Preflight
-
-### Goal
-
-Add a framework-level preflight that prevents stale, cross-profile, cross-toolchain, and cross-host/container generated state from being reused by STM32 CMake builds, wolfBoot builds, application signing, integration tests, and artifact-consuming experiment commands.
-
-### Outcomes
-
-- Project-owned generated-state manifests bind reusable state to workflow, profile, source/config fingerprint, toolchain identity, host/container identity, applicable key tuple, and successful artifact hashes.
-- Compatible profile-scoped state may be retained; incompatible state and stale final artifacts are removed or quarantined deterministically before execution.
-- Canonical local signing keys and other secrets are never cleanup targets.
-- The wolfBoot-local private key, generated public key, and generated keystore are treated as one tuple and are not silently reconstructed from an existing private key.
-- Downstream signing and flashing require successful provenance records and matching artifact hashes rather than filesystem existence alone.
-- Direct command preflight is independent of pytest session-start cleanup.
-- CubeMX-generated folders remain in place and Phase M6.3 transport work is not introduced.
-
-### Expected Evidence
-
-- Unit coverage for same-profile reuse, profile switching, host/container mismatch, failed-build stale artifact prevention, key/keystore mismatch, secret-path protection, and downstream provenance enforcement.
-- Integration coverage that invokes the preflight directly without pytest startup cleanup.
-- Direct and relocated builds, wolfBoot build, and signing verification using the normal container workflow.
-
-### Pass Criteria
-
-- Stale generated state cannot produce a trusted successful artifact after a failed command.
-- Compatible same-profile state remains reusable.
-- Cross-profile and cross-host/container state is rejected and cleaned deterministically.
-- Canonical keys are preserved.
-- Signing and secure-boot flashing reject unrecorded or hash-mismatched inputs before tool or gateway execution.
-
-
 ## Phase M6.3 — wolfSSL Transport Boundary Without Network
 
 ### Goal
@@ -428,10 +396,6 @@ Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Tra
 - Firmware builds with the wolfSSL transport boundary.
 - Transport status remains explicitly unavailable.
 - The boundary is ready for later wolfMQTT build-only work without requiring real networking.
-
-### Implementation Status
-
-Implemented in project-owned `pqc_wolfssl_transport` firmware code. The boundary exposes connect/read/write wrappers and callback-shaped receive/send functions, consumes the Phase M6.2 network-interface status, and always reports unavailable transport without socket I/O, TLS sessions, certificate loading, handshake, MQTT, Wi-Fi, or ST67W61M1 runtime work. Completion still requires the documented unit and direct/relocated build evidence; any UART assertion remains capability-gated and must use a known flashed image.
 
 
 ## Phase M6.4 — Secure-Boot Timing Clock Evidence Cleanup
@@ -513,11 +477,6 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 
 Requirement: Implement Phase M6.5 of the attached development plan - FreeRTOS Task-Context Runtime Smoke. Add a post-scheduler STM32 runtime smoke path for the existing lwIP and wolfSSL preparation layers. Preserve the existing pre-scheduler smoke evidence, but add FreeRTOS task-context UART markers that explicitly state the scheduler is running and identify the smoke context as freertos_task. The task-context smoke may run deterministic local lwIP and wolfSSL/wolfCrypt checks, but it must not perform or claim Wi-Fi, link-up, IP assignment, TCP connection, TLS handshake, certificate loading, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Keep hardware tests capability-gated and do not introduce wolfSSL multithreaded support unless the inspected implementation requires it.
 ```
-
-
-### Implementation Status
-
-Implemented with separate pre-scheduler and post-scheduler evidence. The deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke retain `context=pre_scheduler scheduler=not_started` markers and run once again from `defaultTask` with `context=freertos_task scheduler=running`. The calls are serialized; no wolfSSL multithreaded support is introduced. All Wi-Fi, link, IP, TCP, certificate, TLS-handshake, MQTT, reconnect, ST67W61M1, and end-to-end states remain explicitly unavailable.
 
 ### Pass Criteria
 
@@ -629,7 +588,7 @@ Run the STM32 firmware on the existing board with a fake/no-network backend to v
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase M8 of the attached development plan - STM32 Fake/No-Network Runtime Evidence. Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated. Some of these features may already be present, don't re-implement these, instead check that it matches the requirements and report any inconsistencies for a decision on what to do.
+Requirement: Implement Phase _ of the attached development plan - _. Add STM32 fake/no-network runtime evidence for the MQTT/TLS preparation work. The firmware may emit explicit initialization and unavailable-backend markers, but it must not claim Wi-Fi, IP, TCP, TLS handshake, MQTT connect, publish, reconnect, or end-to-end success. The X-NUCLEO-67W61M1 must not be required for this sub-phase. Keep hardware tests capability-gated.
 
 ```
 
@@ -638,10 +597,6 @@ Requirement: Implement Phase M8 of the attached development plan - STM32 Fake/No
 - UART evidence confirms initialization or unavailable backend markers.
 - No Wi-Fi module is required.
 - No network, TLS, MQTT, or publish success is claimed.
-
-### Implementation Status
-
-Implemented by reusing the Phase M7 wolfMQTT boundary. A serialized one-shot initialization runs from `defaultTask` with `backend=fake_no_network`, emits `wolfMQTT runtime smoke:` as `stm32-fake-no-network-initialization-only` evidence, and deinitializes without network or MQTT protocol operations. Transport, Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end states remain unavailable. Direct and relocated builds plus static tests are the non-hardware evidence path; the known-image UART assertion is capability-gated and requires explicit user-provided output before hardware runtime success is claimed.
 
 ---
 
@@ -668,19 +623,15 @@ Optionally validate MQTT/TLS semantics against the broker using wolfSSL and wolf
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase M9 of the attached development plan - Host side wolfmqtt/wolfssl prototype or validation utility. Add a host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated. Some of this requirement may already be partially implemented as part of the MQTT broker that runs on the gateway and associated validation tests.
+Requirement: Implement Phase _ of the attached development plan - _. Add an optional host-side wolfSSL/wolfMQTT validation path for MQTT-over-TLS broker compatibility. Evidence from this path must be labelled host-side only and must not be used to claim STM32, Wi-Fi module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success. Keep broker/gateway-dependent validation capability-gated.
 
 ```
 
 ### Pass Criteria
 
 - Host-side MQTT/TLS validation is useful but clearly separated from STM32 evidence.
-- No STM32 hardware or Wi-Fi module is required.
+- No hardware or Wi-Fi module is required.
 - No STM32 runtime success is claimed.
-
-### Implementation Status
-
-Implemented with a separate native-host CMake target and wrapper utility. The target builds the pinned wolfMQTT client/example network path against the wolfSSL source pinned through the wolfBoot submodule. Output and optional JSON records are labelled `host_side` and explicitly keep STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, and end-to-end wireless claims false. Native build verification is capability-aware; live local or gateway broker validation requires separately available broker and temporary certificate capability. The broker Compose filename is `experiment/mqtt-broker/compose.yaml`.
 
 ---
 
