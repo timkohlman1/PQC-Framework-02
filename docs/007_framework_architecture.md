@@ -339,36 +339,7 @@ This broker path is broker-side and host-side validation infrastructure. Phase M
 MQTT broker OQS image compatibility: The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
 
 
-## Deferred test coverage — Phase M6.1 wolfSSL TLS context lifecycle
 
-The Phase M6.1 implementation includes static unit coverage and existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes the known Phase M6.1 image and asserts the `wolfSSL TLS context smoke:` UART marker is deferred because the supplied test context only included the ad hoc monitor test, which does not flash a known image before capture. Complete this when the baseline build/flash/UART result helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=tls-context-lifecycle-only`, `client_ctx=created`, and all handshake/certificate/transport/MQTT/Wi-Fi/ST67W61M1 fields to remain unavailable.
-
-
-## Deferred test coverage — Phase M6.2 lwIP network-interface boundary
-
-The Phase M6.2 implementation includes static unit coverage and the existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes a known Phase M6.2 image and asserts the `lwIP network interface:` UART marker is deferred because the supplied hardware test only monitors the currently running image and does not build or flash a known artifact before capture. Complete this when the baseline known-image build/flash/UART helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=lwip-netif-state-only`, `boundary=present`, raw lwIP observations showing netif down, link down, and an unspecified IPv4 address, and link, IP, TCP, transport, Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end fields to remain unavailable.
-
-
-### wolfBoot signing-key and generated-keystore lifecycle
-
-The wolfBoot build wrapper treats the canonical private key, matching wolfBoot-local
-private key, generated public key, and generated `src/keystore.c` as one reusable
-local signing tuple. Its lifecycle is explicit:
-
-- **Completely absent tuple:** when no tuple member exists, the owning workflow may
-  create a new local benchmark tuple if the selected profile permits generation.
-- **Complete matching tuple:** when all members exist and the private-key
-  fingerprints match, the tuple is preserved and reused unchanged.
-- **Partially missing tuple:** when only some members exist, the workflow fails
-  before invoking `make`; it does not reconstruct a public key or keystore from
-  the remaining private key.
-- **Mismatched tuple:** when canonical and wolfBoot-local private-key fingerprints
-  differ, the workflow fails before invoking `make`; it does not overwrite the
-  canonical key or silently rotate either key.
-
-A deliberate local benchmark-key rotation requires explicit operator action and
-invalidates compatibility with artifacts signed by the previous tuple. Routine
-preflight and cleanup must never perform that rotation.
 
 ## Phase M6.2.1 — Generated Build-State Isolation and Stale-Artifact Preflight
 
@@ -382,20 +353,12 @@ Successful commands write artifact hashes and references to their build or signi
 
 The canonical non-hardware MQTT/TLS phase plan is `docs/non_hardware_mqtt_tls_development_plan.md`.
 
-### Deferred test coverage
-
-No hardware test is added for Phase M6.2.1 because the behavior is framework-side artifact selection and preflight, not a firmware-runtime feature. Existing capability-gated flashing tests should validate provenance refusal before gateway access when their fixtures are updated to create successful build/signing records. Verification command: `./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware`.
 
 ### Phase M6.2.1 secure-boot hardware profile selection and tuple preservation
 
 The secure-boot algorithm benchmark hardware test now implements the documented profile-selection environment variables. ML-DSA-65 is selected by default. `PQC_HARDWARE_SECURE_BOOT_PROFILES` adds named profiles to that default, and `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` selects the complete matrix. Unselected parameter cases are collected but skipped with an explicit reason.
 
 Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup cleanup must not remove `wolfboot_signing_private_key.der`, `wolfboot_signing_public_key.der`, or `src/keystore.c`. Those files form reusable local signing state with the canonical key and are validated by the framework preflight. The hardware test removes only its directly managed relocated CMake output; wolfBoot stale-output handling remains owned by `build-wolfboot` generated-state preflight.
-
-
-## Deferred test coverage — Phase M6.3 wolfSSL unavailable transport boundary
-
-The Phase M6.3 implementation includes static unit coverage and existing direct/relocated local-build integration coverage. A dedicated gateway-mediated hardware test that flashes a known Phase M6.3 image and asserts the `wolfSSL transport boundary:` UART marker is deferred because the supplied hardware test only monitors the currently running image and does not build or flash a known artifact before capture. Complete this when the baseline known-image build/flash/UART helper is supplied or extended. The future verification command should be `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware`, with the test requiring `evidence=unavailable-transport-only`, `boundary=present`, `callbacks=present`, `network_boundary=present`, `socket_io=not-performed`, and connect, read, write, TLS handshake, certificates, MQTT connect, MQTT publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end fields to remain unavailable.
 
 
 
@@ -454,9 +417,6 @@ Static unit coverage validates invocation, marker wording, backend selection, un
 
 The canonical broker definition is `experiment/mqtt-broker/compose.yaml`. Phase M4 Mosquitto/OpenSSL checks and Phase M9 wolfMQTT/wolfSSL checks are complementary host-side paths. Neither is firmware evidence.
 
-#### Deferred test coverage
-
-- **Phase M9 gateway wolfMQTT/wolfSSL live validation — gateway integration layer:** the supplied implementation provides the host client, native build integration test, and command path, but a deterministic gateway run requires available gateway connectivity plus provisioned temporary broker certificates. Verify when that capability is intentionally enabled with `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway`, followed by the documented `host_wolfmqtt_validate.py run` command against the gateway endpoint. Evidence must remain `host_side`.
 
 
 #### Phase M9 PowerShell client-argument boundary
@@ -467,3 +427,20 @@ The host validation wrapper accepts upstream wolfMQTT arguments after `--client-
 #### Phase M9 structured runtime evidence
 
 The host validation utility captures the wolfMQTT client output and records individual TLS/MQTT success markers in the JSON result. `broker_compatibility_confirmed` is true only when the process exits successfully and explicit markers confirm TLS socket connection, MQTT connection acknowledgement, subscription, successful publish, message receipt, MQTT disconnect, and socket disconnect. A zero process exit code alone is insufficient.
+## Consolidated deferred-test register
+
+This is the canonical register required by the deferred-test rules in `AI_BUILD_GUIDE.md`. Related implementation requests must inspect these entries and either implement the listed coverage, update the entry with current evidence, or document why it is no longer applicable. Completed M5 gateway/UART coverage and completed M6.6/M8 known-image hardware assertions are intentionally not listed.
+
+| ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
+|---|---|---|---|---|---|---|---|
+| DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Dedicated gateway-mediated known-image UART/hardware assertion | Existing hardware evidence checks task-context ordering in the secure-boot benchmark path, but there is no focused baseline test that builds/flashes the image and asserts the complete M6.1 lifecycle and unavailable-field contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware` | deferred |
+| DTR-002 | M6.2 lwIP network-interface boundary marker | Dedicated gateway-mediated known-image UART/hardware assertion | Static/build coverage exists, but the known-image baseline hardware test does not yet assert the complete `lwIP network interface:` marker contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware` | deferred |
+| DTR-003 | M6.2.1 generated-state provenance refusal before gateway access | Hardware-workflow fixture coverage | Framework and integration coverage exists, but secure-boot hardware fixtures still need explicit successful build/signing records to assert provenance refusal before any gateway operation | Updated build/signing record fixtures in the secure-boot hardware workflow | `tests/hardware/test_secure_boot_flash_workflow.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware` | deferred |
+| DTR-004 | M6.3 wolfSSL unavailable-transport marker | Dedicated gateway-mediated known-image UART/hardware assertion | Static/build coverage exists, but the known-image baseline hardware test does not yet assert callbacks, zero-transfer behavior, no socket I/O, and all unavailable fields | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware` | deferred |
+| DTR-005 | M9 live host wolfMQTT/wolfSSL validation against the gateway broker | Gateway integration and live broker compatibility | Native host build coverage exists; deterministic live validation requires reachable gateway infrastructure and provisioned temporary broker certificates | Gateway connectivity, broker deployment, temporary certificate provisioning, and host client execution | `tests/integration/test_mqtt_broker_gateway_e2e.py` | `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway`, then the documented `host_wolfmqtt_validate.py run` command | deferred |
+| DTR-006 | M10 ST67W61M1 network-interface backend | Firmware-runtime, network, gateway, UART, and hardware coverage | The physical backend is unimplemented and the network hardware is not part of the current verified path | Phase M10 implementation plus installed ST67W61M1 hardware, module-control support, Wi-Fi credentials supplied outside the repository, gateway/UART access, and an external network endpoint | `tests/hardware/test_st67w61m1_network_interface.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_st67w61m1_network_interface.py -m hardware --pqc-require-hardware` | blocked by M10 implementation/hardware |
+| DTR-007 | M11 classical STM32 MQTT-over-TLS | End-to-end firmware-runtime, network, broker, gateway, UART, and hardware coverage | The real STM32 transport, certificate-backed TLS handshake, and MQTT protocol path are unimplemented | Completed M10 backend, real wolfSSL transport/session, classical certificates supplied outside the repository, broker access, and wolfMQTT connect/publish/reconnect implementation | `tests/hardware/test_stm32_mqtt_tls.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_stm32_mqtt_tls.py -m hardware --pqc-require-hardware` | blocked by M10/M11 implementation |
+| DTR-008 | M12 controlled network degradation | Gateway/network integration and end-to-end hardware coverage | A stable real M11 path and safe impairment apply/verify/cleanup controls do not yet exist | Completed M11 path and gateway network-impairment capability with guaranteed cleanup | `tests/integration/test_mqtt_network_degradation.py` | `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_network_degradation.py -m integration --pqc-require-gateway` | blocked by M11/M12 implementation |
+| DTR-009 | M13 PQC/hybrid STM32 MQTT/TLS | End-to-end firmware-runtime, broker, network, gateway, UART, and hardware coverage | Target-library algorithm support and a stable classical STM32 MQTT/TLS baseline have not yet been established | Completed M11 baseline, confirmed wolfSSL/wolfMQTT target support, compatible broker profile, and Phase M13 implementation | `tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py -m hardware --pqc-require-hardware` | blocked by M11/M13 implementation |
+
+Deferred status is not evidence that the named capability works. Future test files and commands are intended contracts and must be reconciled against the implementation that eventually supplies the capability.

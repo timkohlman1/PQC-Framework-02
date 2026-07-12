@@ -396,3 +396,107 @@ def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
     assert "partially missing tuple" in workflow
     assert "mismatched tuple" in workflow
     assert "must never copy private key material" in security
+
+
+MQTT_PLAN = "docs/non_hardware_mqtt_tls_development_plan.md"
+MASTER_PLAN = "docs/pqc_iot_experiment_framework_plan.md"
+ARCHITECTURE = "docs/007_framework_architecture.md"
+MQTT_PHASE_IDS = (
+    "M1", "M2", "M3", "M4", "M5", "M6", "M6.1", "M6.2", "M6.3",
+    "M6.4", "M6.5", "M6.6", "M7", "M8", "M9", "M10", "M11", "M12", "M13",
+)
+STATUS_FIELDS = (
+    "Status",
+    "Implemented evidence boundary",
+    "Verification",
+    "Remaining limitations",
+    "Deferred tests",
+    "Last reconciled",
+)
+DEFERRED_REGISTER_FIELDS = (
+    "ID",
+    "Feature",
+    "Missing test layer",
+    "Reason",
+    "Required capability or phase",
+    "Intended test file",
+    "Eventual verification command",
+    "Status",
+)
+
+
+def _mqtt_phase_sections(content: str) -> dict[str, str]:
+    heading = re.compile(r"(?m)^## (?:Deferred )?Phase (M(?:\d+(?:\.\d+)?)) — .+$")
+    matches = list(heading.finditer(content))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        sections[match.group(1)] = content[match.start():end]
+    return sections
+
+
+def test_every_mqtt_phase_has_one_complete_standard_status_block() -> None:
+    sections = _mqtt_phase_sections(_read(MQTT_PLAN))
+    assert tuple(sections) == MQTT_PHASE_IDS
+
+    for phase_id, section in sections.items():
+        assert section.count("### Phase status") == 1, (
+            f"Phase {phase_id} must contain exactly one standard status block"
+        )
+        for field in STATUS_FIELDS:
+            assert re.search(rf"(?m)^- \*\*{re.escape(field)}:\*\* \S", section), (
+                f"Phase {phase_id} status block is missing a value for {field}"
+            )
+
+
+def test_mqtt_phase_status_values_match_completed_and_deferred_scope() -> None:
+    sections = _mqtt_phase_sections(_read(MQTT_PLAN))
+    for phase_id in MQTT_PHASE_IDS:
+        expected = "deferred" if phase_id in {"M10", "M11", "M12", "M13"} else "completed"
+        assert f"- **Status:** {expected}" in sections[phase_id]
+
+
+def test_master_plan_is_historical_and_does_not_track_live_mqtt_checkboxes() -> None:
+    master = _read(MASTER_PLAN)
+    assert "Lifecycle classification: Historical roadmap" in master
+    assert MQTT_PLAN in master
+    assert ARCHITECTURE in master
+
+    mqtt_start = master.index("## Phase M —")
+    mqtt_section = master[mqtt_start:]
+    assert "Historical goals and pass criteria only" in mqtt_section
+    assert not re.search(r"(?m)^- \[[ xX]\] ", mqtt_section), (
+        "Historical master-plan MQTT content must not retain live status checkboxes"
+    )
+
+
+def test_architecture_has_one_structured_deferred_test_register() -> None:
+    architecture = _read(ARCHITECTURE)
+    assert architecture.count("## Consolidated deferred-test register") == 1
+    assert "AI_BUILD_GUIDE.md" in architecture
+
+    header = "| " + " | ".join(DEFERRED_REGISTER_FIELDS) + " |"
+    assert header in architecture
+    assert "## Deferred test coverage —" not in architecture
+    assert "### Deferred test coverage" not in architecture
+    assert "#### Deferred test coverage" not in architecture
+
+    rows = re.findall(r"(?m)^\| (DTR-\d{3}) \|.*\|$", architecture)
+    assert rows == [f"DTR-{index:03d}" for index in range(1, 10)]
+
+
+def test_deferred_register_rows_have_all_required_values() -> None:
+    architecture = _read(ARCHITECTURE)
+    rows = [
+        line for line in architecture.splitlines()
+        if re.match(r"^\| DTR-\d{3} \|", line)
+    ]
+    assert rows
+
+    expected_cells = len(DEFERRED_REGISTER_FIELDS)
+    for row in rows:
+        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+        assert len(cells) == expected_cells, f"Malformed deferred-test row: {row}"
+        assert all(cells), f"Deferred-test row contains an empty required field: {row}"
+        assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
+        assert "./scripts/dev.ps1" in cells[6], f"Verification command is not explicit: {row}"

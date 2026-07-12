@@ -75,6 +75,16 @@ Requirement: Implement Phase M1 of the attached development plan - MQTT/TLS Arch
 - Future implementation phases are small and evidence-bound.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Documentation establishes STM32 ownership of lwIP, wolfSSL, and wolfMQTT and separates fake, host, broker, STM32-local, and future hardware-backed evidence.
+- **Verification:** Documentation reconciliation and architecture capability-matrix checks.
+- **Remaining limitations:** No network, TLS handshake, MQTT protocol, Wi-Fi, or hardware runtime capability was introduced.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M2 — MQTT Configuration and Result Schema
 
@@ -114,6 +124,16 @@ Requirement: Implement Phase M2 of the attached development plan - MQTT Configur
 - No network or hardware access is required.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Framework configuration and manifest schema represent MQTT/TLS evidence classes, backends, TLS modes, unavailable metrics, and evidence limitations.
+- **Verification:** Unit coverage for configuration validation, schema creation, backend/evidence compatibility, secret-reference rejection, and unavailable metrics.
+- **Remaining limitations:** Schema support does not prove broker, socket, STM32 runtime, Wi-Fi, or hardware operation.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M3 — Fake/No-Network MQTT Transport Harness
 
@@ -149,9 +169,16 @@ Requirement: Implement Phase M3 of the attached development plan - Fake/No-Netwo
 - Simulated evidence is not confused with real broker, TLS, or STM32 runtime evidence.
 - No hardware or network dependency is introduced.
 
-### Implementation Status
 
-Implemented by the Phase M3 fake/no-network transport harness. The harness records simulated control-flow evidence only and keeps broker, network, TLS, STM32 runtime, gateway, UART, Wi-Fi, and hardware success claims false.
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Deterministic fake/no-network transport models simulated connect, publish, timeout, disconnect, and reconnect control flow.
+- **Verification:** Unit coverage in the fake transport and manifest/schema tests.
+- **Remaining limitations:** All outcomes are simulated and are not broker, TLS, network, UART, STM32, gateway, or hardware evidence.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -200,6 +227,16 @@ python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integratio
 - No Wi-Fi module is required.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Classical and experimental OQS broker profiles plus host-side validation provide broker-side or host-side compatibility evidence.
+- **Verification:** Broker Compose unit/integration coverage and capability-gated gateway end-to-end validation.
+- **Remaining limitations:** No STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless success follows.
+- **Deferred tests:** None; live execution remains capability-gated rather than deferred.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M5 — STM32 lwIP Build-Only Skeleton
 
@@ -235,9 +272,16 @@ Requirement: Implement Phase M5 of the attached development plan - STM32 lwIP Bu
 - Runtime networking remains explicitly unavailable.
 - No Wi-Fi hardware is required.
 
-### Implementation Status
 
-Implemented to the current evidence boundary. The STM32 firmware emits a pre-scheduler lwIP runtime smoke marker for local deterministic helpers, while network hardware, link-up, IP assignment, TCP, TLS, MQTT, and end-to-end success remain unavailable. This is not FreeRTOS task-context networking evidence.
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Direct and relocated STM32 builds include lwIP/ST67W6X preparation and a constrained non-network helper smoke.
+- **Verification:** Static/unit coverage, local-build integration, and capability-gated gateway/UART integration in `tests/integration/test_lwip_runtime_smoke_uart.py`.
+- **Remaining limitations:** No module detection, Wi-Fi association, hardware-backed IP, external TCP, TLS, MQTT, or end-to-end networking.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -275,9 +319,16 @@ Requirement: Implement Phase M6 of the attached development plan - wolfSSL Build
 - TLS runtime success is not claimed.
 - Secret-handling rules are preserved.
 
-### Implementation Status
 
-Implemented to the current evidence boundary. The STM32 firmware builds and invokes wolfSSL/wolfCrypt source in a pre-scheduler build/runtime smoke using deterministic local SHA-256 evidence. The evidence does not claim TLS context creation, TLS handshake, certificate loading, transport, MQTT, Wi-Fi, or end-to-end network success. wolfBoot and STM32 application wolfSSL settings must remain isolated so the application `user_settings.h` does not contaminate wolfBoot secure-boot builds.
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Selected wolfSSL/wolfCrypt sources build and link on STM32; the original source smoke remains build/local-runtime evidence only.
+- **Verification:** Static/unit coverage, direct/relocated build integration, and capability-gated source-smoke UART coverage.
+- **Remaining limitations:** No real socket transport, certificate-backed session, TLS handshake, MQTT, Wi-Fi, or ST67W61M1 operation.
+- **Deferred tests:** None for the M6 source smoke; later boundary-specific obligations are tracked under M6.1–M6.3.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -317,9 +368,16 @@ Requirement: Implement Phase M6.1 of the attached development plan - wolfSSL TLS
 - TLS context lifecycle evidence is clearly separated from TLS handshake success.
 - No certificates, private keys, transport, MQTT, Wi-Fi, or end-to-end network success are claimed.
 
-### Implementation Status
 
-Implementation may be in progress, but completion requires explicit test evidence. Do not mark this phase complete until unit/build tests and any selected capability-gated UART smoke tests pass and the evidence remains labelled as TLS context lifecycle evidence only.
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** STM32 performs wolfSSL initialization, TLS 1.2 client-context creation/free, and cleanup only.
+- **Verification:** Static/unit coverage, direct/relocated builds, and task-context marker coverage in the secure-boot benchmark hardware path.
+- **Remaining limitations:** No `WOLFSSL` session, certificate loading, socket transport, handshake, MQTT, Wi-Fi, or ST67W61M1 use.
+- **Deferred tests:** DTR-001 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -360,6 +418,16 @@ Requirement: Implement Phase M6.2 of the attached development plan - lwIP Networ
 - The boundary is suitable for later wolfSSL transport and wolfMQTT integration without requiring Wi-Fi hardware.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Project-owned boundary reports unattached local lwIP `netif` observations and explicitly unavailable transport/network states.
+- **Verification:** Static/unit coverage and direct/relocated local-build integration.
+- **Remaining limitations:** No registered interface, link-up, DHCP, hardware IP, socket, external network, or ST67W61M1 access.
+- **Deferred tests:** DTR-002 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M6.3 — wolfSSL Transport Boundary Without Network
 
@@ -396,7 +464,16 @@ Requirement: Implement Phase M6.3 of the attached development plan - wolfSSL Tra
 - Firmware builds with the wolfSSL transport boundary.
 - Transport status remains explicitly unavailable.
 - The boundary is ready for later wolfMQTT build-only work without requiring real networking.
+### Phase status
 
+- **Status:** completed
+- **Implemented evidence boundary:** Project-owned wolfSSL connect/read/write callback boundary is present but returns unavailable and performs no socket I/O.
+- **Verification:** Static/unit coverage and direct/relocated local-build integration.
+- **Remaining limitations:** No TCP connection, byte transfer, certificates, TLS handshake, MQTT, Wi-Fi, or end-to-end operation.
+- **Deferred tests:** DTR-004 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M6.4 — Secure-Boot Timing Clock Evidence Cleanup
 
@@ -446,6 +523,16 @@ Requirement: Implement Phase M6.4 of the attached development plan - Secure-Boot
 - Documentation clearly states the evidence boundary for cycles, clock reporting, and any derived time values.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Secure-boot timing retains raw DWT cycles and explicit RCC-derived clock evidence; time is derived only from recorded cycles and HCLK.
+- **Verification:** Unit coverage plus capability-gated secure-boot benchmark hardware/manifest assertions.
+- **Remaining limitations:** Derived time is not independently calibrated wall-clock, RTC, host-duration, or UART-latency evidence.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M6.5 — FreeRTOS Task-Context Runtime Smoke
 
@@ -484,6 +571,16 @@ Requirement: Implement Phase M6.5 of the attached development plan - FreeRTOS Ta
 - Hardware UART evidence confirms task-context smoke occurs after scheduler start.
 - The phase does not claim network, TLS handshake, MQTT, Wi-Fi, or end-to-end success.
 - Tests distinguish task-context evidence from pre-scheduler evidence.
+
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Local lwIP and wolfSSL smoke checks execute once in FreeRTOS task context after the scheduler starts.
+- **Verification:** Static/unit checks, direct/relocated builds, and known-image secure-boot benchmark UART marker-order assertions.
+- **Remaining limitations:** Execution is serialized and local; no multithreaded wolfSSL support or network/protocol capability is enabled.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -525,6 +622,16 @@ Requirement: Implement Phase M6.6 of the attached development plan - lwIP Local 
 - Tests remain capability-gated and distinguish local loopback from real network validation.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** STM32 runs deterministic UDP loopback at `127.0.0.1` after scheduler start.
+- **Verification:** Static/unit coverage, direct/relocated builds, and known-image hardware assertion in `tests/hardware/test_baseline_uart.py`.
+- **Remaining limitations:** Loopback is local-only and does not prove Wi-Fi, hardware IP, external TCP, TLS, MQTT, or broker access.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M7 — wolfMQTT Build-Only Skeleton
 
@@ -560,6 +667,16 @@ Requirement: Implement Phase M7 of the attached development plan - wolfMQTT Buil
 - Firmware builds with wolfMQTT integration boundary.
 - MQTT client logic is not tightly coupled to ST67W61M1 hardware.
 - No broker or publish success is claimed.
+
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Pinned wolfMQTT client, packet, and socket-callback layers build and link behind a project-owned backend boundary.
+- **Verification:** Static/unit coverage and direct/relocated local-build integration.
+- **Remaining limitations:** No network connect, MQTT CONNECT, subscribe, publish, receive, TLS, Wi-Fi, or ST67W61M1 runtime operation.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -599,6 +716,16 @@ Requirement: Implement Phase _ of the attached development plan - _. Add STM32 f
 - No network, TLS, MQTT, or publish success is claimed.
 
 ---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** STM32 initializes and deinitializes wolfMQTT once from `defaultTask` using the fake/no-network backend.
+- **Verification:** Static/unit coverage, direct/relocated builds, and known-image hardware assertion in `tests/hardware/test_baseline_uart.py`.
+- **Remaining limitations:** Transport, TLS handshake, MQTT connect/publish/reconnect, Wi-Fi, ST67W61M1, and end-to-end status remain unavailable.
+- **Deferred tests:** None.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Phase M9 — Host-Side wolfMQTT/wolfSSL Prototype or Validation Utility
 
@@ -632,6 +759,16 @@ Requirement: Implement Phase _ of the attached development plan - _. Add an opti
 - Host-side MQTT/TLS validation is useful but clearly separated from STM32 evidence.
 - No hardware or Wi-Fi module is required.
 - No STM32 runtime success is claimed.
+
+---
+### Phase status
+
+- **Status:** completed
+- **Implemented evidence boundary:** Native host wolfMQTT/wolfSSL utility provides structured `host_side` broker-compatibility evidence.
+- **Verification:** Unit coverage and capability-aware native build integration in `tests/integration/test_host_wolfmqtt_build.py`.
+- **Remaining limitations:** Host results do not prove STM32, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, or wireless behavior.
+- **Deferred tests:** DTR-005 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -675,6 +812,16 @@ The exact files should be determined from the current repository and the selecte
 - No unsupported runtime success is inferred.
 
 ---
+### Phase status
+
+- **Status:** deferred
+- **Implemented evidence boundary:** No hardware-backed ST67W61M1 network backend is implemented; only compile-time driver/interface preparation exists.
+- **Verification:** Current builds and static tests verify preparation boundaries only.
+- **Remaining limitations:** Module detection, Wi-Fi association, link, DHCP/hardware IP, and external TCP remain unimplemented.
+- **Deferred tests:** DTR-006 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Deferred Phase M11 — Classical MQTT over TLS on STM32
 
@@ -714,6 +861,16 @@ Requirement: Implement Phase _ of the attached development plan - _. Implement c
 - Hardware-dependent tests remain opt-in.
 
 ---
+### Phase status
+
+- **Status:** deferred
+- **Implemented evidence boundary:** No complete classical STM32 MQTT-over-TLS runtime path exists.
+- **Verification:** Host/broker compatibility and STM32-local preparation are verified separately.
+- **Remaining limitations:** Requires M10 plus real wolfSSL transport/handshake and wolfMQTT protocol operation on STM32.
+- **Deferred tests:** DTR-007 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
+
+---
 
 ## Deferred Phase M12 — Network Degradation
 
@@ -742,6 +899,16 @@ Requirement: Implement Phase _ of the attached development plan - _. Add control
 - Network impairment setup and cleanup are reliable.
 - Results are evidence-backed.
 - No degraded-network result is inferred.
+
+---
+### Phase status
+
+- **Status:** deferred
+- **Implemented evidence boundary:** No controlled network-impairment experiment path is implemented.
+- **Verification:** No current verification applies beyond existing undegraded capability boundaries.
+- **Remaining limitations:** Requires a stable real STM32 MQTT-over-TLS path and safe gateway impairment/cleanup controls.
+- **Deferred tests:** DTR-008 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
 
 ---
 
@@ -774,6 +941,17 @@ Requirement: Implement Phase _ of the attached development plan - _. Add PQC or 
 - Experimental limitations are documented.
 
 ---
+### Phase status
+
+- **Status:** deferred
+- **Implemented evidence boundary:** No PQC or hybrid STM32 MQTT/TLS profile is implemented.
+- **Verification:** Experimental OQS broker/host evidence exists separately and is not STM32 evidence.
+- **Remaining limitations:** Requires stable classical M11 behavior and confirmed target wolfSSL/wolfMQTT algorithm support.
+- **Deferred tests:** DTR-009 in `docs/007_framework_architecture.md`.
+- **Last reconciled:** 2026-07-12
+
+---
+
 
 ## Overall Completion Criteria
 
