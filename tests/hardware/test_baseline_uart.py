@@ -191,3 +191,49 @@ def test_baseline_known_image_reports_wolfmqtt_fake_no_network_runtime(
     assert "reconnect=unavailable" in boot_text
     assert "st67w61m1=unavailable" in boot_text
     assert "end_to_end=unavailable" in boot_text
+
+@pytest.mark.hardware
+def test_baseline_known_image_reports_st67_spi_bringup(
+    tmp_path, pqc_require_capabilities
+):
+    """Build, flash, and capture bounded ST67 GPIO/SPI initialization evidence."""
+
+    pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
+
+    repo_root = _repo_root()
+    results_dir = tmp_path / "results"
+    completed = _run_cli(
+        repo_root,
+        [
+            "run",
+            "--experiment",
+            EXPERIMENT_CONFIG,
+            "--results-dir",
+            str(results_dir),
+        ],
+    )
+    assert completed.returncode == 0, (
+        f"run stdout:\n{completed.stdout}\nrun stderr:\n{completed.stderr}"
+    )
+
+    log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
+    boot_text = _latest_complete_boot(log_text)
+
+    begin_marker = "ST67 SPI bring-up: begin"
+    init_marker = "ST67 SPI bring-up: W6X_Init begin"
+    result_marker = "ST67 SPI bring-up: W6X_Init result="
+    complete_marker = "ST67 SPI bring-up: complete"
+
+    assert begin_marker in boot_text
+    assert init_marker in boot_text
+    assert result_marker in boot_text
+    assert complete_marker in boot_text
+    assert boot_text.index(begin_marker) < boot_text.index(init_marker)
+    assert boot_text.index(init_marker) < boot_text.index(result_marker)
+    assert boot_text.index(result_marker) < boot_text.index(complete_marker)
+    assert "evidence=stm32-st67-gpio-spi-bringup-only" in boot_text
+    assert "wifi_association=not-attempted" in boot_text
+    assert "ip=unavailable" in boot_text
+    assert "tls_handshake=unavailable" in boot_text
+    assert "mqtt_connect=unavailable" in boot_text
+    assert "end_to_end=unavailable" in boot_text

@@ -270,7 +270,7 @@ Phase M5 adds STM32-local lwIP/ST67W6X compile-only preparation to the firmware 
 
 The UART marker begins with `lwIP runtime smoke:` and includes `network=unavailable`; it is intended to prove that a constrained set of lwIP helper functions executes during the existing 10-second UART capture window without crossing the network-interface boundary. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` exercises the baseline build/flash/UART flow and asserts that the marker appears in `uart.log`; this remains helper-call UART evidence only, not ST67W61M1, Wi-Fi, IP, TCP, TLS, MQTT, or end-to-end network evidence.
 
-Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration with SPI1 prescaler 4 is compile-time preparation for an approximately 30 Mbit/s SPI setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain; hardware behaviour is not claimed from this configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
+Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration currently uses SPI1 prescaler 32, giving an approximately 3.75 Mbit/s diagnostic setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. This temporary reduction allows reliable capture with the available FX2 logic analyser; hardware behaviour is not claimed from the configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
 
 Phase M6.2 adds `Core/Inc/pqc_network_interface.h` and `Core/Src/pqc_network_interface.c` as the project-owned boundary between later protocol layers and the future ST67W61M1-backed lwIP netif. The implementation owns an unattached local `struct netif`, clears its IPv4 address, netmask, and gateway with lwIP helpers, then reads `netif_is_up`, `netif_is_link_up`, the lwIP IPv4-any state, and an lwIP-formatted IPv4 string. It maps those observed lwIP values into `link`, `ip`, and `tcp` availability, while transport remains unavailable because no backend exists. The UART line begins with `lwIP network interface:` and is labelled `evidence=lwip-netif-state-only`; it reports both the raw lwIP observations and the mapped unavailable states. Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end status remain unavailable. It does not call `netif_add`, set link or interface state up, start DHCP, open TCP, invoke wolfSSL, invoke wolfMQTT, or access ST67W61M1 hardware. This boundary is intended for later wolfSSL transport and wolfMQTT work without coupling those layers directly to the Wi-Fi driver.
 
@@ -449,3 +449,19 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-009 | M13 PQC/hybrid STM32 MQTT/TLS | End-to-end firmware-runtime, broker, network, gateway, UART, and hardware coverage | Target-library algorithm support and a stable classical STM32 MQTT/TLS baseline have not yet been established | Completed M11 baseline, confirmed wolfSSL/wolfMQTT target support, compatible broker profile, and Phase M13 implementation | `tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py -m hardware --pqc-require-hardware` | blocked by M11/M13 implementation |
 
 Deferred status is not evidence that the named capability works. Future test files and commands are intended contracts and must be reconciled against the implementation that eventually supplies the capability.
+
+### ST67 GPIO/SPI bring-up evidence
+
+The bounded ST67 bring-up path waits 3 seconds for logic-analyser capture setup, then calls `W6X_Init()` from a running FreeRTOS task after initializing the ST67 logging service. SPI1 is temporarily configured with prescaler 32 for analyser-friendly timing. UART markers record the pre-init
+GPIO state, driver invocation, returned status, and post-init GPIO state.
+A paired logic-analyser capture can establish that `CHIP_EN`, `SPI_RDY`,
+active-high `SPI_CS`, SCK, MOSI, and MISO behaved consistently with a real
+transport attempt.
+
+This evidence class is **STM32-to-ST67 GPIO/SPI bring-up evidence**. It may
+support a claim that the module driver was invoked and that physical SPI
+activity occurred. It must not be promoted into evidence of Wi-Fi association,
+IP acquisition, external TCP communication, certificate-backed TLS, MQTT
+connect/publish/reconnect, or end-to-end wireless operation. Those capabilities
+remain unavailable until their own explicit runtime evidence is recorded.
+

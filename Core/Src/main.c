@@ -28,6 +28,9 @@
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
 #include "pqc_wolfmqtt_build_only.h"
+#include "w6x_api.h"
+#include "spi_iface.h"
+#include "logging.h"
 #include "FreeRTOS.h"
 #include "task.h"
 /* USER CODE END Includes */
@@ -114,6 +117,83 @@ static void APP_UART_WriteUint32(uint32_t value)
   {
     count--;
     HAL_UART_Transmit(&hlpuart1, (uint8_t *)&digits[count], 1U, HAL_MAX_DELAY);
+  }
+}
+
+static void APP_PrintST67PinState(const char *stage)
+{
+  APP_UART_WriteString("ST67 SPI bring-up pins: stage=");
+  APP_UART_WriteString(stage);
+  APP_UART_WriteString(" boot=");
+  APP_UART_WriteUint32((uint32_t)HAL_GPIO_ReadPin(BOOT_GPIO_Port, BOOT_Pin));
+  APP_UART_WriteString(" chip_en=");
+  APP_UART_WriteUint32((uint32_t)HAL_GPIO_ReadPin(CHIP_EN_GPIO_Port, CHIP_EN_Pin));
+  APP_UART_WriteString(" ready=");
+  APP_UART_WriteUint32((uint32_t)HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin));
+  APP_UART_WriteString(" cs=");
+  APP_UART_WriteUint32((uint32_t)HAL_GPIO_ReadPin(SPI_CS_GPIO_Port, SPI_CS_Pin));
+  APP_UART_WriteString("\r\n");
+}
+
+static void APP_RunST67SPIBringup(void)
+{
+  W6X_Status_t status;
+  void *logging_service;
+
+  APP_UART_WriteString(
+      "ST67 SPI bring-up: begin context=freertos_task scheduler=running "
+      "evidence=stm32-st67-gpio-spi-bringup-only "
+      "wifi_association=not-attempted ip=unavailable tls_handshake=unavailable "
+      "mqtt_connect=unavailable end_to_end=unavailable\r\n");
+
+  /*
+   * BOOT low selects normal mission execution for this board configuration.
+   * Keep CHIP_EN and the active-high chip select low until the vendor driver
+   * performs its documented startup sequence.
+   */
+  HAL_GPIO_WritePin(BOOT_GPIO_Port, BOOT_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(CHIP_EN_GPIO_Port, CHIP_EN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
+  APP_PrintST67PinState("pre_init");
+
+  /* Make the low level visible in a logic-analyser capture before W6X_Init(). */
+  osDelay(20U);
+
+  logging_service = vLoggingInit(APP_UART_WriteString);
+  if (logging_service == NULL)
+  {
+    APP_UART_WriteString(
+        "ST67 SPI bring-up: result=logging_init_failed "
+        "driver_init=not-attempted\r\n");
+    APP_PrintST67PinState("logging_failed");
+    return;
+  }
+
+  APP_UART_WriteString("ST67 SPI bring-up: W6X_Init begin\r\n");
+  status = W6X_Init();
+
+  APP_UART_WriteString("ST67 SPI bring-up: W6X_Init result=");
+  APP_UART_WriteUint32((uint32_t)status);
+  APP_UART_WriteString(" status_ok=");
+  APP_UART_WriteUint32((status == W6X_STATUS_OK) ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+  APP_PrintST67PinState("post_init");
+
+  if (status == W6X_STATUS_OK)
+  {
+    APP_UART_WriteString(
+        "ST67 SPI bring-up: complete result=passed "
+        "transport=spi-module-initialized wifi_association=not-attempted "
+        "ip=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
+        "end_to_end=unavailable\r\n");
+  }
+  else
+  {
+    APP_UART_WriteString(
+        "ST67 SPI bring-up: complete result=failed "
+        "transport=spi-module-init-failed wifi_association=not-attempted "
+        "ip=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
+        "end_to_end=unavailable\r\n");
   }
 }
 
@@ -912,6 +992,21 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == SPI_RDY_Pin)
+  {
+    if (HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin) == GPIO_PIN_SET)
+    {
+      (void)spi_on_txn_data_ready();
+    }
+    else
+    {
+      (void)spi_on_header_ack();
+    }
+  }
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -930,6 +1025,7 @@ void StartDefaultTask(void *argument)
   BaseType_t runtime_checkpoint_reported = pdFALSE;
 
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
+  APP_RunST67SPIBringup();
   APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
   APP_RunLwIPLocalLoopbackSmoke();
