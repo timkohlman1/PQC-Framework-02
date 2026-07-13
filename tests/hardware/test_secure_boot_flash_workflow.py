@@ -18,7 +18,7 @@ EXPECTED_BOOT_MODE = "wolfboot_ecdsa_p256"
 EXPECTED_BOOT_CRYPTO = "ecdsa_p256"
 FREERTOS_UART_MARKERS = (
     "FreeRTOS defaultTask created: name=defaultTask",
-    "FreeRTOS scheduler starting: cmsis_rtos=v1 default_task=defaultTask",
+    "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask",
     "FreeRTOS defaultTask started: periodic tick task active",
 )
 
@@ -44,31 +44,16 @@ def _run_cli(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 
 
 def _clean_secure_boot_generated_outputs(repo_root: Path) -> None:
-    """Remove generated secure-boot artifacts before hardware workflow builds.
+    """Remove non-signing build outputs before hardware workflow builds.
 
-    The secure-boot hardware test validates a build/sign/flash chain from a
-    zero-generated-artifact state. Cleaning these outputs avoids timestamp-based
-    stale artifacts after ZIP extraction, local source edits, or a previous
-    algorithm benchmark profile that generated wolfBoot key/keystore state for a
-    different signing algorithm.
+    Reusable wolfBoot private-key, public-key, and generated-keystore tuple
+    members are owned by the build preflight and must be preserved. The test
+    removes only rebuildable firmware artifacts so it cannot create partial
+    signing state before invoking ``build-wolfboot``.
     """
 
     wolfboot_dir = repo_root / "tools" / "wolfboot"
     _skip_if_missing(wolfboot_dir, "wolfBoot source tree is missing")
-    if shutil.which("make") is None:
-        pytest.skip("make is unavailable; wolfBoot keysclean cannot run")
-
-    keysclean_completed = subprocess.run(
-        ["make", "WOLFBOOT_ROOT=.", "keysclean"],
-        cwd=wolfboot_dir,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert keysclean_completed.returncode == 0, (
-        f"wolfBoot keysclean stdout:\n{keysclean_completed.stdout}\n"
-        f"wolfBoot keysclean stderr:\n{keysclean_completed.stderr}"
-    )
 
     shutil.rmtree(repo_root / "build", ignore_errors=True)
     for relative_path in (
@@ -277,7 +262,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     toolchain, SSH gateway, configured flash helper, and configured ST-LINK VCP
     UART device are available. It builds the instrumented wolfBoot ELF, builds
     and signs the relocated HAL application, flashes both artifacts, captures
-    UART, and verifies timing evidence from a zero-generated-artifact state.
+    UART, and verifies timing evidence from a clean non-signing build-output state.
 
     The test validates positive secure-boot evidence by requiring the distinct
     secure-boot application UART marker, the normal boot marker, the tick

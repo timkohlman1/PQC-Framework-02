@@ -54,7 +54,7 @@ Inspect or build the direct-flash baseline:
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Run the direct-flash workflow through Docker and the SSH gateway. SSH/SCP uses runtime-mounted SSH access; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough. hardware workflows remain gateway-mediated:
+Run the direct-flash workflow through Docker and the SSH gateway. SSH/SCP uses runtime-mounted SSH access; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough; hardware workflows remain gateway-mediated:
 
 ```powershell
 .\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml

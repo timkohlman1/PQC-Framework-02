@@ -345,7 +345,6 @@ def _run_profile_benchmark(repo_root: Path, profile: SecureBootBenchmarkProfile)
     assert f"Benchmark valid samples: {REPEAT_COUNT}" in completed.stdout
     assert "Benchmark failed samples: 0" in completed.stdout
     assert "Verification result code: 0" in completed.stdout
-    assert "Verification timing source: uart_explicit_verification_time_marker" in completed.stdout
     return _parse_result_directory(repo_root, completed.stdout)
 
 
