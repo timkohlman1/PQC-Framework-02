@@ -747,11 +747,11 @@ Requirement: Implement Phase _ of the attached development plan - _. Add an opti
 
 ---
 
-## Deferred Phase M10 — ST67W61M1 Network Interface Backend
+## Phase M10 — ST67W61M1 Network Interface Backend
 
 ### Goal
 
-Add the real Wi-Fi module backend once the X-NUCLEO-67W61M1 is installed and available.
+Add the real Wi-Fi module backend incrementally now that the X-NUCLEO-67W61M1 is installed and available. Keep module/RF validation separate from association, lwIP netif attachment, TCP, TLS, and MQTT.
 
 ### Outcomes
 
@@ -759,6 +759,15 @@ Add the real Wi-Fi module backend once the X-NUCLEO-67W61M1 is installed and ava
 - STM32 remains responsible for lwIP, TLS, and MQTT according to the target architecture.
 - Wi-Fi/module detection and network bring-up are validated separately from TLS and MQTT.
 - Hardware tests remain capability-gated.
+
+### Phase M10.1 — Module Initialization and Bounded Wi-Fi RF Scan
+
+- Register the minimum application callbacks required by `W6X_WiFi_Init()`.
+- Preserve the successful `W6X_Init()` SPI/module bring-up.
+- Initialize the Wi-Fi subsystem and run an active scan with a fixed 8000 ms timeout.
+- Report only callback status and AP count; do not emit SSIDs, BSSIDs, credentials, or other network identifiers.
+- Keep association, lwIP netif attachment, DHCP/IP, TCP, TLS, MQTT, and end-to-end status explicitly unavailable.
+- Retain the SPI transfer-engine task stack at 2048 bytes until a task-specific high-water measurement establishes a safe lower bound.
 
 ### Expected Evidence
 
@@ -789,12 +798,12 @@ The exact files should be determined from the current repository and the selecte
 ---
 ### Phase status
 
-- **Status:** deferred
-- **Implemented evidence boundary:** No hardware-backed ST67W61M1 network backend is implemented; only compile-time driver/interface preparation exists.
-- **Verification:** Current builds and static tests verify preparation boundaries only.
-- **Remaining limitations:** Module detection, Wi-Fi association, link, DHCP/hardware IP, and external TCP remain unimplemented.
-- **Deferred tests:** DTR-006 in `docs/007_framework_architecture.md`.
-- **Last reconciled:** 2026-07-12
+- **Status:** in progress
+- **Implemented evidence boundary:** Phase M10.1 initializes the ST67W61M1 over SPI, initializes its Wi-Fi subsystem, and runs a bounded active RF scan with UART evidence labelled `stm32-st67-wifi-rf-scan-only`. SSID and BSSID values are deliberately not emitted.
+- **Verification:** Static unit coverage validates the bounded scan path and evidence boundaries. The capability-gated gateway/UART integration test requires successful module initialization and a completed scan marker.
+- **Remaining limitations:** Wi-Fi association, registered lwIP netif attachment, link-up, DHCP/hardware IP, external TCP, TLS handshake, MQTT connect/publish/reconnect, and end-to-end broker communication remain unimplemented.
+- **Deferred tests:** DTR-006 remains applicable to association, real lwIP netif, DHCP/IP, and external TCP work.
+- **Last reconciled:** 2026-07-16
 
 ---
 

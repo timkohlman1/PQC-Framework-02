@@ -10,6 +10,9 @@ import pytest
 EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
 EXPECTED_LWIP_SMOKE_PREFIX = "lwIP runtime smoke:"
 EXPECTED_LWIP_NETWORK_BOUNDARY = "network=unavailable"
+EXPECTED_ST67_INIT_MARKER = "ST67 SPI bring-up: W6X_Init result=0 status_ok=1"
+EXPECTED_ST67_SCAN_MARKER = "ST67 Wi-Fi scan: complete result=passed"
+EXPECTED_ST67_SCAN_BOUNDARY = "evidence=stm32-st67-wifi-rf-scan-only"
 
 
 def _repo_root() -> Path:
@@ -111,6 +114,12 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
         "ip4_format=192.0.2.1",
         "checksum=0x",
         EXPECTED_LWIP_NETWORK_BOUNDARY,
+        EXPECTED_ST67_INIT_MARKER,
+        EXPECTED_ST67_SCAN_MARKER,
+        EXPECTED_ST67_SCAN_BOUNDARY,
+        "ssid_values=not-reported",
+        "bssid_values=not-reported",
+        "wifi_association=not-attempted",
         "FreeRTOS scheduler starting: cmsis_rtos=v2",
         "FreeRTOS defaultTask started: periodic tick task active",
         "tick",
@@ -120,3 +129,7 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
         assert marker in uart_log
 
     assert "network=available" not in uart_log
+    assert "wifi_association=passed" not in uart_log
+    assert "tls_handshake=passed" not in uart_log
+    assert "mqtt_connect=passed" not in uart_log
+    assert "end_to_end=passed" not in uart_log

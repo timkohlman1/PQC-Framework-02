@@ -42,7 +42,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define APP_ST67_WIFI_SCAN_TIMEOUT_MS 8000U
+#define APP_ST67_WIFI_SCAN_POLL_MS      20U
+#define APP_ST67_WIFI_SCAN_MAX_RESULTS  10U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -120,6 +122,150 @@ static void APP_UART_WriteUint32(uint32_t value)
   }
 }
 
+
+static void APP_UART_WriteInt32(int32_t value)
+{
+  if (value < 0)
+  {
+    APP_UART_WriteString("-");
+    APP_UART_WriteUint32((uint32_t)(-(value + 1)) + 1U);
+  }
+  else
+  {
+    APP_UART_WriteUint32((uint32_t)value);
+  }
+}
+
+static volatile bool app_st67_scan_done;
+static volatile int32_t app_st67_scan_status;
+static volatile uint32_t app_st67_scan_count;
+
+static void APP_ST67WiFiEventCallback(W6X_event_id_t event_id, void *event_args)
+{
+  (void)event_id;
+  (void)event_args;
+}
+
+static void APP_ST67ErrorCallback(W6X_Status_t status, const char *function_name)
+{
+  (void)status;
+  (void)function_name;
+}
+
+static void APP_ST67ScanResultCallback(
+    int32_t status,
+    W6X_WiFi_Scan_Result_t *result)
+{
+  app_st67_scan_status = status;
+  app_st67_scan_count = (result != NULL) ? result->Count : 0U;
+  app_st67_scan_done = true;
+}
+
+static W6X_App_Cb_t app_st67_callbacks = {
+  .APP_wifi_cb = APP_ST67WiFiEventCallback,
+  .APP_net_cb = NULL,
+  .APP_mqtt_cb = NULL,
+  .APP_ble_cb = NULL,
+  .APP_error_cb = APP_ST67ErrorCallback,
+};
+
+static void APP_RunST67WiFiScan(void)
+{
+  W6X_Status_t status;
+  W6X_WiFi_Scan_Opts_t options = {0};
+  uint32_t elapsed_ms = 0U;
+
+  APP_UART_WriteString(
+      "ST67 Wi-Fi scan: begin evidence=stm32-st67-wifi-rf-scan-only "
+      "wifi_association=not-attempted link=unavailable ip=unavailable "
+      "tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
+      "end_to_end=unavailable\r\n");
+
+  status = W6X_WiFi_Init();
+  APP_UART_WriteString("ST67 Wi-Fi scan: W6X_WiFi_Init result=");
+  APP_UART_WriteUint32((uint32_t)status);
+  APP_UART_WriteString(" status_ok=");
+  APP_UART_WriteUint32((status == W6X_STATUS_OK) ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+
+  if (status != W6X_STATUS_OK)
+  {
+    APP_UART_WriteString(
+        "ST67 Wi-Fi scan: complete result=wifi_init_failed "
+        "scan=not-attempted wifi_association=not-attempted link=unavailable "
+        "ip=unavailable tcp=unavailable tls_handshake=unavailable "
+        "mqtt_connect=unavailable end_to_end=unavailable\r\n");
+    return;
+  }
+
+  app_st67_scan_done = false;
+  app_st67_scan_status = (int32_t)W6X_STATUS_ERROR;
+  app_st67_scan_count = 0U;
+
+  options.Scan_type = W6X_WIFI_SCAN_ACTIVE;
+  options.Channel = 0U;
+  options.MaxCnt = APP_ST67_WIFI_SCAN_MAX_RESULTS;
+
+  status = W6X_WiFi_Scan(&options, APP_ST67ScanResultCallback);
+  APP_UART_WriteString("ST67 Wi-Fi scan: start result=");
+  APP_UART_WriteUint32((uint32_t)status);
+  APP_UART_WriteString(" status_ok=");
+  APP_UART_WriteUint32((status == W6X_STATUS_OK) ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+
+  if (status != W6X_STATUS_OK)
+  {
+    APP_UART_WriteString(
+        "ST67 Wi-Fi scan: complete result=scan_start_failed "
+        "wifi_initialized=1 wifi_association=not-attempted link=unavailable "
+        "ip=unavailable tcp=unavailable tls_handshake=unavailable "
+        "mqtt_connect=unavailable end_to_end=unavailable\r\n");
+    return;
+  }
+
+  while ((!app_st67_scan_done) &&
+         (elapsed_ms < APP_ST67_WIFI_SCAN_TIMEOUT_MS))
+  {
+    osDelay(APP_ST67_WIFI_SCAN_POLL_MS);
+    elapsed_ms += APP_ST67_WIFI_SCAN_POLL_MS;
+  }
+
+  if (!app_st67_scan_done)
+  {
+    APP_UART_WriteString(
+        "ST67 Wi-Fi scan: complete result=timeout wifi_initialized=1 "
+        "scan_started=1 wifi_association=not-attempted link=unavailable "
+        "ip=unavailable tcp=unavailable tls_handshake=unavailable "
+        "mqtt_connect=unavailable end_to_end=unavailable\r\n");
+    return;
+  }
+
+  APP_UART_WriteString("ST67 Wi-Fi scan: callback_status=");
+  APP_UART_WriteInt32(app_st67_scan_status);
+  APP_UART_WriteString(" ap_count=");
+  APP_UART_WriteUint32(app_st67_scan_count);
+  APP_UART_WriteString("\r\n");
+
+  if (app_st67_scan_status == 0)
+  {
+    APP_UART_WriteString(
+        "ST67 Wi-Fi scan: complete result=passed wifi_initialized=1 "
+        "scan_completed=1 evidence=stm32-st67-wifi-rf-scan-only "
+        "ssid_values=not-reported bssid_values=not-reported "
+        "wifi_association=not-attempted link=unavailable ip=unavailable "
+        "tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
+        "end_to_end=unavailable\r\n");
+  }
+  else
+  {
+    APP_UART_WriteString(
+        "ST67 Wi-Fi scan: complete result=callback_failed wifi_initialized=1 "
+        "scan_completed=1 wifi_association=not-attempted link=unavailable "
+        "ip=unavailable tcp=unavailable tls_handshake=unavailable "
+        "mqtt_connect=unavailable end_to_end=unavailable\r\n");
+  }
+}
+
 static void APP_PrintST67PinState(const char *stage)
 {
   APP_UART_WriteString("ST67 SPI bring-up pins: stage=");
@@ -169,6 +315,23 @@ static void APP_RunST67SPIBringup(void)
     return;
   }
 
+  status = W6X_RegisterAppCb(&app_st67_callbacks);
+  APP_UART_WriteString("ST67 SPI bring-up: W6X_RegisterAppCb result=");
+  APP_UART_WriteUint32((uint32_t)status);
+  APP_UART_WriteString(" status_ok=");
+  APP_UART_WriteUint32((status == W6X_STATUS_OK) ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+
+  if (status != W6X_STATUS_OK)
+  {
+    APP_UART_WriteString(
+        "ST67 SPI bring-up: complete result=callback_registration_failed "
+        "transport=unavailable wifi_association=not-attempted ip=unavailable "
+        "tls_handshake=unavailable mqtt_connect=unavailable "
+        "end_to_end=unavailable\r\n");
+    return;
+  }
+
   APP_UART_WriteString("ST67 SPI bring-up: W6X_Init begin\r\n");
   status = W6X_Init();
 
@@ -186,6 +349,7 @@ static void APP_RunST67SPIBringup(void)
         "transport=spi-module-initialized wifi_association=not-attempted "
         "ip=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
         "end_to_end=unavailable\r\n");
+    APP_RunST67WiFiScan();
   }
   else
   {

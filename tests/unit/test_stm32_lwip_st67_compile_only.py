@@ -123,8 +123,12 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert '#include "logging.h"' in main_c
     assert "static void APP_RunST67SPIBringup(void)" in main_c
     assert "vLoggingInit(APP_UART_WriteString)" in main_c
+    assert "status = W6X_RegisterAppCb(&app_st67_callbacks);" in main_c
     assert "status = W6X_Init();" in main_c
+    assert "status = W6X_WiFi_Init();" in main_c
+    assert "status = W6X_WiFi_Scan(&options, APP_ST67ScanResultCallback);" in main_c
     assert "APP_RunST67SPIBringup();" in main_c
+    assert "APP_RunST67WiFiScan();" in main_c
     assert "ST67 SPI bring-up: delayed 3000 ms for logic analyser capture" not in main_c
     assert "osDelay(3000U);" not in main_c
     assert "void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)" in main_c
@@ -136,8 +140,51 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
         "void StartDefaultTask(void *argument)"
     )
     assert "evidence=stm32-st67-gpio-spi-bringup-only" in main_c
+    assert "evidence=stm32-st67-wifi-rf-scan-only" in main_c
+    assert "ssid_values=not-reported" in main_c
+    assert "bssid_values=not-reported" in main_c
     assert "wifi_association=not-attempted" in main_c
     assert "end_to_end=unavailable" in main_c
+
+
+def test_st67_wifi_scan_is_bounded_and_does_not_expose_network_identifiers() -> None:
+    main_c = _read("Core/Src/main.c")
+
+    required_fragments = (
+        "#define APP_ST67_WIFI_SCAN_TIMEOUT_MS 8000U",
+        "#define APP_ST67_WIFI_SCAN_POLL_MS",
+        "#define APP_ST67_WIFI_SCAN_MAX_RESULTS",
+        "static volatile bool app_st67_scan_done;",
+        "static void APP_ST67ScanResultCallback(",
+        "options.Scan_type = W6X_WIFI_SCAN_ACTIVE;",
+        "options.MaxCnt = APP_ST67_WIFI_SCAN_MAX_RESULTS;",
+        "elapsed_ms < APP_ST67_WIFI_SCAN_TIMEOUT_MS",
+        "ST67 Wi-Fi scan: complete result=passed",
+        "evidence=stm32-st67-wifi-rf-scan-only",
+        "ssid_values=not-reported",
+        "bssid_values=not-reported",
+        "wifi_association=not-attempted",
+        "link=unavailable",
+        "ip=unavailable",
+        "tls_handshake=unavailable",
+        "mqtt_connect=unavailable",
+        "end_to_end=unavailable",
+    )
+
+    for fragment in required_fragments:
+        assert fragment in main_c
+
+    forbidden_fragments = (
+        "W6X_WiFi_PrintScan(",
+        "W6X_WiFi_Connect(",
+        "MX_LWIP_Init(",
+        "dhcp_start(",
+        "wolfSSL_connect(",
+        "MQTTConnect(",
+    )
+
+    for fragment in forbidden_fragments:
+        assert fragment not in main_c
 
 
 def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
