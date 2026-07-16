@@ -47,7 +47,7 @@
 
 #ifndef SPI_THREAD_STACK_SIZE
 /** SPI thread stack size */
-#define SPI_THREAD_STACK_SIZE           768U
+#define SPI_THREAD_STACK_SIZE           2048U
 #endif /* SPI_THREAD_STACK_SIZE */
 
 #ifndef SPI_THREAD_PRIO
