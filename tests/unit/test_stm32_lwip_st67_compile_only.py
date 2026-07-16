@@ -78,7 +78,7 @@ def test_lwip_options_use_cmsis_rtos_v2_os_port_without_runtime_startup() -> Non
     assert "list(FILTER LwIP_Src EXCLUDE REGEX" not in cmake
 
 
-def test_st67_spi_gpio_clock_and_interrupt_configuration_is_static_only() -> None:
+def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     main_h = _read("Core/Inc/main.h")
     main_c = _read("Core/Src/main.c")
     it_c = _read("Core/Src/stm32l4xx_it.c")
@@ -118,6 +118,27 @@ def test_st67_spi_gpio_clock_and_interrupt_configuration_is_static_only() -> Non
     assert "HAL_GPIO_EXTI_IRQHandler(USER_BUTTON_Pin);" in it_c
     assert "HAL_GPIO_EXTI_IRQHandler(USER_BUTTON_GPIO_Pin);" not in it_c
 
+    assert '#include "w6x_api.h"' in main_c
+    assert '#include "spi_iface.h"' in main_c
+    assert '#include "logging.h"' in main_c
+    assert "static void APP_RunST67SPIBringup(void)" in main_c
+    assert "vLoggingInit(APP_UART_WriteString)" in main_c
+    assert "status = W6X_Init();" in main_c
+    assert "APP_RunST67SPIBringup();" in main_c
+    assert "ST67 SPI bring-up: delayed 3000 ms for logic analyser capture" not in main_c
+    assert "osDelay(3000U);" not in main_c
+    assert "void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)" in main_c
+    assert "if (GPIO_Pin == SPI_RDY_Pin)" in main_c
+    assert "HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin) == GPIO_PIN_SET" in main_c
+    assert "(void)spi_on_txn_data_ready();" in main_c
+    assert "(void)spi_on_header_ack();" in main_c
+    assert main_c.index("APP_RunST67SPIBringup();") > main_c.index(
+        "void StartDefaultTask(void *argument)"
+    )
+    assert "evidence=stm32-st67-gpio-spi-bringup-only" in main_c
+    assert "wifi_association=not-attempted" in main_c
+    assert "end_to_end=unavailable" in main_c
+
 
 def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
     main_c = _read("Core/Src/main.c")
@@ -128,7 +149,6 @@ def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
     runtime_entrypoints = (
         "MX_LWIP_Init()",
         "MX_LWIP_Init();",
-        "W6X_Init(",
         "W6X_WiFi_Connect(",
         "dhcp_start(",
         "mqtt_client_connect(",
@@ -181,7 +201,6 @@ def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
         "dhcp_start(",
         "tcp_connect(",
         "mqtt_client_connect(",
-        "W6X_Init(",
         "W6X_WiFi_Connect(",
     )
 

@@ -2,70 +2,69 @@
 
 ## Purpose
 
-This document defines what may and may not be committed to this repository.
+This document owns repository secret-handling and generated-private-state policy. Operational SSH setup is in `docs/002_host_gateway_setup.md`, flash/signing commands are in `docs/005_remote_flash_workflow.md`, and broker certificate operation is in `experiment/mqtt-broker/README.md`.
 
-## Never commit
+## Never commit or package
 
-Do not commit:
+Do not commit, add to container images/build contexts, copy into result artifacts or replacement ZIPs, or include in documentation:
 
-- SSH private keys
-- VPN private keys
-- TLS private keys
-- MQTT passwords
+- SSH or VPN private keys and profiles
+- TLS, client, CA, or firmware-signing private keys
+- MQTT passwords, password files, tokens, or production credentials
 - real `.env` files
-- private client certificates or key bundles
-- private firmware signing keys
-- private wolfBoot signing keys
-- production credentials
+- private certificates or key bundles
 - generated local signing keys under `secrets/wolfboot/`
-- generated wolfBoot working-tree signing keys such as `tools/wolfboot/wolfboot_signing_private_key.der`
+- wolfBoot working-tree signing keys such as `tools/wolfboot/wolfboot_signing_private_key.der`
+- broker runtime material under `experiment/mqtt-broker/runtime/`
 
-## Usually safe to commit
+Non-secret documentation, credential-free example configs, public test certificates, public CA certificates, dummy example values, and project-owned wolfBoot config templates may be committed when their purpose is clear.
 
-These may be committed if clearly non-secret:
+## wolfBoot signing state
 
-- documentation
-- example configuration files without real credentials
-- public CA certificates
-- public test certificates
-- dummy credentials used only for examples
-- project-local wolfBoot `.config` templates under `configs/wolfboot/`
+Build/signing manifests may record non-secret SHA-256 fingerprints, but must never copy private key material into results.
 
-## Local signing-key handling
+The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
 
-The secure-boot signing workflows use local private keys under `secrets/wolfboot/` and a wolfBoot working-tree key path under `tools/wolfboot/` for the active build profile. These files are generated/local state and must remain ignored by Git.
+- A completely absent tuple may be created by its owning workflow when profile configuration permits generation.
+- A complete matching tuple is preserved and reused.
+- A partially missing tuple fails safely; missing members are not silently reconstructed.
+- A mismatched tuple fails safely; the canonical private key is not silently replaced and tuple members are not overwritten.
 
-Build and signing manifests may record non-secret SHA-256 key fingerprints to prove key consistency. They must not copy private key material into result directories, replacement ZIPs, documentation, or commits.
+`flash-secure-boot` must reject inconsistent canonical and wolfBoot-local private-key fingerprints. Do not use wolfBoot `keysclean` or manual tuple-member deletion as routine cleanup.
 
-`flash-secure-boot` refuses hardware flashing when available canonical and wolfBoot working-tree private-key fingerprints differ. This prevents flashing a bootloader and application signed with inconsistent key material.
+Generated-state preflight is the primary mechanism for build/signing compatibility, artifact hashes, stale-output handling, and provenance. Pytest session-start cleanup is supplementary cross-platform hygiene only; it must not remove canonical keys or reusable tuple members and is not signing-state validation.
 
+## Container and gateway access
 
-## Containerised workflow secret handling
+Docker-hosted execution is the normal path. Container images and build contexts must remain secret-free. Signing material is supplied through the runtime-mounted workspace or generated as ignored local workspace state.
 
-Container images and container build contexts must not contain private keys, credential files, generated signing material, real `.env` files, private certificates, or production credentials. The repository `.dockerignore` excludes generated outputs, `secrets/`, local environment files, wolfBoot generated key material, and MQTT broker runtime material from container build contexts.
+Gateway wrappers explicitly enable gateway access, mount the configured host SSH directory read-only, and use it only for the temporary container run. Keep known-hosts data, SSH configuration, and private keys local. Do not bake them into the image.
 
-The container image is the default runtime for Python validation, STM32 direct and relocated builds, wolfBoot builds, relocated application signing, pytest, gateway checks, and gateway-mediated hardware experiments. Signing material for containerised secure-boot workflows must come from the runtime-mounted workspace or locally generated files such as `secrets/wolfboot/<profile>_private_key.der`; it must remain outside the image, outside Git, and outside replacement artifacts. The image may contain client tools such as OpenSSH and OpenSSL, but it must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, real `.env` files, or generated signing material.
-
-This applies to secure-boot signing material, wolfBoot working-tree signing keys, SSH access for any optional gateway-capable workflow, VPN profiles, MQTT broker credentials, TLS private keys, and certificate authority private material. Documentation may describe required mount points or local preparation steps, but must not include real secret values or ask for secret material to be committed.
-
-Gateway-capable and hardware container workflows are still explicit, capability-gated, and supplied with SSH access at runtime only. Inside the container, gateway checks require `PQC_CONTAINER_ENABLE_GATEWAY=1` and runtime-mounted SSH configuration, known-hosts data, and credentials. The default wrapper commands for gateway and hardware workflows set that flag and mount SSH material read-only for the duration of one container run. Without that explicit enablement, gateway tests skip or fail according to the existing pytest strict flag.
-
-
-### Container gateway SSH access
-
-Gateway-capable container checks must use runtime-provided SSH material only. The default PowerShell wrapper mounts the workspace and a local SSH directory read-only:
+Representative capability-gated command:
 
 ```powershell
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
 ```
 
-Do not copy SSH private keys, VPN profiles, broker credentials, TLS private keys, private certificates, private signing keys, or real `.env` files into the repository or the image. Keep known-hosts data and SSH configuration local to the runtime environment.
+The command’s success proves only the evidence asserted by that test. Gateway SSH reachability is not board runtime, UART, broker, MQTT/TLS, timing, memory, benchmark, or end-to-end evidence.
+
+## Broker TLS material
+
+The classical and experimental OQS broker profiles use generated development TLS material under ignored runtime directories. Gateway deployment may copy that material only to the intended temporary or configured remote broker directory.
+
+Do not commit broker private keys, client private keys, CA private keys, password files, private certificates, real `.env` files, or production credentials. The OQS profile is protocol-evaluation infrastructure, not production TLS.
+
+Broker/client validation is host-side or broker-side evidence. It cannot prove STM32 firmware, Wi-Fi-module, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, ST67W61M1, UART, or end-to-end wireless success.
+
+## Firmware secret boundary
+
+Current STM32 lwIP, wolfSSL, and wolfMQTT preparation must not compile private keys, broker credentials, real environment values, private certificates, CA private material, or bearer tokens into firmware.
+
+The implemented STM32 evidence includes build-only linkage, local helper/context lifecycle smokes, an unavailable wolfSSL transport boundary with no socket I/O, local UDP loopback, and fake/no-network wolfMQTT initialization. These are not certificate-backed TLS-handshake or real MQTT evidence. Real credentials must not be introduced merely to exercise an unavailable boundary.
 
 ## CI secret handling
 
-The GitHub Actions workflow preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation as compatibility coverage, and uses the containerised non-hardware job as the default reproducible software-build validation path. The containerised job must not require repository, organization, or environment secrets. It must not mount SSH keys, VPN keys, broker credentials, TLS private keys, private certificates, private signing keys, real `.env` files, or production credentials. Signing material generated during CI is local runner workspace state only and must remain ignored by Git and excluded from container images.
-
-The existing MQTT broker Docker runtime job uses temporary local test certificates generated for the CI run; it must not use production broker credentials, private certificates, real `.env` files, or committed secrets. Gateway, hardware, Wi-Fi-module, or other secret-dependent CI workflows must be separate opt-in workflows if they are added later, and must preserve the same no-committed-secrets rule.
+The default containerised non-hardware CI path must not require repository, organisation, or environment secrets. Temporary local test certificates used by broker runtime checks are per-run development material and must not be committed. Any future gateway, hardware, Wi-Fi-module, or secret-dependent CI must be separate and explicitly opt-in.
 
 ## Generated outputs to keep out of Git
 
@@ -73,6 +72,7 @@ The existing MQTT broker Docker runtime job uses temporary local test certificat
 build/
 results/*
 !results/.gitkeep
+.pqc-generated-state/
 .last_successful_build.json
 .build_number
 *.elf
@@ -87,41 +87,13 @@ tools/wolfboot/.config
 tools/wolfboot/wolfboot.elf
 tools/wolfboot/wolfboot.bin
 tools/wolfboot/wolfboot_signing_private_key.der
+tools/wolfboot/wolfboot_signing_public_key.der
+tools/wolfboot/src/keystore.c
 secrets/wolfboot/
+experiment/mqtt-broker/runtime/
+experiment/mqtt-broker/data/
+experiment/mqtt-broker/log/
+experiment/mqtt-broker/.env
 ```
 
-## Gateway SSH access
-
-Each development PC should generate its own SSH keypair for gateway access. The private key remains local. Only the public key should be installed on `pqc-gateway1`.
-
-Use the SSH alias:
-
-```text
-pqc-gateway1
-```
-
-Do not hard-code private key paths into framework code or documentation.
-
-## VPN and future transport secrets
-
-If VPN, MQTT, TLS, or broker access is required in later phases, document the requirement without committing private profiles, private keys, passwords, tokens, or production certificates.
-
-## MQTT broker TLS material
-
-The MQTT broker compose project uses generated local TLS material under `experiment/mqtt-broker/runtime/`. That directory is ignored by Git and must remain local or be copied only to the intended gateway host during deployment.
-
-Do not commit MQTT broker private keys, client private keys, password files, real `.env` files, production certificates, or private CA material. The committed files are limited to compose files, Mosquitto configuration templates, documentation, tests, and scripts.
-
-## STM32 wolfSSL build-only boundary
-
-The Phase M6 STM32 wolfSSL boundary is build-only. It may compile project-owned wolfSSL preparation code and non-secret configuration/status strings, but it must not embed private keys, MQTT passwords, real `.env` values, private certificates, private CA material, production certificates, or bearer tokens. Certificate handling in this phase is limited to future path/reference configuration; no certificate store is configured and no private key material is compiled into firmware.
-
-Do not treat a successful Phase M6 firmware build as TLS runtime evidence. TLS handshake, certificate validation, MQTT connect, publish, reconnect, Wi-Fi, ST67W61M1, and end-to-end network success require explicit later logs, manifests, UART output, broker output, or equivalent evidence.
-
-
-The classical profile uses local test X.509 certificates for TLS development. The OQS profile is experimental and uses Open Quantum Safe tooling or images for PQC TLS evaluation; it must not be treated as production TLS infrastructure.
-
-
-## Phase M6 wolfSSL source-build smoke
-
-The Phase M6 wolfSSL smoke path builds a minimal wolfCrypt SHA-256 source target from `tools/wolfboot/lib/wolfssl` and runs it over a fixed non-secret test message. This path must not embed private keys, CA private keys, client keys, broker credentials, MQTT passwords, real `.env` files, private certificates, or production TLS material. The UART marker may report source-build and SHA-256 smoke status only; it must continue to mark certificate loading, compiled-in secrets, runtime transport, TLS handshake, MQTT, Wi-Fi, and end-to-end network success as unavailable until later evidence-backed phases implement them.
+Generated files can be locally required while still remaining untracked. Their lifecycle must be handled by the owning workflow and generated-state preflight, not by committing them.

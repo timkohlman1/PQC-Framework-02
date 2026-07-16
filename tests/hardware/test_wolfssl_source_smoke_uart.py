@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
-EXPECTED_SMOKE_MARKER = "wolfSSL build-only smoke:"
+EXPECTED_SMOKE_MARKER = "wolfSSL TLS context smoke:"
 EXPECTED_DIGEST = "01b274b19659995cb829a9a925f613109ec02a088f94d9e914a36026cecf00e5"
 
 
@@ -37,14 +37,14 @@ def _matching_uart_lines(uart_text: str, marker: str) -> list[str]:
 
 @pytest.mark.hardware
 @pytest.mark.long
-def test_wolfssl_source_smoke_marker_after_build_flash_uart_capture(tmp_path, pqc_require_capabilities):
-    """Build, flash, and capture UART evidence for the Phase M6 wolfSSL smoke.
+def test_wolfssl_tls_context_smoke_marker_after_build_flash_uart_capture(tmp_path, pqc_require_capabilities):
+    """Build, flash, and capture UART evidence for the M6.1 TLS-context smoke.
 
     This test is capability-gated because it flashes real STM32 hardware through
-    the configured gateway and requires UART capture. It verifies only that the
-    firmware linked and executed the build-only wolfCrypt SHA-256 smoke path. It
-    does not claim TLS handshake, certificate loading, MQTT, Wi-Fi, ST67W61M1, or
-    end-to-end network success.
+    the configured gateway and requires UART capture. It verifies the retained
+    SHA-256 source smoke plus wolfSSL initialisation and client-context lifecycle.
+    It does not claim TLS handshake, certificate loading, MQTT, Wi-Fi, ST67W61M1,
+    or end-to-end network success.
     """
 
     pqc_require_capabilities("gateway", "flash_helper", "uart_device", strict_mode="hardware")
@@ -86,13 +86,19 @@ def test_wolfssl_source_smoke_marker_after_build_flash_uart_capture(tmp_path, pq
     marker_context = "\n".join(marker_lines) or "<no wolfSSL smoke marker lines>"
 
     assert marker_lines, f"Missing wolfSSL smoke marker. UART evidence:\n{uart_text}"
-    assert "source=enabled" in uart_text, marker_context
-    assert "sha256=ok" in uart_text, marker_context
-    assert f"digest={EXPECTED_DIGEST}" in uart_text, marker_context
-    assert "tls_handshake=unavailable" in uart_text
-    assert "transport=unavailable" in uart_text
-    assert "certs=not-loaded" in uart_text
-    assert "secrets=not-compiled-in" in uart_text
+    assert "context=freertos_task scheduler=running" in marker_context
+    assert "evidence=tls-context-lifecycle-only" in marker_context
+    assert "source=enabled" in marker_context
+    assert "sha256=ok" in marker_context
+    assert f"digest={EXPECTED_DIGEST}" in marker_context
+    assert "init=ok" in marker_context
+    assert "client_ctx=created" in marker_context
+    assert "free=done" in marker_context
+    assert "cleanup=done" in marker_context
+    assert "tls_handshake=unavailable" in marker_context
+    assert "transport=unavailable" in marker_context
+    assert "certs=not-loaded" in marker_context
+    assert "secrets=not-compiled-in" in marker_context
     assert "tls_handshake=ok" not in uart_text
     assert "mqtt=connected" not in uart_text
     assert "publish=ok" not in uart_text

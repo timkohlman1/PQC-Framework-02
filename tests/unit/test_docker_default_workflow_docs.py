@@ -54,3 +54,44 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
     assert "--configure-preset RelocatedDebug" in workflow
     assert "--build-preset RelocatedDebug" in workflow
     assert "--artifact build/RelocatedDebug/stm32_basic_hal1.elf" in workflow
+
+
+def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() -> None:
+    workflow = _read("docs/005_remote_flash_workflow.md")
+    local_commands = _read("docs/local build commands.txt")
+
+    assert ".\\scripts\\dev.ps1 experiment build-wolfboot" in workflow
+    assert ".\\scripts\\dev.ps1 experiment build --experiment" in workflow
+    assert "--configure-preset RelocatedDebug" in workflow
+    assert "--build-preset RelocatedDebug" in workflow
+    assert "generated-state provenance" in workflow
+    assert "## Diagnostic fallback" in workflow
+    assert "Host-native commands may be used only" in workflow
+
+    assert "Local Build Diagnostic Fallback" in local_commands
+    assert "normal project workflow is Docker-hosted" in local_commands
+    assert "generated-state preflight" in local_commands
+    assert "not the reproducible validation gate" in local_commands
+
+
+def test_signing_docs_do_not_describe_partial_key_generation_as_normal() -> None:
+    readme = _read("README.md").lower()
+    workflow = _read("docs/005_remote_flash_workflow.md").lower()
+
+    assert "may locally generate missing profile keys" not in readme
+    assert "silently reconstruct partial signing state" in readme
+    assert "completely absent tuple" in workflow
+    assert "partially missing tuple: fail before build/signing" in workflow
+    assert "mismatched tuple: fail before build/signing" in workflow
+
+
+def test_pytest_cleanup_is_documented_as_supplementary_hygiene() -> None:
+    for path in (
+        "AI_BUILD_GUIDE.md",
+        "README.md",
+        "docs/005_remote_flash_workflow.md",
+        "docs/006_security_and_secrets.md",
+        "docs/007_framework_architecture.md",
+    ):
+        content = _read(path).lower()
+        assert "supplementary cross-platform hygiene" in content

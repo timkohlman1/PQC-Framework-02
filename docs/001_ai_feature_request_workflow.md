@@ -12,6 +12,13 @@ At the start of every fresh feature-request chat, if the latest `AI_BUILD_GUIDE.
 Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, I’ll ask for the specific source, config, test, and documentation files needed for this feature request.
 ```
 
+## Supported entry points
+
+- `AI_BUILD_GUIDE.md` is the required current repository context.
+- `docs/001_ai_feature_request_workflow.md` defines the maintained implementation and review process.
+- `docs/008_chatgpt_project_prompt.md` contains the project prompt used for feature-development chats.
+- Release-readiness assessments use this workflow as review requests; there is no separate release-readiness prompt document.
+
 ## Workflow
 
 1. Start a fresh feature-request chat.

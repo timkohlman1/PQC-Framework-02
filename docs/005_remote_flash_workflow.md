@@ -2,99 +2,110 @@
 
 ## Purpose
 
-This document records the current direct-flash and secure-boot flashing workflows.
+This document owns the current Docker-wrapper direct-flash, secure-boot, and UART workflows. Run commands from the repository root. Host-native Python, CMake, Make, SCP, SSH, and toolchain commands are diagnostic fallback only; they are not the normal reproducible validation path.
 
-## Gateway
-
-```text
-Gateway alias: pqc-gateway1
-Flash helper: flash-stm32a
-Reset helper: reset-stm32a
-UART device: /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-```
+Gateway identity is owned by `configs/hosts/gateway.yaml` and explained in `docs/002_host_gateway_setup.md`. Board/ST-LINK/UART hardware identity is owned by `docs/003_stm32_board_setup.md`.
 
 ## Direct-flash workflow
 
-Build the baseline:
+Build through the Docker wrapper:
 
 ```powershell
-python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-Flash with an explicit verified build run:
+Flash an explicitly recorded build:
 
 ```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run <run_id>
+.\scripts\dev.ps1 experiment-gateway flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run <run_id>
 ```
 
-Use the explicit untracked-artifact escape hatch only for manual recovery or investigation:
+The untracked-artifact escape hatch is limited to manual recovery or investigation:
 
 ```powershell
-python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
+.\scripts\dev.ps1 experiment-gateway flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
 ```
 
-Build, flash, and optionally capture UART in one command:
+Build and flash, with optional UART capture:
 
 ```powershell
-python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
-python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+.\scripts\dev.ps1 experiment-gateway build-flash --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment-gateway build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
 ```
 
-Run the full direct-flash baseline workflow:
+Run the normal build/flash/UART baseline workflow:
 
 ```powershell
-python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
 
-The direct-flash `flash` command refuses SCP/SSH unless the artifact matches an explicit build-run manifest or `--allow-untracked-artifact` is supplied.
+The `flash` path refuses SCP/SSH unless the artifact matches recorded build provenance or the explicit recovery escape hatch is supplied.
 
 ## Secure-boot workflow
 
-Secure boot flashes two artifacts:
-
-1. wolfBoot bootloader artifact at the configured bootloader offset.
-2. Signed relocated application image at the configured signed-application offset.
-
-Command pattern:
+Secure boot consumes the configured wolfBoot artifact and signed relocated application. The normal profile pattern is:
 
 ```powershell
-python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
-cmake --preset RelocatedDebug
-cmake --build --preset RelocatedDebug
-python scripts/experiment.py sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
+.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
 ```
 
-Supported profile stems:
+The supported profile stems represented by matching build, signing, experiment, and wolfBoot config files are:
 
 ```text
-ecdsa_p256
-ecc384
-ecc521
-ed25519
-ed448
-rsa2048
-rsa3072
-rsa4096
+Classical: ecdsa_p256, ecc384, ecc521, ed25519, ed448, rsa2048, rsa3072, rsa4096
+ML-DSA:   mldsa44, mldsa65
 ```
+
+ECC256 uses the historical `ecdsa_p256` file stem. ML-DSA-87 is not a supported profile under the current 8192-byte image-header reserve. The canonical capability interpretation is in `docs/007_framework_architecture.md`; the tracked files under `configs/builds/`, `configs/signing/`, `configs/experiments/`, and `configs/wolfboot/` are the executable profile inventory.
+
+The relocated application build must run through the framework so generated-state provenance and the artifact hash are recorded before signing. `build-wolfboot`, `sign-application`, and `flash-secure-boot` use generated-state preflight as the primary compatibility, stale-output, and provenance mechanism.
+
+The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
+
+- Completely absent tuple: the owning workflow may create it when the profile permits generation.
+- Complete matching tuple: preserve and reuse it.
+- Partially missing tuple: fail before build/signing; do not reconstruct members.
+- Mismatched tuple: fail before build/signing; do not replace the canonical key or overwrite members.
+
+Do not run wolfBoot `keysclean` or manually delete tuple members. Pytest startup cleanup is supplementary cross-platform hygiene only; it is not provenance validation and must not remove reusable signing state.
 
 Negative corrupted-application test:
 
 ```powershell
-python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
 ```
 
-The negative test flashes a result-local corrupted copy of the signed image. It must not modify the original signed image or private signing key.
+The workflow corrupts a result-local copy. It must not modify the canonical signed image or private key.
 
 ## UART capture
 
-Direct-flash post-flash UART capture is opt-in with `--capture-uart` on `flash` and `build-flash`. The `run` command always captures UART after successful flash.
+Direct-flash `flash` and `build-flash` capture UART only with `--capture-uart`; `run` captures UART after a successful flash. Secure-boot flashing captures UART unless `--skip-uart` is supplied. Repeated secure-boot samples are written as `uart_sample_001.log`, `uart_sample_002.log`, and so on.
 
-Secure-boot flashing captures UART by default unless `--skip-uart` is supplied. Repeated secure-boot runs write `uart_sample_001.log`, `uart_sample_002.log`, and so on.
+Ad hoc bounded capture:
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10 --restart
+```
+
+Monitor output is useful for diagnosis but has no result manifest and does not establish image provenance by itself.
+
+## Broker boundary
+
+Broker deployment and host-side MQTT/TLS checks are separate from firmware flashing. Use `experiment/mqtt-broker/README.md`. Broker/client success is `host_side` or broker-side evidence only and cannot be promoted to STM32, UART, Wi-Fi, ST67W61M1, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless evidence.
+
+## Diagnostic fallback
+
+Host-native commands may be used only to isolate a development-machine, CubeMX, IDE, toolchain, SSH, or gateway problem. They must not replace wrapper verification, bypass generated-state preflight, or use destructive signing-state cleanup. Manual SCP/SSH flash and direct `picocom` capture are recovery diagnostics documented by the host/gateway and board setup guides.
 
 ## Evidence rules
 
-- Direct-flash success requires the expected boot marker and `tick` marker.
-- Positive secure-boot success requires the secure-boot marker, normal boot marker, and `tick` marker.
-- Secure-boot timing, cycles, result code, and stack high-water evidence must come from explicit UART markers.
-- Hardware success must only be claimed from logs or manifests generated by the workflow.
+- Container build output proves compilation/linkage only.
+- Flash success requires workflow SCP/SSH/helper evidence.
+- Direct-flash runtime success requires expected UART markers from a provenance-backed run.
+- Positive secure-boot success requires explicit secure-boot/application markers and result status.
+- Timing, cycle, stack, heap, and benchmark values must come from explicit UART fields or manifests.
+- Gateway reachability, broker status, host-client validation, and hardware/UART evidence are separate boundaries.

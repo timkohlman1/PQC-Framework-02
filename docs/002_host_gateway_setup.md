@@ -2,94 +2,64 @@
 
 ## Purpose
 
-This document records how each development PC connects to the experiment gateway.
+This document owns development-host access to the experiment gateway. Operational flash and UART commands are owned by `docs/005_remote_flash_workflow.md`; board and UART hardware details are owned by `docs/003_stm32_board_setup.md`; broker-specific operation is owned by `experiment/mqtt-broker/README.md`.
 
-The gateway is used for remote flashing, UART log capture, and later experiment services.
+## Canonical gateway configuration
 
-## Current Gateway
+Repository-owned gateway identity and helper configuration is stored in `configs/hosts/gateway.yaml`. Use its SSH alias for SSH/SCP orchestration and its `network.address` for MQTT/TLS client validation when the alias is not resolvable through DNS.
 
-```text
-Host alias: pqc-gateway1
-User: timk
-Local IP: 10.1.1.18
-```
-
-## Gateway Role
-
-The gateway is used for:
-
-- remote STM32 flashing
-- UART log capture
-- later MQTT broker hosting
-- later network impairment and traffic shaping
-- later benchmark orchestration
-
-## SSH Access
-
-Each development PC must generate its own SSH keypair for gateway access.
-
-Do not share SSH private keys between development PCs.
-
-The private key must remain on the development PC where it was generated and must not be committed to Git.
-
-Only the public key should be copied to the experiment gateway.
-
-Use the local SSH alias:
+Current configured values are:
 
 ```text
-pqc-gateway1
+SSH alias: pqc-gateway1
+SSH user: timk
+Network address: 10.1.1.18
+Flash helper: flash-stm32a
+Reset helper: reset-stm32a
 ```
 
-rather than hard-coding private key paths into framework code or documentation examples.
+Do not duplicate these values in framework code or add private-key paths to repository configuration. Update `configs/hosts/gateway.yaml` and the relevant canonical documentation when the lab identity changes.
 
-### Generate a key on each development PC
+## Gateway role and evidence boundary
 
-On Windows PowerShell, Git Bash, Linux, or macOS:
+The gateway provides remote STM32 flashing, reset, bounded UART capture, and broker orchestration. A successful SSH probe proves gateway reachability only. Broker logs prove broker-side or host-side compatibility only. Flash and UART success require the workflow logs or manifests described in `docs/005_remote_flash_workflow.md`. None of these outcomes alone proves Wi-Fi-module, ST67W61M1, STM32 network, TLS-handshake, MQTT, timing, memory, benchmark, or end-to-end wireless success.
+
+## SSH access
+
+Each development PC must generate its own SSH keypair. Keep the private key on that development PC and outside the repository. Install only the public key on the gateway.
+
+Generate a key:
 
 ```bash
 ssh-keygen -t ed25519 -C "pqc-framework-dev-pc"
 ```
 
-When prompted, save the key under the local user SSH directory.
-
-Recommended default paths are:
+Recommended local paths are:
 
 ```text
 Windows: C:\Users\<user>\.ssh\id_ed25519
 Linux/macOS: ~/.ssh/id_ed25519
 ```
 
-Use a passphrase where practical.
-
-Do not place SSH keys inside this repository.
-
-### Install the public key on `pqc-gateway1`
-
-Copy only the public key to the gateway account.
-
-From Linux, macOS, or Git Bash:
+Install the public key from Linux, macOS, or Git Bash:
 
 ```bash
 ssh-copy-id timk@pqc-gateway1
 ```
 
-If `ssh-copy-id` is not available, append the public key manually:
+When `ssh-copy-id` is unavailable:
 
 ```bash
 cat ~/.ssh/id_ed25519.pub | ssh timk@pqc-gateway1 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
 ```
 
-On Windows PowerShell:
+Windows PowerShell equivalent:
 
 ```powershell
 type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh timk@pqc-gateway1 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
-### Configure the local SSH alias
-
-Each development PC should configure the alias locally in its SSH config file.
-
-Example local SSH config entry:
+Configure the alias in the local SSH config, not in tracked repository files:
 
 ```sshconfig
 Host pqc-gateway1
@@ -99,148 +69,38 @@ Host pqc-gateway1
     IdentitiesOnly yes
 ```
 
-On Windows, the config file is usually:
+Typical SSH config locations are `C:\Users\<user>\.ssh\config` on Windows and `~/.ssh/config` on Linux/macOS.
 
-```text
-C:\Users\<user>\.ssh\config
-```
-
-On Linux and macOS, the config file is usually:
-
-```text
-~/.ssh/config
-```
-
-This file is local developer-machine configuration and should not be committed to the repository if it contains machine-specific paths, hostnames, usernames, VPN hostnames, or other local access details.
-
-### Verify SSH access
-
-From the development PC:
+Verify reachability:
 
 ```bash
 ssh pqc-gateway1 "hostname && whoami"
 ```
 
-Expected result:
+This is a host-native connectivity diagnostic, not a repository validation gate and not hardware-runtime evidence.
 
-```text
-pqc-gateway1
-timk
-```
+## Docker-wrapper gateway execution
 
-If the command prompts for the SSH key passphrase, that is normal.
+Repository workflows normally run in the project container. Gateway-capable wrappers set `PQC_CONTAINER_ENABLE_GATEWAY=1`, mount the configured host SSH directory read-only, and copy the required SSH material into the temporary container for that run.
 
-If the command prompts for the gateway account password, the public key may not be installed correctly, the SSH alias may not be configured, or the wrong private key may be selected.
-
-### Security checks
-
-Before committing, check that no private keys or local SSH configuration files have been added to Git:
-
-```bash
-git status --short
-```
-
-Private key files such as these must not appear in staged or unstaged Git changes:
-
-```text
-id_ed25519
-id_rsa
-*.pem
-*.key
-.ssh/config
-```
-
-Public keys such as `*.pub` are not secret, but developer-specific public keys should normally still remain outside the repository unless there is a deliberate documented reason to include them.
-
-## Remote Flashing
-
-The gateway has STM32CubeProgrammer CLI installed and provides the helper command:
-
-```text
-flash-stm32a
-```
-
-Manual remote flashing uses the local SSH alias:
+Representative checks from the repository root:
 
 ```powershell
-scp .\build\Debug\stm32_basic_hal1.elf pqc-gateway1:/tmp/stm32_basic_hal1.elf
-ssh pqc-gateway1 "flash-stm32a /tmp/stm32_basic_hal1.elf"
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
 ```
 
-## UART Capture
+`PQC_DOCKER_SSH_DIR` may override the host-side SSH directory. SSH keys, VPN material, broker credentials, or TLS private keys must never be copied into the image or committed. See `docs/006_security_and_secrets.md`.
 
-Manual UART capture is run on the gateway.
+## VPN access
 
-```bash
-picocom -b 115200 /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-```
+When the gateway is reachable only through a VPN, establish the VPN on the development host before invoking gateway wrappers. Keep VPN profiles, keys, and credentials outside the repository and container image. Resolve alternate gateway addresses through local SSH configuration rather than hard-coding private access details.
 
-Expected baseline UART output:
+## Operational links
 
-```text
-stm32-basic_hal1 boot v0.1.0
-tick
-tick
-tick
-```
-
-## VPN Access
-
-When outside the local network, connect to the VPN first.
-
-VPN private keys and credentials must not be stored in this repository.
-
-If the gateway uses a different VPN hostname or IP address, configure this locally through SSH config rather than hard-coding private keys or credentials into the project.
-
-## MQTT broker service
-
-The repository includes a gateway-hosted Docker Compose project at `experiment/mqtt-broker/` for MQTT-over-TLS experiments.
-
-The build server remains the orchestrator. It provisions local development certificates, copies the compose project to the gateway with `scp`, and starts or stops Docker Compose remotely with `ssh`.
-
-Typical build-server commands from the repository root:
-
-```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
-```
-
-The OQS profile uses gateway-generated mutual-TLS material from the OQS-enabled OpenSSL provider in `openquantumsafe/mosquitto:latest`:
-
-```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
-```
-
-The deploy command uses the SSH alias from `configs/hosts/gateway.yaml`. It does not require private SSH key paths in repository files.
-
-## Repository Gateway Network Address
-
-`configs/hosts/gateway.yaml` records two different gateway identifiers:
-
-```text
-alias: pqc-gateway1
-network.address: 10.1.1.18
-```
-
-Use the SSH alias for `ssh` and `scp` orchestration. Use `network.address` for MQTT/TLS, Docker service validation, or other client workflows where the SSH alias may not resolve through DNS.
-
-The MQTT broker certificate provisioning command reads `network.address` and includes it as an IP subject alternative name when certificates are generated with the host config:
-
-```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
-```
-
-The gateway integration tests deploy the broker into temporary remote directories, start the classical and OQS profiles on alternate host ports, validate TLS 1.3 mutual authentication, then stop and remove the temporary deployments:
-
-```powershell
-python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
-```
-
-
-MQTT OQS profile note: the OQS profile logs to Docker stdout and disables Mosquitto persistence. Use `python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile oqs` for diagnostics.
+- Direct flash, secure boot, generated-state provenance, and UART evidence: `docs/005_remote_flash_workflow.md`
+- Board, ST-LINK, and UART hardware configuration: `docs/003_stm32_board_setup.md`
+- Broker deployment, certificate provisioning, and host/broker evidence: `experiment/mqtt-broker/README.md`
+- Secret and generated-state handling: `docs/006_security_and_secrets.md`
+- Canonical capability and evidence matrix: `docs/007_framework_architecture.md`

@@ -4,6 +4,8 @@ This directory contains the gateway-hosted MQTT broker service for transport-sec
 
 The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`. The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
 
+The Docker wrappers are the normal command path. Direct host-native Python, raw `docker run`, and `docker compose` commands are diagnostic fallback only. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; firmware flash/UART workflows are owned by `docs/005_remote_flash_workflow.md`; the canonical capability matrix is `docs/007_framework_architecture.md`.
+
 ## Profiles
 
 - `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses generated local X.509 test material and mutual TLS client-certificate authentication.
@@ -33,13 +35,13 @@ experiment/mqtt-broker/log/
 experiment/mqtt-broker/.env
 ```
 
-## Provision local classical TLS material
+## Provision localhost-only classical TLS material
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
 
-This creates a local development CA, server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed.
+This creates a local development CA, localhost server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 ## Provision remote OQS TLS material
 
@@ -48,27 +50,27 @@ The OQS profile generates its CA, server, client, and healthcheck certificates o
 Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
 Validate OQS mutual TLS after starting the profile:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
 ```
 
 ## Deploy to the gateway
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 ```
 
 Preview remote commands without running them:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
 ```
 
 ## Framework-level broker experiment orchestration
@@ -76,8 +78,8 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
 Use the top-level experiment CLI when the broker is being used as framework infrastructure rather than as a standalone service utility:
 
 ```powershell
-python scripts/experiment.py mqtt-broker-experiment --profile classical --stop-after
-python scripts/experiment.py mqtt-broker-experiment --profile oqs --stop-after
+.\scripts\dev.ps1 experiment mqtt-broker-experiment --profile classical --stop-after
+.\scripts\dev.ps1 experiment mqtt-broker-experiment --profile oqs --stop-after
 ```
 
 The wrapper provisions the selected profile's certificates, deploys the compose project, starts the selected profile, checks status, runs the applicable MQTT/TLS validation, retries validation for a bounded startup-readiness window, writes each step as `running` before its subprocess starts, creates the step log immediately, prints progress for each attempt, applies `--step-timeout-seconds` to bound subprocess hangs, attempts log collection even after validation failures, and stops the broker when `--stop-after` is supplied. Use `--dry-run` to write framework evidence while passing dry-run through to the broker control script.
@@ -89,31 +91,31 @@ The result manifest labels this path as `host-side/broker-side MQTT/TLS compatib
 Start the classical TLS broker:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
 ```
 
 Start the experimental OQS broker:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 ```
 
 Check status:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
 ```
 
 Show logs:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
 ```
 
 Stop broker services:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
 ## Host-side broker compatibility validation
@@ -121,13 +123,29 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 After provisioning, deploying, and starting a profile, the broker utility can validate MQTT publish/subscribe through host-side client containers:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
 ```
 
 The validation command output includes the evidence class, evidence label, profile, and evidence boundary before running the client checks. This output is broker/client compatibility evidence only.
 
-## Local Docker smoke test
+### Native host wolfMQTT validation
+
+For PowerShell, pass upstream wolfMQTT options after `--client-args` and quote each dash-prefixed token individually. Active PowerShell guidance does not use a standalone `--` forwarding boundary.
+
+```powershell
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py `
+  --result-json results/host-wolfmqtt/classical-gateway-validation.json `
+  run `
+  --client-args '-h' 10.1.1.18 '-p' 8883 '-t' `
+  '-A' /workspace/experiment/mqtt-broker/runtime/classical/certs/ca.crt `
+  '-K' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.key `
+  '-c' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.crt
+```
+
+This is native host wolfMQTT/wolfSSL compatibility evidence only. It does not prove wolfMQTT-on-STM32, ST67W61M1 operation, or end-to-end wireless behavior.
+
+## Diagnostic fallback: local Docker smoke test
 
 After provisioning certificates, the classical profile can be run locally from this directory:
 
@@ -147,7 +165,7 @@ Local and gateway Docker success must be confirmed from command output or logs b
 Provision certificates with the host config so the server certificate includes the gateway IP address as an IP subject alternative name:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
 External TLS validation can use the configured IP address:
@@ -163,7 +181,7 @@ openssl s_client `
 ```
 
 
-## Optional gateway-capable container execution
+## Diagnostic fallback: raw gateway-capable container execution
 
 The default container command does not run gateway or broker integration tests. To run gateway broker checks from the project container, provide SSH access at runtime and set `PQC_CONTAINER_ENABLE_GATEWAY=1`. The image must not contain SSH keys, VPN keys, broker credentials, private certificates, private signing keys, real `.env` files, or generated broker runtime material.
 
@@ -182,13 +200,13 @@ The gateway integration tests create temporary broker directories under the gate
 It skips cleanly unless gateway access and Docker Compose are available:
 
 ```powershell
-python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
 ```
 
 To fail instead of skip when the gateway capability is unavailable:
 
 ```powershell
-python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
 ```
 
 
