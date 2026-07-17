@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import subprocess
 import sys
@@ -8,11 +9,6 @@ from pathlib import Path
 import pytest
 
 EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
-EXPECTED_LWIP_SMOKE_PREFIX = "lwIP runtime smoke:"
-EXPECTED_LWIP_NETWORK_BOUNDARY = "network=unavailable"
-EXPECTED_ST67_INIT_MARKER = "ST67 SPI bring-up: W6X_Init result=0 status_ok=1"
-EXPECTED_ST67_SCAN_MARKER = "ST67 Wi-Fi scan: complete result=passed"
-EXPECTED_ST67_SCAN_BOUNDARY = "evidence=stm32-st67-wifi-rf-scan-only"
 
 
 def _repo_root() -> Path:
@@ -30,8 +26,6 @@ def _run_cli(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 
 
 def _run_result_dirs(results_dir: Path) -> list[Path]:
-    """Return experiment run result directories, excluding build-record storage."""
-
     return sorted(
         path
         for path in results_dir.iterdir()
@@ -50,14 +44,7 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
     tmp_path,
     pqc_require_capabilities,
 ):
-    """Build, flash, and verify the Phase M5 lwIP UART smoke marker.
-
-    This is a gateway/hardware-facing integration test. It proves only that the
-    non-network lwIP helper-call smoke marker executes during the existing UART
-    capture window. It does not validate a network interface, ST67W61M1 module
-    detection, Wi-Fi association, IP acquisition, TCP, TLS, MQTT, publish, or
-    reconnect behaviour.
-    """
+    """Build, flash, and verify bounded pre-scheduler and live ST67 evidence."""
 
     pqc_require_capabilities(
         "local_toolchain",
@@ -68,7 +55,6 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
 
     repo_root = _repo_root()
     results_dir = tmp_path / "results"
-
     completed = _run_cli(
         repo_root,
         [
@@ -79,7 +65,7 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
             str(results_dir),
             "--force",
             "--uart-duration-seconds",
-            "10",
+            "30",
         ],
     )
 
@@ -89,13 +75,9 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
         f"stderr:\n{completed.stderr}"
     )
 
-    assert "Baseline run passed" in completed.stdout
-    assert "UART log:" in completed.stdout
-
     result_dir = _single_result_dir(results_dir)
     manifest_path = result_dir / "manifest.json"
     uart_log_path = result_dir / "uart.log"
-
     assert manifest_path.is_file()
     assert uart_log_path.is_file()
 
@@ -104,32 +86,44 @@ def test_lwip_runtime_smoke_marker_appears_in_gateway_uart_log(
     assert manifest["run"]["return_code"] == 0
     assert manifest["run"]["flash_return_code"] == 0
     assert manifest["run"]["uart_return_code"] == 0
-    assert manifest["run"]["uart_log"] == "uart.log"
+
+    network = manifest["network"]
+    assert network["association_success"] is True
+    assert network["dhcp_success"] is True
+    assert network["wifi_association"]["result"] == "passed"
+    assert network["wifi_association"]["state"] == "connected"
+    assert network["dhcp"]["result"] == "passed"
+    assert ipaddress.IPv4Address(network["dhcp"]["ipv4"]) != ipaddress.IPv4Address("0.0.0.0")
 
     uart_log = uart_log_path.read_text(encoding="utf-8", errors="replace")
-
-    required_markers = (
-        "stm32-basic_hal1 boot v0.1.0",
-        EXPECTED_LWIP_SMOKE_PREFIX,
-        "ip4_format=192.0.2.1",
-        "checksum=0x",
-        EXPECTED_LWIP_NETWORK_BOUNDARY,
-        EXPECTED_ST67_INIT_MARKER,
-        EXPECTED_ST67_SCAN_MARKER,
-        EXPECTED_ST67_SCAN_BOUNDARY,
-        "ssid_values=not-reported",
-        "bssid_values=not-reported",
-        "wifi_association=not-attempted",
-        "FreeRTOS scheduler starting: cmsis_rtos=v2",
-        "FreeRTOS defaultTask started: periodic tick task active",
-        "tick",
+    pre_scheduler_line = next(
+        line for line in uart_log.splitlines()
+        if line.startswith("lwIP runtime smoke: context=pre_scheduler ")
     )
+    assert "scheduler=not_started" in pre_scheduler_line
+    assert "network=unavailable" in pre_scheduler_line
+    assert "ip4_format=192.0.2.1" in pre_scheduler_line
+    assert "checksum=0x" in pre_scheduler_line
 
-    for marker in required_markers:
-        assert marker in uart_log
+    assert "ST67 SPI bring-up: W6X_Init result=0 status_ok=1" in uart_log
+    assert "ST67 SPI bring-up: complete result=passed" in uart_log
+    assert "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled" in uart_log
+    assert "ST67 Wi-Fi association: result=passed" in uart_log
+    assert "ST67 DHCP: result=passed" in uart_log
 
-    assert "network=available" not in uart_log
-    assert "wifi_association=passed" not in uart_log
-    assert "tls_handshake=passed" not in uart_log
-    assert "mqtt_connect=passed" not in uart_log
-    assert "end_to_end=passed" not in uart_log
+    live_line = next(
+        line for line in uart_log.splitlines()
+        if line.startswith("lwIP runtime network: context=freertos_task ")
+    )
+    assert "scheduler=running" in live_line
+    assert "network=available" in live_line
+    assert "wifi=connected" in live_line
+    assert "link=up" in live_line
+    assert f"ip={network['dhcp']['ipv4']}" in live_line
+    assert "tcp=available" in live_line
+    assert "transport=st67-lwip" in live_line
+    assert "st67w61m1=available" in live_line
+
+    assert "tls_handshake=passed" not in live_line
+    assert "mqtt_connect=passed" not in live_line
+    assert "end_to_end=passed" not in live_line

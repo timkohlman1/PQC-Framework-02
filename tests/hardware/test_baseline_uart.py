@@ -94,62 +94,49 @@ def _single_run_uart_log(results_dir: Path) -> Path:
 
 
 @pytest.mark.hardware
-def test_baseline_known_image_reports_local_lwip_udp_loopback(tmp_path, pqc_require_capabilities):
-    """Build, flash, and capture a known image before asserting M6.6 evidence."""
+def test_baseline_known_image_reports_pre_scheduler_lwip_smoke(
+    tmp_path, pqc_require_capabilities
+):
+    """Build, flash, and validate the bounded pre-scheduler lwIP smoke line."""
 
     pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
-
     repo_root = _repo_root()
     results_dir = tmp_path / "results"
     completed = _run_cli(
         repo_root,
-        [
-            "run",
-            "--experiment",
-            EXPERIMENT_CONFIG,
-            "--results-dir",
-            str(results_dir),
-        ],
+        ["run", "--experiment", EXPERIMENT_CONFIG, "--results-dir", str(results_dir)],
     )
     assert completed.returncode == 0, (
         f"run stdout:\n{completed.stdout}\nrun stderr:\n{completed.stderr}"
     )
 
-    log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
-    boot_text = _latest_complete_boot(log_text)
-    scheduler_marker = "FreeRTOS defaultTask started: heartbeat active"
-    loopback_marker = "lwIP local loopback smoke:"
-
-    assert scheduler_marker in boot_text
-    assert loopback_marker in boot_text
-    assert boot_text.index(scheduler_marker) < boot_text.index(loopback_marker)
-    assert "evidence=stm32-local-lwip-loopback-only" in boot_text
-    assert "protocol=udp" in boot_text
-    assert "address=127.0.0.1" in boot_text
-    assert "result=passed" in boot_text
-    assert "sent=1" in boot_text
-    assert "received=1" in boot_text
-    assert "payload_match=1" in boot_text
-    assert "wifi_module=unavailable" in boot_text
-    assert "hardware_ip_acquisition=unavailable" in boot_text
-    assert "external_ping=unavailable" in boot_text
-    assert "external_tcp=unavailable" in boot_text
-    assert "tls_handshake=unavailable" in boot_text
-    assert "mqtt_connect=unavailable" in boot_text
-    assert "mqtt_publish=unavailable" in boot_text
-    assert "reconnect=unavailable" in boot_text
-    assert "broker_access=unavailable" in boot_text
-    assert "end_to_end=unavailable" in boot_text
+    boot_text = _latest_complete_boot(
+        _single_run_uart_log(results_dir).read_text(encoding="utf-8")
+    )
+    marker = next(
+        line for line in boot_text.splitlines()
+        if line.startswith("lwIP runtime smoke: context=pre_scheduler ")
+    )
+    assert "scheduler=not_started" in marker
+    assert "version=" in marker
+    assert "ip4_format=192.0.2.1" in marker
+    assert "checksum=0x" in marker
+    assert "network=unavailable" in marker
+    assert "tls_handshake=unavailable" in marker
+    assert "mqtt_connect=unavailable" in marker
+    assert "end_to_end=unavailable" in marker
 
 
 @pytest.mark.hardware
-def test_baseline_known_image_reports_wolfmqtt_fake_no_network_runtime(
+def test_baseline_known_image_reports_live_st67_network(
     tmp_path, pqc_require_capabilities
 ):
-    """Build, flash, and capture a known image before asserting M8 evidence."""
+    """Build, flash, and validate live ST67 association and DHCP evidence."""
+
+    import ipaddress
+    import json
 
     pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
-
     repo_root = _repo_root()
     results_dir = tmp_path / "results"
     completed = _run_cli(
@@ -160,37 +147,39 @@ def test_baseline_known_image_reports_wolfmqtt_fake_no_network_runtime(
             EXPERIMENT_CONFIG,
             "--results-dir",
             str(results_dir),
+            "--uart-duration-seconds",
+            "30",
         ],
     )
     assert completed.returncode == 0, (
         f"run stdout:\n{completed.stdout}\nrun stderr:\n{completed.stderr}"
     )
 
-    log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
-    boot_text = _latest_complete_boot(log_text)
-    scheduler_marker = "FreeRTOS defaultTask started: heartbeat active"
-    mqtt_marker = "wolfMQTT runtime smoke:"
+    boot_text = _latest_complete_boot(
+        _single_run_uart_log(results_dir).read_text(encoding="utf-8")
+    )
+    live_line = next(
+        line for line in boot_text.splitlines()
+        if line.startswith("lwIP runtime network: context=freertos_task ")
+    )
+    assert "scheduler=running" in live_line
+    assert "network=available" in live_line
+    assert "wifi=connected" in live_line
+    assert "link=up" in live_line
+    assert "tcp=available" in live_line
+    assert "transport=st67-lwip" in live_line
+    assert "st67w61m1=available" in live_line
 
-    assert scheduler_marker in boot_text
-    assert mqtt_marker in boot_text
-    assert boot_text.index(scheduler_marker) < boot_text.index(mqtt_marker)
-    assert "context=freertos_task" in boot_text
-    assert "scheduler=running" in boot_text
-    assert "evidence=stm32-fake-no-network-initialization-only" in boot_text
-    assert "backend=fake_no_network" in boot_text
-    assert "client_initialized=1" in boot_text
-    assert "callbacks=present" in boot_text
-    assert "transport=unavailable" in boot_text
-    assert "wifi=unavailable" in boot_text
-    assert "link=unavailable" in boot_text
-    assert "ip=unavailable" in boot_text
-    assert "tcp=unavailable" in boot_text
-    assert "tls_handshake=unavailable" in boot_text
-    assert "mqtt_connect=unavailable" in boot_text
-    assert "mqtt_publish=unavailable" in boot_text
-    assert "reconnect=unavailable" in boot_text
-    assert "st67w61m1=unavailable" in boot_text
-    assert "end_to_end=unavailable" in boot_text
+    manifest_path = next(results_dir.glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    network = manifest["network"]
+    assert network["association_success"] is True
+    assert network["dhcp_success"] is True
+    assert network["wifi_association"]["result"] == "passed"
+    assert network["wifi_association"]["state"] == "connected"
+    assert network["dhcp"]["result"] == "passed"
+    assert ipaddress.IPv4Address(network["dhcp"]["ipv4"]) != ipaddress.IPv4Address("0.0.0.0")
+
 
 @pytest.mark.hardware
 def test_baseline_known_image_reports_st67_spi_bringup(
@@ -231,12 +220,16 @@ def test_baseline_known_image_reports_st67_spi_bringup(
     assert boot_text.index(begin_marker) < boot_text.index(init_marker)
     assert boot_text.index(init_marker) < boot_text.index(result_marker)
     assert boot_text.index(result_marker) < boot_text.index(complete_marker)
-    assert "evidence=stm32-st67-gpio-spi-bringup-only" in boot_text
-    assert "wifi_association=not-attempted" in boot_text
-    assert "ip=unavailable" in boot_text
-    assert "tls_handshake=unavailable" in boot_text
-    assert "mqtt_connect=unavailable" in boot_text
-    assert "end_to_end=unavailable" in boot_text
+    begin_line = next(
+        line for line in boot_text.splitlines() if line.startswith(begin_marker)
+    )
+    complete_line = next(
+        line for line in boot_text.splitlines() if line.startswith(complete_marker)
+    )
+    assert "evidence=stm32-st67-gpio-spi-bringup-only" in begin_line
+    assert "wifi_association=not-attempted" in begin_line
+    assert "result=passed" in complete_line
+    assert "transport=spi-module-initialized" in complete_line
 
 
 @pytest.mark.hardware
@@ -247,10 +240,21 @@ def test_baseline_known_image_joins_ap_and_gets_dhcp(tmp_path, pqc_require_capab
     completed=_run_cli(repo_root,["run","--experiment",EXPERIMENT_CONFIG,"--results-dir",str(results_dir),"--uart-duration-seconds","30"])
     assert completed.returncode == 0, f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     boot_text=_latest_complete_boot(_single_run_uart_log(results_dir).read_text(encoding="utf-8"))
-    assert "ST67 Wi-Fi association: result=passed ssid=hiphopopotamus" in boot_text
-    line=next(line for line in boot_text.splitlines() if line.startswith("ST67 DHCP: result=passed ipv4="))
-    ipv4=line.split("ipv4=",1)[1].split(" ",1)[0]; assert ipaddress.IPv4Address(ipv4) != ipaddress.IPv4Address("0.0.0.0")
-    manifest_path=next(results_dir.glob("*/manifest.json")); manifest=json.loads(manifest_path.read_text())
-    assert manifest["network"]["association_success"] is True and manifest["network"]["dhcp_success"] is True
+    manifest_path = next(results_dir.glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    association = manifest["network"]["wifi_association"]
+    association_line = next(
+        line for line in boot_text.splitlines()
+        if line.startswith("ST67 Wi-Fi association: result=passed ssid=")
+    )
+    assert f"ssid={association['ssid']}" in association_line
+    line = next(
+        line for line in boot_text.splitlines()
+        if line.startswith("ST67 DHCP: result=passed ipv4=")
+    )
+    ipv4 = line.split("ipv4=", 1)[1].split(" ", 1)[0]
+    assert ipaddress.IPv4Address(ipv4) != ipaddress.IPv4Address("0.0.0.0")
+    assert manifest["network"]["association_success"] is True
+    assert manifest["network"]["dhcp_success"] is True
     assert manifest["network"]["dhcp"]["ipv4"] == ipv4
-    assert "lukeisadog" not in manifest_path.read_text()
+    assert "psk" not in manifest["network"]

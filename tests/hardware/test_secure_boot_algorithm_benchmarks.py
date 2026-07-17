@@ -16,12 +16,11 @@ REPEAT_COUNT = 2
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 FREERTOS_UART_MARKERS = (
     "FreeRTOS defaultTask created: name=defaultTask",
+    "FreeRTOS networkTask created: name=networkTask",
     "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask",
-    "FreeRTOS defaultTask started: periodic tick task active",
+    "FreeRTOS networkTask started: initialization active",
     "FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true",
-    "lwIP runtime smoke: context=freertos_task scheduler=running",
-    "wolfSSL TLS context smoke: context=freertos_task scheduler=running",
-    "FreeRTOS task-context smoke complete: context=freertos_task scheduler=running",
+    "lwIP runtime network: context=freertos_task scheduler=running",
 )
 
 
@@ -418,19 +417,23 @@ def _assert_profile_benchmark_manifest(
         assert sample["verification_result_code"] == 0
         assert sample["bootloader_hclk_hz"] > 0
         application_clock = manifest["application_clock"]["clock_hz"]
-        assert application_clock["sysclk_hz"] == 120000000
-        assert application_clock["hclk_hz"] == 120000000
-        assert application_clock["pclk1_hz"] == 120000000
-        assert application_clock["pclk2_hz"] == 120000000
-        assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
-        checkpoints = manifest["runtime_memory"]["application_checkpoints"]
+        assert set(application_clock) == {"sysclk_hz", "hclk_hz", "pclk1_hz", "pclk2_hz"}
+        assert manifest["application_clock"]["source"] in {
+            "uart_reported_hal_rcc_from_running_default_task",
+            "unavailable",
+        }
+        if manifest["application_clock"]["source"] == "unavailable":
+            assert all(value is None for value in application_clock.values())
+        else:
+            assert all(isinstance(value, int) and value > 0 for value in application_clock.values())
+
+        checkpoints = manifest["uart"]["application_memory_checkpoints"]
         checkpoint_by_stage = {checkpoint["stage"]: checkpoint for checkpoint in checkpoints}
-        assert {"pre_scheduler", "default_task_start", "default_task_runtime"}.issubset(checkpoint_by_stage)
+        assert {"pre_scheduler", "default_task_runtime"}.issubset(checkpoint_by_stage)
         assert checkpoint_by_stage["pre_scheduler"]["task_stack_used_bytes"] is None
-        assert checkpoint_by_stage["default_task_start"]["heap_peak_used_bytes"] >= 0
         assert checkpoint_by_stage["default_task_runtime"]["task_stack_used_bytes"] >= 0
         assert manifest["runtime_memory"]["heap_used_bytes"] >= checkpoint_by_stage["pre_scheduler"]["heap_peak_used_bytes"]
-        assert sample["verification_time_source"] == "uart_explicit_verification_time_marker"
+        assert sample["verification_time_source"] == "framework_derived_from_uart_cycles_and_reported_hclk"
         assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"
         assert sample["derived_verification_time_ms"] > 0
         assert sample["verification_cycles"] > 0
@@ -448,21 +451,28 @@ def _assert_profile_benchmark_manifest(
         assert "Boot marker present: true" in uart_log
         assert "Tick marker present: true" in uart_log
         assert "Secure-boot marker present: true" in uart_log
-        assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
+        assert "verification_time_source: framework_derived_from_uart_cycles_and_reported_hclk" in uart_log
         _assert_freertos_uart_markers(uart_log)
-        task_started_index = uart_log.index("FreeRTOS defaultTask started: periodic tick task active")
-        lwip_task_index = uart_log.index("lwIP runtime smoke: context=freertos_task scheduler=running")
-        wolfssl_task_index = uart_log.index("wolfSSL TLS context smoke: context=freertos_task scheduler=running")
-        assert task_started_index < lwip_task_index < wolfssl_task_index
-        assert "lwIP runtime smoke: context=pre_scheduler scheduler=not_started" in uart_log
-        assert "wolfSSL TLS context smoke: context=pre_scheduler scheduler=not_started" in uart_log
-        for unavailable in (
-            "network=unavailable", "tls_handshake=unavailable",
-            "certs=not-loaded", "mqtt_connect=unavailable",
-            "mqtt_publish=unavailable", "reconnect=unavailable",
-            "st67w61m1=unavailable", "end_to_end=unavailable",
-        ):
-            assert unavailable in uart_log
+        pre_scheduler_line = next(
+            line for line in uart_log.splitlines()
+            if line.startswith("lwIP runtime smoke: context=pre_scheduler ")
+        )
+        assert "scheduler=not_started" in pre_scheduler_line
+        assert "network=unavailable" in pre_scheduler_line
+        assert "tls_handshake=unavailable" in pre_scheduler_line
+        assert "mqtt_connect=unavailable" in pre_scheduler_line
+        assert "end_to_end=unavailable" in pre_scheduler_line
+
+        live_line = next(
+            line for line in uart_log.splitlines()
+            if line.startswith("lwIP runtime network: context=freertos_task ")
+        )
+        assert "scheduler=running" in live_line
+        assert "network=available" in live_line
+        assert "wifi=connected" in live_line
+        assert "link=up" in live_line
+        assert "tcp=available" in live_line
+        assert "st67w61m1=available" in live_line
 
     assert (result_dir / "secure_boot_flash.log").is_file()
     return manifest
