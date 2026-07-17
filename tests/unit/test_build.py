@@ -153,7 +153,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
         calls.append(command)
         assert cwd == repo_root
         if command == ["cmake", "--build", "--preset", "Debug"]:
-            artifact_path.parent.mkdir(parents=True)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
             artifact_path.write_text("fake elf", encoding="utf-8")
         return build.CommandExecution(
             command=command,
@@ -1061,7 +1061,7 @@ def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
     write_build_fingerprint_inputs(repo_root)
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("cached elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     expected_fingerprint = _record_matching_last_successful_state(build, repo_root, artifact_path)
@@ -1165,7 +1165,7 @@ def test_execute_build_runs_cmake_when_hash_changed(tmp_path):
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
     write_build_fingerprint_inputs(repo_root)
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("old elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     _record_matching_last_successful_state(build, repo_root, artifact_path, build_number=3)
@@ -1196,7 +1196,7 @@ def test_execute_build_runs_cmake_when_last_successful_state_is_invalid(tmp_path
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
     write_build_fingerprint_inputs(repo_root)
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("old elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     (repo_root / ".last_successful_build.json").write_text("not json\n", encoding="utf-8")
@@ -1224,7 +1224,7 @@ def test_execute_build_runs_cmake_when_previous_build_state_records_failure(tmp_
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
     write_build_fingerprint_inputs(repo_root)
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("old elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     _record_matching_last_successful_state(build, repo_root, artifact_path)
@@ -1255,7 +1255,7 @@ def test_execute_build_force_runs_cmake_even_when_skip_criteria_match(tmp_path):
     artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
     repo_root.mkdir()
     write_build_fingerprint_inputs(repo_root)
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("old elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     _record_matching_last_successful_state(build, repo_root, artifact_path)
@@ -1357,7 +1357,7 @@ def test_run_command_reuses_verified_build_number_without_building(tmp_path, mon
     )
 
     artifact_path = tmp_path / "results" / "builds" / "7" / "firmware.elf"
-    artifact_path.parent.mkdir(parents=True)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("reused elf", encoding="utf-8")
     manifest_path = artifact_path.parent / "manifest.json"
     manifest_path.write_text("{}\n", encoding="utf-8")

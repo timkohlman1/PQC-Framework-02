@@ -2,6 +2,8 @@ the subsequent experiment-gateway run command overwrites the build.log in the bu
 
 The other issue is the fingerprinting is not comprehensive - it's not covering every file that is going into the build, so this needs to be looked at, and implemented in such a way that it will pick up any added source files, any changes to the build tools (eg. version of GCC, cmake, that type of thing)
 
+some integration/hardware tests are currnetly failing and need to be remediated
 
+ask for a command that runs all tests / the most comprehensive test coverage
 
 

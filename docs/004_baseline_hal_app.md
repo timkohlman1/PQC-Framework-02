@@ -92,3 +92,21 @@ The relocated application entry address is `0x08022000`, leaving the current 819
 ## ST67 Wi-Fi association and DHCP
 
 The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
+
+
+## ST67 T02 network startup
+
+The normal hardware startup does not perform an active access-point scan.
+It connects directly using the configured SSID and password. Diagnostic scan
+output is available only in builds that explicitly enable
+`PQC_ST67_WIFI_DIAGNOSTIC_SCAN`.
+
+Successful T02 runtime evidence is reported after host-side lwIP DHCP as:
+
+```text
+lwIP runtime network: ... evidence=stm32-st67-t02-live-state network=available wifi=connected link=up ip=<assigned-ipv4>
+```
+
+The address is read from the live station network interface and is never
+hard-coded. Earlier pre-network smoke markers describe only the state at their
+execution point.

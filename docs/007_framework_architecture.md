@@ -472,3 +472,32 @@ remain unavailable until their own explicit runtime evidence is recorded.
 ## ST67W61M1 Wi-Fi/DHCP evidence
 
 The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
+
+
+## ST67 T02 normal startup and live network evidence
+
+The normal ST67 T02 startup path initializes the module and host-side lwIP,
+associates directly with the configured access point, waits for the station
+link, and obtains IPv4 configuration through host-side lwIP DHCP. Active Wi-Fi
+scanning is not part of the normal startup path because it delays association
+and can fail independently of a valid direct connection.
+
+Active scanning remains available only as an explicit diagnostic build using
+`PQC_ST67_WIFI_DIAGNOSTIC_SCAN=1`. The default is disabled.
+
+After DHCP succeeds, runtime evidence must be derived from the live station
+`netif`. The canonical marker is `lwIP runtime network:` with
+`evidence=stm32-st67-t02-live-state`, `network=available`,
+`wifi=connected`, `link=up`, and the complete assigned IPv4 address. Static
+pre-network smoke markers do not override later live network evidence.
+
+The gateway-mediated hardware test
+`tests/hardware/test_lwip_runtime_smoke_uart.py` validates module
+initialization, scan skipping, association, link-up, DHCP, live IPv4 evidence,
+heartbeat continuity, and absence of contradictory unavailable markers after
+the live-state marker.
+
+Secure-boot profiles use the same relocated application image and therefore
+must preserve these runtime markers after wolfBoot verification and handoff.
+The existing secure-boot profile and benchmark tests remain the authoritative
+build, signing, flash, verification, and profile-matrix coverage.

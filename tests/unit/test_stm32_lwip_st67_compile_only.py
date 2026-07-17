@@ -276,3 +276,13 @@ def test_wifi_config_selection_uses_compile_time_header_detection():
     assert 'PQC_WIFI_CONFIG_GENERATED_AVAILABLE' not in wrapper
     assert '#    define PQC_WIFI_SSID ""' in wrapper
     assert '#    define PQC_WIFI_IPV4_MODE "unconfigured"' in wrapper
+
+
+def test_st67_normal_startup_skips_scan_and_reports_live_t02_state() -> None:
+    main_c = _read("Core/Src/main.c")
+
+    assert "#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN    0U" in main_c
+    assert "#if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)" in main_c
+    assert "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled" in main_c
+    assert "evidence=stm32-st67-t02-live-state" in main_c
+    assert "network=available wifi=connected link=up ip=" in main_c

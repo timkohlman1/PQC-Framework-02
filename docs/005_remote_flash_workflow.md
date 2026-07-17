@@ -109,3 +109,18 @@ Host-native commands may be used only to isolate a development-machine, CubeMX, 
 - Positive secure-boot success requires explicit secure-boot/application markers and result status.
 - Timing, cycle, stack, heap, and benchmark values must come from explicit UART fields or manifests.
 - Gateway reachability, broker status, host-client validation, and hardware/UART evidence are separate boundaries.
+
+
+## ST67 T02 and secure-boot runtime validation
+
+Use a UART capture of at least 30 seconds when validating ST67 networking.
+A successful normal or secure-boot application run must show module
+initialization, the normal scan-skipped marker, Wi-Fi association, DHCP
+success, a live `lwIP runtime network:` marker with a non-zero IPv4 address,
+and continued heartbeat output.
+
+For secure-boot profiles, these application markers are required in addition
+to the profile-specific wolfBoot verification and handoff evidence. Run the
+existing secure-boot flash workflow and algorithm benchmark tests for the
+maintained profile matrix; do not treat build or signing success alone as
+runtime networking evidence.

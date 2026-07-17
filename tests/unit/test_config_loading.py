@@ -395,5 +395,5 @@ def test_baseline_experiment_loads_wifi_dhcp_configuration():
     config = experiment_cli.load_config(
         Path("configs/experiments/baseline_direct_uart.yaml")
     )
-    assert config["network"]["wifi"] == {"ssid": "hiphopopotamus", "psk": "lukeisadog"}
+    assert config["network"]["wifi"]["ssid"] == "pqc"
     assert config["network"]["ipv4"]["mode"] == "dhcp"

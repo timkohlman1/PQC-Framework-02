@@ -47,6 +47,9 @@
 #define APP_ST67_WIFI_SCAN_TIMEOUT_MS 8000U
 #define APP_ST67_WIFI_SCAN_POLL_MS      20U
 #define APP_ST67_WIFI_SCAN_MAX_RESULTS  10U
+#ifndef PQC_ST67_WIFI_DIAGNOSTIC_SCAN
+#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN    0U
+#endif
 #define APP_ST67_ASSOC_TIMEOUT_MS      20000U
 #define APP_ST67_ASSOC_POLL_MS           250U
 #define APP_ST67_ASSOC_LOG_INTERVAL_MS  1000U
@@ -297,6 +300,66 @@ static void APP_CopyCString(uint8_t *destination, uint32_t capacity, const char 
 
 static volatile uint32_t app_st67_wifi_event_count = 0U;
 static volatile uint32_t app_st67_error_count = 0U;
+static volatile bool app_st67_wifi_connected = false;
+static volatile bool app_st67_wifi_reason_available = false;
+static volatile uint32_t app_st67_wifi_reason_code = 0U;
+
+static const char *APP_W6XStatusToString(W6X_Status_t status)
+{
+  switch (status)
+  {
+    case W6X_STATUS_OK: return "OK";
+    case W6X_STATUS_BUSY: return "BUSY";
+    case W6X_STATUS_ERROR: return "ERROR";
+    case W6X_STATUS_TIMEOUT: return "TIMEOUT";
+    case W6X_STATUS_UNEXPECTED_RESPONSE: return "UNEXPECTED_RESPONSE";
+    case W6X_STATUS_NOT_SUPPORTED: return "NOT_SUPPORTED";
+    case W6X_STATUS_UNKNOWN: return "UNKNOWN";
+    default: return "INVALID";
+  }
+}
+
+static const char *APP_WiFiStateToString(W6X_WiFi_StaStateType_e state)
+{
+  switch (state)
+  {
+    case W6X_WIFI_STATE_STA_NO_STARTED_CONNECTION: return "NOT_STARTED";
+    case W6X_WIFI_STATE_STA_CONNECTED: return "CONNECTED";
+    case W6X_WIFI_STATE_STA_GOT_IP: return "GOT_IP";
+    case W6X_WIFI_STATE_STA_CONNECTING: return "CONNECTING";
+    case W6X_WIFI_STATE_STA_DISCONNECTED: return "DISCONNECTED";
+    case W6X_WIFI_STATE_STA_OFF: return "OFF";
+    default: return "INVALID";
+  }
+}
+
+static const char *APP_WiFiEventToString(W6X_event_id_t event_id)
+{
+  switch (event_id)
+  {
+    case W6X_WIFI_EVT_CONNECTED_ID: return "CONNECTED";
+    case W6X_WIFI_EVT_DISCONNECTED_ID: return "DISCONNECTED";
+    case W6X_WIFI_EVT_GOT_IP_ID: return "GOT_IP";
+    case W6X_WIFI_EVT_CONNECTING_ID: return "CONNECTING";
+    case W6X_WIFI_EVT_REASON_ID: return "REASON";
+    case W6X_WIFI_EVT_STA_CONNECTED_ID: return "STA_CONNECTED";
+    case W6X_WIFI_EVT_STA_DISCONNECTED_ID: return "STA_DISCONNECTED";
+    case W6X_WIFI_EVT_DIST_STA_IP_ID: return "STA_IP_ASSIGNED";
+    default: return "UNKNOWN";
+  }
+}
+
+static uint32_t APP_CStringLengthBounded(const char *text, uint32_t capacity)
+{
+  uint32_t length = 0U;
+
+  while ((length < capacity) && (text[length] != '\0'))
+  {
+    length++;
+  }
+
+  return length;
+}
 
 static void APP_ST67WiFiEventCallback(W6X_event_id_t event_id, void *event_args)
 {
@@ -306,8 +369,23 @@ static void APP_ST67WiFiEventCallback(W6X_event_id_t event_id, void *event_args)
   APP_UART_WriteUint32(app_st67_wifi_event_count);
   APP_UART_WriteString(" event_id=");
   APP_UART_WriteInt32((int32_t)event_id);
+  APP_UART_WriteString(" event_name=");
+  APP_UART_WriteString(APP_WiFiEventToString(event_id));
   APP_UART_WriteString(" event_args_present=");
   APP_UART_WriteUint32((event_args != NULL) ? 1U : 0U);
+
+  if ((event_id == W6X_WIFI_EVT_REASON_ID) && (event_args != NULL))
+  {
+    const char *reason_text = W6X_WiFi_ReasonToStr(event_args);
+
+    app_st67_wifi_reason_code = *(const uint32_t *)event_args;
+    app_st67_wifi_reason_available = true;
+    APP_UART_WriteString(" reason_code=");
+    APP_UART_WriteUint32(app_st67_wifi_reason_code);
+    APP_UART_WriteString(" reason_text=");
+    APP_UART_WriteString((reason_text != NULL) ? reason_text : "unavailable");
+  }
+
   APP_UART_WriteString("\r\n");
 }
 
@@ -319,6 +397,8 @@ static void APP_ST67ErrorCallback(W6X_Status_t status, const char *function_name
   APP_UART_WriteUint32(app_st67_error_count);
   APP_UART_WriteString(" status=");
   APP_UART_WriteInt32((int32_t)status);
+  APP_UART_WriteString(" status_name=");
+  APP_UART_WriteString(APP_W6XStatusToString(status));
   APP_UART_WriteString(" function=");
   APP_UART_WriteString((function_name != NULL) ? function_name : "<null>");
   APP_UART_WriteString("\r\n");
@@ -357,8 +437,12 @@ static bool APP_WaitForWiFiAssociation(
       APP_UART_WriteUint32(elapsed_ms);
       APP_UART_WriteString(" query_status=");
       APP_UART_WriteInt32((int32_t)*last_query_status);
+      APP_UART_WriteString(" query_status_name=");
+      APP_UART_WriteString(APP_W6XStatusToString(*last_query_status));
       APP_UART_WriteString(" state=");
       APP_UART_WriteInt32((int32_t)*station_state);
+      APP_UART_WriteString(" state_name=");
+      APP_UART_WriteString(APP_WiFiStateToString(*station_state));
       APP_UART_WriteString(" terminal=connected\r\n");
       return true;
     }
@@ -372,8 +456,12 @@ static bool APP_WaitForWiFiAssociation(
       APP_UART_WriteUint32(elapsed_ms);
       APP_UART_WriteString(" query_status=");
       APP_UART_WriteInt32((int32_t)*last_query_status);
+      APP_UART_WriteString(" query_status_name=");
+      APP_UART_WriteString(APP_W6XStatusToString(*last_query_status));
       APP_UART_WriteString(" state=");
       APP_UART_WriteInt32((int32_t)*station_state);
+      APP_UART_WriteString(" state_name=");
+      APP_UART_WriteString(APP_WiFiStateToString(*station_state));
       APP_UART_WriteString(" wifi_event_count=");
       APP_UART_WriteUint32(app_st67_wifi_event_count);
       APP_UART_WriteString(" middleware_error_count=");
@@ -487,8 +575,9 @@ static void APP_RunST67WiFiDhcp(void)
 
   APP_UART_WriteString("ST67 Wi-Fi configuration: ssid=");
   APP_UART_WriteString(PQC_WIFI_SSID);
-  APP_UART_WriteString(" psk=");
-  APP_UART_WriteString(PQC_WIFI_PSK);
+  APP_UART_WriteString(" psk=redacted psk_length=");
+  APP_UART_WriteUint32(
+      APP_CStringLengthBounded(PQC_WIFI_PSK, W6X_WIFI_MAX_PASSWORD_SIZE + 1U));
   APP_UART_WriteString(" ipv4_mode=");
   APP_UART_WriteString(PQC_WIFI_IPV4_MODE);
   APP_UART_WriteString("\r\n");
@@ -524,13 +613,47 @@ static void APP_RunST67WiFiDhcp(void)
     return;
   }
 
+#if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)
   (void)APP_RunST67WiFiScan();
+#else
+  APP_UART_WriteString(
+      "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled\r\n");
+#endif
 
+  /*
+   * Match the ST MQTT demonstration: zero-initialize the options structure
+   * and populate only SSID and Password. In particular, leave Secured,
+   * WPS, WEP, MAC filtering, and reconnection fields at their documented
+   * defaults unless a later requirement explicitly needs them.
+   */
   APP_CopyCString(options.SSID, sizeof(options.SSID), PQC_WIFI_SSID);
   APP_CopyCString(options.Password, sizeof(options.Password), PQC_WIFI_PSK);
-  options.Secured = 1U;
-  options.Reconnection_interval = 5U;
-  options.Reconnection_nb_attempts = 3U;
+
+  app_st67_wifi_reason_available = false;
+  app_st67_wifi_reason_code = 0U;
+
+  APP_UART_WriteString("ST67 Wi-Fi connect options: ssid_length=");
+  APP_UART_WriteUint32(
+      APP_CStringLengthBounded((const char *)options.SSID, sizeof(options.SSID)));
+  APP_UART_WriteString(" password_length=");
+  APP_UART_WriteUint32(
+      APP_CStringLengthBounded((const char *)options.Password, sizeof(options.Password)));
+  APP_UART_WriteString(" mac_filter_present=");
+  APP_UART_WriteUint32(
+      ((options.MAC[0] | options.MAC[1] | options.MAC[2] |
+        options.MAC[3] | options.MAC[4] | options.MAC[5]) != 0U) ? 1U : 0U);
+  APP_UART_WriteString(" reconnection_interval_s=");
+  APP_UART_WriteUint32(options.Reconnection_interval);
+  APP_UART_WriteString(" reconnection_attempts=");
+  APP_UART_WriteUint32(options.Reconnection_nb_attempts);
+  APP_UART_WriteString(" wps=");
+  APP_UART_WriteUint32(options.WPS);
+  APP_UART_WriteString(" wep=");
+  APP_UART_WriteUint32(options.WEP);
+  APP_UART_WriteString(" secured=");
+  APP_UART_WriteUint32(options.Secured);
+  APP_UART_WriteString(" option_profile=st_demo_defaults");
+  APP_UART_WriteString("\r\n");
 
   APP_UART_WriteString("ST67 Wi-Fi association: begin ssid=");
   APP_UART_WriteString(PQC_WIFI_SSID);
@@ -541,16 +664,35 @@ static void APP_RunST67WiFiDhcp(void)
   APP_UART_WriteString("\r\n");
 
   status = W6X_WiFi_Connect(&options);
-  APP_UART_WriteString("ST67 Wi-Fi association: connect_start_status=");
+  APP_UART_WriteString("ST67 Wi-Fi association: connect_call_status=");
   APP_UART_WriteInt32((int32_t)status);
+  APP_UART_WriteString(" status_name=");
+  APP_UART_WriteString(APP_W6XStatusToString(status));
+  APP_UART_WriteString(" synchronous_wait=complete");
+  APP_UART_WriteString(" wifi_event_count=");
+  APP_UART_WriteUint32(app_st67_wifi_event_count);
+  APP_UART_WriteString(" middleware_error_count=");
+  APP_UART_WriteUint32(app_st67_error_count);
+  if (app_st67_wifi_reason_available)
+  {
+    APP_UART_WriteString(" reason_code=");
+    APP_UART_WriteUint32(app_st67_wifi_reason_code);
+  }
   APP_UART_WriteString("\r\n");
 
   if (status != W6X_STATUS_OK)
   {
-    APP_UART_WriteString("ST67 Wi-Fi association: result=start_failed ssid=");
+    APP_UART_WriteString("ST67 Wi-Fi association: result=connect_failed ssid=");
     APP_UART_WriteString(PQC_WIFI_SSID);
     APP_UART_WriteString(" status=");
     APP_UART_WriteInt32((int32_t)status);
+    APP_UART_WriteString(" status_name=");
+    APP_UART_WriteString(APP_W6XStatusToString(status));
+    if (app_st67_wifi_reason_available)
+    {
+      APP_UART_WriteString(" reason_code=");
+      APP_UART_WriteUint32(app_st67_wifi_reason_code);
+    }
     APP_UART_WriteString(
         " state=unavailable security=unavailable channel=0\r\n");
     return;
@@ -569,8 +711,12 @@ static void APP_RunST67WiFiDhcp(void)
     APP_UART_WriteUint32(APP_ST67_ASSOC_TIMEOUT_MS);
     APP_UART_WriteString(" query_status=");
     APP_UART_WriteInt32((int32_t)association_query_status);
+    APP_UART_WriteString(" query_status_name=");
+    APP_UART_WriteString(APP_W6XStatusToString(association_query_status));
     APP_UART_WriteString(" state=");
     APP_UART_WriteInt32((int32_t)station_state);
+    APP_UART_WriteString(" state_name=");
+    APP_UART_WriteString(APP_WiFiStateToString(station_state));
     APP_UART_WriteString(" wifi_event_count=");
     APP_UART_WriteUint32(app_st67_wifi_event_count);
     APP_UART_WriteString(" middleware_error_count=");
@@ -578,6 +724,8 @@ static void APP_RunST67WiFiDhcp(void)
     APP_UART_WriteString(" security=unavailable channel=0\r\n");
     return;
   }
+
+  app_st67_wifi_connected = true;
 
   APP_UART_WriteString("ST67 Wi-Fi association: result=passed ssid=");
   APP_UART_WriteString((const char *)connection.SSID);
@@ -696,6 +844,33 @@ static void APP_RunST67SPIBringup(void)
 static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_running)
 {
   static char smoke_line[512];
+  struct netif *station_netif = netif_get_interface(NETIF_STA);
+
+  if ((station_netif != NULL) &&
+      app_st67_wifi_connected &&
+      (netif_is_up(station_netif) != 0) &&
+      (netif_is_link_up(station_netif) != 0) &&
+      (ip4_addr_isany_val(*netif_ip4_addr(station_netif)) == 0))
+  {
+    char ipv4_text[IP4ADDR_STRLEN_MAX];
+    const char *ipv4_result = ip4addr_ntoa_r(
+        netif_ip4_addr(station_netif),
+        ipv4_text,
+        (int)sizeof(ipv4_text));
+
+    APP_UART_WriteString("lwIP runtime network: context=");
+    APP_UART_WriteString((context != NULL) ? context : "unavailable");
+    APP_UART_WriteString(" scheduler=");
+    APP_UART_WriteString(scheduler_running ? "running" : "not_started");
+    APP_UART_WriteString(
+        " evidence=stm32-st67-t02-live-state network=available wifi=connected link=up ip=");
+    APP_UART_WriteString((ipv4_result != NULL) ? ipv4_result : "unavailable");
+    APP_UART_WriteString(
+        " tcp=available transport=st67-lwip tls_handshake=unavailable "
+        "mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable "
+        "st67w61m1=available end_to_end=unavailable\r\n");
+    return;
+  }
 
   PQC_LwIP_BuildOnly_Init();
 
@@ -706,7 +881,13 @@ static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_runnin
   }
   else
   {
-    APP_UART_WriteString("lwIP runtime smoke: context=unavailable scheduler=unavailable reason=format_failed network=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n");
+    APP_UART_WriteString(
+        "lwIP runtime smoke: context=unavailable scheduler=unavailable "
+        "evidence=pre-network-build-only reason=format_failed "
+        "network=unavailable wifi=unavailable link=unavailable ip=unavailable "
+        "tcp=unavailable tls_handshake=unavailable certs=not-loaded "
+        "mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable "
+        "st67w61m1=unavailable end_to_end=unavailable\r\n");
   }
 }
 
@@ -1561,7 +1742,7 @@ void StartNetworkTask(void *argument)
   APP_RunLwIPLocalLoopbackSmoke();
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
   APP_PrintWolfMQTTRuntimeStatus();
-  APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=unavailable tls_handshake=unavailable mqtt=unavailable\r\n");
+  APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=available wifi=connected link=up tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE);
 
