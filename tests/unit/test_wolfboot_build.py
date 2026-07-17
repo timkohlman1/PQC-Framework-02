@@ -421,6 +421,11 @@ def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
     profile_text = profile_path.read_text(encoding="utf-8")
 
     assert 'args: "WOLFBOOT_ROOT=. wolfboot.elf"' in profile_text
+    assert "signing_tuple:" in profile_text
+    assert "tuple_id: ecdsa_p256-development" in profile_text
+    assert (
+        "directory: secrets/wolfboot/tuples/ecdsa_p256-development"
+    ) in profile_text
     assert "stm32l4_hal_conf_pwr_patch: true" in profile_text
     assert "boot_timing_instrumentation_patch: true" in profile_text
     assert wolfboot_build.construct_wolfboot_build_command({

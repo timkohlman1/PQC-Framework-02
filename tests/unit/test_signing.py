@@ -354,7 +354,18 @@ def test_default_application_signing_profile_is_safe_and_phase_10g_scoped():
     profile_text = profile_path.read_text(encoding="utf-8")
 
     assert "signature_algorithm: ecdsa_p256" in profile_text
-    assert "private_key: secrets/wolfboot/ecdsa_p256_private_key.der" in profile_text
+    assert (
+        "private_key: "
+        "secrets/wolfboot/tuples/ecdsa_p256-development/private_key.der"
+    ) in profile_text
+    assert "keygen:" in profile_text
+    assert "enabled: false" in profile_text
+    assert "signing_tuple:" in profile_text
+    assert "tuple_id: ecdsa_p256-development" in profile_text
+    assert (
+        "directory: secrets/wolfboot/tuples/ecdsa_p256-development"
+    ) in profile_text
+    assert "manifest: tuple.json" in profile_text
     assert "input_elf: build/RelocatedDebug/stm32_basic_hal1.elf" in profile_text
     assert "input_image: build/RelocatedDebug/stm32_basic_hal1.bin" in profile_text
     assert "binary_conversion:" in profile_text

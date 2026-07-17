@@ -9,9 +9,11 @@ from pathlib import Path
 import pytest
 
 SECURE_BOOT_EXPERIMENT_CONFIG = "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+BUILD_PROVENANCE_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
 SIGNING_PROFILE = "configs/signing/wolfboot_ecdsa_p256_app.yaml"
 WOLFBOOT_BUILD_PROFILE = "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
+RELOCATED_APPLICATION_ELF = "build/RelocatedDebug/stm32_basic_hal1.elf"
 SIGNED_APPLICATION_ARTIFACT = "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 EXPECTED_BOOT_MODE = "wolfboot_ecdsa_p256"
@@ -123,17 +125,28 @@ def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path) -> None:
 
 
 def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) -> None:
-    configure_completed = _run_command(repo_root, ["cmake", "--preset", "RelocatedDebug"])
-    assert configure_completed.returncode == 0, (
-        f"cmake configure stdout:\n{configure_completed.stdout}\n"
-        f"cmake configure stderr:\n{configure_completed.stderr}"
+    build_completed = _run_cli(
+        repo_root,
+        [
+            "build",
+            "--experiment",
+            BUILD_PROVENANCE_EXPERIMENT_CONFIG,
+            "--results-dir",
+            str(results_dir),
+            "--configure-preset",
+            "RelocatedDebug",
+            "--build-preset",
+            "RelocatedDebug",
+            "--artifact",
+            RELOCATED_APPLICATION_ELF,
+            "--force",
+        ],
     )
-
-    build_completed = _run_command(repo_root, ["cmake", "--build", "--preset", "RelocatedDebug"])
     assert build_completed.returncode == 0, (
-        f"cmake build stdout:\n{build_completed.stdout}\n"
-        f"cmake build stderr:\n{build_completed.stderr}"
+        f"framework build stdout:\n{build_completed.stdout}\n"
+        f"framework build stderr:\n{build_completed.stderr}"
     )
+    assert (repo_root / RELOCATED_APPLICATION_ELF).is_file()
 
     signing_completed = _run_cli(
         repo_root,

@@ -76,3 +76,6 @@ experiment/mqtt-broker/data/
 experiment/mqtt-broker/log/
 experiment/mqtt-broker/.env
 .pqc-generated-state/
+
+# Persistent wolfBoot signing tuples are local authoritative state
+secrets/wolfboot/tuples/

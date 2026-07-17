@@ -31,7 +31,13 @@ build:
   stm32l4_hal_conf_pwr_patch: true
   boot_timing_instrumentation_patch: true
   runtime_stack_high_water_instrumentation: true
-  signing_key: secrets/wolfboot/mldsa65_private_key.der
+  signing_key: secrets/wolfboot/tuples/mldsa65-development/private_key.der
   wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
   generated_keystore: tools/wolfboot/src/keystore.c
+  signing_tuple:
+    tuple_id: mldsa65-development
+    directory: secrets/wolfboot/tuples/mldsa65-development
+    private_key: private_key.der
+    keystore: keystore.c
+    manifest: tuple.json
 notes: This profile is build-only for the post-Phase 11 ML-DSA-65 benchmark profile. It uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=3, IMAGE_SIGNATURE_SIZE=3309, and the existing 8192-byte image-header reserve. The framework coordinates the canonical local ML-DSA-65 signing key with the wolfBoot working-tree private key and records SHA-256 key fingerprints as non-secret consistency evidence. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.

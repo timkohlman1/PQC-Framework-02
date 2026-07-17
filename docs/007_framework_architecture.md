@@ -501,3 +501,18 @@ Secure-boot profiles use the same relocated application image and therefore
 must preserve these runtime markers after wolfBoot verification and handoff.
 The existing secure-boot profile and benchmark tests remain the authoritative
 build, signing, flash, verification, and profile-matrix coverage.
+
+## Persistent signing tuple model
+
+wolfBoot build profiles and application-signing profiles select an
+algorithm-specific tuple under `secrets/wolfboot/tuples/`. The tuple contains
+the private key, generated keystore, and a hash manifest. It is
+persistent local security state, not build output.
+
+`tools/wolfboot/wolfboot_signing_private_key.der` and
+`tools/wolfboot/src/keystore.c` are disposable materializations. A separate
+public-key DER file is optional because the maintained wolfBoot profiles
+embed the verification public key in generated `keystore.c`. Their absence
+does not make the persistent tuple partial; the next wolfBoot build restores
+them. Only missing or inconsistent members inside the persistent tuple cause a
+safe failure.

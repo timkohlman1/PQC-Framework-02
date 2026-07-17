@@ -8,9 +8,11 @@ or copy private signing keys into result directories.
 from __future__ import annotations
 
 import json
+import os
 import re
-import shlex
+import tempfile
 import shutil
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,6 +28,7 @@ from framework.generated_state import (
     preflight_generated_state,
     record_generated_state_success,
 )
+from framework.signing_audit import append_signing_usage_event
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -773,6 +776,314 @@ def _prepare_wolfboot_signing_artifacts(
     return [], None
 
 
+
+def _signing_tuple_config(profile: dict[str, Any]) -> dict[str, Any] | None:
+    build = profile.get("build")
+    if not isinstance(build, dict):
+        return None
+    value = build.get("signing_tuple")
+    return value if isinstance(value, dict) else None
+
+
+def _signing_tuple_paths(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+) -> dict[str, Path] | None:
+    config = _signing_tuple_config(profile)
+    if config is None:
+        return None
+    tuple_dir_value = config.get("directory")
+    if not isinstance(tuple_dir_value, str) or not tuple_dir_value:
+        raise WolfBootBuildProfileError("build.signing_tuple.directory must be a non-empty path")
+    tuple_dir = repo_root / tuple_dir_value
+    paths = {
+        "directory": tuple_dir,
+        "private_key": tuple_dir / str(config.get("private_key", "private_key.der")),
+        "keystore": tuple_dir / str(config.get("keystore", "keystore.c")),
+        "manifest": tuple_dir / str(config.get("manifest", "tuple.json")),
+        "materialized_private_key": _resolve_wolfboot_private_key_path(
+            repo_root=repo_root, source_dir=source_dir, profile=profile
+        ) or (source_dir / DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH),
+        "materialized_keystore": repo_root
+        / str(_optional_profile_path(profile, "build.generated_keystore") or "tools/wolfboot/src/keystore.c"),
+    }
+    public_key_value = config.get("public_key")
+    if isinstance(public_key_value, str) and public_key_value:
+        paths["public_key"] = tuple_dir / public_key_value
+    return paths
+
+
+def _tuple_sha256(path: Path) -> str:
+    return calculate_file_sha256(path)
+
+
+def _load_and_validate_persistent_tuple(
+    *,
+    profile: dict[str, Any],
+    paths: dict[str, Path],
+) -> tuple[str, str | None]:
+    members = [paths["private_key"], paths["keystore"], paths["manifest"]]
+    if "public_key" in paths:
+        members.insert(1, paths["public_key"])
+    present = [path.is_file() for path in members]
+    if not any(present):
+        return "absent", None
+    if not all(present):
+        missing = [str(path) for path, exists in zip(members, present) if not exists]
+        return "partial", "Persistent signing tuple is partial; missing: " + ", ".join(missing)
+    try:
+        manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return "invalid", f"Persistent signing tuple manifest is invalid: {exc}"
+    expected_algorithm = str(profile.get("signature_algorithm", ""))
+    if manifest.get("signature_algorithm") != expected_algorithm:
+        return "incompatible", (
+            "Persistent signing tuple algorithm does not match the selected profile: "
+            f"{manifest.get('signature_algorithm')} != {expected_algorithm}"
+        )
+    hash_members = [
+        ("private_key", "private_key_sha256"),
+        ("keystore", "keystore_sha256"),
+    ]
+    if "public_key" in paths:
+        hash_members.insert(1, ("public_key", "public_key_sha256"))
+    for key, manifest_key in hash_members:
+        if manifest.get(manifest_key) != _tuple_sha256(paths[key]):
+            return "invalid", f"Persistent signing tuple hash mismatch for {paths[key]}"
+    return "complete", None
+
+
+def _materialize_persistent_tuple(paths: dict[str, Path]) -> None:
+    members = [
+        ("private_key", "materialized_private_key"),
+        ("keystore", "materialized_keystore"),
+    ]
+    for source_key, destination_key in members:
+        destination = paths[destination_key]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(paths[source_key], destination)
+
+
+def _keystore_public_key_bytes(
+    *,
+    keystore_path: Path,
+    expected_size: int,
+) -> tuple[bytes | None, str | None]:
+    try:
+        source = keystore_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, f"Unable to read persistent keystore: {exc}"
+
+    match = re.search(
+        r"\.pubkey\s*=\s*\{(?P<body>.*?)\}\s*,",
+        source,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        return None, (
+            "Unable to locate the first .pubkey initializer in "
+            f"{keystore_path}"
+        )
+
+    values = bytes(
+        int(value, 16)
+        for value in re.findall(r"0x([0-9a-fA-F]{2})", match.group("body"))
+    )
+    if len(values) != expected_size:
+        return None, (
+            "Persistent keystore public-key size does not match the configured "
+            f"size: {len(values)} != {expected_size}"
+        )
+    return values, None
+
+
+def _derive_tuple_public_key(
+    *,
+    profile: dict[str, Any],
+    private_key_path: Path,
+    keystore_path: Path,
+) -> tuple[bytes | None, str | None]:
+    config = _signing_tuple_config(profile) or {}
+    export_format = config.get("public_key_export_format")
+    size_value = config.get("public_key_size")
+
+    if export_format != "wolfboot_raw_ecc_xy":
+        return None, (
+            "Unsupported persistent public-key export format: "
+            f"{export_format}"
+        )
+    if not isinstance(size_value, int) or size_value <= 0:
+        return None, (
+            "build.signing_tuple.public_key_size must be a positive integer"
+        )
+
+    try:
+        private_bytes = private_key_path.read_bytes()
+    except OSError as exc:
+        return None, f"Unable to read persistent private key: {exc}"
+
+    expected_private_size = size_value + (size_value // 2)
+    if len(private_bytes) != expected_private_size:
+        return None, (
+            "wolfBoot raw ECC private-key size does not match the configured "
+            f"public-key size: {len(private_bytes)} != {expected_private_size}"
+        )
+
+    public_bytes = private_bytes[:size_value]
+    keystore_bytes, keystore_error = _keystore_public_key_bytes(
+        keystore_path=keystore_path,
+        expected_size=size_value,
+    )
+    if keystore_error is not None:
+        return None, keystore_error
+    if public_bytes != keystore_bytes:
+        return None, (
+            "Derived public key does not match the public key embedded in "
+            f"{keystore_path}; the persistent tuple may be mismatched"
+        )
+    return public_bytes, None
+
+
+def _migrate_optional_public_key(
+    *,
+    profile: dict[str, Any],
+    paths: dict[str, Path],
+) -> str | None:
+    if "public_key" not in paths:
+        return None
+
+    private_key = paths["private_key"]
+    keystore = paths["keystore"]
+    manifest_path = paths["manifest"]
+    if not private_key.is_file() or not keystore.is_file() or not manifest_path.is_file():
+        return None
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"Persistent signing tuple manifest is invalid: {exc}"
+
+    public_path = paths["public_key"]
+    public_hash = manifest.get("public_key_sha256")
+    if public_path.is_file() and public_path.stat().st_size > 0 and isinstance(public_hash, str):
+        return None
+
+    public_bytes, error = _derive_tuple_public_key(
+        profile=profile,
+        private_key_path=private_key,
+        keystore_path=keystore,
+    )
+    if error is not None:
+        return error
+    assert public_bytes is not None
+
+    tuple_dir = paths["directory"]
+    temp_public = tuple_dir / f".{public_path.name}.migrating"
+    temp_manifest = tuple_dir / f".{manifest_path.name}.migrating"
+    try:
+        temp_public.write_bytes(public_bytes)
+        manifest["public_key_sha256"] = _tuple_sha256(temp_public)
+        manifest["public_key_format"] = "wolfboot_raw_ecc_xy"
+        manifest["public_key_size"] = len(public_bytes)
+        temp_manifest.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temp_public, public_path)
+        os.replace(temp_manifest, manifest_path)
+    finally:
+        temp_public.unlink(missing_ok=True)
+        temp_manifest.unlink(missing_ok=True)
+    return None
+
+
+
+def _persist_generated_tuple_atomically(
+    *,
+    profile: dict[str, Any],
+    paths: dict[str, Path],
+) -> str | None:
+    generated = [
+        paths["materialized_private_key"],
+        paths["materialized_keystore"],
+    ]
+    missing = [str(path) for path in generated if not path.is_file()]
+    if missing:
+        return "wolfBoot build passed but generated signing tuple is incomplete; missing: " + ", ".join(missing)
+
+    tuple_dir = paths["directory"]
+    tuple_dir.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{tuple_dir.name}.creating-", dir=tuple_dir.parent))
+    try:
+        private_dest = temp_dir / paths["private_key"].name
+        keystore_dest = temp_dir / paths["keystore"].name
+        shutil.copyfile(paths["materialized_private_key"], private_dest)
+        shutil.copyfile(paths["materialized_keystore"], keystore_dest)
+        public_dest = None
+        if "public_key" in paths:
+            public_dest = temp_dir / paths["public_key"].name
+            public_bytes, public_key_error = _derive_tuple_public_key(
+                profile=profile,
+                private_key_path=private_dest,
+                keystore_path=keystore_dest,
+            )
+            if public_key_error is not None:
+                return public_key_error
+            assert public_bytes is not None
+            public_dest.write_bytes(public_bytes)
+        config = _signing_tuple_config(profile) or {}
+        manifest = {
+            "schema_version": 1,
+            "tuple_id": str(config.get("tuple_id", tuple_dir.name)),
+            "signature_algorithm": str(profile.get("signature_algorithm", "")),
+            "private_key_sha256": _tuple_sha256(private_dest),
+            "keystore_sha256": _tuple_sha256(keystore_dest),
+        }
+        if public_dest is not None:
+            manifest["public_key_sha256"] = _tuple_sha256(public_dest)
+            manifest["public_key_format"] = "wolfboot_raw_ecc_xy"
+            manifest["public_key_size"] = public_dest.stat().st_size
+        (temp_dir / paths["manifest"].name).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if tuple_dir.exists():
+            return f"Persistent signing tuple appeared concurrently: {tuple_dir}"
+        os.replace(temp_dir, tuple_dir)
+        return None
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _prepare_persistent_signing_tuple(
+    *,
+    profile: dict[str, Any],
+    repo_root: Path,
+    source_dir: Path,
+) -> tuple[dict[str, Path] | None, str | None]:
+    paths = _signing_tuple_paths(profile=profile, repo_root=repo_root, source_dir=source_dir)
+    if paths is None:
+        return None, None
+    migration_error = _migrate_optional_public_key(
+        profile=profile,
+        paths=paths,
+    )
+    if migration_error is not None:
+        return paths, migration_error
+    state, error = _load_and_validate_persistent_tuple(profile=profile, paths=paths)
+    if error is not None:
+        return paths, error
+    if state == "complete":
+        _materialize_persistent_tuple(paths)
+    elif state == "absent":
+        _remove_wolfboot_generated_signing_artifacts(
+            profile=profile, repo_root=repo_root, source_dir=source_dir
+        )
+    return paths, None
+
+
 def _decode_wolfboot_command_output(output: bytes | str | None) -> str:
     """Decode captured wolfBoot command output without failing on toolchain bytes.
 
@@ -886,16 +1197,25 @@ def _coordinate_wolfboot_signing_key_after_build(
     signing_key_path: Path | None,
     wolfboot_private_key_path: Path | None,
     return_code: int,
+    persistent_tuple: bool = False,
 ) -> str | None:
     if signing_key_path is None or wolfboot_private_key_path is None:
         return None
     if return_code != 0:
-        return "wolfBoot build did not pass; canonical signing key was not updated from wolfBoot key material."
+        return "wolfBoot build did not pass; canonical signing key was not modified."
     if not wolfboot_private_key_path.is_file():
-        return "wolfBoot private key was not found after build; canonical signing key could not be synchronized."
+        return "wolfBoot private key was not found after build; canonical signing key was not modified."
+    if persistent_tuple:
+        if not signing_key_path.is_file():
+            return "Persistent tuple key is unexpectedly absent after build; no write-back was attempted."
+        canonical_sha256 = calculate_file_sha256(signing_key_path)
+        materialized_sha256 = calculate_file_sha256(wolfboot_private_key_path)
+        if canonical_sha256 != materialized_sha256:
+            return "Persistent tuple key and materialized wolfBoot key differ after build; no write-back was attempted."
+        return "Persistent tuple key remained authoritative and unchanged; post-build write-back was skipped."
     signing_key_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(wolfboot_private_key_path, signing_key_path)
-    return "Copied wolfBoot private key back to the configured canonical signing-key path after successful build."
+    return "Copied wolfBoot private key back to the configured legacy canonical signing-key path after successful build."
 
 
 def _key_consistency_evidence(
@@ -1214,6 +1534,7 @@ def execute_wolfboot_build(
     )
     key_sync_before_build_message: str | None = None
     generated_signing_artifact_cleanup_paths: list[Path] = []
+    persistent_tuple_paths: dict[str, Path] | None = None
 
     execution: WolfBootCommandExecution | None = None
     artifact_sha256: str | None = None
@@ -1327,16 +1648,24 @@ def execute_wolfboot_build(
                         else:
                             try:
                                 _remove_wolfboot_host_tool_outputs(source_dir)
-                                (
-                                    generated_signing_artifact_cleanup_paths,
-                                    signing_artifact_error,
-                                ) = _prepare_wolfboot_signing_artifacts(
-                                    profile=profile,
-                                    repo_root=repo_root_path,
-                                    source_dir=source_dir,
-                                    signing_key_path=signing_key_path,
-                                    wolfboot_private_key_path=wolfboot_private_key_path,
+                                persistent_tuple_paths, signing_artifact_error = (
+                                    _prepare_persistent_signing_tuple(
+                                        profile=profile,
+                                        repo_root=repo_root_path,
+                                        source_dir=source_dir,
+                                    )
                                 )
+                                if persistent_tuple_paths is None:
+                                    (
+                                        generated_signing_artifact_cleanup_paths,
+                                        signing_artifact_error,
+                                    ) = _prepare_wolfboot_signing_artifacts(
+                                        profile=profile,
+                                        repo_root=repo_root_path,
+                                        source_dir=source_dir,
+                                        signing_key_path=signing_key_path,
+                                        wolfboot_private_key_path=wolfboot_private_key_path,
+                                    )
                                 if signing_artifact_error is not None:
                                     return_code = PROFILE_ERROR_RETURN_CODE
                                     failure_reason = signing_artifact_error
@@ -1347,6 +1676,21 @@ def execute_wolfboot_build(
                                     )
                                     execution = runner(command, working_directory)
                                     return_code = execution.return_code
+                                    if return_code == 0 and persistent_tuple_paths is not None:
+                                        tuple_state, tuple_error = _load_and_validate_persistent_tuple(
+                                            profile=profile,
+                                            paths=persistent_tuple_paths,
+                                        )
+                                        if tuple_state == "absent" and tuple_error is None:
+                                            tuple_error = _persist_generated_tuple_atomically(
+                                                profile=profile,
+                                                paths=persistent_tuple_paths,
+                                            )
+                                        if tuple_error is not None:
+                                            return_code = PROFILE_ERROR_RETURN_CODE
+                                            failure_reason = tuple_error
+                                        elif tuple_state == "complete":
+                                            _materialize_persistent_tuple(persistent_tuple_paths)
                             except FileNotFoundError as exc:
                                 missing_executable = command[0] if command else "configured build tool"
                                 return_code = WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE
@@ -1404,6 +1748,7 @@ def execute_wolfboot_build(
         signing_key_path=signing_key_path,
         wolfboot_private_key_path=wolfboot_private_key_path,
         return_code=return_code,
+        persistent_tuple=persistent_tuple_paths is not None,
     )
     (
         key_consistency_status,
@@ -1414,6 +1759,22 @@ def execute_wolfboot_build(
         signing_key_path=signing_key_path,
         wolfboot_private_key_path=wolfboot_private_key_path,
     )
+
+    if return_code == 0 and persistent_tuple_paths is not None:
+        append_signing_usage_event(
+            tuple_directory=persistent_tuple_paths["directory"],
+            event={
+                "event": "wolfboot_verification_key_use",
+                "profile_id": profile_id,
+                "signature_algorithm": profile.get("signature_algorithm"),
+                "private_key_sha256": signing_key_sha256,
+                "artifact_path": str(artifact_path),
+                "artifact_sha256": artifact_sha256,
+                "result_directory": str(result_dir),
+                "purpose": "build wolfBoot with the tuple public key embedded in keystore.c",
+                "private_key_modified": False,
+            },
+        )
 
     if return_code == 0 and wolfboot_state_identity is not None:
         record_generated_state_success(

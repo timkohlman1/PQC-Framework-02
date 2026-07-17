@@ -124,3 +124,14 @@ to the profile-specific wolfBoot verification and handoff evidence. Run the
 existing secure-boot flash workflow and algorithm benchmark tests for the
 maintained profile matrix; do not treat build or signing success alone as
 runtime networking evidence.
+
+## Signing-state initialization and clean builds
+
+Before the first secure-boot build for an algorithm, ensure the configured
+persistent tuple directory is either completely absent or complete. The
+matching `build-wolfboot` profile atomically creates a new tuple when absent.
+
+Deleting `build/` or generated files inside `tools/wolfboot/` does not rotate
+the signing identity. The next build rematerializes the required wolfBoot files
+from `secrets/wolfboot/tuples/<tuple-id>/`. Do not manually delete individual
+files inside a persistent tuple.

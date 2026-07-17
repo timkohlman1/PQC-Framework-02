@@ -97,3 +97,30 @@ experiment/mqtt-broker/.env
 ```
 
 Generated files can be locally required while still remaining untracked. Their lifecycle must be handled by the owning workflow and generated-state preflight, not by committing them.
+
+## Persistent wolfBoot signing identity
+
+The authoritative wolfBoot signing state is the complete local tuple under
+`secrets/wolfboot/tuples/<tuple-id>/`: private key, public key, generated
+`keystore.c`, and `tuple.json`. Generic cleanup must never modify `secrets/`.
+
+The matching files under `tools/wolfboot/` are materialized build copies. They
+may be deleted by clean builds, submodule resets, or test cleanup and are
+restored automatically from the validated persistent tuple.
+
+Configuration chooses the tuple ID. Algorithm changes must select a compatible
+tuple ID. The framework never overwrites a complete persistent tuple and fails
+on partial state or hash mismatch.
+
+
+### Standalone public-key export
+
+The maintained ECDSA-P256 tuple also stores `public_key.der` in wolfBoot's raw
+ECC public-key format: 32-byte X followed by 32-byte Y. The corresponding
+wolfBoot private-key file is raw X, Y, and private scalar data, so the public
+file can be derived without changing the private key. Before writing or
+migrating the public file, the framework verifies that those 64 bytes exactly
+match the key embedded in `keystore.c`.
+
+The public-key hash and format metadata are recorded in `tuple.json`. Existing
+tuples are migrated in place without rotating or rewriting `private_key.der`.
