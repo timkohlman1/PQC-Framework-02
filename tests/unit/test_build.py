@@ -1531,3 +1531,62 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
     assert original_bundle["experiment"]["firmware"]["artifact"] == (
         "build/Debug/stm32_basic_hal1.elf"
     )
+
+
+def test_wifi_header_generation_uses_experiment_values(tmp_path):
+    from framework.build import _write_wifi_config_header
+    bundle={"experiment":{"network":{"wifi":{"ssid":"hiphopopotamus","psk":"lukeisadog"},"ipv4":{"mode":"dhcp"}}}}
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    assert path.name == "pqc_wifi_config_generated.h"
+    assert '#define PQC_WIFI_SSID "hiphopopotamus"' in text
+    assert '#define PQC_WIFI_PSK "lukeisadog"' in text
+
+def test_execute_build_writes_wifi_header_after_preflight_and_before_cmake(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
+    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    repo_root.mkdir()
+    write_build_fingerprint_inputs(repo_root)
+    write_initial_manifest(result_dir)
+
+    bundle = sample_bundle()
+    bundle["experiment"]["network"] = {
+        "wifi": {"ssid": "hiphopopotamus", "psk": "test-only-password"},
+        "ipv4": {"mode": "dhcp"},
+    }
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path):
+        calls.append(command)
+        header = cwd / "build" / "Debug" / "pqc_generated" / "pqc_wifi_config_generated.h"
+        assert header.is_file()
+        text = header.read_text(encoding="utf-8")
+        assert '#define PQC_WIFI_SSID "hiphopopotamus"' in text
+        assert '#define PQC_WIFI_PSK "test-only-password"' in text
+        assert '#define PQC_WIFI_IPV4_MODE "dhcp"' in text
+        if command == ["cmake", "--build", "--preset", "Debug"]:
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text("fake elf", encoding="utf-8")
+        return build.CommandExecution(
+            command=command,
+            return_code=0,
+            stdout="ran command",
+            stderr="",
+            duration_seconds=0.1,
+        )
+
+    result = build.execute_build(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 0
+    assert calls == [
+        ["cmake", "--preset", "Debug"],
+        ["cmake", "--build", "--preset", "Debug"],
+    ]
+

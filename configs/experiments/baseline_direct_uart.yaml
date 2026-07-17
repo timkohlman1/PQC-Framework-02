@@ -6,6 +6,12 @@ boot: direct_flash
 firmware:
   mode: direct_flash
   artifact: build/Debug/stm32_basic_hal1.elf
+network:
+  wifi:
+    ssid: pqc
+    psk: lukeisadog
+  ipv4:
+    mode: dhcp
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick

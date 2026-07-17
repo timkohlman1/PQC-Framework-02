@@ -99,6 +99,18 @@ class UartMonitorResult:
 Runner = Callable[[list[str], Path], CommandExecution]
 
 
+
+
+_WIFI_ASSOCIATION_RE = re.compile(r"^ST67 Wi-Fi association: result=(?P<result>\S+) ssid=(?P<ssid>\S+) state=(?P<state>\S+) security=(?P<security>\S+) channel=(?P<channel>\d+)$", re.MULTILINE)
+_WIFI_DHCP_RE = re.compile(r"^ST67 DHCP: result=(?P<result>\S+) ipv4=(?P<ipv4>\d{1,3}(?:\.\d{1,3}){3}) gateway=(?P<gateway>\d{1,3}(?:\.\d{1,3}){3}) netmask=(?P<netmask>\d{1,3}(?:\.\d{1,3}){3})$", re.MULTILINE)
+
+def parse_wifi_dhcp_evidence(output: str) -> dict[str, Any]:
+    association_match = _WIFI_ASSOCIATION_RE.search(output)
+    dhcp_match = _WIFI_DHCP_RE.search(output)
+    association = None if association_match is None else association_match.groupdict()
+    dhcp = None if dhcp_match is None else dhcp_match.groupdict()
+    return {"evidence_source": "uart_explicit_st67_markers", "wifi_association": association, "dhcp": dhcp, "association_success": association is not None and association["result"] == "passed", "dhcp_success": dhcp is not None and dhcp["result"] == "passed" and dhcp["ipv4"] != "0.0.0.0"}
+
 def construct_ssh_uart_capture_command(
     gateway_alias: str,
     uart_device: str,
@@ -648,8 +660,9 @@ def execute_uart_capture(
     duration = perf_counter() - start
 
     data_captured = bool(capture_execution.stdout.strip())
+    output_lines = {line.strip() for line in capture_execution.stdout.splitlines()}
     boot_marker_present = expected_boot_message in capture_execution.stdout
-    tick_present = expected_tick_message in capture_execution.stdout
+    tick_present = expected_tick_message.strip() in output_lines
     secure_boot_marker_present = (
         None
         if expected_secure_boot_message is None
@@ -662,6 +675,7 @@ def execute_uart_capture(
     boot_timing = _boot_timing_evidence(capture_execution.stdout)
     application_clock_hz = parse_application_clock_hz(capture_execution.stdout)
     runtime_memory = _runtime_memory_evidence(capture_execution.stdout)
+    network_evidence = parse_wifi_dhcp_evidence(capture_execution.stdout)
 
     if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
         return_code = 0
@@ -745,6 +759,7 @@ def execute_uart_capture(
                 "measurement_point": "after FreeRTOS scheduler start in defaultTask",
             },
             "runtime_memory": runtime_memory,
+            "network": network_evidence,
         },
     )
 

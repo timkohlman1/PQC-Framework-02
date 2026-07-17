@@ -1,0 +1,7 @@
+the subsequent experiment-gateway run command overwrites the build.log in the build folder.  the build folder should not be touched when a previous build is re-used,  the build folder should only record an actual build. I am also not sure if the build number is being incremeneted when a build is re-used.  this shouldn't happen, but I am not sure if this is happening or not, so just check this logic
+
+The other issue is the fingerprinting is not comprehensive - it's not covering every file that is going into the build, so this needs to be looked at, and implemented in such a way that it will pick up any added source files, any changes to the build tools (eg. version of GCC, cmake, that type of thing)
+
+
+
+

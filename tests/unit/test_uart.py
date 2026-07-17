@@ -324,6 +324,39 @@ def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
     assert manifest["uart"]["restart_during_capture"] is True
 
 
+
+def test_execute_uart_capture_does_not_accept_tick_as_substring(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    def fake_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout=(
+                "stm32-basic_hal1 boot v0.1.0\n"
+                "FreeRTOS scheduler starting: tick_hz=1000\n"
+                "FreeRTOS defaultTask started: heartbeat active\n"
+            ),
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    result = uart.execute_uart_capture(
+        sample_bundle(),
+        repo_root,
+        result_dir,
+        runner=fake_runner,
+        duration_seconds=10,
+    )
+
+    assert result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
+    assert result.boot_marker_present is True
+    assert result.tick_present is False
+
 def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path):
     uart = load_uart_module()
     repo_root = tmp_path / "repo"
@@ -730,3 +763,11 @@ def test_run_monitor_command_writes_adhoc_log_and_reports_status(tmp_path, monke
     assert seen == [results_root]
     assert "UART monitor passed" in output
     assert "No result manifest, build, or flash action was performed." in output
+
+
+def test_parse_wifi_dhcp_evidence_records_explicit_markers():
+    from framework.uart import parse_wifi_dhcp_evidence
+    evidence = parse_wifi_dhcp_evidence("ST67 Wi-Fi association: result=passed ssid=hiphopopotamus state=connected security=4 channel=6\nST67 DHCP: result=passed ipv4=192.168.1.42 gateway=192.168.1.1 netmask=255.255.255.0\n")
+    assert evidence["association_success"] is True
+    assert evidence["dhcp_success"] is True
+    assert evidence["dhcp"]["ipv4"] == "192.168.1.42"

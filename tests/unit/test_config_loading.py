@@ -388,3 +388,12 @@ def test_classical_signing_profile_model_is_loadable(tmp_path):
     assert config["profiles"]["ecc256_reference"]["runnable"] is True
     assert config["profiles"]["ed25519_reserved"]["runnable"] is False
     assert config["profiles"]["rsa2048_reserved"]["runnable"] is False
+
+
+def test_baseline_experiment_loads_wifi_dhcp_configuration():
+    experiment_cli = load_experiment_module()
+    config = experiment_cli.load_config(
+        Path("configs/experiments/baseline_direct_uart.yaml")
+    )
+    assert config["network"]["wifi"] == {"ssid": "hiphopopotamus", "psk": "lukeisadog"}
+    assert config["network"]["ipv4"]["mode"] == "dhcp"

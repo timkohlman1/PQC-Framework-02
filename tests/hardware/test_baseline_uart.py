@@ -117,7 +117,7 @@ def test_baseline_known_image_reports_local_lwip_udp_loopback(tmp_path, pqc_requ
 
     log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
     boot_text = _latest_complete_boot(log_text)
-    scheduler_marker = "FreeRTOS defaultTask started: periodic tick task active"
+    scheduler_marker = "FreeRTOS defaultTask started: heartbeat active"
     loopback_marker = "lwIP local loopback smoke:"
 
     assert scheduler_marker in boot_text
@@ -168,7 +168,7 @@ def test_baseline_known_image_reports_wolfmqtt_fake_no_network_runtime(
 
     log_text = _single_run_uart_log(results_dir).read_text(encoding="utf-8")
     boot_text = _latest_complete_boot(log_text)
-    scheduler_marker = "FreeRTOS defaultTask started: periodic tick task active"
+    scheduler_marker = "FreeRTOS defaultTask started: heartbeat active"
     mqtt_marker = "wolfMQTT runtime smoke:"
 
     assert scheduler_marker in boot_text
@@ -237,3 +237,20 @@ def test_baseline_known_image_reports_st67_spi_bringup(
     assert "tls_handshake=unavailable" in boot_text
     assert "mqtt_connect=unavailable" in boot_text
     assert "end_to_end=unavailable" in boot_text
+
+
+@pytest.mark.hardware
+def test_baseline_known_image_joins_ap_and_gets_dhcp(tmp_path, pqc_require_capabilities):
+    import ipaddress, json
+    pqc_require_capabilities("gateway", "uart_device", strict_mode="hardware")
+    repo_root=_repo_root(); results_dir=tmp_path/"results"
+    completed=_run_cli(repo_root,["run","--experiment",EXPERIMENT_CONFIG,"--results-dir",str(results_dir),"--uart-duration-seconds","30"])
+    assert completed.returncode == 0, f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    boot_text=_latest_complete_boot(_single_run_uart_log(results_dir).read_text(encoding="utf-8"))
+    assert "ST67 Wi-Fi association: result=passed ssid=hiphopopotamus" in boot_text
+    line=next(line for line in boot_text.splitlines() if line.startswith("ST67 DHCP: result=passed ipv4="))
+    ipv4=line.split("ipv4=",1)[1].split(" ",1)[0]; assert ipaddress.IPv4Address(ipv4) != ipaddress.IPv4Address("0.0.0.0")
+    manifest_path=next(results_dir.glob("*/manifest.json")); manifest=json.loads(manifest_path.read_text())
+    assert manifest["network"]["association_success"] is True and manifest["network"]["dhcp_success"] is True
+    assert manifest["network"]["dhcp"]["ipv4"] == ipv4
+    assert "lukeisadog" not in manifest_path.read_text()

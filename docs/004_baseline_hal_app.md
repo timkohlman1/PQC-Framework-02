@@ -87,3 +87,8 @@ STM32L4R5XX_FLASH_RELOCATED.ld
 ```
 
 The relocated application entry address is `0x08022000`, leaving the current 8192-byte wolfBoot image-header reserve at the signed image slot start.
+
+
+## ST67 Wi-Fi association and DHCP
+
+The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.

@@ -46,7 +46,6 @@
 #include "main.h"
 #include "lwip_netif.h"
 #include "dhcp_server.h"
-#include "app_config.h"
 
 /* USER CODE BEGIN Includes */
 
@@ -191,8 +190,8 @@ int32_t MX_LWIP_Init(void)
   {
     .link_sta_up_fn = netif_link_sta_up_cb,
     .link_sta_down_fn = netif_link_sta_down_cb,
-    .link_ap_up_fn = netif_link_ap_up_cb,
-    .link_ap_down_fn = netif_link_ap_down_cb,
+    .link_ap_up_fn = NULL,
+    .link_ap_down_fn = NULL,
   };
   uint8_t mac[6] = {0};
   (void)memset(last_ipv4_addr, 0, sizeof(last_ipv4_addr));
@@ -661,16 +660,6 @@ u32_t sio_tryread(sio_fd_t fd, u8_t *data, u32_t len)
   return recved_bytes;
 }
 #endif /* MDK ARM Compiler */
-
-/**
-  * @brief  Returns the current time in milliseconds
-  *         when LWIP_TIMERS == 1 and NO_SYS == 1
-  * @retval Current Time value
-  */
-u32_t sys_now(void)
-{
-  return HAL_GetTick();
-}
 
 /* USER CODE BEGIN FD */
 
