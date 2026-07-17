@@ -27,3 +27,80 @@ Diagnostic fallback boundary
 ----------------------------
 
 A host-native CMake, Make, Python, or IDE command may be used to isolate a local environment problem, but it is not the reproducible validation gate. After diagnosis, rerun the applicable Docker-wrapper command and verification tests. Native diagnosis must not bypass framework-generated state, recorded relocated-build provenance, signing records, or secure-boot artifact provenance.
+
+
+Building Relocated application
+------------------------------
+
+.\scripts\dev.ps1 experiment build `
+    --experiment configs/experiments/baseline_direct_uart.yaml `
+    --results-dir results/secure-boot-matrix `
+    --configure-preset RelocatedDebug `
+    --build-preset RelocatedDebug `
+    --artifact build/RelocatedDebug/stm32_basic_hal1.elf `
+    --force
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Relocated application build failed"
+}
+
+Run full matrix of secureboot profiles
+--------------------------------------
+
+$algorithms = @(
+    "ecdsa_p256",
+    "ecc384",
+    "ecc521",
+    "ed25519",
+    "ed448",
+    "rsa2048",
+    "rsa3072",
+    "rsa4096",
+    "mldsa44",
+    "mldsa65"
+)
+
+$resultsRoot = "results/secure-boot-matrix"
+
+foreach ($algorithm in $algorithms) {
+    $buildProfile = "configs/builds/wolfboot_stm32l4_$algorithm.yaml"
+    $signingProfile = "configs/signing/wolfboot_${algorithm}_app.yaml"
+    $experimentProfile = "configs/experiments/wolfboot_${algorithm}_uart.yaml"
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "Secure-boot end-to-end test: $algorithm"
+    Write-Host "============================================================"
+
+    Write-Host "[1/3] Building wolfBoot"
+    .\scripts\dev.ps1 experiment build-wolfboot `
+        --profile $buildProfile `
+        --results-dir $resultsRoot
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "wolfBoot build failed for $algorithm"
+    }
+
+    Write-Host "[2/3] Signing relocated application"
+    .\scripts\dev.ps1 experiment sign-application `
+        --profile $signingProfile `
+        --results-dir $resultsRoot
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Application signing failed for $algorithm"
+    }
+
+    Write-Host "[3/3] Flashing and checking UART"
+    .\scripts\dev.ps1 experiment-gateway flash-secure-boot `
+        --experiment $experimentProfile `
+        --results-dir $resultsRoot `
+        --uart-duration-seconds 15
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Secure-boot flash/UART test failed for $algorithm"
+    }
+
+    Write-Host "PASS: $algorithm"
+}
+
+

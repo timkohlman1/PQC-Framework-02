@@ -9,3 +9,5 @@ ask for a command that runs all tests / the most comprehensive test coverage
 i think we should configure all of the tests so that they log results in the results folder to make it easier to diagnose issues.  right now, only the secure boot hardware tests I believe create results.  I think we just use a prefix to indicate that it was an automated test result (not a manually ran experiment).
 
 
+diagnose the SPI errors after networking is established
+"waiting for spi txn ready timeouted"

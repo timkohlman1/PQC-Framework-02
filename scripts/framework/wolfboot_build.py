@@ -67,6 +67,10 @@ WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
     "tools/keytools/sign",
     "tools/keytools/sign.exe",
 )
+WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS = (
+    "lib/wolfssl/**/*.o",
+    "lib/wolfssl/**/*.d",
+)
 
 
 @dataclass(frozen=True)
@@ -640,20 +644,26 @@ def _copy_project_local_config(
 
 
 def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
-    """Remove generated wolfBoot host-tool outputs before a local build.
+    """Remove generated host and profile-dependent objects before a build.
 
-    wolfBoot builds several host utilities, including ``bin-assemble`` and
-    signing/key-generation tools. In this project the wolfBoot submodule is
-    often shared between the native Windows workflow and the Linux container
-    through a bind mount. Stale object files and dependency files can otherwise
-    carry host-specific paths, such as ``/workspace`` from a container run, into
-    a native Windows build or vice versa. These files are generated build
-    products, not source files or signing secrets, so removing them before the
-    build is safe and keeps cross-host/container builds deterministic.
+    wolfBoot builds host utilities and target wolfCrypt objects inside one
+    shared checkout. The target object names do not encode the selected signing
+    algorithm or preprocessor configuration. Reusing an object produced by a
+    previous profile can therefore create incompatible symbol references, such
+    as an ML-DSA SHA-3 object expecting ``BlockSha3`` while the current linked
+    assembly objects were built under different settings.
+
+    Only generated object, dependency, and host-tool executable files are
+    removed. Source files, generated signing tuples, and persistent keys are
+    not part of these patterns.
     """
 
     removed: list[Path] = []
-    for pattern in WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS:
+    patterns = (
+        *WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS,
+        *WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS,
+    )
+    for pattern in patterns:
         for path in source_dir.glob(pattern):
             if not path.exists() or path.is_dir():
                 continue
@@ -1594,7 +1604,10 @@ def execute_wolfboot_build(
             )
             generated_cleanup_paths = [
                 path
-                for pattern in WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS
+                for pattern in (
+                    *WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS,
+                    *WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS,
+                )
                 for path in source_dir.glob(pattern)
             ]
             preflight_generated_state(

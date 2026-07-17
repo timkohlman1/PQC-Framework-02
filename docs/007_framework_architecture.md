@@ -518,16 +518,15 @@ them. Only missing or inconsistent members inside the persistent tuple cause a
 safe failure.
 
 
-### Secure-boot UART restart boundary
+### wolfBoot cross-profile object isolation
 
-Secure-boot UART evidence is scoped to the boot initiated by the workflow.
-Before issuing the reset command, the gateway drains UART bytes for the short
-restart-delay interval. It then opens the bounded capture before issuing reset.
-This prevents output from an already-running application from satisfying
-positive markers or invalidating a corrupted-image negative test, while still
-retaining the earliest post-reset firmware output.
+The wolfBoot checkout is reused across signing algorithms, but wolfCrypt target
+object filenames do not encode the active algorithm or preprocessor settings.
+Before each wolfBoot profile build, the framework removes generated `.o` and
+`.d` files below `tools/wolfboot/lib/wolfssl/`. This forces target wolfCrypt
+sources and ARM assembly wrappers to be rebuilt for the selected profile and
+prevents stale cross-profile symbol combinations such as an unresolved
+`BlockSha3`.
 
-Verification time in the maintained STM32 workflow is derived by the framework
-from explicit wolfBoot cycle and reported HCLK markers. The manifest source is
-`framework_derived_from_uart_cycles_and_reported_hclk`; it is not an explicit
-millisecond marker emitted by firmware.
+This cleanup does not remove wolfSSL source files, persistent signing tuples, or
+private keys.

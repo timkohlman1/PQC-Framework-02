@@ -629,3 +629,75 @@ def test_execute_wolfboot_build_rejects_existing_key_when_keystore_is_missing(tm
     assert "generated wolfBoot keystore is missing" in result.failure_reason
     assert "cannot regenerate keystore.c from an existing private key alone" in result.failure_reason
 
+
+
+def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_make(
+    tmp_path,
+):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = (
+        repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    )
+    source_dir.mkdir(parents=True)
+    write_keytools_makefile(source_dir)
+    write_stm32l4_hal_conf(source_dir)
+    write_wolfboot_image_source(source_dir)
+    write_stm32l4_source(source_dir)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text(
+        "TARGET=stm32l4\nSIGN=ECC256\nSTM32CUBE=../..\n",
+        encoding="utf-8",
+    )
+
+    stale_outputs = [
+        source_dir / "lib/wolfssl/wolfcrypt/src/sha3.o",
+        source_dir / "lib/wolfssl/wolfcrypt/src/sha3.d",
+        source_dir
+        / "lib/wolfssl/wolfcrypt/src/port/arm/thumb2-sha3-asm.o",
+        source_dir
+        / "lib/wolfssl/wolfcrypt/src/port/arm/thumb2-sha3-asm_c.o",
+        source_dir / "lib/wolfssl/wolfcrypt/src/wc_mldsa.o",
+    ]
+    preserved_sources = [
+        source_dir / "lib/wolfssl/wolfcrypt/src/sha3.c",
+        source_dir
+        / "lib/wolfssl/wolfcrypt/src/port/arm/thumb2-sha3-asm.S",
+    ]
+    for path in stale_outputs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"stale profile-dependent output")
+    for path in preserved_sources:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("/* source */\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], cwd: Path):
+        assert command == ["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"]
+        assert cwd == source_dir
+        for path in stale_outputs:
+            assert not path.exists()
+        for path in preserved_sources:
+            assert path.is_file()
+        artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(
+            command,
+            0,
+            "ok",
+            "",
+            0.1,
+        )
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=sample_profile(),
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+    )
+
+    assert result.return_code == 0
+    for path in stale_outputs:
+        assert not path.exists()
+    for path in preserved_sources:
+        assert path.is_file()
