@@ -199,10 +199,12 @@ def test_constructs_monitor_with_delayed_restart_command():
 
     assert command[0:2] == ["ssh", "pqc-gateway1"]
     assert "stty -F /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02 115200" in command[2]
-    assert "sleep 0.2; reset-stm32a 1>&2" in command[2]
+    assert "timeout 0.2s cat /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02 >/dev/null 2>&1 || true" in command[2]
+    assert "reset-stm32a 1>&2" in command[2]
     assert "timeout 10s cat /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02" in command[2]
-    assert command[2].index("stty -F") < command[2].index("sleep 0.2")
-    assert command[2].index("sleep 0.2") < command[2].index("timeout 10s cat")
+    assert command[2].index("stty -F") < command[2].index("timeout 0.2s cat")
+    assert command[2].index("timeout 0.2s cat") < command[2].index("timeout 10s cat")
+    assert command[2].index("timeout 10s cat") < command[2].index("reset-stm32a 1>&2")
 
 
 
@@ -318,7 +320,10 @@ def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
     assert result.return_code == 0
     assert len(calls) == 1
     assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
-    assert "sleep 0.2; reset-stm32a 1>&2" in calls[0][2]
+    assert "timeout 0.2s cat " in calls[0][2]
+    assert ">/dev/null 2>&1 || true" in calls[0][2]
+    assert "reset-stm32a 1>&2" in calls[0][2]
+    assert calls[0][2].index("timeout 10s cat") < calls[0][2].index("reset-stm32a 1>&2")
     assert "timeout 10s cat" in calls[0][2]
     assert manifest["uart"]["restart_command"] == "reset-stm32a"
     assert manifest["uart"]["restart_during_capture"] is True
@@ -687,7 +692,10 @@ def test_execute_uart_monitor_runs_delayed_restart_inside_monitor_command(tmp_pa
     assert result.restart is None
     assert len(calls) == 1
     assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
-    assert "sleep 0.2; reset-stm32a 1>&2" in calls[0][2]
+    assert "timeout 0.2s cat " in calls[0][2]
+    assert ">/dev/null 2>&1 || true" in calls[0][2]
+    assert "reset-stm32a 1>&2" in calls[0][2]
+    assert calls[0][2].index("timeout 5s cat") < calls[0][2].index("reset-stm32a 1>&2")
     assert "timeout 5s cat" in calls[0][2]
     log = result.log_path.read_text(encoding="utf-8")
     assert "Restart requested: true" in log

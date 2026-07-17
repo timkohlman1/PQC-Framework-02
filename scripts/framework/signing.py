@@ -971,6 +971,13 @@ def execute_application_signing(
                 f"{signed_image_path}"
             )
 
+    private_key_present_after = private_key_path.is_file()
+    private_key_sha256 = (
+        calculate_file_sha256(private_key_path)
+        if private_key_present_after
+        else None
+    )
+
     if return_code == 0:
         tuple_directory = configured_tuple_directory(
             profile=profile,
@@ -1004,8 +1011,6 @@ def execute_application_signing(
         )
 
     duration_seconds = perf_counter() - start
-    private_key_present_after = private_key_path.is_file()
-    private_key_sha256 = calculate_file_sha256(private_key_path) if private_key_present_after else None
     if signed_image_path.is_file() and signed_image_sha256 is None:
         signed_image_sha256 = calculate_file_sha256(signed_image_path)
         signed_image_size_bytes = signed_image_path.stat().st_size

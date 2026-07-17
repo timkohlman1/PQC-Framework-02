@@ -516,3 +516,18 @@ embed the verification public key in generated `keystore.c`. Their absence
 does not make the persistent tuple partial; the next wolfBoot build restores
 them. Only missing or inconsistent members inside the persistent tuple cause a
 safe failure.
+
+
+### Secure-boot UART restart boundary
+
+Secure-boot UART evidence is scoped to the boot initiated by the workflow.
+Before issuing the reset command, the gateway drains UART bytes for the short
+restart-delay interval. It then opens the bounded capture before issuing reset.
+This prevents output from an already-running application from satisfying
+positive markers or invalidating a corrupted-image negative test, while still
+retaining the earliest post-reset firmware output.
+
+Verification time in the maintained STM32 workflow is derived by the framework
+from explicit wolfBoot cycle and reported HCLK markers. The manifest source is
+`framework_derived_from_uart_cycles_and_reported_hclk`; it is not an explicit
+millisecond marker emitted by firmware.

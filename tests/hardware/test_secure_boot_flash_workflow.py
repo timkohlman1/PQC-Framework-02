@@ -45,6 +45,28 @@ def _run_cli(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 
 
 
+def _result_log_context(results_dir: Path, filename: str) -> str:
+    """Return the newest matching result log for assertion diagnostics."""
+
+    if not results_dir.exists():
+        return f"No {filename} was created under {results_dir}."
+
+    candidates = sorted(
+        results_dir.rglob(filename),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    if not candidates:
+        return f"No {filename} was created under {results_dir}."
+
+    log_path = candidates[0]
+    try:
+        content = log_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"Unable to read {log_path}: {exc}"
+    return f"{log_path}:\n{content}"
+
+
 def _clean_secure_boot_generated_outputs(repo_root: Path) -> None:
     """Remove non-signing build outputs before hardware workflow builds.
 
@@ -87,17 +109,37 @@ def _assert_freertos_uart_markers_absent(uart_log: str) -> None:
 
 
 def _secure_boot_result_dirs(results_dir: Path) -> list[Path]:
-    """Return experiment run result directories, excluding helper evidence trees."""
+    """Return result directories containing secure-boot execution manifests."""
 
     if not results_dir.exists():
         return []
 
-    excluded_names = {"adhoc", "builds", "signing", "wolfboot-builds"}
-    return sorted(
-        path
-        for path in results_dir.iterdir()
-        if path.is_dir() and path.name not in excluded_names
-    )
+    result_dirs: list[Path] = []
+    for path in results_dir.iterdir():
+        if not path.is_dir():
+            continue
+
+        manifest_path = path / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+
+        if not isinstance(manifest, dict):
+            continue
+        if not isinstance(manifest.get("secure_boot_flash"), dict):
+            continue
+        if manifest.get("boot_mode") != EXPECTED_BOOT_MODE:
+            continue
+        if manifest.get("boot_crypto") != EXPECTED_BOOT_CRYPTO:
+            continue
+
+        result_dirs.append(path)
+
+    return sorted(result_dirs)
 
 
 def _single_secure_boot_result_dir(results_dir: Path) -> Path:
@@ -119,7 +161,9 @@ def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path) -> None:
     )
     assert build_completed.returncode == 0, (
         f"build-wolfboot stdout:\n{build_completed.stdout}\n"
-        f"build-wolfboot stderr:\n{build_completed.stderr}"
+        f"build-wolfboot stderr:\n{build_completed.stderr}\n"
+        f"wolfBoot build log:\n"
+        f"{_result_log_context(results_dir, 'wolfboot_build.log')}"
     )
     assert (repo_root / WOLFBOOT_ARTIFACT).is_file()
 
@@ -144,7 +188,9 @@ def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) 
     )
     assert build_completed.returncode == 0, (
         f"framework build stdout:\n{build_completed.stdout}\n"
-        f"framework build stderr:\n{build_completed.stderr}"
+        f"framework build stderr:\n{build_completed.stderr}\n"
+        f"firmware build log:\n"
+        f"{_result_log_context(results_dir, 'build.log')}"
     )
     assert (repo_root / RELOCATED_APPLICATION_ELF).is_file()
 
@@ -160,7 +206,9 @@ def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) 
     )
     assert signing_completed.returncode == 0, (
         f"sign-application stdout:\n{signing_completed.stdout}\n"
-        f"sign-application stderr:\n{signing_completed.stderr}"
+        f"sign-application stderr:\n{signing_completed.stderr}\n"
+        f"signing log:\n"
+        f"{_result_log_context(results_dir, 'signing.log')}"
     )
     assert (repo_root / SIGNED_APPLICATION_ARTIFACT).is_file()
 
@@ -209,7 +257,7 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["secure_boot_run"]["positive_boot_evidence_passed"] is True
 
     assert "boot_timing" in manifest
-    assert isinstance(manifest["boot_timing"]["derived_verification_time_ms"], int)
+    assert isinstance(manifest["boot_timing"]["derived_verification_time_ms"], (int, float))
     assert manifest["boot_timing"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["boot_timing"]["verification_cycles"], int)
     assert manifest["boot_timing"]["verification_cycles"] > 0
@@ -217,15 +265,15 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["boot_timing"]["verification_result_code"] == 0
     assert (
         manifest["boot_timing"]["verification_time_source"]
-        == "uart_explicit_verification_time_marker"
+        == "framework_derived_from_uart_cycles_and_reported_hclk"
     )
-    assert isinstance(manifest["uart"]["derived_verification_time_ms"], int)
+    assert isinstance(manifest["uart"]["derived_verification_time_ms"], (int, float))
     assert manifest["uart"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["uart"]["verification_cycles"], int)
     assert manifest["uart"]["verification_cycles"] > 0
     assert manifest["uart"]["bootloader_hclk_hz"] > 0
     assert manifest["uart"]["verification_result_code"] == 0
-    assert isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], int)
+    assert isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], (int, float))
     assert manifest["secure_boot_run"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["secure_boot_run"]["verification_cycles"], int)
     assert manifest["secure_boot_run"]["verification_cycles"] > 0
@@ -347,7 +395,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     assert "Tick marker present: true" in uart_log
     assert "Secure-boot marker present: true" in uart_log
     assert "Data captured: true" in uart_log
-    assert "verification_time_source: uart_explicit_verification_time_marker" in uart_log
+    assert "verification_time_source: framework_derived_from_uart_cycles_and_reported_hclk" in uart_log
     assert "verification_cycles:" in uart_log
     assert "bootloader_hclk_hz:" in uart_log
     assert "verification_result_code: 0" in uart_log

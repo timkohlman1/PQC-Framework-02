@@ -144,12 +144,14 @@ def construct_ssh_uart_monitor_with_restart_command(
     restart_command: str = DEFAULT_RESTART_COMMAND,
     restart_delay_seconds: float = DEFAULT_RESTART_DELAY_SECONDS,
 ) -> list[str]:
-    """Construct one SSH command that starts UART capture before resetting.
+    """Construct one SSH command that captures only post-reset UART output.
 
-    The reset command runs in a delayed background subshell after the UART
-    device has been configured and before the bounded ``cat`` capture window
-    starts. Reset stdout is redirected to stderr so the monitor stdout remains
-    device UART data only.
+    The configured UART is first drained for the short restart-delay interval
+    so bytes emitted by firmware that was already running cannot satisfy marker
+    checks for the next boot. A bounded UART capture is then opened before the
+    reset command is issued, ensuring the earliest post-reset bytes are retained.
+    Reset stdout is redirected to stderr so monitor stdout remains device UART
+    data only.
     """
 
     device = shlex.quote(uart_device)
@@ -158,12 +160,13 @@ def construct_ssh_uart_monitor_with_restart_command(
         f"stty -F {device} {int(baud)} cs8 -cstopb -parenb raw -echo; "
         "stty_rc=$?; "
         'if [ "$stty_rc" -ne 0 ]; then exit "$stty_rc"; fi; '
-        f"(sleep {restart_delay}; {restart_command} 1>&2) & "
-        "reset_pid=$!; "
-        f"timeout {int(duration_seconds)}s cat {device}; "
-        "capture_rc=$?; "
-        'wait "$reset_pid"; '
+        f"timeout {restart_delay}s cat {device} >/dev/null 2>&1 || true; "
+        f"timeout {int(duration_seconds)}s cat {device} & "
+        "capture_pid=$!; "
+        f"{restart_command} 1>&2; "
         "reset_rc=$?; "
+        'wait "$capture_pid"; '
+        "capture_rc=$?; "
         'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; '
         'exit "$capture_rc"'
     )
