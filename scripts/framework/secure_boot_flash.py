@@ -229,6 +229,7 @@ def _fingerprint_evidence(
             "fingerprint": None,
             "fingerprint_algorithm": None,
             "fingerprint_inputs": [],
+            "fingerprint_tool_versions": {},
             "requested_fingerprint_inputs": requested_inputs,
             "missing_fingerprint_inputs": missing_inputs,
             "limitations": str(exc),
@@ -239,6 +240,7 @@ def _fingerprint_evidence(
             "fingerprint": fingerprint.fingerprint,
             "fingerprint_algorithm": fingerprint.algorithm,
             "fingerprint_inputs": fingerprint.inputs,
+        "fingerprint_tool_versions": fingerprint.tool_versions or {},
             "requested_fingerprint_inputs": requested_inputs,
             "missing_fingerprint_inputs": missing_inputs,
             "limitations": None

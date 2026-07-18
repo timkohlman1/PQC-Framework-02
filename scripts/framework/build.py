@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
 from framework.build_number import BuildNumberError, reserve_next_build_number
-from framework.build_records import write_build_record
+from framework.build_records import build_record_dir_for_result_dir, write_build_record
 from framework.build_state import (
     BuildHashStateError,
     read_last_successful_build_state,
@@ -538,40 +538,19 @@ def execute_build(
             build_skip_detail=skip_detail,
             force_rebuild=force,
         )
+        # A cached build is an immutable reference to the original build record.
+        # Never call write_build_record here: doing so would overwrite the original
+        # manifest and build.log with evidence from this reuse operation.
         build_record_path = None
         build_record_manifest_path = None
         if isinstance(state_build_number, int):
-            build_record_build = {
-                "configure_preset": configure_preset,
-                "build_preset": build_preset,
-                "return_code": 0,
-                "duration_seconds": round(duration_seconds, 3),
-                "log": "build.log",
-                "fingerprint": build_fingerprint.fingerprint,
-                "fingerprint_inputs": build_fingerprint.inputs,
-                "fingerprint_algorithm": build_fingerprint.algorithm,
-                "skipped": True,
-                "skip_reason": skip_reason,
-                "skip_detail": skip_detail,
-                "force": force,
-                "source_state_run_id": state_run_id if isinstance(state_run_id, str) else None,
-                "source_state_build_number": state_build_number,
-                "source_state_fingerprint": state_build.get("fingerprint") if isinstance(state_build, dict) else None,
-            }
-            build_record_path, _ = write_build_record(
-                bundle=bundle,
-                result_dir=result_dir_path,
-                build_number=state_build_number,
-                firmware_elf_path=elf_path,
-                firmware_artifact=artifact_relative_path.as_posix(),
-                firmware_artifact_path=str(elf_path),
-                firmware_sha256=firmware_sha256,
-                source=source,
-                build=build_record_build,
-                source_run_id=_current_run_id(result_dir_path),
-                build_log_path=log_path,
+            build_record_path = build_record_dir_for_result_dir(
+                result_dir_path,
+                state_build_number,
             )
-            build_record_manifest_path = build_record_path / "manifest.json"
+            candidate_manifest_path = build_record_path / "manifest.json"
+            if candidate_manifest_path.is_file():
+                build_record_manifest_path = candidate_manifest_path
         record_generated_state_success(
             repo_root=repo_root_path,
             scope=generated_state_scope,
@@ -614,6 +593,7 @@ def execute_build(
                     "fingerprint": build_fingerprint.fingerprint,
                     "fingerprint_inputs": build_fingerprint.inputs,
                     "fingerprint_algorithm": build_fingerprint.algorithm,
+                    "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                     "skipped": True,
                     "skip_reason": skip_reason,
                     "skip_detail": skip_detail,
@@ -621,6 +601,8 @@ def execute_build(
                     "source_state_run_id": state_run_id if isinstance(state_run_id, str) else None,
                     "source_state_build_number": state_build_number if isinstance(state_build_number, int) else None,
                     "source_state_fingerprint": state_build.get("fingerprint") if isinstance(state_build, dict) else None,
+                    "record_action": "reused_immutable_build_record",
+                    "record_mutated": False,
                     **_build_record_manifest_update(build_record_path),
                 },
             },
@@ -712,6 +694,7 @@ def execute_build(
                     "fingerprint": build_fingerprint.fingerprint,
                     "fingerprint_inputs": build_fingerprint.inputs,
                     "fingerprint_algorithm": build_fingerprint.algorithm,
+                    "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                     "build_number_error": build_number_error,
                     "skipped": False,
                     "skip_reason": skip_reason,
@@ -839,6 +822,7 @@ def execute_build(
                 "fingerprint": build_fingerprint.fingerprint,
                 "fingerprint_inputs": build_fingerprint.inputs,
                 "fingerprint_algorithm": build_fingerprint.algorithm,
+                "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                 "skipped": False,
                 "skip_reason": skip_reason,
                 "skip_detail": skip_detail,

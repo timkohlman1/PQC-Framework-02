@@ -563,6 +563,7 @@ def _fingerprint_evidence(*, repo_root: Path, profile: dict[str, Any]) -> dict[s
             "fingerprint": None,
             "fingerprint_algorithm": None,
             "fingerprint_inputs": [],
+            "fingerprint_tool_versions": {},
             "requested_fingerprint_inputs": requested_inputs,
             "missing_fingerprint_inputs": missing_inputs,
             "limitations": str(exc),
@@ -572,6 +573,7 @@ def _fingerprint_evidence(*, repo_root: Path, profile: dict[str, Any]) -> dict[s
         "fingerprint": fingerprint.fingerprint,
         "fingerprint_algorithm": fingerprint.algorithm,
         "fingerprint_inputs": fingerprint.inputs,
+        "fingerprint_tool_versions": fingerprint.tool_versions or {},
         "requested_fingerprint_inputs": requested_inputs,
         "missing_fingerprint_inputs": missing_inputs,
         "limitations": None
@@ -1065,6 +1067,7 @@ def execute_application_signing(
                 "fingerprint": fingerprint_evidence.get("fingerprint"),
                 "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
                 "fingerprint_inputs": fingerprint_evidence.get("fingerprint_inputs", []),
+                "fingerprint_tool_versions": fingerprint_evidence.get("fingerprint_tool_versions", {}),
                 "requested_fingerprint_inputs": fingerprint_evidence.get("requested_fingerprint_inputs", []),
                 "missing_fingerprint_inputs": fingerprint_evidence.get("missing_fingerprint_inputs", []),
                 "fingerprint_status": fingerprint_evidence.get("status"),

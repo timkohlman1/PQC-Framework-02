@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-v1"
+BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-and-tools-v2"
 
 
 
@@ -55,17 +57,63 @@ DEFAULT_FIRMWARE_FINGERPRINT_INPUTS = [
     "stm32_basic_hal1.ioc",
 ]
 
+# Optional roots are limited to source/configuration trees that can contribute
+# to the selected STM32 targets. Directory collection applies the build-input
+# file filter below, so generated objects, credentials, docs, examples, tests,
+# repository metadata, and unrelated upstream project files are not hashed.
+OPTIONAL_FIRMWARE_FINGERPRINT_INPUTS = [
+    "ST67W6X/Target",
+    "LWIP/App",
+    "Middlewares/ST/ST67W6X_Network_Driver",
+    "Middlewares/Third_Party/FreeRTOS/Source",
+    "Middlewares/Third_Party/SICS_Network_LwIP/LwIP",
+    "Middlewares/Third_Party/wolfMQTT/src",
+    "Middlewares/Third_Party/wolfMQTT/wolfmqtt",
+    "tools/wolfboot/lib/wolfssl/src",
+    "tools/wolfboot/lib/wolfssl/wolfcrypt/src",
+    "tools/wolfboot/lib/wolfssl/wolfssl",
+    "scripts/framework/build.py",
+    "scripts/framework/fingerprint.py",
+]
+
+BUILD_INPUT_SUFFIXES = {
+    ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+    ".s", ".S", ".asm", ".ld", ".cmake", ".json", ".yaml", ".yml",
+    ".ioc", ".in",
+}
+BUILD_INPUT_FILENAMES = {"CMakeLists.txt", "CMakePresets.json", "Makefile"}
+EXCLUDED_PATH_PARTS = {
+    ".git", ".github", ".vscode", "__pycache__", "build", "results",
+    "examples", "tests", "test", "docs", "doc", "certs", "IDE", "zephyr",
+}
+
+
+def _is_build_input_file(path: Path) -> bool:
+    """Return whether a discovered file can affect the selected firmware build."""
+
+    if any(part in EXCLUDED_PATH_PARTS for part in path.parts):
+        return False
+    return path.name in BUILD_INPUT_FILENAMES or path.suffix in BUILD_INPUT_SUFFIXES
+
+DEFAULT_BUILD_TOOL_COMMANDS = {
+    "cmake": ["cmake", "--version"],
+    "arm_none_eabi_gcc": ["arm-none-eabi-gcc", "--version"],
+    "ninja": ["ninja", "--version"],
+    "python": [sys.executable, "--version"],
+}
+
 
 class FingerprintInputError(Exception):
     """Raised when a required build fingerprint input is unavailable."""
 
 
 class BuildFingerprint(NamedTuple):
-    """A deterministic build input fingerprint and the paths it covered."""
+    """A deterministic build fingerprint and the evidence it covered."""
 
     fingerprint: str
     inputs: list[str]
     algorithm: str = BUILD_FINGERPRINT_ALGORITHM
+    tool_versions: dict[str, str] | None = None
 
 
 def _relative_path(path: Path, repo_root: Path) -> str:
@@ -105,7 +153,7 @@ def _collect_files(repo_root: Path, relative_inputs: Iterable[str]) -> list[Path
 
         if input_path.is_dir():
             files = sorted(
-                (path for path in input_path.rglob("*") if path.is_file()),
+                (path for path in input_path.rglob("*") if path.is_file() and _is_build_input_file(path)),
                 key=lambda path: _relative_path(path, repo_root),
             )
 
@@ -123,6 +171,41 @@ def _collect_files(repo_root: Path, relative_inputs: Iterable[str]) -> list[Path
 
     return sorted(collected, key=lambda path: _relative_path(path, repo_root))
 
+
+def capture_build_tool_versions(
+    commands: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
+    """Capture stable version evidence for tools that can affect build output.
+
+    Missing tools are recorded explicitly rather than ignored. In the normal
+    container build environment the required build tools must be available; the
+    explicit marker keeps fingerprint calculation deterministic in unit-test
+    fixtures and makes incomplete provenance visible in manifests.
+    """
+
+    selected = DEFAULT_BUILD_TOOL_COMMANDS if commands is None else commands
+    versions: dict[str, str] = {}
+    for name, command in sorted(selected.items()):
+        try:
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            versions[name] = f"unavailable:{type(exc).__name__}"
+            continue
+        output = "\n".join(
+            part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+        )
+        versions[name] = f"return_code={completed.returncode};output={output}"
+    return versions
+
+
+def _existing_optional_inputs(repo_root: Path, relative_inputs: Iterable[str]) -> list[str]:
+    return [item for item in relative_inputs if (repo_root / item).exists()]
 
 def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> list[str]:
     """Return the current conservative build fingerprint input set.
@@ -160,6 +243,8 @@ def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> li
 def calculate_build_fingerprint(
     repo_root: Path | str,
     relative_inputs: Iterable[str],
+    *,
+    tool_versions: dict[str, str] | None = None,
 ) -> BuildFingerprint:
     """Calculate the deterministic build input fingerprint.
 
@@ -180,9 +265,13 @@ def calculate_build_fingerprint(
         for path in files
     ]
 
+    captured_tool_versions = (
+        capture_build_tool_versions() if tool_versions is None else dict(tool_versions)
+    )
     payload = {
         "algorithm": BUILD_FINGERPRINT_ALGORITHM,
         "files": file_entries,
+        "tools": captured_tool_versions,
     }
 
     encoded_payload = json.dumps(
@@ -194,18 +283,27 @@ def calculate_build_fingerprint(
     return BuildFingerprint(
         fingerprint=hashlib.sha256(encoded_payload).hexdigest(),
         inputs=[entry["path"] for entry in file_entries],
+        tool_versions=captured_tool_versions,
     )
 
 
 def calculate_default_build_fingerprint(
     bundle: dict[str, dict[str, object]],
     repo_root: Path | str,
+    *,
+    tool_versions: dict[str, str] | None = None,
 ) -> BuildFingerprint:
-    """Calculate the fingerprint for the current default build input set."""
+    """Calculate the fingerprint for all discovered default build inputs."""
 
+    repo_root_path = Path(repo_root)
+    relative_inputs = [
+        *default_build_fingerprint_inputs(bundle),
+        *_existing_optional_inputs(repo_root_path, OPTIONAL_FIRMWARE_FINGERPRINT_INPUTS),
+    ]
     return calculate_build_fingerprint(
-        repo_root=repo_root,
-        relative_inputs=default_build_fingerprint_inputs(bundle),
+        repo_root=repo_root_path,
+        relative_inputs=relative_inputs,
+        tool_versions=tool_versions,
     )
 
 
@@ -241,9 +339,11 @@ def calculate_existing_inputs_fingerprint(
         }
         for path in files
     ]
+    captured_tool_versions = capture_build_tool_versions()
     payload = {
         "algorithm": algorithm,
         "files": file_entries,
+        "tools": captured_tool_versions,
     }
     encoded_payload = json.dumps(
         payload,
@@ -254,6 +354,7 @@ def calculate_existing_inputs_fingerprint(
         fingerprint=hashlib.sha256(encoded_payload).hexdigest(),
         inputs=[entry["path"] for entry in file_entries],
         algorithm=algorithm,
+        tool_versions=captured_tool_versions,
     )
 
 

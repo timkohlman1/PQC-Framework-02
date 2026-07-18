@@ -323,6 +323,10 @@ Gateway and hardware tests remain outside the default CI workflow because they r
 
 Build records identify produced firmware binaries. Experiment run records identify one execution and its hardware-facing evidence. Secure-boot build/sign/flash evidence remains explicit and profile-specific. Aggregated benchmark summaries are derived outputs from existing manifests.
 
+A directory under `results/builds/<build_number>/` is an immutable compilation record. It is created or updated only by the workflow that actually executes the compiler and produces that numbered build. Reusing a compatible build does not reserve a new build number and must not rewrite the retained build manifest, `build.log`, or firmware artifact. The new experiment result records the reuse decision, referenced build number, record path, fingerprint, artifact hash, and `record_mutated: false`; its own `build.log` describes the reuse operation.
+
+Firmware fingerprints cover the resolved experiment, board, host, and boot configuration; recursively discovered firmware, middleware, build-system, framework-build, container, and CI inputs that exist in the checkout; and captured versions of CMake, Arm GCC, Ninja, and Python. Adding a source file beneath a covered source tree or changing a captured tool version therefore invalidates reuse. Secure-boot wolfBoot, relocated-application, signing, and flash evidence uses the same file-and-tool fingerprint model while retaining separate profile-specific records and artifact hashes for each producer stage.
+
 
 ## ML-DSA secure-boot profiles
 

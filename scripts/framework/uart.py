@@ -181,6 +181,8 @@ def default_runner(command: list[str], cwd: Path) -> CommandExecution:
         command,
         cwd=cwd,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )

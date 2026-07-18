@@ -200,7 +200,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert f"Output ELF path: {artifact_path}" in build_log
     assert f"Output ELF SHA-256: {expected_sha256}" in build_log
     assert "Build number: 1" in build_log
-    assert "Build fingerprint algorithm: sha256-build-inputs-v1" in build_log
+    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v2" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
     assert "- configs/boot/direct_flash.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
@@ -215,7 +215,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert build_state["run_id"] == "2026-06-25_001_baseline_direct_uart"
     assert build_state["build_number"] == 1
     assert build_state["build"]["fingerprint"] == manifest["build"]["fingerprint"]
-    assert build_state["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
+    assert build_state["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v2"
     assert build_state["build"]["fingerprint_inputs"] == manifest["build"]["fingerprint_inputs"]
     assert build_state["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert build_state["firmware"]["artifact_path"] == str(artifact_path)
@@ -243,7 +243,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["build"]["log"] == "build.log"
     assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "1")
     assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "1" / "manifest.json")
-    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-v1"
+    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v2"
     assert isinstance(manifest["build"]["fingerprint"], str)
     assert len(manifest["build"]["fingerprint"]) == 64
     assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
@@ -1065,6 +1065,15 @@ def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
     artifact_path.write_text("cached elf", encoding="utf-8")
     write_initial_manifest(result_dir)
     expected_fingerprint = _record_matching_last_successful_state(build, repo_root, artifact_path)
+    build_record_dir = result_dir.parent / "builds" / "7"
+    build_record_dir.mkdir(parents=True)
+    original_record_manifest = {"result": "build_passed", "build": {"skipped": False}}
+    (build_record_dir / "manifest.json").write_text(
+        json.dumps(original_record_manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (build_record_dir / "build.log").write_text("original compilation log\n", encoding="utf-8")
+    (build_record_dir / "firmware.elf").write_text("original retained elf", encoding="utf-8")
 
     def forbidden_runner(command: list[str], cwd: Path):
         raise AssertionError("CMake must not run when rebuild skip criteria are satisfied")
@@ -1088,7 +1097,7 @@ def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
     assert result.build_record_manifest_path == result_dir.parent / "builds" / "7" / "manifest.json"
     assert not (repo_root / ".build_number").exists()
     assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "cached elf"
-    assert (result_dir.parent / "builds" / "7" / "firmware.elf").read_text(encoding="utf-8") == "cached elf"
+    assert (build_record_dir / "firmware.elf").read_text(encoding="utf-8") == "original retained elf"
     assert manifest["result"] == "build_skipped"
     assert manifest["build_number"] == 7
     assert manifest["build"]["skipped"] is True
@@ -1096,10 +1105,11 @@ def test_execute_build_skips_cmake_when_hash_state_and_elf_match(tmp_path):
     assert manifest["build"]["source_state_run_id"] == "2026-06-25_000_baseline_direct_uart"
     assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "7")
     assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "7" / "manifest.json")
-    skipped_build_record_manifest = json.loads((result_dir.parent / "builds" / "7" / "manifest.json").read_text(encoding="utf-8"))
-    assert skipped_build_record_manifest["result"] == "build_skipped"
-    assert skipped_build_record_manifest["build"]["skipped"] is True
-    assert skipped_build_record_manifest["build"]["source_state_run_id"] == "2026-06-25_000_baseline_direct_uart"
+    retained_build_record_manifest = json.loads((build_record_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert retained_build_record_manifest == original_record_manifest
+    assert (build_record_dir / "build.log").read_text(encoding="utf-8") == "original compilation log\n"
+    assert manifest["build"]["record_action"] == "reused_immutable_build_record"
+    assert manifest["build"]["record_mutated"] is False
     assert manifest["build"]["fingerprint"] == expected_fingerprint
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"

@@ -68,7 +68,7 @@ def test_build_fingerprint_is_deterministic(tmp_path):
     second = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
 
     assert first == second
-    assert first.algorithm == "sha256-build-inputs-v1"
+    assert first.algorithm == "sha256-build-inputs-and-tools-v2"
     assert len(first.fingerprint) == 64
     assert first.inputs == sorted(first.inputs)
 
@@ -248,3 +248,87 @@ def test_secure_boot_flash_fingerprint_inputs_cover_artifact_producers():
     assert "configs/wolfboot/stm32l4r5_ecdsa_p256.config" in inputs
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in inputs
     assert "tools/wolfboot/src/image.c" in inputs
+
+
+def test_added_source_under_build_relevant_middleware_changes_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "fixed"}
+    )
+    source = repo_root / "Middlewares" / "Third_Party" / "wolfMQTT" / "src" / "new_component.c"
+    source.parent.mkdir(parents=True)
+    source.write_text("int new_component(void) { return 1; }\n", encoding="utf-8")
+    after = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "fixed"}
+    )
+
+    assert before.fingerprint != after.fingerprint
+    assert "Middlewares/Third_Party/wolfMQTT/src/new_component.c" in after.inputs
+
+
+def test_generated_and_unrelated_third_party_files_are_excluded(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    generated = repo_root / "Drivers" / "STM32L4xx_HAL_Driver" / "Src" / "stale.o"
+    generated.write_bytes(b"object")
+    example = repo_root / "Middlewares" / "Third_Party" / "wolfMQTT" / "examples" / "demo.c"
+    example.parent.mkdir(parents=True)
+    example.write_text("int demo(void) { return 0; }\n", encoding="utf-8")
+    key = repo_root / "Middlewares" / "Third_Party" / "wolfMQTT" / "certs" / "client-key.pem"
+    key.parent.mkdir(parents=True)
+    key.write_text("test key\n", encoding="utf-8")
+
+    result = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "fixed"}
+    )
+
+    assert "Drivers/STM32L4xx_HAL_Driver/Src/stale.o" not in result.inputs
+    assert "Middlewares/Third_Party/wolfMQTT/examples/demo.c" not in result.inputs
+    assert "Middlewares/Third_Party/wolfMQTT/certs/client-key.pem" not in result.inputs
+
+
+def test_missing_compiled_source_roots_are_now_covered(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+    files = {
+        "ST67W6X/Target/spi_port.c": "int spi_port(void) { return 0; }\n",
+        "LWIP/App/lwip.c": "int lwip_app(void) { return 0; }\n",
+        "tools/wolfboot/lib/wolfssl/src/ssl.c": "int wolfssl_ssl(void) { return 0; }\n",
+    }
+    for relative_path, content in files.items():
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    result = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "fixed"}
+    )
+
+    for relative_path in files:
+        assert relative_path in result.inputs
+
+
+def test_tool_version_change_changes_fingerprint(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    before = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "cmake 3.30", "gcc": "13.2"}
+    )
+    after = fingerprint.calculate_default_build_fingerprint(
+        sample_bundle(), repo_root, tool_versions={"cmake": "cmake 3.31", "gcc": "13.2"}
+    )
+
+    assert before.fingerprint != after.fingerprint
+    assert after.tool_versions == {"cmake": "cmake 3.31", "gcc": "13.2"}

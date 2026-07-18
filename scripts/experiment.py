@@ -1326,7 +1326,7 @@ def _record_run_summary(
                 "artifact_copy_return_code": artifact_copy_return_code,
                 "flash_return_code": flash_return_code,
                 "uart_return_code": uart_return_code,
-                "build_log": None if referenced_build_number is not None else "build.log",
+                "build_log": "build.log" if build_return_code is not None else None,
                 "flash_log": "flash.log" if flash_return_code is not None else None,
                 "uart_log": "uart.log" if uart_return_code is not None else None,
                 "copied_artifact": (
@@ -1621,6 +1621,9 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             uart_return_code=None,
             copied_artifact_path=None,
             duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
         print("Baseline run failed during build")
         print("--------------------------------")
@@ -1660,6 +1663,9 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             uart_return_code=None,
             copied_artifact_path=None,
             duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
         print("Baseline run failed while copying artifact")
         print("------------------------------------------")
@@ -1674,6 +1680,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         repo_root=repo_root,
         result_dir=result_dir,
         source_build_run_id=manifest["run_id"],
+        source_build_number=getattr(build_result, "build_number", None),
+        source_build_manifest_path=getattr(build_result, "build_record_manifest_path", None),
     )
 
     if flash_result.return_code != 0:
@@ -1697,6 +1705,9 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             uart_return_code=None,
             copied_artifact_path=copied_artifact_path,
             duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
         print("Baseline run failed during flash")
         print("--------------------------------")
@@ -1728,6 +1739,9 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         uart_return_code=uart_result.return_code,
         copied_artifact_path=copied_artifact_path,
         duration_seconds=perf_counter() - start,
+        referenced_build_number=getattr(build_result, "build_number", None),
+        referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+        referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
     )
 
     print("Baseline run passed" if final_return_code == 0 else "Baseline run failed during uart")

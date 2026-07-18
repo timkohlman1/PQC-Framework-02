@@ -169,6 +169,27 @@ def write_sample_configs(configs_root: Path) -> Path:
     return experiment_path
 
 
+
+def test_default_runner_replaces_invalid_utf8_bytes(tmp_path: Path):
+    uart = load_uart_module()
+
+    result = uart.default_runner(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.buffer.write(bytes([98, 111, 111, 116, 10, 255, 116, 105, 99, 107, 10])); "
+                "sys.stderr.buffer.write(bytes([119, 97, 114, 110, 105, 110, 103, 58, 255, 10]))"
+            ),
+        ],
+        tmp_path,
+    )
+
+    assert result.return_code == 0
+    assert result.stdout == "boot\n\ufffdtick\n"
+    assert result.stderr == "warning:\ufffd\n"
+
 def test_constructs_bounded_uart_capture_command():
     uart = load_uart_module()
 
