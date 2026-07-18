@@ -210,17 +210,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert (repo_root / ".build_number").read_text(encoding="utf-8") == "1\n"
-    build_state = json.loads((repo_root / ".last_successful_build.json").read_text(encoding="utf-8"))
-    assert build_state["schema_version"] == 1
-    assert build_state["run_id"] == "2026-06-25_001_baseline_direct_uart"
-    assert build_state["build_number"] == 1
-    assert build_state["build"]["fingerprint"] == manifest["build"]["fingerprint"]
-    assert build_state["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v2"
-    assert build_state["build"]["fingerprint_inputs"] == manifest["build"]["fingerprint_inputs"]
-    assert build_state["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
-    assert build_state["firmware"]["artifact_path"] == str(artifact_path)
-    assert build_state["firmware"]["sha256"] == expected_sha256
-    assert build_state["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
+    assert not (repo_root / ".last_successful_build.json").exists()
     assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
     build_record_dir = result_dir.parent / "builds" / "1"
     build_record_manifest = json.loads((build_record_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -1010,33 +1000,6 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
     assert manifest["build_flash"]["failure_stage"] == "none"
 
 
-def _record_matching_last_successful_state(build, repo_root: Path, artifact_path: Path, build_number: int = 7) -> str:
-    fingerprint = build.calculate_default_build_fingerprint(sample_bundle(), repo_root)
-    firmware_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest() if artifact_path.exists() else "c" * 64
-    build.record_last_successful_build_state(
-        repo_root=repo_root,
-        run_id="2026-06-25_000_baseline_direct_uart",
-        build_number=build_number,
-        build_fingerprint=fingerprint.fingerprint,
-        build_fingerprint_algorithm=fingerprint.algorithm,
-        build_fingerprint_inputs=fingerprint.inputs,
-        firmware_artifact="build/Debug/stm32_basic_hal1.elf",
-        firmware_artifact_path=str(artifact_path),
-        firmware_sha256=firmware_sha256,
-        result_artifacts={
-            "elf": {
-                "source_path": str(artifact_path),
-                "path": "firmware.elf",
-                "artifact_path": str(repo_root / "results" / "old" / "firmware.elf"),
-                "sha256": firmware_sha256,
-                "copied": True,
-                "missing_reason": None,
-            }
-        },
-    )
-    return fingerprint.fingerprint
-
-
 def _successful_runner_that_writes_artifact(build, artifact_path: Path, calls: list[list[str]]):
     def fake_runner(command: list[str], cwd: Path):
         calls.append(command)
@@ -1529,3 +1492,22 @@ def test_execute_build_writes_wifi_header_after_preflight_and_before_cmake(tmp_p
         ["cmake", "--build", "--preset", "Debug"],
     ]
 
+
+
+def test_full_baseline_flash_uses_selected_build_result_artifact():
+    """The normal run must flash the ELF chosen by build-record reuse."""
+
+    experiment_source = (
+        Path(__file__).resolve().parents[2] / "scripts" / "experiment.py"
+    ).read_text(encoding="utf-8")
+
+    expected_call_fragment = '''flash_result = execute_flash(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        source_build_run_id=manifest["run_id"],
+        source_build_number=getattr(build_result, "build_number", None),
+        source_build_manifest_path=getattr(build_result, "build_record_manifest_path", None),
+        artifact_path_override=build_result.elf_path,
+    )'''
+    assert expected_call_fragment in experiment_source

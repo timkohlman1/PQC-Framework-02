@@ -17,11 +17,6 @@ from typing import Any, Callable
 from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
 from framework.build_number import BuildNumberError, reserve_next_build_number
 from framework.build_records import build_record_dir_for_result_dir, write_build_record
-from framework.build_state import (
-    BuildHashStateError,
-    read_last_successful_build_state,
-    record_last_successful_build_state,
-)
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_default_build_fingerprint,
@@ -264,26 +259,6 @@ def _write_build_log(
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-
-
-def _read_rebuild_state(repo_root: Path) -> tuple[dict[str, Any] | None, str | None]:
-    """Read local rebuild-skip state without trusting malformed data."""
-
-    try:
-        return read_last_successful_build_state(repo_root), None
-    except BuildHashStateError as exc:
-        return None, str(exc)
-
-
-def _successful_state_return_code(state: dict[str, Any]) -> bool:
-    """Return whether a local state record says its source build succeeded."""
-
-    build = state.get("build", {})
-    if not isinstance(build, dict):
-        return False
-
-    return_code = build.get("return_code")
-    return return_code is None or return_code == 0
 
 
 def _matching_build_record(
@@ -855,18 +830,6 @@ def execute_build(
     )
 
     if return_code == 0 and firmware_sha256 is not None:
-        record_last_successful_build_state(
-            repo_root=repo_root_path,
-            run_id=str(updated_manifest.get("run_id")) if updated_manifest.get("run_id") is not None else result_dir_path.name,
-            build_number=build_number,
-            build_fingerprint=build_fingerprint.fingerprint,
-            build_fingerprint_algorithm=build_fingerprint.algorithm,
-            build_fingerprint_inputs=build_fingerprint.inputs,
-            firmware_artifact=artifact_relative_path.as_posix(),
-            firmware_artifact_path=str(elf_path),
-            firmware_sha256=firmware_sha256,
-            result_artifacts=result_artifacts,
-        )
         record_generated_state_success(
             repo_root=repo_root_path,
             scope=generated_state_scope,

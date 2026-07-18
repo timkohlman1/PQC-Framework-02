@@ -1682,6 +1682,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         source_build_run_id=manifest["run_id"],
         source_build_number=getattr(build_result, "build_number", None),
         source_build_manifest_path=getattr(build_result, "build_record_manifest_path", None),
+        artifact_path_override=build_result.elf_path,
     )
 
     if flash_result.return_code != 0:
