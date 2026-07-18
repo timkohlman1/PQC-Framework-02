@@ -5,6 +5,7 @@ under results/<run_id>/ without flashing hardware, opening UART devices, using
 SSH, or touching network resources.
 """
 
+import json
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -285,43 +286,95 @@ def _successful_state_return_code(state: dict[str, Any]) -> bool:
     return return_code is None or return_code == 0
 
 
-def _rebuild_decision(
+def _matching_build_record(
     *,
+    results_root: Path,
     current_fingerprint: str,
     current_algorithm: str,
-    state: dict[str, Any] | None,
-    state_error: str | None,
-    elf_path: Path,
+    experiment_id: str,
+    board_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Find the newest verified immutable build record matching this build."""
+
+    builds_root = results_root / "builds"
+    if not builds_root.is_dir():
+        return None, f"Build-record directory was not found: {builds_root}"
+
+    candidates = sorted(
+        (entry for entry in builds_root.iterdir() if entry.is_dir() and entry.name.isdigit()),
+        key=lambda entry: int(entry.name),
+        reverse=True,
+    )
+    matching_invalid: list[str] = []
+    for record_dir in candidates:
+        manifest_path = record_dir / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        build = manifest.get("build")
+        firmware = manifest.get("firmware")
+        if not isinstance(build, dict) or not isinstance(firmware, dict):
+            continue
+        if build.get("fingerprint") != current_fingerprint:
+            continue
+        if build.get("fingerprint_algorithm") != current_algorithm:
+            continue
+        if manifest.get("experiment") != experiment_id or manifest.get("board") != board_id:
+            continue
+
+        build_number = manifest.get("build_number")
+        if build_number != int(record_dir.name):
+            matching_invalid.append(f"{record_dir}: build number mismatch")
+            continue
+        recorded_sha256 = firmware.get("sha256")
+        if not isinstance(recorded_sha256, str) or not recorded_sha256:
+            matching_invalid.append(f"{record_dir}: missing firmware SHA-256")
+            continue
+
+        artifact_path = record_dir / "firmware.elf"
+        result_artifacts = firmware.get("result_artifacts")
+        if isinstance(result_artifacts, dict):
+            elf = result_artifacts.get("elf")
+            if isinstance(elf, dict) and isinstance(elf.get("path"), str) and elf["path"]:
+                artifact_path = record_dir / elf["path"]
+        if not artifact_path.is_file():
+            matching_invalid.append(f"{record_dir}: retained firmware artifact is missing")
+            continue
+        actual_sha256 = calculate_file_sha256(artifact_path)
+        if actual_sha256 != recorded_sha256:
+            matching_invalid.append(f"{record_dir}: retained firmware SHA-256 mismatch")
+            continue
+
+        return {
+            "build_number": build_number,
+            "record_dir": record_dir,
+            "manifest_path": manifest_path,
+            "artifact_path": artifact_path,
+            "firmware_sha256": recorded_sha256,
+            "manifest": manifest,
+        }, f"Verified matching immutable build record: {record_dir}"
+
+    if matching_invalid:
+        return None, "Matching build records were found but none passed verification: " + "; ".join(matching_invalid)
+    return None, "No immutable build record matched the current fingerprint and algorithm."
+
+
+def _rebuild_decision(
+    *,
+    matching_record: dict[str, Any] | None,
+    search_detail: str,
     force: bool,
 ) -> tuple[bool, str, str]:
-    """Return whether CMake can be skipped, plus a reason and detail."""
+    """Return whether CMake can be skipped using an immutable build record."""
 
     if force:
         return False, "force_requested", "--force was supplied."
-
-    if state_error is not None:
-        return False, "invalid_state", state_error
-
-    if state is None:
-        return False, "missing_state", "No local last-successful-build state was found."
-
-    if not _successful_state_return_code(state):
-        return False, "previous_build_failed", "Local build state did not record a successful prior build."
-
-    if not elf_path.is_file():
-        return False, "missing_elf", f"Expected ELF was not found: {elf_path}"
-
-    build_state = state.get("build", {})
-    state_fingerprint = build_state.get("fingerprint") if isinstance(build_state, dict) else None
-    state_algorithm = build_state.get("fingerprint_algorithm") if isinstance(build_state, dict) else None
-
-    if state_algorithm != current_algorithm:
-        return False, "changed_hash", "Build fingerprint algorithm differs from local state."
-
-    if state_fingerprint != current_fingerprint:
-        return False, "changed_hash", "Current build fingerprint differs from local state."
-
-    return True, BUILD_SKIP_REASON_CACHED, "Current fingerprint matched local state and expected ELF exists."
+    if matching_record is None:
+        return False, "missing_matching_build_record", search_detail
+    return True, BUILD_SKIP_REASON_CACHED, search_detail
 
 
 
@@ -495,82 +548,66 @@ def execute_build(
         },
         execution=detect_execution_identity(),
     )
-    state, state_error = _read_rebuild_state(repo_root_path)
-    build_skipped, skip_reason, skip_detail = _rebuild_decision(
+    matching_record, build_record_search_detail = _matching_build_record(
+        results_root=result_dir_path.parent,
         current_fingerprint=build_fingerprint.fingerprint,
         current_algorithm=build_fingerprint.algorithm,
-        state=state,
-        state_error=state_error,
-        elf_path=elf_path,
+        experiment_id=str(bundle["experiment"]["id"]),
+        board_id=str(bundle["board"]["id"]),
+    )
+    build_skipped, skip_reason, skip_detail = _rebuild_decision(
+        matching_record=matching_record,
+        search_detail=build_record_search_detail,
         force=force,
     )
 
     if build_skipped:
-        firmware_sha256 = calculate_file_sha256(elf_path)
-        result_artifacts = copy_firmware_artifacts_to_result(elf_path, result_dir_path)
+        assert matching_record is not None
+        reused_elf_path = Path(matching_record["artifact_path"])
+        firmware_sha256 = str(matching_record["firmware_sha256"])
+        build_number = int(matching_record["build_number"])
+        build_record_path = Path(matching_record["record_dir"])
+        build_record_manifest_path = Path(matching_record["manifest_path"])
+        source_manifest = matching_record["manifest"]
+        source_compatibility = source_manifest.get("compatibility", {}) if isinstance(source_manifest, dict) else {}
+        source_run_id = source_compatibility.get("source_run_id") if isinstance(source_compatibility, dict) else None
+        result_artifacts = copy_firmware_artifacts_to_result(reused_elf_path, result_dir_path)
         duration_seconds = perf_counter() - start
         skipped_configure = CommandExecution(
             command=construct_configure_command(configure_preset),
             return_code=0,
-            stdout="Skipped because current build fingerprint matched local state.",
+            stdout="Skipped because a verified immutable build record matched the current fingerprint.",
             stderr="",
             duration_seconds=0.0,
         )
-        state_build = state.get("build", {}) if isinstance(state, dict) else {}
-        state_run_id = state.get("run_id") if isinstance(state, dict) else None
-        state_build_number = state.get("build_number") if isinstance(state, dict) else None
         _write_build_log(
-            log_path=log_path,
-            repo_root=repo_root_path,
-            configure=skipped_configure,
-            build=None,
-            return_code=0,
-            duration_seconds=duration_seconds,
-            elf_path=elf_path,
-            artifact_exists=True,
-            firmware_sha256=firmware_sha256,
+            log_path=log_path, repo_root=repo_root_path, configure=skipped_configure,
+            build=None, return_code=0, duration_seconds=duration_seconds,
+            elf_path=reused_elf_path, artifact_exists=True, firmware_sha256=firmware_sha256,
             build_fingerprint=build_fingerprint.fingerprint,
             build_fingerprint_inputs=build_fingerprint.inputs,
             build_fingerprint_algorithm=build_fingerprint.algorithm,
-            build_number=state_build_number if isinstance(state_build_number, int) else None,
-            build_skipped=True,
-            build_skip_reason=skip_reason,
-            build_skip_detail=skip_detail,
-            force_rebuild=force,
+            build_number=build_number, build_skipped=True, build_skip_reason=skip_reason,
+            build_skip_detail=skip_detail, force_rebuild=force,
         )
-        # A cached build is an immutable reference to the original build record.
-        # Never call write_build_record here: doing so would overwrite the original
-        # manifest and build.log with evidence from this reuse operation.
-        build_record_path = None
-        build_record_manifest_path = None
-        if isinstance(state_build_number, int):
-            build_record_path = build_record_dir_for_result_dir(
-                result_dir_path,
-                state_build_number,
-            )
-            candidate_manifest_path = build_record_path / "manifest.json"
-            if candidate_manifest_path.is_file():
-                build_record_manifest_path = candidate_manifest_path
         record_generated_state_success(
-            repo_root=repo_root_path,
-            scope=generated_state_scope,
-            identity=generated_state_identity,
-            artifacts=[elf_path],
+            repo_root=repo_root_path, scope=generated_state_scope, identity=generated_state_identity,
+            artifacts=[reused_elf_path],
             record_refs={
-                "build_number": state_build_number if isinstance(state_build_number, int) else None,
-                "build_record_manifest": None if build_record_manifest_path is None else str(build_record_manifest_path),
+                "build_number": build_number,
+                "build_record_manifest": str(build_record_manifest_path),
                 "run_manifest": str(result_dir_path / "manifest.json"),
-                "source": "compatible_legacy_build_state",
+                "source": "verified_immutable_build_record",
             },
         )
         update_manifest(
             result_dir_path / "manifest.json",
             {
                 "result": "build_skipped",
-                "build_number": state_build_number if isinstance(state_build_number, int) else None,
+                "build_number": build_number,
                 "firmware": {
                     "artifact": artifact_relative_path.as_posix(),
-                    "artifact_path": str(elf_path),
+                    "artifact_path": str(reused_elf_path),
                     "artifact_exists": True,
                     "sha256": firmware_sha256,
                     "result_artifacts": result_artifacts,
@@ -585,44 +622,29 @@ def execute_build(
                 },
                 "source": source,
                 "build": {
-                    "configure_preset": configure_preset,
-                    "build_preset": build_preset,
-                    "return_code": 0,
-                    "duration_seconds": round(duration_seconds, 3),
-                    "log": "build.log",
-                    "fingerprint": build_fingerprint.fingerprint,
+                    "configure_preset": configure_preset, "build_preset": build_preset,
+                    "return_code": 0, "duration_seconds": round(duration_seconds, 3),
+                    "log": "build.log", "fingerprint": build_fingerprint.fingerprint,
                     "fingerprint_inputs": build_fingerprint.inputs,
                     "fingerprint_algorithm": build_fingerprint.algorithm,
                     "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
-                    "skipped": True,
-                    "skip_reason": skip_reason,
-                    "skip_detail": skip_detail,
-                    "force": force,
-                    "source_state_run_id": state_run_id if isinstance(state_run_id, str) else None,
-                    "source_state_build_number": state_build_number if isinstance(state_build_number, int) else None,
-                    "source_state_fingerprint": state_build.get("fingerprint") if isinstance(state_build, dict) else None,
-                    "record_action": "reused_immutable_build_record",
-                    "record_mutated": False,
+                    "skipped": True, "skip_reason": skip_reason, "skip_detail": skip_detail,
+                    "force": force, "source_state_run_id": source_run_id,
+                    "source_state_build_number": build_number,
+                    "source_state_fingerprint": build_fingerprint.fingerprint,
+                    "record_action": "reused_immutable_build_record", "record_mutated": False,
                     **_build_record_manifest_update(build_record_path),
                 },
             },
         )
         return BuildResult(
-            return_code=0,
-            duration_seconds=duration_seconds,
-            elf_path=elf_path,
-            log_path=log_path,
-            configure=skipped_configure,
-            build=None,
-            firmware_sha256=firmware_sha256,
-            build_fingerprint=build_fingerprint.fingerprint,
+            return_code=0, duration_seconds=duration_seconds, elf_path=reused_elf_path,
+            log_path=log_path, configure=skipped_configure, build=None,
+            firmware_sha256=firmware_sha256, build_fingerprint=build_fingerprint.fingerprint,
             build_fingerprint_inputs=build_fingerprint.inputs,
-            build_fingerprint_algorithm=build_fingerprint.algorithm,
-            build_number=state_build_number if isinstance(state_build_number, int) else None,
-            result_artifacts=result_artifacts,
-            build_record_dir=build_record_path,
-            build_record_manifest_path=build_record_manifest_path,
-            build_skipped=True,
+            build_fingerprint_algorithm=build_fingerprint.algorithm, build_number=build_number,
+            result_artifacts=result_artifacts, build_record_dir=build_record_path,
+            build_record_manifest_path=build_record_manifest_path, build_skipped=True,
             build_skip_reason=skip_reason,
         )
 
