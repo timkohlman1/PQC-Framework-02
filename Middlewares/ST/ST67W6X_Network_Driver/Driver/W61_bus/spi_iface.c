@@ -140,6 +140,8 @@ struct spi_xfer_engine
   uint8_t rxq_bound;
   /** Current transmit buffer */
   struct spi_buffer *txbuf;
+  /** Number of consecutive failed attempts for the current transmit buffer */
+  uint8_t tx_retry_count;
   /** Transfer statistics */
   struct spi_stat stat;
   /** Received data callbacks for each traffic type */
@@ -599,8 +601,12 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   if ((wait_txn_rdy != 0) &&
       (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0))
   {
+    uint16_t tx_len = (txbuf != NULL) ? txbuf->len : 0U;
+
     SPI_STAT_INC(&engine->stat, wait_txn_timeouts, 1U);
-    spi_err("waiting for spi txn ready timeouted\n");
+    spi_err("waiting for spi txn ready timeouted: tx_pending=%" PRIi32
+            " tx_len=%" PRIu16 " ready=%" PRIi32 "\n",
+            (txbuf != NULL) ? 1 : 0, tx_len, spi_port_is_ready());
     return -1;
   }
 
@@ -811,46 +817,73 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
   struct spi_buffer *txbuf;
   int32_t rx_pending;
   int32_t wait_txn_rdy;
+  int32_t xfer_ret;
 
-  while (true)
+  /*
+   * Process exactly one protocol transaction for each engine wake-up.
+   * SPI_EVT_TXN_RDY is edge-derived and may describe module-to-host data.
+   * Draining multiple transactions in one wake-up can consume that edge for
+   * an RX transaction and then incorrectly reuse it for a queued TX buffer.
+   */
+  txbuf = spi_get_txbuf(engine);
+  rx_pending = spi_port_is_ready();
+
+  spi_trace(SPI_TP_NONE, "txbuf %" PRIuPTR ", rx_pending %" PRIi32 "\n", txbuf, rx_pending);
+  if ((txbuf == NULL) && (rx_pending != 1))
   {
-    /* Get txbuf */
-    txbuf = spi_get_txbuf(engine);
+    return 0;
+  }
 
-    /* Read data ready GPIO level */
-    rx_pending = spi_port_is_ready();
+  spi_trace(SPI_TP_ASSERT_CS, "Assert CS\n");
+  (void)spi_port_set_cs(1);
 
-    spi_trace(SPI_TP_NONE, "txbuf %" PRIuPTR ", rx_pending %" PRIi32 "\n", txbuf, rx_pending);
-    /* Check if txbuf is valid or data is ready for transfer */
-    if ((txbuf != NULL) || (rx_pending == 1))
+  wait_txn_rdy = ((flags & SPI_XFER_F_SKIP_FIRST_TXN_WAIT) != 0U) ? 0 : 1;
+  xfer_ret = spi_xfer_one(engine, txbuf, wait_txn_rdy);
+
+  spi_trace(SPI_TP_DEASSERT_CS, "Deassert CS\n");
+  (void)spi_port_set_cs(0);
+  engine->state = SPI_XFER_STATE_TXN_DONE;
+
+  if (xfer_ret != 0)
+  {
+    if (txbuf != NULL)
     {
-      /* Assert chip select */
-      spi_trace(SPI_TP_ASSERT_CS, "Assert CS\n");
-      (void)spi_port_set_cs(1);
-
-      /* Transfer one packet */
-      if ((flags & SPI_XFER_F_SKIP_FIRST_TXN_WAIT) != 0U)
+      engine->tx_retry_count++;
+      if (engine->tx_retry_count >= 3U)
       {
-        flags &= ~SPI_XFER_F_SKIP_FIRST_TXN_WAIT;
-        wait_txn_rdy = 0;
+        spi_err("spi transaction dropped after bounded retries: ret=%" PRIi32
+                " tx_len=%" PRIu16 " retries=%" PRIu32 " ready=%" PRIi32 "\n",
+                xfer_ret, txbuf->len, (uint32_t)engine->tx_retry_count,
+                spi_port_is_ready());
+        engine->txbuf = NULL;
+        engine->tx_retry_count = 0U;
+        spi_buffer_free(txbuf);
       }
       else
       {
-        wait_txn_rdy = 1;
+        spi_err("spi transaction deferred after error: ret=%" PRIi32
+                " tx_len=%" PRIu16 " retry=%" PRIu32 "/3 ready=%" PRIi32 "\n",
+                xfer_ret, txbuf->len, (uint32_t)engine->tx_retry_count,
+                spi_port_is_ready());
       }
-
-      (void)spi_xfer_one(engine, txbuf, wait_txn_rdy);
-
-      /* De-assert chip select */
-      spi_trace(SPI_TP_DEASSERT_CS, "Deassert CS\n");
-      (void)spi_port_set_cs(0);
-      engine->state = SPI_XFER_STATE_TXN_DONE;
     }
     else
     {
-      /* Neither txbuf nor rx_pending require processing, exit loop */
-      break;
+      spi_err("spi receive transaction failed: ret=%" PRIi32
+              " ready=%" PRIi32 "\n", xfer_ret, spi_port_is_ready());
     }
+    return xfer_ret;
+  }
+
+  if (engine->txbuf == NULL)
+  {
+    engine->tx_retry_count = 0U;
+  }
+
+  /* Preserve queued work without reusing the READY event just consumed. */
+  if ((engine->txbuf != NULL) || (uxQueueMessagesWaiting(engine->txq) > 0U))
+  {
+    (void)xEventGroupSetBits(engine->event, SPI_EVT_TXN_PENDING);
   }
 
   return 0;
@@ -861,20 +894,25 @@ static void spi_xfer_engine_task(void *arg)
   EventBits_t bits;
   struct spi_xfer_engine *engine = arg;
 
-  /* Wait for events and process them. */
+  /* Wait for events and clear only the event that this iteration owns. */
   while (engine->stop == 0)
   {
     engine->state = SPI_XFER_STATE_IDLE;
-    bits = SPI_EVT_TXN_PENDING | SPI_EVT_TXN_RDY;
-    bits = xEventGroupWaitBits(engine->event, bits, pdTRUE, pdFALSE,
-                               portMAX_DELAY);
+    bits = xEventGroupWaitBits(engine->event,
+                               SPI_EVT_TXN_PENDING | SPI_EVT_TXN_RDY,
+                               pdFALSE, pdFALSE, portMAX_DELAY);
     spi_trace(SPI_TP_NONE, "Got event bits %" PRIx32 "\n", bits);
+
     if ((bits & SPI_EVT_TXN_RDY) != 0U)
     {
+      /* READY owns this transaction. Leave TX_PENDING set for a later wake-up. */
+      (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
       (void)spi_do_xfer(engine, SPI_XFER_F_SKIP_FIRST_TXN_WAIT);
     }
     else if ((bits & SPI_EVT_TXN_PENDING) != 0U)
     {
+      /* A host TX request must obtain its own subsequent READY handshake. */
+      (void)spi_clear_event(engine, SPI_EVT_TXN_PENDING);
       (void)spi_do_xfer(engine, 0U);
     }
     else

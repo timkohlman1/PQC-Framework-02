@@ -95,3 +95,36 @@ high `SPI_CS`, SPI clock bursts, and MOSI/MISO transfers. Compare those
 transitions with the UART markers rather than treating either source alone as
 higher-level network evidence.
 
+### Post-network SPI READY recovery
+
+The ST67 transaction-ready handshake remains event driven. An already-high
+`SPI_RDY` level is not treated as permission to bypass the transaction-ready
+wait because the same pin also reports module-to-host receive availability.
+Conflating those states can start a host transmit while the module is presenting
+receive data and can produce an SPI transfer-completion timeout.
+
+A failed transmit buffer is retained only for bounded recovery. The engine exits
+the current processing loop after each failure, retries only when a later SPI
+event wakes it, and drops the buffer after three failed attempts. This prevents
+a permanently queued packet from generating an unbounded timeout loop. A drop
+is diagnostic evidence of transport failure, not successful network delivery.
+
+The lwIP output adapter submits exactly one complete Ethernet frame for each
+output call. A chained lwIP `pbuf` is copied into one temporary contiguous
+buffer before it is queued to the ST67 driver. Sending each pbuf segment as an
+independent ST67 message is prohibited because the segments belong to one
+Ethernet frame. Runtime success still requires hardware UART evidence showing
+association, DHCP, and sustained operation without recurring SPI timeouts or
+bounded-retry drops.
+
+### SPI READY event ownership
+
+The transfer engine processes one protocol transaction per wake-up and clears
+only the event owned by that iteration. A module `SPI_EVT_TXN_RDY` event is
+handled before a host `SPI_EVT_TXN_PENDING` event, while the pending TX event is
+left set for a separate iteration. This prevents an RX/data-ready edge from
+being consumed and then reused as the transaction-ready handshake for a queued
+host transmit. After a successful transaction, additional queued TX work is
+re-armed explicitly. Failed TX buffers remain subject to the three-attempt
+bounded drop policy. Retry counters are logged as 32-bit values so the UART
+formatter produces numeric diagnostics.

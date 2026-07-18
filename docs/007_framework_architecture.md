@@ -272,6 +272,16 @@ The UART marker begins with `lwIP runtime smoke:` and includes `network=unavaila
 
 Phase M10.1 begins hardware-backed ST67W61M1 validation without importing the CubeMX HTTP-server demo application. The default FreeRTOS task registers the minimal ST67 application callbacks, initializes the module through `W6X_Init()`, initializes the Wi-Fi subsystem through `W6X_WiFi_Init()`, and starts a bounded active scan through `W6X_WiFi_Scan()`. UART evidence uses `evidence=stm32-st67-wifi-rf-scan-only`, reports the callback status and access-point count, and deliberately omits SSID and BSSID values. The scan has an 8000 ms timeout and does not attempt association, register a real lwIP netif, start DHCP, open TCP, load certificates, perform a TLS handshake, or invoke MQTT. The ST67 SPI transfer-engine task stack is currently 2048 bytes after the prior 768-byte allocation faulted in the FreeRTOS queue receive path; the final minimum safe size remains unconfirmed because the current UART memory checkpoint measures only `defaultTask`.
 
+The ST67/lwIP transmit boundary sends one complete Ethernet frame per driver
+submission. Chained lwIP pbufs are consolidated before enqueueing. The SPI
+transfer engine checks the current active-high READY level before blocking for
+a new event and, after a failed transaction, leaves the pending transmit buffer
+owned by the engine while exiting the immediate processing loop. This prevents
+an ignored READY timeout from retrying the same packet every two seconds. These
+controls are recovery and frame-integrity behaviour only; they do not establish
+TCP, TLS, MQTT, or end-to-end success without explicit hardware evidence.
+
+
 Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration currently uses SPI1 prescaler 32, giving an approximately 3.75 Mbit/s diagnostic setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. This temporary reduction allows reliable capture with the available FX2 logic analyser; hardware behaviour is not claimed from the configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
 
 Phase M6.2 adds `Core/Inc/pqc_network_interface.h` and `Core/Src/pqc_network_interface.c` as the project-owned boundary between later protocol layers and the future ST67W61M1-backed lwIP netif. The implementation owns an unattached local `struct netif`, clears its IPv4 address, netmask, and gateway with lwIP helpers, then reads `netif_is_up`, `netif_is_link_up`, the lwIP IPv4-any state, and an lwIP-formatted IPv4 string. It maps those observed lwIP values into `link`, `ip`, and `tcp` availability, while transport remains unavailable because no backend exists. The UART line begins with `lwIP network interface:` and is labelled `evidence=lwip-netif-state-only`; it reports both the raw lwIP observations and the mapped unavailable states. Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end status remain unavailable. It does not call `netif_add`, set link or interface state up, start DHCP, open TCP, invoke wolfSSL, invoke wolfMQTT, or access ST67W61M1 hardware. This boundary is intended for later wolfSSL transport and wolfMQTT work without coupling those layers directly to the Wi-Fi driver.
@@ -478,6 +488,24 @@ remain unavailable until their own explicit runtime evidence is recorded.
 The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
 
 
+### Post-network SPI transaction recovery
+
+The ST67 transaction-ready handshake remains event driven. The active-high
+`SPI_RDY` level also represents module-to-host receive availability, so a high
+level alone must not bypass the transaction-ready event expected for a host
+transmit. A failed transmit is retained for at most three event-driven attempts;
+the engine exits the current processing loop after every failure and drops the
+packet after the retry limit. This bounds fault amplification while preserving
+a limited opportunity for protocol recovery. A dropped packet is explicit
+negative transport evidence.
+
+The lwIP output adapter submits exactly one complete Ethernet frame for each
+output call. A chained lwIP `pbuf` is copied into one temporary contiguous
+buffer before it is queued to the ST67 driver. Sending each pbuf segment as an
+independent ST67 message is prohibited because the segments belong to one
+Ethernet frame. Hardware success requires association, DHCP, heartbeat
+continuity, and absence of recurring SPI timeout or bounded-drop markers.
+
 ## ST67 T02 normal startup and live network evidence
 
 The normal ST67 T02 startup path initializes the module and host-side lwIP,
@@ -534,3 +562,15 @@ prevents stale cross-profile symbol combinations such as an unresolved
 
 This cleanup does not remove wolfSSL source files, persistent signing tuples, or
 private keys.
+
+### SPI READY event ownership
+
+The transfer engine processes one protocol transaction per wake-up and clears
+only the event owned by that iteration. A module `SPI_EVT_TXN_RDY` event is
+handled before a host `SPI_EVT_TXN_PENDING` event, while the pending TX event is
+left set for a separate iteration. This prevents an RX/data-ready edge from
+being consumed and then reused as the transaction-ready handshake for a queued
+host transmit. After a successful transaction, additional queued TX work is
+re-armed explicitly. Failed TX buffers remain subject to the three-attempt
+bounded drop policy. Retry counters are logged as 32-bit values so the UART
+formatter produces numeric diagnostics.
