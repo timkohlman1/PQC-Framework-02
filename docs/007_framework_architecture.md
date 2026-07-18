@@ -58,13 +58,13 @@ This matrix is the canonical detailed implementation-status reference. A support
 | Classical MQTT broker Compose profile | Supported | Not applicable | Host clients may validate it | Supported with temporary classical mutual-TLS material | Gateway deployment and validation are capability-gated | Broker-side and host-side evidence | Does not prove STM32, lwIP-on-STM32, wolfSSL-on-STM32, wolfMQTT-on-STM32, Wi-Fi, or end-to-end wireless success |
 | Experimental OQS MQTT broker profile | Supported | Not applicable | OQS-capable host validation supported where tooling is available | Supported as an experimental protocol-evaluation profile | Gateway deployment and validation are capability-gated | Broker-side and host-side experimental evidence | Not production TLS and not STM32 or wireless evidence |
 | Native host wolfMQTT/wolfSSL broker validation | Supported as a native host target | Not applicable | Supported, including structured compatibility markers | Uses the configured broker | Local or gateway broker checks are capability-gated | `host_side` MQTT-over-TLS compatibility evidence | Must keep all STM32, ST67W61M1, and end-to-end wireless claims false |
-| STM32 lwIP/ST67W6X source integration | Supported in direct and relocated firmware builds | Limited non-network helper smoke supported | Not applicable | Not applicable | Optional UART smoke is capability-gated | STM32 build-only plus constrained local runtime evidence | Generated driver presence and pin/clock preparation do not prove module detection, Wi-Fi, link, hardware IP, TCP, TLS, or MQTT |
+| STM32 lwIP/ST67W6X source integration | Supported in direct and relocated firmware builds | Module initialization and bounded Wi-Fi RF scan supported; local lwIP helper smoke remains separate | Not applicable | Not applicable | Capability-gated UART validation | STM32 build evidence plus `stm32-st67-wifi-rf-scan-only` hardware evidence | Module initialization and RF scan do not prove association, link, hardware IP, TCP, TLS, or MQTT |
 | STM32 lwIP network-interface boundary | Supported | Supported only as unattached local `netif` state observation | Not applicable | Not applicable | Optional UART evidence is capability-gated | `lwip-netif-state-only`; unavailable-boundary evidence | No `netif_add`, link-up, DHCP, socket, external network, or ST67W61M1 access |
 | STM32 lwIP UDP loopback | Supported | Supported after scheduler start at `127.0.0.1` | Not applicable | No broker used | Known-image UART assertion is capability-gated | `stm32-local-lwip-loopback-only` | Local loopback is not Wi-Fi, hardware-backed IP, external TCP, TLS, MQTT, or broker evidence |
 | STM32 wolfSSL source and TLS-context lifecycle | Supported in direct and relocated firmware builds | Supported for initialization, TLS 1.2 client `WOLFSSL_CTX` create/free, and cleanup | Not applicable | Not applicable | UART smoke is capability-gated | `tls-context-lifecycle-only` | No `WOLFSSL` session, certificates, private keys, socket transport, handshake, MQTT, Wi-Fi, or ST67W61M1 |
 | STM32 wolfSSL transport boundary | Supported | Boundary executes only to report unavailable operations | Not applicable | Not applicable | Optional UART evidence is capability-gated | `unavailable-transport-only` | Connect/read/write callbacks perform no socket I/O and transfer no data |
 | STM32 wolfMQTT integration | Supported: pinned wolfMQTT client, packet, and socket callback layers build and link | Supported only for serialized fake/no-network client initialization/deinitialization after scheduler start | Separate native host validation exists but is not STM32 evidence | No broker used by STM32 path | Known-image UART assertion is capability-gated | Build-only plus `stm32-fake-no-network-initialization-only` | No TCP, TLS handshake, MQTT connect, subscribe, publish, receive, disconnect, reconnect, Wi-Fi, or ST67W61M1 |
-| ST67W61M1 hardware-backed network backend | Compile-time driver/interface preparation only | Unimplemented | Not applicable | Not applicable | Unimplemented | Future hardware-backed capability | Real module detection, Wi-Fi association, link, DHCP/hardware IP, and external TCP require hardware-backed implementation and evidence |
+| ST67W61M1 hardware-backed network backend | Driver and interface sources build in direct and relocated profiles | Association and DHCP-supported runtime | Not applicable | No broker used by this path | Capability-gated known-image UART and manifest evidence supported | `stm32-st67-wifi-association-dhcp` | Proves configured-AP association and DHCP IPv4 assignment only; external TCP, TLS handshake, MQTT, broker reachability, and end-to-end protocol success remain unavailable |
 | Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented | Host-side compatibility exists separately | Broker profiles exist separately | Unimplemented end-to-end | Future hardware-backed STM32 runtime capability | Requires ST67W61M1 network bring-up, real wolfSSL transport/handshake, wolfMQTT protocol operations, UART/manifests, and broker corroboration |
 | PQC or hybrid STM32 MQTT-over-TLS | Broker-side OQS experimentation exists separately | Unimplemented | Experimental host/broker evaluation only | Experimental OQS profile | Unimplemented end-to-end | Future protocol and hardware-backed capability | Must follow successful classical STM32 MQTT-over-TLS and confirmed embedded library support |
 
@@ -217,12 +217,12 @@ Supported planning modes are evidence-bound:
 - Host/socket validation path: host-side client or broker compatibility evidence only.
 - STM32 build-only path: compiler/linker evidence only.
 - STM32 fake/no-network runtime path: board UART initialization evidence only.
-- Future ST67W61M1 network-interface path: module detection, link, IP, and TCP readiness evidence only until TLS/MQTT are explicitly validated.
+- Current ST67W61M1 Wi-Fi/DHCP path: configured-AP association and DHCP IPv4 evidence only. External TCP and all TLS/MQTT claims remain unavailable until explicitly implemented and validated.
 - Future STM32 MQTT-over-TLS path: TLS handshake, MQTT connect, publish, reconnect, timing, and resource evidence only from explicit STM32 UART logs, manifests, and broker logs.
 
 Evidence categories must not be collapsed. Build-only evidence does not imply runtime success. Fake transport evidence does not imply broker, TLS, STM32, or Wi-Fi success. Host-side and broker-side evidence does not imply STM32 success. STM32 UART initialization evidence does not imply Wi-Fi, IP, TCP, TLS, MQTT, publish, reconnect, or end-to-end wireless success.
 
-Current implemented preparation and compatibility layers must preserve this boundary as later work adds the ST67W61M1 network-interface backend, classical STM32 MQTT-over-TLS validation, network degradation, and eventual PQC/hybrid MQTT/TLS experiments.
+Current implemented preparation, ST67W61M1 association/DHCP support, and compatibility layers must preserve this boundary as later work adds external TCP readiness, classical STM32 MQTT-over-TLS validation, network degradation, and eventual PQC/hybrid MQTT/TLS experiments.
 
 ## Benchmark model
 
@@ -269,6 +269,8 @@ Phase M3 adds `scripts/framework/mqtt_fake_transport.py` and the `mqtt-fake-tran
 Phase M5 adds STM32-local lwIP/ST67W6X compile-only preparation to the firmware target. `Core/Inc/pqc_lwip_build_only.h` still defines the project-owned build-only status boundary and `Core/Src/pqc_lwip_build_only.c` keeps runtime networking explicitly unavailable. CubeMX-generated lwIP application files, SICS Network LwIP sources, SPI HAL support, and ST67W6X network-driver sources are now allowed to compile and link in both direct and relocated application builds so the future network-interface layer can be inspected against the real generated interfaces. This remains compile/link evidence only, with one additional non-network lwIP runtime smoke marker emitted over UART. The smoke marker exercises deterministic lwIP version, IPv4 formatting, and checksum helpers only; it does not initialize a netif, use ST67W6X hardware, acquire an IP address, open TCP, run TLS, or perform MQTT. The generated ST67W6X hardware-facing code is present so interfaces can be inspected and future stubs can be scoped, but the firmware does not claim module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, network runtime success, or end-to-end wireless success.
 
 The UART marker begins with `lwIP runtime smoke:` and includes `network=unavailable`; it is intended to prove that a constrained set of lwIP helper functions executes during the existing 10-second UART capture window without crossing the network-interface boundary. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` exercises the baseline build/flash/UART flow and asserts that the marker appears in `uart.log`; this remains helper-call UART evidence only, not ST67W61M1, Wi-Fi, IP, TCP, TLS, MQTT, or end-to-end network evidence.
+
+Phase M10.1 begins hardware-backed ST67W61M1 validation without importing the CubeMX HTTP-server demo application. The default FreeRTOS task registers the minimal ST67 application callbacks, initializes the module through `W6X_Init()`, initializes the Wi-Fi subsystem through `W6X_WiFi_Init()`, and starts a bounded active scan through `W6X_WiFi_Scan()`. UART evidence uses `evidence=stm32-st67-wifi-rf-scan-only`, reports the callback status and access-point count, and deliberately omits SSID and BSSID values. The scan has an 8000 ms timeout and does not attempt association, register a real lwIP netif, start DHCP, open TCP, load certificates, perform a TLS handshake, or invoke MQTT. The ST67 SPI transfer-engine task stack is currently 2048 bytes after the prior 768-byte allocation faulted in the FreeRTOS queue receive path; the final minimum safe size remains unconfirmed because the current UART memory checkpoint measures only `defaultTask`.
 
 Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration currently uses SPI1 prescaler 32, giving an approximately 3.75 Mbit/s diagnostic setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. This temporary reduction allows reliable capture with the available FX2 logic analyser; hardware behaviour is not claimed from the configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
 
@@ -443,7 +445,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-003 | M6.2.1 generated-state provenance refusal before gateway access | Hardware-workflow fixture coverage | Framework and integration coverage exists, but secure-boot hardware fixtures still need explicit successful build/signing records to assert provenance refusal before any gateway operation | Updated build/signing record fixtures in the secure-boot hardware workflow | `tests/hardware/test_secure_boot_flash_workflow.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_secure_boot_flash_workflow.py -m hardware --pqc-require-hardware` | deferred |
 | DTR-004 | M6.3 wolfSSL unavailable-transport marker | Dedicated gateway-mediated known-image UART/hardware assertion | Static/build coverage exists, but the known-image baseline hardware test does not yet assert callbacks, zero-transfer behavior, no socket I/O, and all unavailable fields | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware` | deferred |
 | DTR-005 | M9 live host wolfMQTT/wolfSSL validation against the gateway broker | Gateway integration and live broker compatibility | Native host build coverage exists; deterministic live validation requires reachable gateway infrastructure and provisioned temporary broker certificates | Gateway connectivity, broker deployment, temporary certificate provisioning, and host client execution | `tests/integration/test_mqtt_broker_gateway_e2e.py` | `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway`, then the documented `host_wolfmqtt_validate.py run` command | deferred |
-| DTR-006 | M10 ST67W61M1 network-interface backend | Firmware-runtime, network, gateway, UART, and hardware coverage | The physical backend is unimplemented and the network hardware is not part of the current verified path | Phase M10 implementation plus installed ST67W61M1 hardware, module-control support, Wi-Fi credentials supplied outside the repository, gateway/UART access, and an external network endpoint | `tests/hardware/test_st67w61m1_network_interface.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_st67w61m1_network_interface.py -m hardware --pqc-require-hardware` | blocked by M10 implementation/hardware |
+| DTR-006 | M10 ST67W61M1 association and DHCP | Hardware coverage | Implemented by the baseline known-image UART hardware test, which requires explicit association and DHCP success markers plus a non-zero IPv4 address | Installed ST67W61M1 hardware, configured access point, gateway/UART access, and experiment-supplied credentials | `tests/hardware/test_baseline_uart.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_baseline_uart.py -m hardware --pqc-require-hardware` | retired: coverage implemented; external TCP/TLS/MQTT remains separately deferred |
 | DTR-007 | M11 classical STM32 MQTT-over-TLS | End-to-end firmware-runtime, network, broker, gateway, UART, and hardware coverage | The real STM32 transport, certificate-backed TLS handshake, and MQTT protocol path are unimplemented | Completed M10 backend, real wolfSSL transport/session, classical certificates supplied outside the repository, broker access, and wolfMQTT connect/publish/reconnect implementation | `tests/hardware/test_stm32_mqtt_tls.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_stm32_mqtt_tls.py -m hardware --pqc-require-hardware` | blocked by M10/M11 implementation |
 | DTR-008 | M12 controlled network degradation | Gateway/network integration and end-to-end hardware coverage | A stable real M11 path and safe impairment apply/verify/cleanup controls do not yet exist | Completed M11 path and gateway network-impairment capability with guaranteed cleanup | `tests/integration/test_mqtt_network_degradation.py` | `./scripts/dev.ps1 pytest-gateway tests/integration/test_mqtt_network_degradation.py -m integration --pqc-require-gateway` | blocked by M11/M12 implementation |
 | DTR-009 | M13 PQC/hybrid STM32 MQTT/TLS | End-to-end firmware-runtime, broker, network, gateway, UART, and hardware coverage | Target-library algorithm support and a stable classical STM32 MQTT/TLS baseline have not yet been established | Completed M11 baseline, confirmed wolfSSL/wolfMQTT target support, compatible broker profile, and Phase M13 implementation | `tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_stm32_pqc_hybrid_mqtt_tls.py -m hardware --pqc-require-hardware` | blocked by M11/M13 implementation |
@@ -465,3 +467,66 @@ IP acquisition, external TCP communication, certificate-backed TLS, MQTT
 connect/publish/reconnect, or end-to-end wireless operation. Those capabilities
 remain unavailable until their own explicit runtime evidence is recorded.
 
+
+
+## ST67W61M1 Wi-Fi/DHCP evidence
+
+The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
+
+
+## ST67 T02 normal startup and live network evidence
+
+The normal ST67 T02 startup path initializes the module and host-side lwIP,
+associates directly with the configured access point, waits for the station
+link, and obtains IPv4 configuration through host-side lwIP DHCP. Active Wi-Fi
+scanning is not part of the normal startup path because it delays association
+and can fail independently of a valid direct connection.
+
+Active scanning remains available only as an explicit diagnostic build using
+`PQC_ST67_WIFI_DIAGNOSTIC_SCAN=1`. The default is disabled.
+
+After DHCP succeeds, runtime evidence must be derived from the live station
+`netif`. The canonical marker is `lwIP runtime network:` with
+`evidence=stm32-st67-t02-live-state`, `network=available`,
+`wifi=connected`, `link=up`, and the complete assigned IPv4 address. Static
+pre-network smoke markers do not override later live network evidence.
+
+The gateway-mediated hardware test
+`tests/hardware/test_lwip_runtime_smoke_uart.py` validates module
+initialization, scan skipping, association, link-up, DHCP, live IPv4 evidence,
+heartbeat continuity, and absence of contradictory unavailable markers after
+the live-state marker.
+
+Secure-boot profiles use the same relocated application image and therefore
+must preserve these runtime markers after wolfBoot verification and handoff.
+The existing secure-boot profile and benchmark tests remain the authoritative
+build, signing, flash, verification, and profile-matrix coverage.
+
+## Persistent signing tuple model
+
+wolfBoot build profiles and application-signing profiles select an
+algorithm-specific tuple under `secrets/wolfboot/tuples/`. The tuple contains
+the private key, generated keystore, and a hash manifest. It is
+persistent local security state, not build output.
+
+`tools/wolfboot/wolfboot_signing_private_key.der` and
+`tools/wolfboot/src/keystore.c` are disposable materializations. A separate
+public-key DER file is optional because the maintained wolfBoot profiles
+embed the verification public key in generated `keystore.c`. Their absence
+does not make the persistent tuple partial; the next wolfBoot build restores
+them. Only missing or inconsistent members inside the persistent tuple cause a
+safe failure.
+
+
+### wolfBoot cross-profile object isolation
+
+The wolfBoot checkout is reused across signing algorithms, but wolfCrypt target
+object filenames do not encode the active algorithm or preprocessor settings.
+Before each wolfBoot profile build, the framework removes generated `.o` and
+`.d` files below `tools/wolfboot/lib/wolfssl/`. This forces target wolfCrypt
+sources and ARM assembly wrappers to be rebuilt for the selected profile and
+prevents stale cross-profile symbol combinations such as an unresolved
+`BlockSha3`.
+
+This cleanup does not remove wolfSSL source files, persistent signing tuples, or
+private keys.

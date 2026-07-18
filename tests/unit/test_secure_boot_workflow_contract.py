@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HARDWARE_TEST_PATH = (
+    REPO_ROOT / "tests/hardware/test_secure_boot_flash_workflow.py"
+)
+
+
+def _load_hardware_test_module():
+    spec = importlib.util.spec_from_file_location(
+        "secure_boot_flash_workflow_review",
+        HARDWARE_TEST_PATH,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_secure_boot_profile_and_hardware_test_use_derived_timing_contract():
+    profile = (
+        REPO_ROOT
+        / "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+    ).read_text(encoding="utf-8")
+    hardware = HARDWARE_TEST_PATH.read_text(encoding="utf-8")
+    expected = "framework_derived_from_uart_cycles_and_reported_hclk"
+
+    assert f"boot_timing_source: {expected}" in profile
+    assert expected in hardware
+    assert "uart_explicit_verification_time_marker" not in hardware
+
+
+def test_hardware_failure_context_reads_newest_matching_log(tmp_path):
+    module = _load_hardware_test_module()
+    older = tmp_path / "older" / "wolfboot_build.log"
+    newer = tmp_path / "newer" / "wolfboot_build.log"
+    older.parent.mkdir()
+    newer.parent.mkdir()
+    older.write_text("older failure", encoding="utf-8")
+    newer.write_text("newer failure", encoding="utf-8")
+    older.touch()
+    newer.touch()
+
+    context = module._result_log_context(
+        tmp_path,
+        "wolfboot_build.log",
+    )
+
+    assert str(newer) in context
+    assert "newer failure" in context
+    assert "older failure" not in context
+
+
+def test_secure_boot_result_selection_uses_manifest_semantics(tmp_path):
+    module = _load_hardware_test_module()
+
+    build_result = tmp_path / "001_baseline"
+    build_result.mkdir()
+    (build_result / "manifest.json").write_text(
+        json.dumps({"result": "build_passed"}),
+        encoding="utf-8",
+    )
+
+    secure_boot = tmp_path / "002_secure_boot"
+    secure_boot.mkdir()
+    (secure_boot / "manifest.json").write_text(
+        json.dumps(
+            {
+                "boot_mode": module.EXPECTED_BOOT_MODE,
+                "boot_crypto": module.EXPECTED_BOOT_CRYPTO,
+                "secure_boot_flash": {"return_code": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert module._secure_boot_result_dirs(tmp_path) == [secure_boot]

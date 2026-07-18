@@ -99,6 +99,18 @@ class UartMonitorResult:
 Runner = Callable[[list[str], Path], CommandExecution]
 
 
+
+
+_WIFI_ASSOCIATION_RE = re.compile(r"^ST67 Wi-Fi association: result=(?P<result>\S+) ssid=(?P<ssid>\S+) state=(?P<state>\S+) security=(?P<security>\S+) channel=(?P<channel>\d+)$", re.MULTILINE)
+_WIFI_DHCP_RE = re.compile(r"^ST67 DHCP: result=(?P<result>\S+) ipv4=(?P<ipv4>\d{1,3}(?:\.\d{1,3}){3}) gateway=(?P<gateway>\d{1,3}(?:\.\d{1,3}){3}) netmask=(?P<netmask>\d{1,3}(?:\.\d{1,3}){3})$", re.MULTILINE)
+
+def parse_wifi_dhcp_evidence(output: str) -> dict[str, Any]:
+    association_match = _WIFI_ASSOCIATION_RE.search(output)
+    dhcp_match = _WIFI_DHCP_RE.search(output)
+    association = None if association_match is None else association_match.groupdict()
+    dhcp = None if dhcp_match is None else dhcp_match.groupdict()
+    return {"evidence_source": "uart_explicit_st67_markers", "wifi_association": association, "dhcp": dhcp, "association_success": association is not None and association["result"] == "passed", "dhcp_success": dhcp is not None and dhcp["result"] == "passed" and dhcp["ipv4"] != "0.0.0.0"}
+
 def construct_ssh_uart_capture_command(
     gateway_alias: str,
     uart_device: str,
@@ -132,12 +144,14 @@ def construct_ssh_uart_monitor_with_restart_command(
     restart_command: str = DEFAULT_RESTART_COMMAND,
     restart_delay_seconds: float = DEFAULT_RESTART_DELAY_SECONDS,
 ) -> list[str]:
-    """Construct one SSH command that starts UART capture before resetting.
+    """Construct one SSH command that captures only post-reset UART output.
 
-    The reset command runs in a delayed background subshell after the UART
-    device has been configured and before the bounded ``cat`` capture window
-    starts. Reset stdout is redirected to stderr so the monitor stdout remains
-    device UART data only.
+    The configured UART is first drained for the short restart-delay interval
+    so bytes emitted by firmware that was already running cannot satisfy marker
+    checks for the next boot. A bounded UART capture is then opened before the
+    reset command is issued, ensuring the earliest post-reset bytes are retained.
+    Reset stdout is redirected to stderr so monitor stdout remains device UART
+    data only.
     """
 
     device = shlex.quote(uart_device)
@@ -146,12 +160,13 @@ def construct_ssh_uart_monitor_with_restart_command(
         f"stty -F {device} {int(baud)} cs8 -cstopb -parenb raw -echo; "
         "stty_rc=$?; "
         'if [ "$stty_rc" -ne 0 ]; then exit "$stty_rc"; fi; '
-        f"(sleep {restart_delay}; {restart_command} 1>&2) & "
-        "reset_pid=$!; "
-        f"timeout {int(duration_seconds)}s cat {device}; "
-        "capture_rc=$?; "
-        'wait "$reset_pid"; '
+        f"timeout {restart_delay}s cat {device} >/dev/null 2>&1 || true; "
+        f"timeout {int(duration_seconds)}s cat {device} & "
+        "capture_pid=$!; "
+        f"{restart_command} 1>&2; "
         "reset_rc=$?; "
+        'wait "$capture_pid"; '
+        "capture_rc=$?; "
         'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; '
         'exit "$capture_rc"'
     )
@@ -648,8 +663,9 @@ def execute_uart_capture(
     duration = perf_counter() - start
 
     data_captured = bool(capture_execution.stdout.strip())
+    output_lines = {line.strip() for line in capture_execution.stdout.splitlines()}
     boot_marker_present = expected_boot_message in capture_execution.stdout
-    tick_present = expected_tick_message in capture_execution.stdout
+    tick_present = expected_tick_message.strip() in output_lines
     secure_boot_marker_present = (
         None
         if expected_secure_boot_message is None
@@ -662,6 +678,7 @@ def execute_uart_capture(
     boot_timing = _boot_timing_evidence(capture_execution.stdout)
     application_clock_hz = parse_application_clock_hz(capture_execution.stdout)
     runtime_memory = _runtime_memory_evidence(capture_execution.stdout)
+    network_evidence = parse_wifi_dhcp_evidence(capture_execution.stdout)
 
     if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
         return_code = 0
@@ -745,6 +762,7 @@ def execute_uart_capture(
                 "measurement_point": "after FreeRTOS scheduler start in defaultTask",
             },
             "runtime_memory": runtime_memory,
+            "network": network_evidence,
         },
     )
 

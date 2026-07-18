@@ -199,10 +199,12 @@ def test_constructs_monitor_with_delayed_restart_command():
 
     assert command[0:2] == ["ssh", "pqc-gateway1"]
     assert "stty -F /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02 115200" in command[2]
-    assert "sleep 0.2; reset-stm32a 1>&2" in command[2]
+    assert "timeout 0.2s cat /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02 >/dev/null 2>&1 || true" in command[2]
+    assert "reset-stm32a 1>&2" in command[2]
     assert "timeout 10s cat /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02" in command[2]
-    assert command[2].index("stty -F") < command[2].index("sleep 0.2")
-    assert command[2].index("sleep 0.2") < command[2].index("timeout 10s cat")
+    assert command[2].index("stty -F") < command[2].index("timeout 0.2s cat")
+    assert command[2].index("timeout 0.2s cat") < command[2].index("timeout 10s cat")
+    assert command[2].index("timeout 10s cat") < command[2].index("reset-stm32a 1>&2")
 
 
 
@@ -318,11 +320,47 @@ def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
     assert result.return_code == 0
     assert len(calls) == 1
     assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
-    assert "sleep 0.2; reset-stm32a 1>&2" in calls[0][2]
+    assert "timeout 0.2s cat " in calls[0][2]
+    assert ">/dev/null 2>&1 || true" in calls[0][2]
+    assert "reset-stm32a 1>&2" in calls[0][2]
+    assert calls[0][2].index("timeout 10s cat") < calls[0][2].index("reset-stm32a 1>&2")
     assert "timeout 10s cat" in calls[0][2]
     assert manifest["uart"]["restart_command"] == "reset-stm32a"
     assert manifest["uart"]["restart_during_capture"] is True
 
+
+
+def test_execute_uart_capture_does_not_accept_tick_as_substring(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    def fake_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout=(
+                "stm32-basic_hal1 boot v0.1.0\n"
+                "FreeRTOS scheduler starting: tick_hz=1000\n"
+                "FreeRTOS defaultTask started: heartbeat active\n"
+            ),
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    result = uart.execute_uart_capture(
+        sample_bundle(),
+        repo_root,
+        result_dir,
+        runner=fake_runner,
+        duration_seconds=10,
+    )
+
+    assert result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
+    assert result.boot_marker_present is True
+    assert result.tick_present is False
 
 def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path):
     uart = load_uart_module()
@@ -654,7 +692,10 @@ def test_execute_uart_monitor_runs_delayed_restart_inside_monitor_command(tmp_pa
     assert result.restart is None
     assert len(calls) == 1
     assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
-    assert "sleep 0.2; reset-stm32a 1>&2" in calls[0][2]
+    assert "timeout 0.2s cat " in calls[0][2]
+    assert ">/dev/null 2>&1 || true" in calls[0][2]
+    assert "reset-stm32a 1>&2" in calls[0][2]
+    assert calls[0][2].index("timeout 5s cat") < calls[0][2].index("reset-stm32a 1>&2")
     assert "timeout 5s cat" in calls[0][2]
     log = result.log_path.read_text(encoding="utf-8")
     assert "Restart requested: true" in log
@@ -730,3 +771,11 @@ def test_run_monitor_command_writes_adhoc_log_and_reports_status(tmp_path, monke
     assert seen == [results_root]
     assert "UART monitor passed" in output
     assert "No result manifest, build, or flash action was performed." in output
+
+
+def test_parse_wifi_dhcp_evidence_records_explicit_markers():
+    from framework.uart import parse_wifi_dhcp_evidence
+    evidence = parse_wifi_dhcp_evidence("ST67 Wi-Fi association: result=passed ssid=hiphopopotamus state=connected security=4 channel=6\nST67 DHCP: result=passed ipv4=192.168.1.42 gateway=192.168.1.1 netmask=255.255.255.0\n")
+    assert evidence["association_success"] is True
+    assert evidence["dhcp_success"] is True
+    assert evidence["dhcp"]["ipv4"] == "192.168.1.42"

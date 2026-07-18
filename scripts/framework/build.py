@@ -344,6 +344,26 @@ def _current_run_id(result_dir: Path) -> str | None:
 
     return run_id if isinstance(run_id, str) else result_dir.name
 
+
+
+def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> Path:
+    """Write experiment Wi-Fi configuration without exposing the PSK in command logs."""
+    network = bundle.get("experiment", {}).get("network", {})
+    wifi = network.get("wifi", {}) if isinstance(network, dict) else {}
+    ipv4 = network.get("ipv4", {}) if isinstance(network, dict) else {}
+    def esc(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+    generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    path = generated_dir / "pqc_wifi_config_generated.h"
+    path.write_text(
+        "#ifndef PQC_WIFI_CONFIG_GENERATED_H\n#define PQC_WIFI_CONFIG_GENERATED_H\n"
+        f'#define PQC_WIFI_SSID "{esc(str(wifi.get("ssid", "")))}"\n'
+        f'#define PQC_WIFI_PSK "{esc(str(wifi.get("psk", "")))}"\n'
+        f'#define PQC_WIFI_IPV4_MODE "{esc(str(ipv4.get("mode", "")))}"\n'
+        "#endif\n", encoding="utf-8")
+    return path
+
 def execute_build(
     bundle: dict[str, dict[str, Any]],
     repo_root: Path | str,
@@ -414,6 +434,14 @@ def execute_build(
                     "artifact_path": str(elf_path),
                     "artifact_exists": elf_path.is_file(),
                     "sha256": None,
+                },
+                "network_configuration": {
+                    "wifi": {
+                        "ssid": str(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("ssid", "")),
+                        "psk": "redacted",
+                        "psk_supplied": bool(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("psk")),
+                    },
+                    "ipv4": {"mode": str(bundle.get("experiment", {}).get("network", {}).get("ipv4", {}).get("mode", ""))},
                 },
                 "source": source,
                 "build": {
@@ -568,6 +596,14 @@ def execute_build(
                     "sha256": firmware_sha256,
                     "result_artifacts": result_artifacts,
                 },
+                "network_configuration": {
+                    "wifi": {
+                        "ssid": str(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("ssid", "")),
+                        "psk": "redacted",
+                        "psk_supplied": bool(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("psk")),
+                    },
+                    "ipv4": {"mode": str(bundle.get("experiment", {}).get("network", {}).get("ipv4", {}).get("mode", ""))},
+                },
                 "source": source,
                 "build": {
                     "configure_preset": configure_preset,
@@ -658,6 +694,14 @@ def execute_build(
                     "artifact_exists": elf_path.is_file(),
                     "sha256": None,
                 },
+                "network_configuration": {
+                    "wifi": {
+                        "ssid": str(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("ssid", "")),
+                        "psk": "redacted",
+                        "psk_supplied": bool(bundle.get("experiment", {}).get("network", {}).get("wifi", {}).get("psk")),
+                    },
+                    "ipv4": {"mode": str(bundle.get("experiment", {}).get("network", {}).get("ipv4", {}).get("mode", ""))},
+                },
                 "source": source,
                 "build": {
                     "configure_preset": configure_preset,
@@ -694,6 +738,11 @@ def execute_build(
             build_skipped=False,
             build_skip_reason=skip_reason,
         )
+
+    # Generated-state preflight may remove the configured build directory.
+    # Write the Wi-Fi header only after that cleanup and before CMake configure,
+    # so the compiler sees the experiment values during this build.
+    _write_wifi_config_header(bundle, repo_root_path, configure_preset)
 
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)
 

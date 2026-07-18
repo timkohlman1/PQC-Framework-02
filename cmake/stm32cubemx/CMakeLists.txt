@@ -11,6 +11,7 @@ set(MX_Defines_Syms
 
 # STM32CubeMX generated include paths
 set(MX_Include_Dirs
+    ${CMAKE_BINARY_DIR}/pqc_generated
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../ST67W6X/Target
     ${CMAKE_CURRENT_SOURCE_DIR}/../../LWIP/App
@@ -208,7 +209,7 @@ set(LwIP_Src
 # middleware sources available for STM32 builds while excluding generated
 # runtime applications and optional protocol/demo utilities that require a
 # real network backend or application-specific headers.
-list(FILTER MX_Application_Src EXCLUDE REGEX "/LWIP/App/(altls_mbedtls|sntp|dhcp_server_raw|http_client|lwip|lwip_netif)\\.c$")
+list(FILTER MX_Application_Src EXCLUDE REGEX "/LWIP/App/(altls_mbedtls|sntp|dhcp_server_raw|http_client)\\.c$")
 list(FILTER STM32_Drivers_Src EXCLUDE REGEX "/Utils/Performance/")
 list(FILTER STM32_Drivers_Src EXCLUDE REGEX "/Core/w6x_(ble|http|mqtt)\\.c$")
 set_source_files_properties(

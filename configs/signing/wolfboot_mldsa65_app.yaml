@@ -23,14 +23,14 @@ mldsa_benchmark_profile:
   current_header_fit: true
 image_version: 1
 image_header_size_bytes: 8192
-private_key: secrets/wolfboot/mldsa65_private_key.der
+private_key: secrets/wolfboot/tuples/mldsa65-development/private_key.der
 key_policy: local_private_key_never_commit
 binary_conversion:
   enabled: true
   command: arm-none-eabi-objcopy
   args: "-O binary {input_elf} {input_image}"
 keygen:
-  enabled: true
+  enabled: false
   working_dir: tools/wolfboot
   environment:
     ML_DSA_LEVEL: "3"
@@ -46,4 +46,8 @@ sign:
     IMAGE_SIGNATURE_SIZE: "3309"
   command: tools/keytools/sign
   args: "--ml_dsa {input_image} {private_key} {image_version}"
-notes: This profile is signing-only for the post-Phase 11 ML-DSA-65 benchmark profile. The private key path is intentionally under secrets/ and must remain local. Build the matching wolfBoot profile first so tools/wolfboot/.config contains ML_DSA_LEVEL=3 and IMAGE_SIGNATURE_SIZE=3309. The framework may generate the local ML-DSA key when absent, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+signing_tuple:
+  tuple_id: mldsa65-development
+  directory: secrets/wolfboot/tuples/mldsa65-development
+  manifest: tuple.json
+notes: This profile is signing-only for the post-Phase 11 ML-DSA-65 benchmark profile. The private key path is intentionally under secrets/ and must remain local. Build the matching wolfBoot profile first so tools/wolfboot/.config contains ML_DSA_LEVEL=3 and IMAGE_SIGNATURE_SIZE=3309. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.

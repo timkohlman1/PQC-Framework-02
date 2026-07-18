@@ -31,7 +31,13 @@ build:
   stm32l4_hal_conf_pwr_patch: true
   boot_timing_instrumentation_patch: true
   runtime_stack_high_water_instrumentation: true
-  signing_key: secrets/wolfboot/ed448_private_key.der
+  signing_key: secrets/wolfboot/tuples/ed448-development/private_key.der
   wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
   generated_keystore: tools/wolfboot/src/keystore.c
+  signing_tuple:
+    tuple_id: ed448-development
+    directory: secrets/wolfboot/tuples/ed448-development
+    private_key: private_key.der
+    keystore: keystore.c
+    manifest: tuple.json
 notes: This profile is build-only for the Phase 11.5d ED448 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 8192-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.

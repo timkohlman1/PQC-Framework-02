@@ -102,3 +102,17 @@ Use `experiment/mqtt-broker/README.md` for certificate provisioning, gateway dep
 Private signing keys, credentials, real `.env` files, generated broker runtime state, local signing tuples, build output, and result output must not be committed or packaged. Secrets must not be baked into the image. Gateway credentials and private material must be supplied outside the repository and mounted or referenced only for the current run.
 
 Do not claim build, signing, flashing, gateway, hardware, UART, runtime, timing, memory, benchmark, MQTT/TLS, Wi-Fi, or end-to-end success without explicit logs, manifests, or equivalent evidence from the relevant workflow. A skipped capability-gated test is not evidence that the capability succeeded.
+
+## Persistent wolfBoot signing tuples
+
+Signing identities are selected by the signing and wolfBoot build profiles.
+The complete reusable tuple is stored locally under
+`secrets/wolfboot/tuples/<tuple-id>/`. Files copied into `tools/wolfboot/` are
+disposable build material and are recreated from the persistent tuple on every
+build when necessary.
+
+A new tuple is generated atomically by the owning wolfBoot build when the
+configured tuple directory is completely absent. A partial, corrupted, or
+algorithm-incompatible persistent tuple fails safely. Application signing does
+not create a private key independently; run the matching `build-wolfboot`
+profile first when initializing a new signing identity.

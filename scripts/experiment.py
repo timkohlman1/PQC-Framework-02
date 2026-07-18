@@ -410,6 +410,17 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
     for field in required_fields:
         require_field(config, field, "experiment config")
 
+    if "network" in config:
+        ssid = str(require_field(config, "network.wifi.ssid", "experiment config"))
+        psk = str(require_field(config, "network.wifi.psk", "experiment config"))
+        ipv4_mode = str(require_field(config, "network.ipv4.mode", "experiment config"))
+        if len(ssid.encode("utf-8")) > 32:
+            raise ConfigError("network.wifi.ssid must be at most 32 bytes")
+        if len(psk.encode("utf-8")) < 8 or len(psk.encode("utf-8")) > 63:
+            raise ConfigError("network.wifi.psk must be between 8 and 63 bytes")
+        if ipv4_mode != "dhcp":
+            raise ConfigError("network.ipv4.mode must be dhcp")
+
     validate_mqtt_tls_config(config)
 
 

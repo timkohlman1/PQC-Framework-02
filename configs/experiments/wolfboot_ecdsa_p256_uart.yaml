@@ -55,7 +55,7 @@ secure_boot_flash:
   signing_private_key: secrets/wolfboot/ecdsa_p256_private_key.der
   wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
   negative_test_corrupt_application: false
-  boot_timing_source: uart_explicit_verification_time_marker
+  boot_timing_source: framework_derived_from_uart_cycles_and_reported_hclk
   boot_timing_expected_uart_pattern: "wolfBoot verification cycles: <cycles> cycles"
   boot_timing_unavailable_behavior: record_null_verification_time_ms
   corruption_method: flip_first_byte

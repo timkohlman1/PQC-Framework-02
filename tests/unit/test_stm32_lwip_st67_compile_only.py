@@ -32,13 +32,17 @@ def test_lwip_and_st67_sources_are_wired_into_generated_cmake() -> None:
         assert fragment in cmake
 
     excluded_runtime_fragments = (
-        "/LWIP/App/(altls_mbedtls|sntp|dhcp_server_raw|http_client|lwip|lwip_netif)",
+        "/LWIP/App/(altls_mbedtls|sntp|dhcp_server_raw|http_client)",
         "/Utils/Performance/",
         "/Core/w6x_(ble|http|mqtt)",
     )
 
     for fragment in excluded_runtime_fragments:
         assert fragment in cmake
+
+    assert "LWIP/App/lwip.c" in cmake
+    assert "LWIP/App/lwip_netif.c" in cmake
+    assert "|lwip|lwip_netif)" not in cmake
 
 
 def test_lwip_and_st67_source_tree_contains_expected_compile_only_inputs() -> None:
@@ -123,8 +127,16 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert '#include "logging.h"' in main_c
     assert "static void APP_RunST67SPIBringup(void)" in main_c
     assert "vLoggingInit(APP_UART_WriteString)" in main_c
+    assert "status = W6X_RegisterAppCb(&app_st67_callbacks);" in main_c
     assert "status = W6X_Init();" in main_c
+    assert "status = W6X_WiFi_Init();" in main_c
+    assert "status = W6X_WiFi_Connect(&options);" in main_c
     assert "APP_RunST67SPIBringup();" in main_c
+    assert "APP_RunST67WiFiDhcp();" in main_c
+    assert "void StartNetworkTask(void *argument)" in main_c
+    assert "networkTaskHandle = osThreadNew(StartNetworkTask" in main_c
+    assert "PQC_WIFI_SSID[0] == '\\0'" in main_c
+    assert "result=config_missing ssid=<empty>" in main_c
     assert "ST67 SPI bring-up: delayed 3000 ms for logic analyser capture" not in main_c
     assert "osDelay(3000U);" not in main_c
     assert "void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)" in main_c
@@ -132,46 +144,56 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin) == GPIO_PIN_SET" in main_c
     assert "(void)spi_on_txn_data_ready();" in main_c
     assert "(void)spi_on_header_ack();" in main_c
-    assert main_c.index("APP_RunST67SPIBringup();") > main_c.index(
-        "void StartDefaultTask(void *argument)"
-    )
+    network_task_definition = main_c.rindex("void StartNetworkTask(void *argument)")
+    assert main_c.index("APP_RunST67SPIBringup();", network_task_definition) > network_task_definition
+    default_task_definition = main_c.rindex("void StartDefaultTask(void *argument)")
+    default_task_body = main_c[default_task_definition:network_task_definition]
+    assert "APP_RunST67SPIBringup();" not in default_task_body
+    assert 'const char tick_msg[] = "tick\\r\\n";' in default_task_body
     assert "evidence=stm32-st67-gpio-spi-bringup-only" in main_c
     assert "wifi_association=not-attempted" in main_c
     assert "end_to_end=unavailable" in main_c
 
 
-def test_lwip_st67_preparation_does_not_claim_runtime_network_success() -> None:
+def test_st67_wifi_join_and_dhcp_emit_redacted_machine_readable_evidence() -> None:
     main_c = _read("Core/Src/main.c")
-    freertos_c = _read("Core/Src/freertos.c")
-    architecture = _read("docs/007_framework_architecture.md")
-    readme = _read("README.md")
-
-    runtime_entrypoints = (
+    required = (
+        '#include "pqc_wifi_config.h"',
         "MX_LWIP_Init()",
-        "MX_LWIP_Init();",
-        "W6X_WiFi_Connect(",
-        "dhcp_start(",
-        "mqtt_client_connect(",
-        "MQTTConnect(",
-        "wolfSSL_connect(",
+        "W6X_WiFi_Connect(&options)",
+        "W6X_WiFi_Station_GetState",
+        "netif_get_interface(NETIF_STA)",
+        "ST67 Wi-Fi association: result=passed",
+        "ST67 DHCP: result=",
+        "psk=redacted",
+        "W6X_WiFi_Scan(&options, APP_ST67WiFiScanCallback)",
+        "ST67 Wi-Fi scan: begin",
+        "ST67 Wi-Fi scan result: index=",
+        "rssi_dbm=",
+        "security=",
+        "ST67 Wi-Fi scan summary: result=",
+        "configured_ssid_found=",
     )
+    for fragment in required:
+        assert fragment in main_c
+    assert "PQC_WIFI_PSK" in main_c
+    assert "W6X_Net_Station_GetIPAddress" not in main_c
+    assert "lukeisadog" not in main_c
+    assert "APP_ST67_WIFI_SCAN_MAX_RESULTS  10U" in main_c
+    assert "APP_ST67_WIFI_SCAN_TIMEOUT_MS 8000U" in main_c
+    assert "APP_RunST67WiFiScan();" in main_c
 
-    for source in (main_c, freertos_c):
-        for fragment in runtime_entrypoints:
-            assert fragment not in source
 
-    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c
-    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' in main_c
-    assert "lwIP runtime smoke:" in main_c
-    assert "network=unavailable" in main_c
-    assert "PQC_LwIP_BuildOnly_RuntimeSmokeLine" not in freertos_c
-
-    for doc in (architecture, readme):
-        assert "compile/link evidence only" in doc
-        assert "does not initialize" in doc or "does not claim" in doc
-        assert "Wi-Fi association" in doc
-        assert "MQTT connect" in doc
-        assert "end-to-end wireless success" in doc
+def test_lwip_st67_runtime_claims_are_bounded_to_association_and_dhcp() -> None:
+    main_c = _read("Core/Src/main.c")
+    assert "W6X_WiFi_Connect(&options)" in main_c
+    assert "APP_WaitForDhcpAddress" in main_c
+    assert "wolfSSL_connect(" not in main_c
+    assert "MQTTConnect(" not in main_c
+    assert "mqtt_client_connect(" not in main_c
+    assert "tls_handshake=unavailable" in main_c
+    assert "mqtt_connect=unavailable" in main_c
+    assert "end_to_end=unavailable" in main_c
 
 
 def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
@@ -206,9 +228,61 @@ def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
 
     for fragment in forbidden_runtime_network_fragments:
         assert fragment not in source
-        assert fragment not in main_c
 
     for doc in (architecture, readme):
         assert "non-network lwIP runtime smoke" in doc
         assert "version, IPv4 formatting, and checksum helpers" in doc
         assert "does not initialize a netif" in doc
+
+
+def test_st67_wifi_dhcp_runtime_configuration():
+    main_c = _read("Core/Src/main.c")
+    assert "W6X_WiFi_Connect(&options)" in main_c
+    assert "APP_WaitForDhcpAddress" in main_c
+    assert "ST67 DHCP: result=" in main_c
+    assert "psk=redacted" in main_c
+
+
+def test_lwip_runtime_source_does_not_require_demo_app_config_header():
+    lwip_c = _read("LWIP/App/lwip.c")
+
+    assert '#include "app_config.h"' not in lwip_c
+
+
+def test_lwip_runtime_is_station_only_and_uses_single_sys_now_owner():
+    lwip_c = _read("LWIP/App/lwip.c")
+    sys_arch_c = _read(
+        "Middlewares/Third_Party/SICS_Network_LwIP/LwIP/system/OS/sys_arch.c"
+    )
+
+    assert ".link_sta_up_fn = netif_link_sta_up_cb" in lwip_c
+    assert ".link_sta_down_fn = netif_link_sta_down_cb" in lwip_c
+    assert ".link_ap_up_fn = NULL" in lwip_c
+    assert ".link_ap_down_fn = NULL" in lwip_c
+    assert "u32_t sys_now(void)" not in lwip_c
+    assert "u32_t sys_now(void)" in sys_arch_c
+
+
+def test_wifi_config_selection_uses_compile_time_header_detection():
+    cmake = _read("cmake/stm32cubemx/CMakeLists.txt")
+    wrapper = _read("Core/Inc/pqc_wifi_config.h")
+
+    assert "${CMAKE_BINARY_DIR}/pqc_generated" in cmake
+    assert "PQC_WIFI_CONFIG_GENERATED_AVAILABLE" not in cmake
+    assert 'if(EXISTS "${CMAKE_BINARY_DIR}/pqc_generated/pqc_wifi_config_generated.h")' not in cmake
+    assert '#if defined(__has_include)' in wrapper
+    assert '#  if __has_include("pqc_wifi_config_generated.h")' in wrapper
+    assert '#    include "pqc_wifi_config_generated.h"' in wrapper
+    assert 'PQC_WIFI_CONFIG_GENERATED_AVAILABLE' not in wrapper
+    assert '#    define PQC_WIFI_SSID ""' in wrapper
+    assert '#    define PQC_WIFI_IPV4_MODE "unconfigured"' in wrapper
+
+
+def test_st67_normal_startup_skips_scan_and_reports_live_t02_state() -> None:
+    main_c = _read("Core/Src/main.c")
+
+    assert "#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN    0U" in main_c
+    assert "#if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)" in main_c
+    assert "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled" in main_c
+    assert "evidence=stm32-st67-t02-live-state" in main_c
+    assert "network=available wifi=connected link=up ip=" in main_c

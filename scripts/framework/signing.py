@@ -30,6 +30,7 @@ from framework.generated_state import (
     record_generated_state_success,
     require_recorded_artifact,
 )
+from framework.signing_audit import append_signing_usage_event, configured_tuple_directory
 from framework.fingerprint import (
     FingerprintInputError,
     calculate_existing_inputs_fingerprint,
@@ -970,6 +971,36 @@ def execute_application_signing(
                 f"{signed_image_path}"
             )
 
+    private_key_present_after = private_key_path.is_file()
+    private_key_sha256 = (
+        calculate_file_sha256(private_key_path)
+        if private_key_present_after
+        else None
+    )
+
+    if return_code == 0:
+        tuple_directory = configured_tuple_directory(
+            profile=profile,
+            repo_root=repo_root_path,
+            config_path="signing_tuple.directory",
+        )
+        if tuple_directory is not None:
+            append_signing_usage_event(
+                tuple_directory=tuple_directory,
+                event={
+                    "event": "application_image_signed",
+                    "profile_id": profile_id,
+                    "signature_algorithm": profile.get("signature_algorithm"),
+                    "private_key_sha256": private_key_sha256,
+                    "input_image_path": str(input_image_path),
+                    "input_image_sha256": input_image_sha256,
+                    "signed_image_path": str(signed_image_path),
+                    "signed_image_sha256": signed_image_sha256,
+                    "result_directory": str(result_dir),
+                    "private_key_modified": not private_key_existed_before,
+                },
+            )
+
     if return_code == 0:
         record_generated_state_success(
             repo_root=repo_root_path,
@@ -980,8 +1011,6 @@ def execute_application_signing(
         )
 
     duration_seconds = perf_counter() - start
-    private_key_present_after = private_key_path.is_file()
-    private_key_sha256 = calculate_file_sha256(private_key_path) if private_key_present_after else None
     if signed_image_path.is_file() and signed_image_sha256 is None:
         signed_image_sha256 = calculate_file_sha256(signed_image_path)
         signed_image_size_bytes = signed_image_path.stat().st_size

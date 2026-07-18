@@ -23,14 +23,14 @@ classical_benchmark_profile:
   curve: Ed448
 image_version: 1
 image_header_size_bytes: 8192
-private_key: secrets/wolfboot/ed448_private_key.der
+private_key: secrets/wolfboot/tuples/ed448-development/private_key.der
 key_policy: local_private_key_never_commit
 binary_conversion:
   enabled: true
   command: arm-none-eabi-objcopy
   args: -O binary {input_elf} {input_image}
 keygen:
-  enabled: true
+  enabled: false
   working_dir: tools/wolfboot
   command: tools/keytools/keygen
   args: --ed448 -g {private_key}
@@ -41,4 +41,8 @@ sign:
     IMAGE_HEADER_SIZE: '8192'
   command: tools/keytools/sign
   args: --ed448 {input_image} {private_key} {image_version}
-notes: This profile is signing-only for the Phase 11.5d ED448 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The framework may generate the local ED448 key when absent, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+signing_tuple:
+  tuple_id: ed448-development
+  directory: secrets/wolfboot/tuples/ed448-development
+  manifest: tuple.json
+notes: This profile is signing-only for the Phase 11.5d ED448 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.

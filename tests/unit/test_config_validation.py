@@ -828,3 +828,24 @@ def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend()
 
     with pytest.raises(experiment_cli.ConfigError, match="fake_transport requires"):
         experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_experiment_network_requires_valid_wifi_and_dhcp():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "baseline_direct_uart",
+        "description": "Wi-Fi DHCP experiment.",
+        "board": "board_a",
+        "host": "gateway",
+        "boot": "direct_flash",
+        "firmware": {"mode": "direct_flash", "artifact": "build/Debug/stm32_basic_hal1.elf"},
+        "uart": {"expected_boot_message": "boot", "expected_tick_message": "tick"},
+        "network": {
+            "wifi": {"ssid": "hiphopopotamus", "psk": "lukeisadog"},
+            "ipv4": {"mode": "dhcp"},
+        },
+    }
+    experiment_cli.validate_experiment_config(config)
+    config["network"]["wifi"]["psk"] = "short"
+    with pytest.raises(experiment_cli.ConfigError, match="between 8 and 63 bytes"):
+        experiment_cli.validate_experiment_config(config)

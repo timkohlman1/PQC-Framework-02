@@ -54,12 +54,14 @@ def test_stm32cubemx_cmake_includes_freertos_application_sources():
 def test_application_emits_freertos_scheduler_uart_markers():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
-    assert "FreeRTOS defaultTask created: name=defaultTask priority=osPriorityNormal stack_words=512" in main_c
+    assert "FreeRTOS defaultTask created: name=defaultTask priority=osPriorityNormal stack_words=1024" in main_c
     assert "FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask" in main_c
     assert "tick_hz=" in main_c
     assert "heap_bytes=" in main_c
-    assert "default_task_stack_words=512" in main_c
-    assert "FreeRTOS defaultTask started: periodic tick task active" in main_c
+    assert "default_task_stack_words=1024" in main_c
+    assert "FreeRTOS defaultTask started: heartbeat active" in main_c
+    assert "FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=1024" in main_c
+    assert "FreeRTOS networkTask started: initialization active" in main_c
     assert "APP_PrintFreeRTOSSchedulerStarting();" in main_c
     assert "osKernelStart();" in main_c
 
@@ -118,7 +120,7 @@ def test_freertos_tick_runs_from_default_task_not_main_loop():
     task_start = main_c.rindex(task_definition)
     task_body = main_c[task_start:]
 
-    assert "FreeRTOS defaultTask started: periodic tick task active" in task_body
+    assert "FreeRTOS defaultTask started: heartbeat active" in task_body
     assert 'const char tick_msg[] = "tick\\r\\n";' in task_body
     assert "HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg" in task_body
     assert "osDelay(1000);" in task_body
@@ -126,16 +128,21 @@ def test_freertos_tick_runs_from_default_task_not_main_loop():
 
 
 
-def test_phase_m6_5_task_context_smoke_is_after_task_start_and_separate_from_pre_scheduler_smoke():
+def test_phase_m6_5_task_context_smoke_runs_in_network_task_and_is_separate_from_heartbeat():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
-    task_start = main_c.rindex("void StartDefaultTask(void *argument)")
-    task_body = main_c[task_start:]
+    default_start = main_c.rindex("void StartDefaultTask(void *argument)")
+    network_start = main_c.rindex("void StartNetworkTask(void *argument)")
+    default_body = main_c[default_start:network_start]
+    network_body = main_c[network_start:]
 
-    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:task_start]
-    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:task_start]
-    started_index = task_body.index("FreeRTOS defaultTask started: periodic tick task active")
-    phase_index = task_body.index("FreeRTOS task-context smoke starting:")
-    lwip_index = task_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
-    wolfssl_index = task_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
-    complete_index = task_body.index("FreeRTOS task-context smoke complete:")
+    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
+    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
+    assert "FreeRTOS task-context smoke starting:" not in default_body
+    assert r'const char tick_msg[] = "tick\r\n";' in default_body
+
+    started_index = network_body.index("FreeRTOS networkTask started: initialization active")
+    phase_index = network_body.index("FreeRTOS task-context smoke starting:")
+    lwip_index = network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
+    wolfssl_index = network_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
+    complete_index = network_body.index("FreeRTOS task-context smoke complete:")
     assert started_index < phase_index < lwip_index < wolfssl_index < complete_index
