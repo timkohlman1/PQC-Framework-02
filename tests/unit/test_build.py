@@ -243,6 +243,9 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert "cmake/gcc-arm-none-eabi.cmake" in manifest["build"]["fingerprint_inputs"]
     assert "stm32_basic_hal1.ioc" in manifest["build"]["fingerprint_inputs"]
     assert manifest["build"]["fingerprint_inputs"] == sorted(manifest["build"]["fingerprint_inputs"])
+    assert list(manifest["build"]["fingerprint_file_hashes"]) == manifest["build"]["fingerprint_inputs"]
+    assert all(len(value) == 64 for value in manifest["build"]["fingerprint_file_hashes"].values())
+    assert build_record_manifest["build"]["fingerprint_file_hashes"] == manifest["build"]["fingerprint_file_hashes"]
     assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert manifest["firmware"]["sha256"] == expected_sha256

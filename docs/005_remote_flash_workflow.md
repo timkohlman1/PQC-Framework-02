@@ -135,3 +135,12 @@ Deleting `build/` or generated files inside `tools/wolfboot/` does not rotate
 the signing identity. The next build rematerializes the required wolfBoot files
 from `secrets/wolfboot/tuples/<tuple-id>/`. Do not manually delete individual
 files inside a persistent tuple.
+
+## Locating failed pytest hardware and gateway evidence
+
+Hardware, gateway, and integration pytest failures retain their partial evidence
+under `results/automated-tests/<test-run-id>/`. Inspect `manifest.json` for the
+failure stage and `pytest.log` for the ordered collection, setup, call, and
+teardown records. Test-triggered build evidence is below the same run's
+`builds/` directory. These test-only builds are diagnostic evidence and are not
+normal reusable firmware builds.

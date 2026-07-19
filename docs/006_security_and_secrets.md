@@ -21,7 +21,7 @@ Non-secret documentation, credential-free example configs, public test certifica
 
 ## wolfBoot signing state
 
-Build/signing manifests may record non-secret SHA-256 fingerprints, but must never copy private key material into results.
+Build/signing manifests may record non-secret aggregate and per-file SHA-256 fingerprints, but must never copy private key material into results. Per-file fingerprint records contain repository-relative paths and content digests only, not file contents or absolute host paths.
 
 The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
 
@@ -124,3 +124,13 @@ match the key embedded in `keystore.c`.
 
 The public-key hash and format metadata are recorded in `tuple.json`. Existing
 tuples are migrated in place without rotating or rewriting `private_key.der`.
+
+## Automated-test result retention
+
+Automated-test manifests and logs may retain commands, outcomes, public hashes,
+fingerprints, paths, and bounded failure details. They must not retain
+passwords, PSKs, tokens, credentials, private-key contents, private certificate
+material, secret environment values, or generated authentication files. Secret-
+bearing fields are redacted before JSON manifests are written. A test may
+reference a canonical non-secret result record by identity, path, and hash, but
+must not copy secret material or mutate the referenced record.

@@ -71,6 +71,8 @@ def test_build_fingerprint_is_deterministic(tmp_path):
     assert first.algorithm == "sha256-build-inputs-and-tools-v2"
     assert len(first.fingerprint) == 64
     assert first.inputs == sorted(first.inputs)
+    assert list(first.file_hashes) == first.inputs
+    assert all(len(value) == 64 for value in first.file_hashes.values())
 
 
 def test_default_build_fingerprint_covers_phase_9_required_inputs(tmp_path):
@@ -107,6 +109,12 @@ def test_changing_fingerprinted_file_changes_fingerprint(tmp_path):
     after = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
 
     assert before.fingerprint != after.fingerprint
+    assert before.file_hashes["Core/Src/main.c"] != after.file_hashes["Core/Src/main.c"]
+    unchanged_paths = set(before.file_hashes) - {"Core/Src/main.c"}
+    assert all(
+        before.file_hashes[path] == after.file_hashes[path]
+        for path in unchanged_paths
+    )
 
 
 def test_changing_excluded_file_does_not_change_fingerprint(tmp_path):

@@ -117,3 +117,12 @@ configured tuple directory is completely absent. A partial, corrupted, or
 algorithm-incompatible persistent tuple fails safely. Application signing does
 not create a private key independently; run the matching `build-wolfboot`
 profile first when initializing a new signing identity.
+
+## Automated-test evidence
+
+Pytest writes incremental evidence to `results/automated-tests/<test-run-id>/`, including `manifest.json`, `pytest.log`, failure stages, and test-triggered builds. Test IDs remain separate from experiment and build identities; test builds do not consume `.build_number` or enter normal reuse.
+
+```powershell
+$run = Get-ChildItem .\results\automated-tests -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content (Join-Path $run.FullName "manifest.json"); Get-Content (Join-Path $run.FullName "pytest.log")
+```

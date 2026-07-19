@@ -328,7 +328,7 @@ Build records identify produced firmware binaries. Experiment run records identi
 
 A directory under `results/builds/<build_number>/` is an immutable compilation record. It is created or updated only by the workflow that actually executes the compiler and produces that numbered build. Reusing a compatible build does not reserve a new build number and must not rewrite the retained build manifest, `build.log`, or firmware artifact. The new experiment result records the reuse decision, referenced build number, record path, fingerprint, artifact hash, and `record_mutated: false`; its own `build.log` describes the reuse operation.
 
-Firmware fingerprints cover the resolved experiment, board, host, and boot configuration; recursively discovered firmware, middleware, build-system, framework-build, container, and CI inputs that exist in the checkout; and captured versions of CMake, Arm GCC, Ninja, and Python. Adding a source file beneath a covered source tree or changing a captured tool version therefore invalidates reuse. Secure-boot wolfBoot, relocated-application, signing, and flash evidence uses the same file-and-tool fingerprint model while retaining separate profile-specific records and artifact hashes for each producer stage.
+Firmware fingerprints cover the resolved experiment, board, host, and boot configuration; recursively discovered firmware, middleware, build-system, framework-build, container, and CI inputs that exist in the checkout; and captured versions of CMake, Arm GCC, Ninja, and Python. Adding a source file beneath a covered source tree or changing a captured tool version therefore invalidates reuse. Secure-boot wolfBoot, relocated-application, signing, and flash evidence uses the same file-and-tool fingerprint model while retaining separate profile-specific records and artifact hashes for each producer stage. In addition to the aggregate fingerprint, manifests record `fingerprint_file_hashes` as a path-sorted mapping from each exact repository-relative file in `fingerprint_inputs` to its SHA-256 content digest. Comparing mappings across compiled build records identifies added, removed, modified, and unchanged inputs; captured tool versions remain separate because they are not files. The aggregate fingerprint remains the authoritative compatibility and reuse key.
 
 
 ## ML-DSA secure-boot profiles
@@ -542,3 +542,38 @@ prevents stale cross-profile symbol combinations such as an unresolved
 
 This cleanup does not remove wolfSSL source files, persistent signing tuples, or
 private keys.
+
+## Automated-test results and build-purpose boundary
+
+Pytest is a provenance-producing workflow. Its generated evidence is stored
+under `results/automated-tests/<test-run-id>/`, separately from canonical
+experiment results and from `results/builds/<build-number>/`.
+
+Identity domains are not interchangeable:
+
+- `test_run_id` identifies one pytest process.
+- `run_id` identifies one canonical experiment execution.
+- `build_number` identifies one normal reusable firmware build.
+- `build_identity` identifies a test-only build within a test run.
+
+A test-run manifest is written at session start and updated incrementally after
+collection and each setup, call, and teardown stage. It records invocation
+arguments, non-secret environment metadata, collected and outcome counts,
+failure stage, case-stage records, retained artifact hashes, unavailable
+artifacts, referenced canonical result records, and test-triggered build
+records. A failed or interrupted run remains inspectable even if finalisation is
+incomplete.
+
+Build reuse is purpose constrained. Automated-test builds are retained under
+`results/automated-tests/<test-run-id>/builds/<sequence>/`; they do not reserve
+or increment `.build_number` and do not enter `results/builds/`. Fingerprint
+equality cannot override this boundary. Normal experiment, benchmark,
+secure-boot, and release selectors must only consider normal-purpose records in
+the canonical reusable build pool. References from a test result to a canonical
+experiment result are immutable references; the referenced record must not be
+rewritten or supplemented in place.
+
+Test evidence records unavailable artifacts explicitly with a producing stage
+and reason. Secrets, private key material, credentials, PSKs, tokens, and
+passwords are redacted or omitted; only approved public hashes and
+fingerprints may be retained.

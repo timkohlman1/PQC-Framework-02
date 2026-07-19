@@ -285,6 +285,7 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
     assert "configs/signing/wolfboot_ecdsa_p256_app.yaml" in freshness["requested_fingerprint_inputs"]
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in freshness["requested_fingerprint_inputs"]
+    assert list(freshness["fingerprint_file_hashes"]) == freshness["fingerprint_inputs"]
     evidence = manifest["secure_boot_evidence"]
     assert evidence["schema_version"] == 1
     assert evidence["boot_mode"] == "wolfboot_ecdsa_p256"
