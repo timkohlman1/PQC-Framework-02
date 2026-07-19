@@ -155,14 +155,9 @@ int32_t net_if_init(W6X_Net_if_cb_t *net_if_cb)
 err_t net_if_output(struct netif *net_if, struct pbuf *p_buf)
 {
   err_t status = ERR_OK;
-  int32_t ret;
+  int32_t ret = 0;
+  struct pbuf *q;
   uint32_t link_id = 0;
-  uint8_t *frame = NULL;
-
-  if ((net_if == NULL) || (p_buf == NULL) || (p_buf->tot_len == 0U))
-  {
-    return ERR_ARG;
-  }
 
   for (link_id = NETIF_STA; link_id < NETIF_MAX; link_id++)
   {
@@ -173,60 +168,38 @@ err_t net_if_output(struct netif *net_if, struct pbuf *p_buf)
   }
   if (link_id >= NETIF_MAX)
   {
-    return ERR_IF;
+    return ERR_OK;
   }
 
   link_id = (link_id == NETIF_STA) ? W6X_NET_IF_STA : W6X_NET_IF_AP;
 
-  if (p_buf->next == NULL)
+  for (q = p_buf; q != NULL; q = q->next)
   {
-    frame = p_buf->payload;
-  }
-  else
-  {
-    frame = pvPortMalloc(p_buf->tot_len);
-    if (frame == NULL)
+    ret = W6X_Netif_output(link_id, q->payload, q->len);
+    if (ret < 0)
     {
-      return ERR_MEM;
-    }
-
-    if (pbuf_copy_partial(p_buf, frame, p_buf->tot_len, 0U) != p_buf->tot_len)
-    {
-      vPortFree(frame);
-      return ERR_BUF;
-    }
-  }
-
-  ret = W6X_Netif_output(link_id, frame, p_buf->tot_len);
-
-  if (p_buf->next != NULL)
-  {
-    vPortFree(frame);
-  }
-
-  if (ret < 0)
-  {
-    LogError("%s: spi_write ERROR : %d\n", __func__, ret);
-    switch (ret)
-    {
-      case -1:
-        status = ERR_BUF;
-        break;
-      case -2:
-        status = ERR_VAL;
-        break;
-      case -3:
-        status = ERR_MEM;
-        break;
-      case -4:
-        status = ERR_BUF;
-        break;
-      case -5:
-        status = ERR_INPROGRESS;
-        break;
-      default:
-        status = ERR_VAL;
-        break;
+      LogError("%s: spi_write ERROR : %d\n", __func__, ret);
+      switch (ret)
+      {
+        case -1:
+          status = ERR_BUF;
+          break;
+        case -2:
+          status = ERR_VAL;
+          break;
+        case -3:
+          status = ERR_MEM;
+          break;
+        case -4:
+          status = ERR_BUF;
+          break;
+        case -5:
+          status = ERR_INPROGRESS;
+          break;
+        default:
+          status = ERR_VAL;
+          break;
+      }
     }
   }
 

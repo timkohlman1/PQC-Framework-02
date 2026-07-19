@@ -19,3 +19,16 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 ----------------
 
 The SPI bus speed was temporarily lowered for diagnosis,  please correct this and set the SPI bus to a reasonable and supported speed for communication with the ST67 network module.  Please also check the STM32 clock speed
+
+
+
+
+useful commands-
+-----------------
+
+
+timk@pqc-gateway1:~$ STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -w /tmp/PQC-Framework-02-NWTest.elf -v -rst
+
+
+timk@pqc-gateway1:~$ picocom --baud 115200 --flow none --imap crlf --omap lfcrlf /dev/ttyACM0
+

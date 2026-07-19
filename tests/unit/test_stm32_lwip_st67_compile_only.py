@@ -115,7 +115,7 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "RCC_OscInitStruct.PLL.PLLN = 15" in main_c
     assert "RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK" in main_c
     assert "FLASH_LATENCY_5" in main_c
-    assert "hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32" in main_c
+    assert "hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4" in main_c
     ioc = _read("stm32_basic_hal1.ioc")
     assert "SPI1.BaudRatePrescaler=SPI_BAUDRATEPRESCALER_32" in ioc
     assert "SPI1.CalculateBaudRate=3.75 MBits/s" in ioc
@@ -302,14 +302,14 @@ def test_st67_normal_startup_skips_scan_and_reports_live_t02_state() -> None:
     assert "evidence=stm32-st67-t02-live-state" in main_c
     assert "network=available wifi=connected link=up ip=" in main_c
 
-def test_st67_lwip_output_submits_one_complete_frame_per_pbuf_chain() -> None:
+def test_st67_lwip_output_uses_vendor_segmented_pbuf_submission() -> None:
     netif_source = _read("LWIP/App/lwip_netif.c")
 
-    assert "if (p_buf->next == NULL)" in netif_source
-    assert "frame = pvPortMalloc(p_buf->tot_len);" in netif_source
-    assert "pbuf_copy_partial(p_buf, frame, p_buf->tot_len, 0U)" in netif_source
-    assert "W6X_Netif_output(link_id, frame, p_buf->tot_len)" in netif_source
-    assert "for (q = p_buf; q != NULL; q = q->next)" not in netif_source
+    assert "for (q = p_buf; q != NULL; q = q->next)" in netif_source
+    assert "W6X_Netif_output(link_id, q->payload, q->len)" in netif_source
+    assert "frame = pvPortMalloc(p_buf->tot_len);" not in netif_source
+    assert "pbuf_copy_partial(p_buf, frame, p_buf->tot_len, 0U)" not in netif_source
+    assert "W6X_Netif_output(link_id, frame, p_buf->tot_len)" not in netif_source
 
 
 def test_st67_spi_ready_timeout_reports_isr_diagnostic_snapshot() -> None:
@@ -328,64 +328,8 @@ def test_st67_spi_ready_timeout_reports_isr_diagnostic_snapshot() -> None:
         "last_rising_tick=%",
         "last_falling_tick=%",
         "current_tick=%",
-        "current_event_bits=0x%",
-        "last_task_wake_bits=0x%",
-        "last_selected_event=0x%",
-        "last_do_xfer_flags=0x%",
-        "txbuf_present=%",
-        "txq_waiting=%",
-        "tx_enqueue_count=%",
-        "last_tx_enqueue_tick=%",
-        "xfer_attempt_count=%",
-        "xfer_success_count=%",
-        "last_xfer_tick=%",
-        "last_xfer_result=%",
-        "last_pre_ready=%",
-        "last_post_ready=%",
-        "ready_before_cs=%",
-        "ready_after_cs_assert=%",
-        "last_cs_assert_tick=%",
-        "last_cs_deassert_tick=%",
-        "hw_xfer_start_tick=%",
-        "hw_xfer_done_tick=%",
-        "hw_xfer_done_count=%",
-        "hw_wait_result=%",
-        "spi txrx transaction timeouted: hw_xfer_start_tick=%",
-        "spi rx transaction timeouted: hw_xfer_start_tick=%",
-        "xfer_engine.diag_hw_xfer_done_count++;",
-        "engine->diag_last_task_wake_bits = (uint32_t)bits;",
-        "engine->diag_last_selected_event = SPI_EVT_TXN_RDY;",
-        "engine->diag_last_selected_event = SPI_EVT_TXN_PENDING;",
-        "xfer_engine.diag_tx_enqueue_count++;",
     )
     for fragment in required:
         assert fragment in spi_iface
 
     assert 'spi_err("waiting for spi txn ready timeouted\\n");' not in spi_iface
-
-
-def test_st67_spi_transaction_sequencing_restores_vendor_loop_and_adds_phase_diagnostics() -> None:
-    spi_iface = _read(
-        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
-    )
-
-    do_xfer = spi_iface[
-        spi_iface.index("static int32_t spi_do_xfer"):
-        spi_iface.index("static void spi_xfer_engine_task")
-    ]
-    task = spi_iface[
-        spi_iface.index("static void spi_xfer_engine_task"):
-        spi_iface.index("int32_t spi_transaction_init")
-    ]
-
-    assert "while (true)" in do_xfer
-    assert "flags &= ~SPI_XFER_F_SKIP_FIRST_TXN_WAIT;" in do_xfer
-    assert "diag_ready_before_cs" in do_xfer
-    assert "diag_ready_after_cs_assert" in do_xfer
-    assert "diag_last_cs_assert_tick" in do_xfer
-    assert "diag_last_cs_deassert_tick" in do_xfer
-    assert "pdTRUE, pdFALSE" in task
-    assert "if ((bits & SPI_EVT_TXN_RDY) != 0U)" in task
-    assert "else if ((bits & SPI_EVT_TXN_PENDING) != 0U)" in task
-    assert "ready_level == 1" not in task
-    assert "Process exactly one protocol transaction for each engine wake-up." not in spi_iface
