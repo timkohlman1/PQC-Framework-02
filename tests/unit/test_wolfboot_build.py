@@ -270,6 +270,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert manifest["wolfboot_build"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
     assert "scripts/framework/wolfboot_build.py" in manifest["wolfboot_build"]["requested_fingerprint_inputs"]
     assert "tools/wolfboot/src/image.c" in manifest["wolfboot_build"]["fingerprint_inputs"]
+    assert list(manifest["wolfboot_build"]["fingerprint_file_hashes"]) == manifest["wolfboot_build"]["fingerprint_inputs"]
     assert manifest["artifact"]["sha256"] == expected_sha256
     assert "Project-local config applied: true" in build_log
     assert "Keytools MinGW stdio patch applied: true" in build_log

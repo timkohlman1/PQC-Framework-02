@@ -21,7 +21,7 @@ Non-secret documentation, credential-free example configs, public test certifica
 
 ## wolfBoot signing state
 
-Build/signing manifests may record non-secret SHA-256 fingerprints, but must never copy private key material into results.
+Build/signing manifests may record non-secret aggregate and per-file SHA-256 fingerprints, but must never copy private key material into results. Per-file fingerprint records contain repository-relative paths and content digests only, not file contents or absolute host paths.
 
 The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
 

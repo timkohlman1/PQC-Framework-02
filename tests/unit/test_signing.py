@@ -221,6 +221,7 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert manifest["signing"]["fingerprint_status"] == "available"
     assert len(manifest["signing"]["fingerprint"]) == 64
     assert manifest["signing"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
+    assert list(manifest["signing"]["fingerprint_file_hashes"]) == manifest["signing"]["fingerprint_inputs"]
     assert "scripts/framework/signing.py" in manifest["signing"]["requested_fingerprint_inputs"]
     assert manifest["signing"]["signed_image_sha256"] == expected_signed_sha
     assert manifest["signing"]["sign_environment"] == {"IMAGE_HEADER_SIZE": "8192"}
