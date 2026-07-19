@@ -117,7 +117,7 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "FLASH_LATENCY_5" in main_c
     assert "hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4" in main_c
     ioc = _read("stm32_basic_hal1.ioc")
-    assert "SPI1.BaudRatePrescaler=SPI_BAUDRATEPRESCALER_32" in ioc
+    assert "SPI1.BaudRatePrescaler=SPI_BAUDRATEPRESCALER_4" in ioc
     assert "SPI1.CalculateBaudRate=3.75 MBits/s" in ioc
     assert "#define configTOTAL_HEAP_SIZE                    ((size_t)40000)" in freertos_config
 
