@@ -312,24 +312,15 @@ def test_st67_lwip_output_uses_vendor_segmented_pbuf_submission() -> None:
     assert "W6X_Netif_output(link_id, frame, p_buf->tot_len)" not in netif_source
 
 
-def test_st67_spi_ready_timeout_reports_isr_diagnostic_snapshot() -> None:
+def test_st67_spi_iface_uses_clean_vendor_transfer_engine_for_controlled_test() -> None:
     spi_iface = _read(
         "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
     )
 
-    required = (
-        '#include "main.h"',
-        "APP_ST67ReadyDiagnosticSnapshot ready_snapshot;",
-        "APP_ST67ReadyDiagnosticSnapshotGet(&ready_snapshot);",
-        "ready_level=%",
-        "ready_irq_count=%",
-        "ready_rising_count=%",
-        "ready_falling_count=%",
-        "last_rising_tick=%",
-        "last_falling_tick=%",
-        "current_tick=%",
-    )
-    for fragment in required:
-        assert fragment in spi_iface
-
-    assert 'spi_err("waiting for spi txn ready timeouted\\n");' not in spi_iface
+    assert '#include "stm32l4xx.h"' in spi_iface
+    assert "static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)" in spi_iface
+    assert "static void spi_xfer_engine_task(void *arg)" in spi_iface
+    assert "while (true)" in spi_iface
+    assert "APP_ST67ReadyDiagnosticSnapshot" not in spi_iface
+    assert "APP_ST67ReadyDiagnosticSnapshotGet" not in spi_iface
+    assert '#include "main.h"' not in spi_iface
