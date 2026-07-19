@@ -12,8 +12,9 @@ Evidence boundaries are strict:
 - STM32 local-only and fake/no-network evidence does not prove external networking.
 - Host-side or broker-side validation does not prove STM32 or end-to-end wireless success.
 - The unavailable transport boundary performs no socket I/O.
-- The ST67W61M1 integration currently provides compile/link evidence only and does not initialize a netif. The non-network lwIP runtime smoke exercises version, IPv4 formatting, and checksum helpers and reports `network=unavailable`; it does not claim TCP/IP traffic, socket I/O, Wi-Fi association, MQTT connect, or end-to-end wireless success.
-- Real ST67W61M1-backed networking, STM32 TLS handshakes, real STM32 MQTT broker operations, and end-to-end classical or PQC/hybrid MQTT-over-TLS remain unavailable.
+- The ST67W61M1 integration supports configured-AP association, link-up, host-side lwIP DHCP, and live IPv4 evidence in capability-gated hardware runs. Earlier local smoke markers remain limited to their execution point.
+- The non-network lwIP runtime smoke exercises version, IPv4 formatting, and checksum helpers only; it does not initialize a netif or prove external networking.
+- External STM32 TCP validation, STM32 TLS handshakes, real STM32 MQTT broker operations, and end-to-end classical or PQC/hybrid MQTT-over-TLS remain unavailable.
 
 The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
 

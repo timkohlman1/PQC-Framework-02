@@ -78,6 +78,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;
 osThreadId_t networkTaskHandle;
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
@@ -101,6 +102,23 @@ void StartNetworkTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapshot)
+{
+  if (snapshot == NULL)
+  {
+    return;
+  }
+
+  taskENTER_CRITICAL();
+  snapshot->irq_count = app_st67_ready_diagnostic.irq_count;
+  snapshot->rising_count = app_st67_ready_diagnostic.rising_count;
+  snapshot->falling_count = app_st67_ready_diagnostic.falling_count;
+  snapshot->last_rising_tick = app_st67_ready_diagnostic.last_rising_tick;
+  snapshot->last_falling_tick = app_st67_ready_diagnostic.last_falling_tick;
+  snapshot->last_level = app_st67_ready_diagnostic.last_level;
+  taskEXIT_CRITICAL();
+}
 
 static void APP_UART_WriteString(const char *text)
 {
@@ -1347,7 +1365,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1681,12 +1699,22 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == SPI_RDY_Pin)
   {
-    if (HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin) == GPIO_PIN_SET)
+    GPIO_PinState ready_level = HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin);
+    uint32_t tick = (uint32_t)xTaskGetTickCountFromISR();
+
+    app_st67_ready_diagnostic.irq_count++;
+    app_st67_ready_diagnostic.last_level = (ready_level == GPIO_PIN_SET) ? 1U : 0U;
+
+    if (ready_level == GPIO_PIN_SET)
     {
+      app_st67_ready_diagnostic.rising_count++;
+      app_st67_ready_diagnostic.last_rising_tick = tick;
       (void)spi_on_txn_data_ready();
     }
     else
     {
+      app_st67_ready_diagnostic.falling_count++;
+      app_st67_ready_diagnostic.last_falling_tick = tick;
       (void)spi_on_header_ack();
     }
   }

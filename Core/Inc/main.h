@@ -36,7 +36,15 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+typedef struct
+{
+  uint32_t irq_count;
+  uint32_t rising_count;
+  uint32_t falling_count;
+  uint32_t last_rising_tick;
+  uint32_t last_falling_tick;
+  uint32_t last_level;
+} APP_ST67ReadyDiagnosticSnapshot;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -53,7 +61,7 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapshot);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

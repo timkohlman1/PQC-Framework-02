@@ -1,7 +1,21 @@
+To do list and bug resolution prompts
 
+Start requests with: 
 
-i think we should configure all of the tests so that they log results in the results folder to make it easier to diagnose issues.  right now, only the secure boot hardware tests I believe create results.  I think we just use a prefix to indicate that it was an automated test result (not a manually ran experiment).
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
+unless the request will examine prior AI prompts / interactions
 
-diagnose the SPI errors after networking is established
-"waiting for spi txn ready timeouted"
+-------------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state. Improve the results and provenance system so pytest runs produce durable, inspectable artifacts under a clearly separate automated-test result area, including retained logs and partial evidence for failed hardware, gateway, and integration tests. Test-run identities, experiment-run identities, and build identities must remain distinct, and test-triggered builds must not enter the normal reusable build pool or consume normal build numbers.
+
+Preserve strict provenance and reuse boundaries: matching fingerprints alone must not allow normal experiment, benchmark, secure-boot, or release workflows to reuse test-only artifacts. Record what ran, what built or was reused, relevant hashes and fingerprints, referenced canonical experiment results, outcomes, unavailable artifacts, and failure stages, without mutating referenced records or retaining secrets. Update tests and canonical documentation for the new result conventions, build-purpose rules, artifact retention, and commands for locating pytest evidence.
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state. Improve the build fingerprint system so that in addition to an overall fingerprint, the hash for each individual file included in the fingerprint is also recorded. The objective is so that we can easily determine which artifacts changed and which remaind the same when a build is performed (instead of re-used) as a result of a non-matching fingerprint.
+
+----------------
+
+The SPI bus speed was temporarily lowered for diagnosis,  please correct this and set the SPI bus to a reasonable and supported speed for communication with the ST67 network module.  Please also check the STM32 clock speed

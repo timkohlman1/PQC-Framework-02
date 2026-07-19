@@ -274,12 +274,10 @@ Phase M10.1 begins hardware-backed ST67W61M1 validation without importing the Cu
 
 The ST67/lwIP transmit boundary sends one complete Ethernet frame per driver
 submission. Chained lwIP pbufs are consolidated before enqueueing. The SPI
-transfer engine checks the current active-high READY level before blocking for
-a new event and, after a failed transaction, leaves the pending transmit buffer
-owned by the engine while exiting the immediate processing loop. This prevents
-an ignored READY timeout from retrying the same packet every two seconds. These
-controls are recovery and frame-integrity behaviour only; they do not establish
-TCP, TLS, MQTT, or end-to-end success without explicit hardware evidence.
+transfer engine otherwise remains on the X-CUBE-ST67W61 1.3.0 event-driven
+baseline, apart from the enlarged task stack required by observed runtime stack
+usage. A READY timeout is negative transport evidence; it does not establish
+TCP, TLS, MQTT, or end-to-end success.
 
 
 Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration currently uses SPI1 prescaler 32, giving an approximately 3.75 Mbit/s diagnostic setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. This temporary reduction allows reliable capture with the available FX2 logic analyser; hardware behaviour is not claimed from the configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
@@ -468,8 +466,7 @@ Deferred status is not evidence that the named capability works. Future test fil
 
 ### ST67 GPIO/SPI bring-up evidence
 
-The bounded ST67 bring-up path waits 3 seconds for logic-analyser capture setup, then calls `W6X_Init()` from a running FreeRTOS task after initializing the ST67 logging service. SPI1 is temporarily configured with prescaler 32 for analyser-friendly timing. UART markers record the pre-init
-GPIO state, driver invocation, returned status, and post-init GPIO state.
+The bounded ST67 bring-up path calls `W6X_Init()` from a running FreeRTOS task after initializing the ST67 logging service. SPI1 is temporarily configured with prescaler 32, giving approximately 3.75 Mbit/s from the 120 MHz APB2/PCLK2 domain. This is a controlled diagnostic setting used to compare invalid-header frequency and READY-timeout behavior against the prior 30 Mbit/s configuration; it does not change the MCU clock or establish a permanent production bus rate. UART markers record the pre-init GPIO state, driver invocation, returned status, and post-init GPIO state.
 A paired logic-analyser capture can establish that `CHIP_EN`, `SPI_RDY`,
 active-high `SPI_CS`, SCK, MOSI, and MISO behaved consistently with a real
 transport attempt.
@@ -488,23 +485,18 @@ remain unavailable until their own explicit runtime evidence is recorded.
 The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
 
 
-### Post-network SPI transaction recovery
+### Post-network SPI READY timeout diagnostics
 
-The ST67 transaction-ready handshake remains event driven. The active-high
-`SPI_RDY` level also represents module-to-host receive availability, so a high
-level alone must not bypass the transaction-ready event expected for a host
-transmit. A failed transmit is retained for at most three event-driven attempts;
-the engine exits the current processing loop after every failure and drops the
-packet after the retry limit. This bounds fault amplification while preserving
-a limited opportunity for protocol recovery. A dropped packet is explicit
-negative transport evidence.
+The STM32L4 HAL exposes one generic callback for READY rising and falling edges.
+The application samples the READY level in that callback, updates ISR-safe total,
+high/rising, and low/falling counters, and records the latest tick for each
+classification. It performs no UART logging from interrupt context.
 
-The lwIP output adapter submits exactly one complete Ethernet frame for each
-output call. A chained lwIP `pbuf` is copied into one temporary contiguous
-buffer before it is queued to the ST67 driver. Sending each pbuf segment as an
-independent ST67 message is prohibited because the segments belong to one
-Ethernet frame. Hardware success requires association, DHCP, heartbeat
-continuity, and absence of recurring SPI timeout or bounded-drop markers.
+If the vendor transfer engine times out waiting for `SPI_EVT_TXN_RDY`, the error
+line includes a snapshot of the READY level, callback counters, last rising and
+falling ticks, and current task tick. Timeout evidence also records the transfer engine's last task wake bits, selected event, `spi_do_xfer` flags, queued transmit state, transfer attempt/result counters, and READY levels before and after the most recent transfer.
+
+The attempted one-transaction-per-wake ownership correction was reverted because hardware evidence showed repeated SPI hardware-transfer timeouts and continued transmit backlog growth. The transfer engine therefore retains the vendor multi-transaction loop and original event clearing behavior while emitting additional transaction-sequencing evidence: READY levels around chip-select assertion, chip-select assertion and deassertion ticks, hardware-transfer start and completion ticks, completion-callback counts, and completion-wait results. This remains diagnostic negative transport evidence and does not claim the READY defect is resolved.
 
 ## ST67 T02 normal startup and live network evidence
 
@@ -562,15 +554,3 @@ prevents stale cross-profile symbol combinations such as an unresolved
 
 This cleanup does not remove wolfSSL source files, persistent signing tuples, or
 private keys.
-
-### SPI READY event ownership
-
-The transfer engine processes one protocol transaction per wake-up and clears
-only the event owned by that iteration. A module `SPI_EVT_TXN_RDY` event is
-handled before a host `SPI_EVT_TXN_PENDING` event, while the pending TX event is
-left set for a separate iteration. This prevents an RX/data-ready edge from
-being consumed and then reused as the transaction-ready handshake for a queued
-host transmit. After a successful transaction, additional queued TX work is
-re-armed explicitly. Failed TX buffers remain subject to the three-attempt
-bounded drop policy. Retry counters are logged as 32-bit values so the UART
-formatter produces numeric diagnostics.

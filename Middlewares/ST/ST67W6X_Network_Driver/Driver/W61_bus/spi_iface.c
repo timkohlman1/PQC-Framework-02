@@ -41,6 +41,7 @@
 
 #include "spi_iface.h"
 #include "spi_port.h"
+#include "main.h"
 
 /** SPI header magic code */
 #define SPI_HEADER_MAGIC_CODE           0x55AAU
@@ -140,6 +141,44 @@ struct spi_xfer_engine
   uint8_t rxq_bound;
   /** Current transmit buffer */
   struct spi_buffer *txbuf;
+  /** Last event bits returned to the transfer-engine task */
+  uint32_t diag_last_task_wake_bits;
+  /** Last event selected by the transfer-engine task */
+  uint32_t diag_last_selected_event;
+  /** Flags supplied to the most recent spi_do_xfer invocation */
+  uint32_t diag_last_do_xfer_flags;
+  /** READY level sampled immediately before the most recent transfer attempt */
+  uint32_t diag_last_pre_ready;
+  /** READY level sampled immediately after the most recent transfer attempt */
+  uint32_t diag_last_post_ready;
+  /** Tick of the most recent transfer attempt */
+  uint32_t diag_last_xfer_tick;
+  /** Return code from the most recent transfer attempt */
+  int32_t diag_last_xfer_result;
+  /** Number of transfer attempts made by the engine */
+  uint32_t diag_xfer_attempt_count;
+  /** Number of successful transfer attempts made by the engine */
+  uint32_t diag_xfer_success_count;
+  /** Number of buffers successfully queued for host transmission */
+  uint32_t diag_tx_enqueue_count;
+  /** Tick at which the most recent host transmit buffer was queued */
+  uint32_t diag_last_tx_enqueue_tick;
+  /** READY level sampled immediately before the most recent CS assertion */
+  uint32_t diag_ready_before_cs;
+  /** READY level sampled immediately after the most recent CS assertion */
+  uint32_t diag_ready_after_cs_assert;
+  /** Tick of the most recent CS assertion */
+  uint32_t diag_last_cs_assert_tick;
+  /** Tick of the most recent CS deassertion */
+  uint32_t diag_last_cs_deassert_tick;
+  /** Tick at which the most recent hardware transfer was started */
+  uint32_t diag_last_hw_xfer_start_tick;
+  /** Tick at which the most recent hardware-transfer completion callback ran */
+  uint32_t diag_last_hw_xfer_done_tick;
+  /** Number of hardware-transfer completion callbacks observed */
+  uint32_t diag_hw_xfer_done_count;
+  /** Result of the most recent hardware-transfer completion wait */
+  int32_t diag_last_hw_wait_result;
   /** Transfer statistics */
   struct spi_stat stat;
   /** Received data callbacks for each traffic type */
@@ -517,6 +556,8 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
   }
   else
   {
+    engine->diag_last_hw_xfer_start_tick = (uint32_t)xTaskGetTickCount();
+    engine->diag_last_hw_wait_result = -1;
     status = spi_port_transfer_dma(tx_buf, rx_buf, len);
     if (status < 0)
     {
@@ -525,9 +566,18 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
       return -2;
     }
     /* Wait for spi transaction completion. */
-    if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
+    engine->diag_last_hw_wait_result =
+        spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS);
+    if (engine->diag_last_hw_wait_result == 0)
     {
-      spi_err("spi txrx transaction timeouted\n");
+      spi_err("spi txrx transaction timeouted: hw_xfer_start_tick=%" PRIu32
+              " hw_xfer_done_tick=%" PRIu32 " hw_xfer_done_count=%" PRIu32
+              " ready_level=%" PRIi32 " state=%" PRIi32 "\n",
+              engine->diag_last_hw_xfer_start_tick,
+              engine->diag_last_hw_xfer_done_tick,
+              engine->diag_hw_xfer_done_count,
+              spi_port_is_ready(),
+              engine->state);
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
       return -3;
     }
@@ -562,6 +612,8 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
   }
   else
   {
+    engine->diag_last_hw_xfer_start_tick = (uint32_t)xTaskGetTickCount();
+    engine->diag_last_hw_wait_result = -1;
     status = spi_port_transfer_dma(NULL, rx_buf, len);
     if (status < 0)
     {
@@ -570,9 +622,18 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
       return -2;
     }
     /* Wait for spi transaction completion. */
-    if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
+    engine->diag_last_hw_wait_result =
+        spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS);
+    if (engine->diag_last_hw_wait_result == 0)
     {
-      spi_err("spi rx transaction timeouted\n");
+      spi_err("spi rx transaction timeouted: hw_xfer_start_tick=%" PRIu32
+              " hw_xfer_done_tick=%" PRIu32 " hw_xfer_done_count=%" PRIu32
+              " ready_level=%" PRIi32 " state=%" PRIi32 "\n",
+              engine->diag_last_hw_xfer_start_tick,
+              engine->diag_last_hw_xfer_done_tick,
+              engine->diag_hw_xfer_done_count,
+              spi_port_is_ready(),
+              engine->state);
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
       return -3;
     }
@@ -599,8 +660,58 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   if ((wait_txn_rdy != 0) &&
       (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0))
   {
+    APP_ST67ReadyDiagnosticSnapshot ready_snapshot;
+    EventBits_t current_event_bits;
+    UBaseType_t txq_waiting;
+
     SPI_STAT_INC(&engine->stat, wait_txn_timeouts, 1U);
-    spi_err("waiting for spi txn ready timeouted\n");
+    APP_ST67ReadyDiagnosticSnapshotGet(&ready_snapshot);
+    current_event_bits = xEventGroupGetBits(engine->event);
+    txq_waiting = uxQueueMessagesWaiting(engine->txq);
+    spi_err("waiting for spi txn ready timeouted: ready_level=%" PRIu32
+            " ready_irq_count=%" PRIu32 " ready_rising_count=%" PRIu32
+            " ready_falling_count=%" PRIu32 " last_rising_tick=%" PRIu32
+            " last_falling_tick=%" PRIu32 " current_tick=%" PRIu32
+            " current_event_bits=0x%" PRIx32 " last_task_wake_bits=0x%" PRIx32
+            " last_selected_event=0x%" PRIx32 " last_do_xfer_flags=0x%" PRIx32
+            " txbuf_present=%" PRIu32 " txq_waiting=%" PRIu32
+            " tx_enqueue_count=%" PRIu32 " last_tx_enqueue_tick=%" PRIu32
+            " xfer_attempt_count=%" PRIu32 " xfer_success_count=%" PRIu32
+            " last_xfer_tick=%" PRIu32 " last_xfer_result=%" PRIi32
+            " last_pre_ready=%" PRIu32 " last_post_ready=%" PRIu32
+            " ready_before_cs=%" PRIu32 " ready_after_cs_assert=%" PRIu32
+            " last_cs_assert_tick=%" PRIu32 " last_cs_deassert_tick=%" PRIu32
+            " hw_xfer_start_tick=%" PRIu32 " hw_xfer_done_tick=%" PRIu32
+            " hw_xfer_done_count=%" PRIu32 " hw_wait_result=%" PRIi32 "\n",
+            ready_snapshot.last_level,
+            ready_snapshot.irq_count,
+            ready_snapshot.rising_count,
+            ready_snapshot.falling_count,
+            ready_snapshot.last_rising_tick,
+            ready_snapshot.last_falling_tick,
+            (uint32_t)xTaskGetTickCount(),
+            (uint32_t)current_event_bits,
+            engine->diag_last_task_wake_bits,
+            engine->diag_last_selected_event,
+            engine->diag_last_do_xfer_flags,
+            (engine->txbuf != NULL) ? 1U : 0U,
+            (uint32_t)txq_waiting,
+            engine->diag_tx_enqueue_count,
+            engine->diag_last_tx_enqueue_tick,
+            engine->diag_xfer_attempt_count,
+            engine->diag_xfer_success_count,
+            engine->diag_last_xfer_tick,
+            engine->diag_last_xfer_result,
+            engine->diag_last_pre_ready,
+            engine->diag_last_post_ready,
+            engine->diag_ready_before_cs,
+            engine->diag_ready_after_cs_assert,
+            engine->diag_last_cs_assert_tick,
+            engine->diag_last_cs_deassert_tick,
+            engine->diag_last_hw_xfer_start_tick,
+            engine->diag_last_hw_xfer_done_tick,
+            engine->diag_hw_xfer_done_count,
+            engine->diag_last_hw_wait_result);
     return -1;
   }
 
@@ -811,6 +922,9 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
   struct spi_buffer *txbuf;
   int32_t rx_pending;
   int32_t wait_txn_rdy;
+  int32_t xfer_result;
+
+  engine->diag_last_do_xfer_flags = flags;
 
   while (true)
   {
@@ -824,9 +938,13 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
     /* Check if txbuf is valid or data is ready for transfer */
     if ((txbuf != NULL) || (rx_pending == 1))
     {
+      engine->diag_ready_before_cs = (uint32_t)rx_pending;
+      engine->diag_last_cs_assert_tick = (uint32_t)xTaskGetTickCount();
+
       /* Assert chip select */
       spi_trace(SPI_TP_ASSERT_CS, "Assert CS\n");
       (void)spi_port_set_cs(1);
+      engine->diag_ready_after_cs_assert = (uint32_t)spi_port_is_ready();
 
       /* Transfer one packet */
       if ((flags & SPI_XFER_F_SKIP_FIRST_TXN_WAIT) != 0U)
@@ -839,11 +957,21 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
         wait_txn_rdy = 1;
       }
 
-      (void)spi_xfer_one(engine, txbuf, wait_txn_rdy);
+      engine->diag_last_pre_ready = (uint32_t)spi_port_is_ready();
+      engine->diag_last_xfer_tick = (uint32_t)xTaskGetTickCount();
+      engine->diag_xfer_attempt_count++;
+      xfer_result = spi_xfer_one(engine, txbuf, wait_txn_rdy);
+      engine->diag_last_xfer_result = xfer_result;
+      engine->diag_last_post_ready = (uint32_t)spi_port_is_ready();
+      if (xfer_result == 0)
+      {
+        engine->diag_xfer_success_count++;
+      }
 
       /* De-assert chip select */
       spi_trace(SPI_TP_DEASSERT_CS, "Deassert CS\n");
       (void)spi_port_set_cs(0);
+      engine->diag_last_cs_deassert_tick = (uint32_t)xTaskGetTickCount();
       engine->state = SPI_XFER_STATE_TXN_DONE;
     }
     else
@@ -861,7 +989,7 @@ static void spi_xfer_engine_task(void *arg)
   EventBits_t bits;
   struct spi_xfer_engine *engine = arg;
 
-  /* Wait for events and process them. */
+  /* Wait for events and process them using the vendor multi-transaction loop. */
   while (engine->stop == 0)
   {
     engine->state = SPI_XFER_STATE_IDLE;
@@ -869,12 +997,15 @@ static void spi_xfer_engine_task(void *arg)
     bits = xEventGroupWaitBits(engine->event, bits, pdTRUE, pdFALSE,
                                portMAX_DELAY);
     spi_trace(SPI_TP_NONE, "Got event bits %" PRIx32 "\n", bits);
+    engine->diag_last_task_wake_bits = (uint32_t)bits;
     if ((bits & SPI_EVT_TXN_RDY) != 0U)
     {
+      engine->diag_last_selected_event = SPI_EVT_TXN_RDY;
       (void)spi_do_xfer(engine, SPI_XFER_F_SKIP_FIRST_TXN_WAIT);
     }
     else if ((bits & SPI_EVT_TXN_PENDING) != 0U)
     {
+      engine->diag_last_selected_event = SPI_EVT_TXN_PENDING;
       (void)spi_do_xfer(engine, 0U);
     }
     else
@@ -1244,6 +1375,9 @@ int32_t spi_write(struct spi_msg *msg, int32_t timeout_ms)
     return -5;
   }
 
+  xfer_engine.diag_tx_enqueue_count++;
+  xfer_engine.diag_last_tx_enqueue_tick = (uint32_t)xTaskGetTickCount();
+
   /* Notify transfer engine about pending data */
   (void)xEventGroupSetBits(xfer_engine.event, SPI_EVT_TXN_PENDING);
 
@@ -1365,6 +1499,19 @@ static void spi_on_transaction_complete(void)
   if (xfer_engine.event != NULL)
   {
     spi_trace(SPI_TP_NONE, "hw txn done\n");
+#if ((tskKERNEL_VERSION_MAJOR > 10) || ((tskKERNEL_VERSION_MAJOR == 10) && (tskKERNEL_VERSION_MINOR >= 6)))
+    if (xPortIsInsideInterrupt())
+#else
+    if (__get_IPSR() != 0U)
+#endif /* tskKERNEL_VERSION_MAJOR */
+    {
+      xfer_engine.diag_last_hw_xfer_done_tick = (uint32_t)xTaskGetTickCountFromISR();
+    }
+    else
+    {
+      xfer_engine.diag_last_hw_xfer_done_tick = (uint32_t)xTaskGetTickCount();
+    }
+    xfer_engine.diag_hw_xfer_done_count++;
 #if ((tskKERNEL_VERSION_MAJOR > 10) || ((tskKERNEL_VERSION_MAJOR == 10) && (tskKERNEL_VERSION_MINOR >= 6)))
     if (xPortIsInsideInterrupt())
 #else

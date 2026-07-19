@@ -109,3 +109,61 @@ def test_st67_t02_wifi_link_and_dhcp_live_evidence(
         "ip=unavailable",
     ):
         assert stale_marker not in later_text
+
+    timeout_lines = [
+        line for line in later_text.splitlines()
+        if "waiting for spi txn ready timeouted" in line
+    ]
+    for line in timeout_lines:
+        for field in (
+            "ready_level=",
+            "ready_irq_count=",
+            "ready_rising_count=",
+            "ready_falling_count=",
+            "last_rising_tick=",
+            "last_falling_tick=",
+            "current_tick=",
+            "current_event_bits=",
+            "last_task_wake_bits=",
+            "last_selected_event=",
+            "last_do_xfer_flags=",
+            "txbuf_present=",
+            "txq_waiting=",
+            "tx_enqueue_count=",
+            "last_tx_enqueue_tick=",
+            "xfer_attempt_count=",
+            "xfer_success_count=",
+            "last_xfer_tick=",
+            "last_xfer_result=",
+            "last_pre_ready=",
+            "last_post_ready=",
+            "ready_before_cs=",
+            "ready_after_cs_assert=",
+            "last_cs_assert_tick=",
+            "last_cs_deassert_tick=",
+            "hw_xfer_start_tick=",
+            "hw_xfer_done_tick=",
+            "hw_xfer_done_count=",
+            "hw_wait_result=",
+        ):
+            assert field in line
+        assert re.search(r"ready_level=[01]\b", line)
+        irq_count = int(re.search(r"ready_irq_count=(\d+)", line).group(1))
+        rising_count = int(re.search(r"ready_rising_count=(\d+)", line).group(1))
+        falling_count = int(re.search(r"ready_falling_count=(\d+)", line).group(1))
+        assert irq_count == rising_count + falling_count
+        assert re.search(r"current_event_bits=0x[0-9a-fA-F]+\b", line)
+        assert re.search(r"last_task_wake_bits=0x[0-9a-fA-F]+\b", line)
+        assert re.search(r"last_selected_event=0x[0-9a-fA-F]+\b", line)
+        assert re.search(r"last_do_xfer_flags=0x[0-9a-fA-F]+\b", line)
+        assert re.search(r"txbuf_present=[01]\b", line)
+        assert re.search(r"last_pre_ready=[01]\b", line)
+        assert re.search(r"last_post_ready=[01]\b", line)
+        assert re.search(r"ready_before_cs=[01]\b", line)
+        assert re.search(r"ready_after_cs_assert=[01]\b", line)
+        assert re.search(r"last_cs_assert_tick=\d+\b", line)
+        assert re.search(r"last_cs_deassert_tick=\d+\b", line)
+        assert re.search(r"hw_xfer_start_tick=\d+\b", line)
+        assert re.search(r"hw_xfer_done_tick=\d+\b", line)
+        assert re.search(r"hw_xfer_done_count=\d+\b", line)
+        assert re.search(r"hw_wait_result=-?\d+\b", line)
