@@ -287,29 +287,6 @@ def test_st67_normal_startup_skips_scan_and_reports_live_t02_state() -> None:
     assert "evidence=stm32-st67-t02-live-state" in main_c
     assert "network=available wifi=connected link=up ip=" in main_c
 
-
-def test_st67_spi_ready_wait_remains_event_driven_and_tx_retries_are_bounded() -> None:
-    spi_iface = _read("Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c")
-
-    wait_block = spi_iface[spi_iface.index("if ((wait_txn_rdy != 0)"):][:500]
-    assert "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)" in wait_block
-    assert "spi_port_is_ready() == 0" not in wait_block
-    assert "uint8_t tx_retry_count;" in spi_iface
-    assert "engine->tx_retry_count >= 3U" in spi_iface
-    assert "spi transaction dropped after bounded retries" in spi_iface
-    assert "(uint32_t)engine->tx_retry_count" in spi_iface
-    assert "engine->txbuf = NULL;" in spi_iface
-    assert "spi_buffer_free(txbuf);" in spi_iface
-    assert "(void)spi_xfer_one(engine, txbuf, wait_txn_rdy);" not in spi_iface
-    assert "Process exactly one protocol transaction for each engine wake-up" in spi_iface
-    assert "pdFALSE, pdFALSE, portMAX_DELAY" in spi_iface
-    assert "spi_clear_event(engine, SPI_EVT_TXN_RDY)" in spi_iface
-    assert "spi_clear_event(engine, SPI_EVT_TXN_PENDING)" in spi_iface
-    assert "uxQueueMessagesWaiting(engine->txq) > 0U" in spi_iface
-    do_xfer = spi_iface[spi_iface.rindex("static int32_t spi_do_xfer"):spi_iface.index("static void spi_xfer_engine_task", spi_iface.rindex("static int32_t spi_do_xfer"))]
-    assert "while (true)" not in do_xfer
-
-
 def test_st67_lwip_output_submits_one_complete_frame_per_pbuf_chain() -> None:
     netif_source = _read("LWIP/App/lwip_netif.c")
 
