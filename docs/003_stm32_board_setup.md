@@ -67,64 +67,19 @@ initialization. It does not establish Wi-Fi association, IP acquisition, an
 external TCP connection, a TLS handshake, MQTT operation, or end-to-end
 wireless success.
 
-For logic-analyser capture, SPI1 is temporarily reduced to prescaler 32 (approximately 3.75 Mbit/s with the current 120 MHz PCLK2) so the FX2 analyser can sample it reliably. Start the capture during the 3-second UART-announced delay; no board reset is required while acquisition is active. Use:
+The current validated runtime configuration uses SPI1 prescaler 4 (approximately 30 Mbit/s with the current 120 MHz PCLK2). The earlier prescaler-32 setting was a temporary logic-analyser diagnostic and is no longer the supported runtime configuration. A logic-analyser capture at the current rate requires equipment and sampling settings capable of resolving the faster bus. Start the capture during the 3-second UART-announced delay; no board reset is required while acquisition is active.
 
-```bash
-sudo sigrok-cli \
-  --driver fx2lafw:conn=3.5 \
-  --config samplerate=12m \
-  --channels D0=SCK,D1=MISO,D2=MOSI,D3=CS,D4=BOOT,D5=CHIP_EN,D6=RDY \
-  --time 5s \
-  --output-file st67-startup.sr
-```
-
-Decode the active-high, mode-0 SPI traffic with:
-
-```bash
-sigrok-cli \
-  --input-file st67-startup.sr \
-  --protocol-decoders \
-  'spi:clk=SCK:miso=MISO:mosi=MOSI:cs=CS:cs_polarity=active-high:cpol=0:cpha=0:bitorder=msb-first:wordsize=8' \
-  --protocol-decoder-annotations \
-  'spi=miso-data:mosi-data:warnings' \
-  > st67-spi.txt
-```
+Do not reuse the earlier 12 MHz FX2 capture command at this rate; it cannot reliably decode an approximately 30 Mbit/s SPI clock.
 
 The expected physical ordering is `CHIP_EN` rising, `SPI_RDY` activity, active
 high `SPI_CS`, SPI clock bursts, and MOSI/MISO transfers. Compare those
 transitions with the UART markers rather than treating either source alone as
 higher-level network evidence.
 
-### Post-network SPI READY recovery
+### ST67 vendor transport baseline
 
-The ST67 transaction-ready handshake remains event driven. An already-high
-`SPI_RDY` level is not treated as permission to bypass the transaction-ready
-wait because the same pin also reports module-to-host receive availability.
-Conflating those states can start a host transmit while the module is presenting
-receive data and can produce an SPI transfer-completion timeout.
+The supported transport keeps `Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c` aligned with the X-CUBE-ST67W61 vendor implementation. The local integration retains only the CMSIS device include required to declare `__get_IPSR()`. Previous transaction-loop and READY diagnostic modifications are not part of the supported baseline because a controlled comparison associated them with the post-DHCP READY-high deadlock.
 
-A failed transmit buffer is retained only for bounded recovery. The engine exits
-the current processing loop after each failure, retries only when a later SPI
-event wakes it, and drops the buffer after three failed attempts. This prevents
-a permanently queued packet from generating an unbounded timeout loop. A drop
-is diagnostic evidence of transport failure, not successful network delivery.
+The lwIP output adapter also follows the vendor `lwip_netif.c` behavior: each segment in a chained lwIP `pbuf` is submitted to `W6X_Netif_output()` in sequence. The framework does not coalesce the chain into a temporary contiguous allocation.
 
-The lwIP output adapter submits exactly one complete Ethernet frame for each
-output call. A chained lwIP `pbuf` is copied into one temporary contiguous
-buffer before it is queued to the ST67 driver. Sending each pbuf segment as an
-independent ST67 message is prohibited because the segments belong to one
-Ethernet frame. Runtime success still requires hardware UART evidence showing
-association, DHCP, and sustained operation without recurring SPI timeouts or
-bounded-retry drops.
-
-### SPI READY event ownership
-
-The transfer engine processes one protocol transaction per wake-up and clears
-only the event owned by that iteration. A module `SPI_EVT_TXN_RDY` event is
-handled before a host `SPI_EVT_TXN_PENDING` event, while the pending TX event is
-left set for a separate iteration. This prevents an RX/data-ready edge from
-being consumed and then reused as the transaction-ready handshake for a queued
-host transmit. After a successful transaction, additional queued TX work is
-re-armed explicitly. Failed TX buffers remain subject to the three-attempt
-bounded drop policy. Retry counters are logged as 32-bit values so the UART
-formatter produces numeric diagnostics.
+A provenance-backed 30-second hardware run with this vendor-aligned transport, SPI prescaler 4, configured-AP association, and DHCP completed without `Invalid magic 0xffff`, READY-wait timeout, or SPI transaction-timeout messages. This evidence covers only the captured interval and the association/DHCP path; sustained external traffic, TLS, MQTT, and end-to-end protocol operation require separate evidence.

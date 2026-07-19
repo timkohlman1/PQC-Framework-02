@@ -272,15 +272,10 @@ The UART marker begins with `lwIP runtime smoke:` and includes `network=unavaila
 
 Phase M10.1 begins hardware-backed ST67W61M1 validation without importing the CubeMX HTTP-server demo application. The default FreeRTOS task registers the minimal ST67 application callbacks, initializes the module through `W6X_Init()`, initializes the Wi-Fi subsystem through `W6X_WiFi_Init()`, and starts a bounded active scan through `W6X_WiFi_Scan()`. UART evidence uses `evidence=stm32-st67-wifi-rf-scan-only`, reports the callback status and access-point count, and deliberately omits SSID and BSSID values. The scan has an 8000 ms timeout and does not attempt association, register a real lwIP netif, start DHCP, open TCP, load certificates, perform a TLS handshake, or invoke MQTT. The ST67 SPI transfer-engine task stack is currently 2048 bytes after the prior 768-byte allocation faulted in the FreeRTOS queue receive path; the final minimum safe size remains unconfirmed because the current UART memory checkpoint measures only `defaultTask`.
 
-The ST67/lwIP transmit boundary sends one complete Ethernet frame per driver
-submission. Chained lwIP pbufs are consolidated before enqueueing. The SPI
-transfer engine otherwise remains on the X-CUBE-ST67W61 1.3.0 event-driven
-baseline, apart from the enlarged task stack required by observed runtime stack
-usage. A READY timeout is negative transport evidence; it does not establish
-TCP, TLS, MQTT, or end-to-end success.
+The ST67/lwIP transmit boundary follows the X-CUBE-ST67W61 vendor adapter: each segment in a chained lwIP `pbuf` is submitted to `W6X_Netif_output()` in sequence. The framework does not consolidate the chain into a temporary contiguous allocation. The SPI transfer engine remains aligned with the vendor `spi_iface.c` implementation, apart from the CMSIS device include required for `__get_IPSR()` and the enlarged task stack required by observed runtime stack usage.
 
 
-Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration currently uses SPI1 prescaler 32, giving an approximately 3.75 Mbit/s diagnostic setting when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. This temporary reduction allows reliable capture with the available FX2 logic analyser; hardware behaviour is not claimed from the configuration alone. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
+Current compile-only ST67W61M1 shield pin preparation maps the Arduino connector labels to the NUCLEO-L4R5ZI-P pins as follows: `D13/PA5 SPI1_SCK`, `D12/PA6 SPI1_MISO`, `D11/PA7 SPI1_MOSI`, `D10/PD14 SPI_CS`, `D5/PE11 CHIP_EN`, `D6/PE9 BOOT`, `D3/PE13 SPI_RDY`, and `D2/PF15 USER_BUTTON`. `SPI_RDY` and the relocated user button share `EXTI15_10_IRQn` but use different EXTI lines, 13 and 15 respectively. The generated 120 MHz clock configuration uses SPI1 prescaler 4, giving approximately 30 Mbit/s when SPI1 is fed from the 120 MHz APB2/PCLK2 domain. The earlier prescaler-32 configuration was a temporary diagnostic and is not the supported runtime baseline. The generated lwIP application/demo files are kept in the tree for inspection but filtered out of the Phase M5 compile-only CMake path; the project now compiles the CMSIS-RTOS v2 lwIP sys_arch port while runtime networking remains deferred.
 
 Phase M6.2 adds `Core/Inc/pqc_network_interface.h` and `Core/Src/pqc_network_interface.c` as the project-owned boundary between later protocol layers and the future ST67W61M1-backed lwIP netif. The implementation owns an unattached local `struct netif`, clears its IPv4 address, netmask, and gateway with lwIP helpers, then reads `netif_is_up`, `netif_is_link_up`, the lwIP IPv4-any state, and an lwIP-formatted IPv4 string. It maps those observed lwIP values into `link`, `ip`, and `tcp` availability, while transport remains unavailable because no backend exists. The UART line begins with `lwIP network interface:` and is labelled `evidence=lwip-netif-state-only`; it reports both the raw lwIP observations and the mapped unavailable states. Wi-Fi module, ST67W61M1, TLS handshake, MQTT connect, MQTT publish, reconnect, and end-to-end status remain unavailable. It does not call `netif_add`, set link or interface state up, start DHCP, open TCP, invoke wolfSSL, invoke wolfMQTT, or access ST67W61M1 hardware. This boundary is intended for later wolfSSL transport and wolfMQTT work without coupling those layers directly to the Wi-Fi driver.
 
@@ -466,7 +461,7 @@ Deferred status is not evidence that the named capability works. Future test fil
 
 ### ST67 GPIO/SPI bring-up evidence
 
-The bounded ST67 bring-up path calls `W6X_Init()` from a running FreeRTOS task after initializing the ST67 logging service. SPI1 is temporarily configured with prescaler 32, giving approximately 3.75 Mbit/s from the 120 MHz APB2/PCLK2 domain. This is a controlled diagnostic setting used to compare invalid-header frequency and READY-timeout behavior against the prior 30 Mbit/s configuration; it does not change the MCU clock or establish a permanent production bus rate. UART markers record the pre-init GPIO state, driver invocation, returned status, and post-init GPIO state.
+The bounded ST67 bring-up path calls `W6X_Init()` from a running FreeRTOS task after initializing the ST67 logging service. SPI1 uses prescaler 4, giving approximately 30 Mbit/s from the 120 MHz APB2/PCLK2 domain. UART markers record the pre-init GPIO state, driver invocation, returned status, and post-init GPIO state. The earlier prescaler-32 configuration was limited to logic-analyser diagnostics and is no longer the supported runtime setting.
 A paired logic-analyser capture can establish that `CHIP_EN`, `SPI_RDY`,
 active-high `SPI_CS`, SCK, MOSI, and MISO behaved consistently with a real
 transport attempt.
@@ -485,18 +480,11 @@ remain unavailable until their own explicit runtime evidence is recorded.
 The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
 
 
-### Post-network SPI READY timeout diagnostics
+### Vendor-aligned SPI transport validation
 
-The STM32L4 HAL exposes one generic callback for READY rising and falling edges.
-The application samples the READY level in that callback, updates ISR-safe total,
-high/rising, and low/falling counters, and records the latest tick for each
-classification. It performs no UART logging from interrupt context.
+The supported runtime keeps the ST67 transfer engine aligned with the X-CUBE-ST67W61 vendor `spi_iface.c` implementation. The only local source-level integration retained in that file is the CMSIS device include required to declare `__get_IPSR()`. The lwIP output adapter likewise follows the vendor per-segment `pbuf` submission path.
 
-If the vendor transfer engine times out waiting for `SPI_EVT_TXN_RDY`, the error
-line includes a snapshot of the READY level, callback counters, last rising and
-falling ticks, and current task tick. Timeout evidence also records the transfer engine's last task wake bits, selected event, `spi_do_xfer` flags, queued transmit state, transfer attempt/result counters, and READY levels before and after the most recent transfer.
-
-The attempted one-transaction-per-wake ownership correction was reverted because hardware evidence showed repeated SPI hardware-transfer timeouts and continued transmit backlog growth. The transfer engine therefore retains the vendor multi-transaction loop and original event clearing behavior while emitting additional transaction-sequencing evidence: READY levels around chip-select assertion, chip-select assertion and deassertion ticks, hardware-transfer start and completion ticks, completion-callback counts, and completion-wait results. This remains diagnostic negative transport evidence and does not claim the READY defect is resolved.
+A controlled 30-second hardware run using SPI prescaler 4 completed module initialization, configured-AP association, link-up, DHCP assignment, and live IPv4 reporting without invalid-header, READY-wait-timeout, or SPI transaction-timeout messages. Earlier extended READY counters, transaction sequencing changes, bounded retry/drop behavior, and related timeout formatting are historical diagnostics and are not part of the supported transport baseline. The captured evidence does not establish sustained external traffic, TLS, MQTT, or end-to-end protocol success.
 
 ## ST67 T02 normal startup and live network evidence
 

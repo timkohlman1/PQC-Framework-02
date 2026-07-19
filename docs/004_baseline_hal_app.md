@@ -113,20 +113,11 @@ hard-coded. Earlier pre-network smoke markers describe only the state at their
 execution point.
 
 
-## ST67 SPI clock diagnostic setting
+## ST67 SPI transport baseline
 
-SPI1 is temporarily configured with prescaler 32, giving approximately 3.75 Mbit/s from the 120 MHz APB2/PCLK2 domain. This isolates SPI bus timing from the unchanged 120 MHz MCU clock while comparing `Invalid magic 0xffff` frequency, association/DHCP behavior, and the recurring READY timeout against the previous 30 Mbit/s configuration. The setting is diagnostic evidence only and is not a production-rate decision.
+SPI1 uses `SPI_BAUDRATEPRESCALER_4`, giving approximately 30 Mbit/s from the 120 MHz APB2/PCLK2 domain. The CubeMX `.ioc`, generated initialization, and unit-test contract all record the same setting. Prescaler 32 was used only during earlier logic-analyser diagnostics and is no longer the supported runtime configuration.
 
-## ST67 SPI READY timeout diagnostics
+The ST67 SPI transfer engine remains aligned with the X-CUBE-ST67W61 vendor `spi_iface.c` implementation, apart from the CMSIS device include required for `__get_IPSR()`. The host-side lwIP adapter follows the vendor output path and submits each chained `pbuf` segment to `W6X_Netif_output()` in sequence.
 
-The STM32L4 HAL reports both READY edges through one generic EXTI callback. The firmware classifies each callback from the sampled READY level and records ISR-safe counters without logging from interrupt context. The counters include total callbacks, high/rising classifications, low/falling classifications, the latest tick for each classification, and the latest sampled level.
+A 30-second provenance-backed UART capture verified module initialization, configured-AP association, link-up, DHCP assignment, and live IPv4 evidence without `Invalid magic 0xffff`, `waiting for spi txn ready timeouted`, or SPI transaction-timeout messages. This does not establish sustained external traffic, TLS, MQTT, broker access, or end-to-end protocol success.
 
-When the transfer engine times out waiting for `SPI_EVT_TXN_RDY`, its existing error line includes a snapshot of those counters and the current task tick:
-
-```text
-waiting for spi txn ready timeouted: ready_level=<0|1> ready_irq_count=<n> ready_rising_count=<n> ready_falling_count=<n> last_rising_tick=<tick> last_falling_tick=<tick> current_tick=<tick>
-```
-
-Timeout evidence also records the transfer engine's last task wake bits, selected event, `spi_do_xfer` flags, queued transmit state, transfer attempt/result counters, and READY levels before and after the most recent transfer.
-
-The attempted one-transaction-per-wake event-ownership change was reverted after hardware evidence showed repeated SPI hardware-transfer timeouts and a growing transmit backlog. The transfer engine again uses the vendor multi-transaction loop and original event clearing semantics. Diagnostic output now records READY around chip-select assertion, chip-select timing, hardware-transfer start and completion timing, completion-callback counts, and completion-wait results. This is diagnostic instrumentation only; retry limits, DMA behavior, buffer lifetime, packet-drop policy, and protocol ordering are otherwise unchanged.

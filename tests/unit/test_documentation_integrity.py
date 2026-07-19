@@ -777,3 +777,16 @@ def test_ai_build_guide_preserves_mandatory_workflow_and_safety_rules() -> None:
     )
     for phrase in required_phrases:
         assert phrase in guide, f"AI build guide lost mandatory rule: {phrase}"
+
+def test_st67_transport_documentation_matches_vendor_aligned_runtime_baseline() -> None:
+    board = _read("docs/003_stm32_board_setup.md")
+    baseline = _read("docs/004_baseline_hal_app.md")
+    architecture = _read("docs/007_framework_architecture.md")
+    combined = "\n".join((board, baseline, architecture))
+
+    assert "SPI_BAUDRATEPRESCALER_4" in baseline
+    assert "SPI1 uses prescaler 4" in architecture
+    assert "approximately 30 Mbit/s" in combined
+    assert "vendor `spi_iface.c` implementation" in combined
+    assert "each segment in a chained lwIP `pbuf`" in combined
+    assert "30-second" in combined
