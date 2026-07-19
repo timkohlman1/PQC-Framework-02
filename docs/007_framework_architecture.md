@@ -542,3 +542,38 @@ prevents stale cross-profile symbol combinations such as an unresolved
 
 This cleanup does not remove wolfSSL source files, persistent signing tuples, or
 private keys.
+
+## Automated-test results and build-purpose boundary
+
+Pytest is a provenance-producing workflow. Its generated evidence is stored
+under `results/automated-tests/<test-run-id>/`, separately from canonical
+experiment results and from `results/builds/<build-number>/`.
+
+Identity domains are not interchangeable:
+
+- `test_run_id` identifies one pytest process.
+- `run_id` identifies one canonical experiment execution.
+- `build_number` identifies one normal reusable firmware build.
+- `build_identity` identifies a test-only build within a test run.
+
+A test-run manifest is written at session start and updated incrementally after
+collection and each setup, call, and teardown stage. It records invocation
+arguments, non-secret environment metadata, collected and outcome counts,
+failure stage, case-stage records, retained artifact hashes, unavailable
+artifacts, referenced canonical result records, and test-triggered build
+records. A failed or interrupted run remains inspectable even if finalisation is
+incomplete.
+
+Build reuse is purpose constrained. Automated-test builds are retained under
+`results/automated-tests/<test-run-id>/builds/<sequence>/`; they do not reserve
+or increment `.build_number` and do not enter `results/builds/`. Fingerprint
+equality cannot override this boundary. Normal experiment, benchmark,
+secure-boot, and release selectors must only consider normal-purpose records in
+the canonical reusable build pool. References from a test result to a canonical
+experiment result are immutable references; the referenced record must not be
+rewritten or supplemented in place.
+
+Test evidence records unavailable artifacts explicitly with a producing stage
+and reason. Secrets, private key material, credentials, PSKs, tokens, and
+passwords are redacted or omitted; only approved public hashes and
+fingerprints may be retained.

@@ -124,3 +124,13 @@ match the key embedded in `keystore.c`.
 
 The public-key hash and format metadata are recorded in `tuple.json`. Existing
 tuples are migrated in place without rotating or rewriting `private_key.der`.
+
+## Automated-test result retention
+
+Automated-test manifests and logs may retain commands, outcomes, public hashes,
+fingerprints, paths, and bounded failure details. They must not retain
+passwords, PSKs, tokens, credentials, private-key contents, private certificate
+material, secret environment values, or generated authentication files. Secret-
+bearing fields are redacted before JSON manifests are written. A test may
+reference a canonical non-secret result record by identity, path, and hash, but
+must not copy secret material or mutate the referenced record.
