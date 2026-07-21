@@ -215,3 +215,12 @@ OQS broker logs are emitted to Docker stdout only. The OQS profile disables Mosq
 ## OQS image user compatibility
 
 The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+
+
+## STM32 plaintext command/response orchestration
+
+The framework's `mqtt_plaintext_st67_e2e` run starts `mosquitto_sub` on the response topic before resetting the board. Because the command publication is intentionally non-retained, it publishes the configured command repeatedly during the bounded startup window rather than relying on a fixed delay. The run succeeds only when the expected response is received and the UART log contains all MQTT end-to-end success markers.
+
+## Experiment-managed lifecycle
+
+The real STM32 plaintext MQTT gateway experiment manages this Compose project transactionally. It stops only the configured framework Compose project, deploys and starts the classical profile, verifies the port 1883 listener with a bounded MQTT publish/subscribe readiness exchange, then collects the full Compose broker log and stops the project after the hardware exchange. The run retains deploy, start, status, readiness, broker, and stop logs in its result directory. Manual `deploy`, `start`, `status`, and `stop` commands remain available for broker-only diagnosis, but are not required before the managed hardware experiment.

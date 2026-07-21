@@ -36,7 +36,6 @@ FreeRTOS task-context smoke starting: context=freertos_task scheduler=running se
 It runs one serialized task-context smoke sequence:
 
 - lwIP helper smoke labelled `context=freertos_task scheduler=running`
-- STM32-local lwIP UDP loopback at `127.0.0.1`, labelled `evidence=stm32-local-lwip-loopback-only`
 - wolfSSL TLS-context lifecycle smoke labelled `context=freertos_task scheduler=running`
 - wolfMQTT initialization/deinitialization against unavailable callbacks, labelled `evidence=stm32-fake-no-network-initialization-only backend=fake_no_network`
 
@@ -54,7 +53,6 @@ FreeRTOS defaultTask created: name=defaultTask ...
 FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask ...
 FreeRTOS defaultTask started: periodic tick task active
 FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true
-lwIP local loopback smoke: ... evidence=stm32-local-lwip-loopback-only ... result=passed
 wolfMQTT runtime smoke: ... evidence=stm32-fake-no-network-initialization-only ... transport=unavailable
 FreeRTOS task-context smoke complete: ... network=unavailable tls_handshake=unavailable mqtt=unavailable
 tick
@@ -121,3 +119,12 @@ The ST67 SPI transfer engine remains aligned with the X-CUBE-ST67W61 vendor `spi
 
 A 30-second provenance-backed UART capture verified module initialization, configured-AP association, link-up, DHCP assignment, and live IPv4 evidence without `Invalid magic 0xffff`, `waiting for spi txn ready timeouted`, or SPI transaction-timeout messages. This does not establish sustained external traffic, TLS, MQTT, broker access, or end-to-end protocol success.
 
+
+
+## Plaintext MQTT runtime verdict
+
+For the `mqtt_plaintext_st67_e2e` profile, the normal boot and tick markers remain necessary but are not sufficient. The run passes only when UART reports DHCP, MQTT CONNECT, SUBSCRIBE, command receive, response publish, and `end_to_end=passed`, and the gateway subscriber independently receives the configured correlation response.
+
+### Plaintext MQTT broker lifecycle evidence
+
+The `mqtt_plaintext_st67_e2e` experiment is not a generic baseline-only run. Before resetting the application it stops the known framework broker project, deploys and starts the classical broker profile, and waits for a successful MQTT readiness exchange on the plaintext listener. After the STM32 response is independently received, the framework retains the full broker log and stops the broker. End-to-end success therefore requires firmware UART markers, independent subscriber receipt, broker readiness, broker-log collection, and successful broker cleanup.

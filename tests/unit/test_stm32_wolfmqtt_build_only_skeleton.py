@@ -16,49 +16,51 @@ def test_phase_m7_wolfmqtt_sources_and_submodule_are_wired():
     assert "Core/Src/pqc_wolfmqtt_build_only.c" in cmake
 
 
-def test_phase_m7_client_uses_native_mqttnet_transport_boundary():
+def test_wolfmqtt_supports_fake_and_real_st67_lwip_transport_boundaries():
     header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
     assert "PQC_WOLFMQTT_BACKEND_FAKE_NO_NETWORK" in header
     assert "PQC_WOLFMQTT_BACKEND_ST67W61M1" in header
     assert "PQC_WolfMQTT_BuildOnly_Initialize" in header
+    assert "PQC_WolfMQTT_RunPlaintextExchange" in header
     assert '#include "wolfmqtt/mqtt_client.h"' in source
+    assert '#include "lwip/sockets.h"' in source
     assert "MqttNet network;" in source
-    assert "network.connect = PQC_WolfMQTT_UnavailableConnect;" in source
-    assert "network.read = PQC_WolfMQTT_UnavailableRead;" in source
-    assert "network.write = PQC_WolfMQTT_UnavailableWrite;" in source
-    assert "network.disconnect = PQC_WolfMQTT_UnavailableDisconnect;" in source
+    assert "network.connect = PQC_WolfMQTT_LwIPConnect;" in source
+    assert "network.read = PQC_WolfMQTT_LwIPRead;" in source
+    assert "network.write = PQC_WolfMQTT_LwIPWrite;" in source
+    assert "network.disconnect = PQC_WolfMQTT_LwIPDisconnect;" in source
     assert "MqttClient_Init(" in source
     assert "MqttClient_DeInit(" in source
 
 
-def test_phase_m7_performs_no_network_tls_or_mqtt_runtime_operations():
+def test_real_plaintext_exchange_performs_bounded_mqtt_operations_without_tls():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
-    forbidden = (
+    for fragment in (
         "MqttClient_NetConnect(",
         "MqttClient_Connect(",
-        "MqttClient_Publish(",
         "MqttClient_Subscribe(",
         "MqttClient_WaitMessage(",
-        "wolfSSL_connect(",
-        "socket(",
+        "MqttClient_Publish(",
+        "MqttClient_Disconnect(",
+        "lwip_socket(",
         "lwip_connect(",
-        "W6X_WiFi_Connect(",
-    )
-    for fragment in forbidden:
-        assert fragment not in source
-
-    for field in (
-        "transport_available = false",
-        "broker_connected = false",
-        "tls_handshake_complete = false",
-        "publish_complete = false",
-        "reconnect_complete = false",
+        "lwip_recv(",
+        "lwip_send(",
+        "lwip_close(",
     ):
-        assert field in source
+        assert fragment in source
 
+    assert "PQC_WOLFMQTT_COMMAND_TIMEOUT_MS" in source
+    assert "wolfSSL_connect(" not in source
+    assert "W6X_WiFi_Connect(" not in source
+    assert "status->transport_available = (backend == PQC_WOLFMQTT_BACKEND_ST67W61M1);" in source
+    assert "status->broker_connected = true;" in source
+    assert "status->subscribed = true;" in source
+    assert "status->message_received = true;" in source
+    assert "status->publish_complete = true;" in source
 
 def test_phase_m8_invokes_fake_no_network_initialization_from_freertos_task():
     header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")

@@ -60,7 +60,6 @@ This matrix is the canonical detailed implementation-status reference. A support
 | Native host wolfMQTT/wolfSSL broker validation | Supported as a native host target | Not applicable | Supported, including structured compatibility markers | Uses the configured broker | Local or gateway broker checks are capability-gated | `host_side` MQTT-over-TLS compatibility evidence | Must keep all STM32, ST67W61M1, and end-to-end wireless claims false |
 | STM32 lwIP/ST67W6X source integration | Supported in direct and relocated firmware builds | Module initialization and bounded Wi-Fi RF scan supported; local lwIP helper smoke remains separate | Not applicable | Not applicable | Capability-gated UART validation | STM32 build evidence plus `stm32-st67-wifi-rf-scan-only` hardware evidence | Module initialization and RF scan do not prove association, link, hardware IP, TCP, TLS, or MQTT |
 | STM32 lwIP network-interface boundary | Supported | Supported only as unattached local `netif` state observation | Not applicable | Not applicable | Optional UART evidence is capability-gated | `lwip-netif-state-only`; unavailable-boundary evidence | No `netif_add`, link-up, DHCP, socket, external network, or ST67W61M1 access |
-| STM32 lwIP UDP loopback | Supported | Supported after scheduler start at `127.0.0.1` | Not applicable | No broker used | Known-image UART assertion is capability-gated | `stm32-local-lwip-loopback-only` | Local loopback is not Wi-Fi, hardware-backed IP, external TCP, TLS, MQTT, or broker evidence |
 | STM32 wolfSSL source and TLS-context lifecycle | Supported in direct and relocated firmware builds | Supported for initialization, TLS 1.2 client `WOLFSSL_CTX` create/free, and cleanup | Not applicable | Not applicable | UART smoke is capability-gated | `tls-context-lifecycle-only` | No `WOLFSSL` session, certificates, private keys, socket transport, handshake, MQTT, Wi-Fi, or ST67W61M1 |
 | STM32 wolfSSL transport boundary | Supported | Boundary executes only to report unavailable operations | Not applicable | Not applicable | Optional UART evidence is capability-gated | `unavailable-transport-only` | Connect/read/write callbacks perform no socket I/O and transfer no data |
 | STM32 wolfMQTT integration | Supported: pinned wolfMQTT client, packet, and socket callback layers build and link | Supported only for serialized fake/no-network client initialization/deinitialization after scheduler start | Separate native host validation exists but is not STM32 evidence | No broker used by STM32 path | Known-image UART assertion is capability-gated | Build-only plus `stm32-fake-no-network-initialization-only` | No TCP, TLS handshake, MQTT connect, subscribe, publish, receive, disconnect, reconnect, Wi-Fi, or ST67W61M1 |
@@ -402,10 +401,6 @@ The task-context path remains local and serialized. It does not register or brin
 
 ## STM32-local lwIP UDP loopback
 
-The STM32-local loopback capability adds `Core/Inc/pqc_lwip_loopback.h` and `Core/Src/pqc_lwip_loopback.c`. The one-shot smoke runs from `defaultTask` after the FreeRTOS scheduler has started. It initializes the lwIP TCP/IP core, creates a local IPv4 UDP PCB, binds a fixed high port, sends a deterministic payload to `127.0.0.1`, and verifies the received length and bytes through the lwIP loop interface. The smoke is serialized with the existing task-context checks and uses lwIP core locking for raw UDP API access outside the TCP/IP thread.
-
-The UART marker begins with `lwIP local loopback smoke:` and labels the evidence as `stm32-local-lwip-loopback-only`. A passing marker requires `result=passed`, `sent=1`, `received=1`, and `payload_match=1`. This is internal STM32/lwIP runtime evidence only. It does not prove ST67W61M1 detection, Wi-Fi association, link-up, address acquisition from hardware, external ping, external TCP connectivity, broker access, TLS handshake, MQTT connect, MQTT publish, reconnect, or end-to-end network success. Those fields remain explicitly unavailable in the marker.
-
 The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The ordinary monitor-only test remains non-assertive because it cannot establish which firmware image is already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
 
 
@@ -543,6 +538,20 @@ prevents stale cross-profile symbol combinations such as an unresolved
 This cleanup does not remove wolfSSL source files, persistent signing tuples, or
 private keys.
 
+### Plaintext STM32 MQTT end-to-end baseline
+
+The `mqtt_plaintext_st67_e2e` profile extends the working ST67 Wi-Fi/DHCP path with a bounded wolfMQTT exchange over lwIP sockets. The firmware connects to the gateway broker on TCP port 1883, subscribes to a command topic, waits for one message, and publishes a correlation acknowledgement on a response topic. The existing TLS listener remains separate on port 8883.
+
+End-to-end success requires recorded evidence of DHCP acquisition, TCP/MQTT connection, subscription, inbound delivery, outbound publication, and receipt of the expected correlation value by an independent gateway subscriber. Firmware UART markers alone prove the STM32-side observations but do not by themselves prove that the gateway received the response. TLS, reconnect, latency, and throughput remain unavailable for this baseline and must not be inferred.
+
+
+### Automated plaintext MQTT orchestration evidence
+
+The `stm32_st67_plaintext_e2e` experiment class uses one bounded gateway operation that starts the response subscriber before MCU reset, captures UART from reset, and republishes the non-retained command at a configured interval until the response arrives or the attempt limit is reached. A successful record requires matching STM32 UART protocol markers and an independently observed response payload. The result retains `mqtt-publisher.log`, `mqtt-subscriber.log`, and an `mqtt_e2e` manifest block with the failure stage, publication count, response verdict, and missing UART markers.
+
+### Managed broker evidence for STM32 plaintext MQTT
+
+The `stm32_st67_plaintext_e2e` evidence class owns the framework Mosquitto Compose project during each run. The workflow stops any prior instance of that known project, deploys the current broker configuration, starts the classical profile, performs a bounded plaintext MQTT readiness exchange, runs the STM32 command/response exchange, captures complete broker logs, and stops the project in guaranteed cleanup. Result folders retain broker deploy, start, status, readiness, log, and stop evidence. Broker lifecycle failures remain distinct from STM32 exchange failures, and a successful exchange does not mask failed log collection or cleanup.
 ## Automated-test results and build-purpose boundary
 
 Pytest is a provenance-producing workflow. Its generated evidence is stored

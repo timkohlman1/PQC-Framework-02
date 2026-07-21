@@ -17,7 +17,20 @@ unless the request will examine prior AI prompts / interactions
 ----------------
 
 
+fix these build warnings:
 
+[25/160] Building C object CMakeFiles/stm32_basic_hal1.dir/Core/Src/main.c.obj
+/workspace/Core/Src/main.c:246:13: warning: 'APP_RunST67WiFiScan' defined but not used [-Wunused-function]
+  246 | static bool APP_RunST67WiFiScan(void)
+      |             ^~~~~~~~~~~~~~~~~~~
+[26/160] Building C object CMakeFiles/stm32_basic_hal1.dir/Core/Src/sysmem.c.obj
+[27/160] Building C object CMakeFiles/stm32_basic_hal1.dir/LWIP/App/lwip.c.obj
+/workspace/LWIP/App/lwip.c:486:16: warning: 'netif_link_ap_down_cb' defined but not used [-Wunused-function]
+  486 | static int32_t netif_link_ap_down_cb(void)
+      |                ^~~~~~~~~~~~~~~~~~~~~
+/workspace/LWIP/App/lwip.c:457:16: warning: 'netif_link_ap_up_cb' defined but not used [-Wunused-function]
+  457 | static int32_t netif_link_ap_up_cb(void)
+      |                ^~~~~~~~~~~~~~~~~~~
 
 
 
@@ -33,4 +46,29 @@ timk@pqc-gateway1:~$ picocom --baud 115200 --flow none --imap crlf --omap lfcrlf
 .\scripts\dev.ps1 experiment-gateway run `
     --experiment configs/experiments/baseline_direct_uart.yaml `
     --uart-duration-seconds 30
+
+
+
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+
+
+
+
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml
+
+
+validate MQTT broker locally (2 terminals)
+
+docker run --rm --network host eclipse-mosquitto:2.0 \
+  mosquitto_sub -h 127.0.0.1 -p 1883 \
+  -t pqc/experiments/stm32/command -C 1 -W 20 -v
+
+
+docker run --rm --network host eclipse-mosquitto:2.0 \
+  mosquitto_pub -h 127.0.0.1 -p 1883 \
+  -t pqc/experiments/stm32/command \
+  -m pqc-stm32-e2e-ok
 

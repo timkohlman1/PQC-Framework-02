@@ -25,7 +25,6 @@
 #include "pqc_lwip_build_only.h"
 #include "lwip.h"
 #include "pqc_wifi_config.h"
-#include "pqc_lwip_loopback.h"
 #include "pqc_network_interface.h"
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
@@ -82,7 +81,7 @@ static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;
 osThreadId_t networkTaskHandle;
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
-  .stack_size = 1024 * 4,
+  .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE END PV */
@@ -577,7 +576,7 @@ static bool APP_WaitForDhcpAddress(
   return false;
 }
 
-static void APP_RunST67WiFiDhcp(void)
+static bool APP_RunST67WiFiDhcp(void)
 {
   W6X_Status_t status;
   W6X_WiFi_Connect_Opts_t options = {0};
@@ -605,7 +604,7 @@ static void APP_RunST67WiFiDhcp(void)
     APP_UART_WriteString(
         "ST67 Wi-Fi association: result=config_missing ssid=<empty>"
         " state=not_attempted security=unavailable channel=0\r\n");
-    return;
+    return false;
   }
 
   char status_buf[32];
@@ -628,7 +627,7 @@ static void APP_RunST67WiFiDhcp(void)
     APP_UART_WriteString(PQC_WIFI_SSID);
     APP_UART_WriteString(
         " state=unavailable security=unavailable channel=0\r\n");
-    return;
+    return false;
   }
 
 #if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)
@@ -713,7 +712,7 @@ static void APP_RunST67WiFiDhcp(void)
     }
     APP_UART_WriteString(
         " state=unavailable security=unavailable channel=0\r\n");
-    return;
+    return false;
   }
 
   association_success = APP_WaitForWiFiAssociation(
@@ -740,7 +739,7 @@ static void APP_RunST67WiFiDhcp(void)
     APP_UART_WriteString(" middleware_error_count=");
     APP_UART_WriteUint32(app_st67_error_count);
     APP_UART_WriteString(" security=unavailable channel=0\r\n");
-    return;
+    return false;
   }
 
   app_st67_wifi_connected = true;
@@ -762,6 +761,7 @@ static void APP_RunST67WiFiDhcp(void)
   APP_UART_WriteString(" netmask=");
   APP_UART_WriteIPv4(netmask);
   APP_UART_WriteString("\r\n");
+  return dhcp_success;
 }
 
 static void APP_PrintST67PinState(const char *stage)
@@ -778,6 +778,8 @@ static void APP_PrintST67PinState(const char *stage)
   APP_UART_WriteUint32((uint32_t)HAL_GPIO_ReadPin(SPI_CS_GPIO_Port, SPI_CS_Pin));
   APP_UART_WriteString("\r\n");
 }
+
+static bool app_st67_network_ready = false;
 
 static void APP_RunST67SPIBringup(void)
 {
@@ -810,6 +812,7 @@ static void APP_RunST67SPIBringup(void)
         "ST67 SPI bring-up: result=logging_init_failed "
         "driver_init=not-attempted\r\n");
     APP_PrintST67PinState("logging_failed");
+    app_st67_network_ready = false;
     return;
   }
 
@@ -827,6 +830,7 @@ static void APP_RunST67SPIBringup(void)
         "transport=unavailable wifi_association=not-attempted ip=unavailable "
         "tls_handshake=unavailable mqtt_connect=unavailable "
         "end_to_end=unavailable\r\n");
+    app_st67_network_ready = false;
     return;
   }
 
@@ -847,7 +851,8 @@ static void APP_RunST67SPIBringup(void)
         "transport=spi-module-initialized wifi_association=not-attempted "
         "ip=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
         "end_to_end=unavailable\r\n");
-    APP_RunST67WiFiDhcp();
+    app_st67_network_ready = APP_RunST67WiFiDhcp();
+    return;
   }
   else
   {
@@ -857,6 +862,7 @@ static void APP_RunST67SPIBringup(void)
         "ip=unavailable tls_handshake=unavailable mqtt_connect=unavailable "
         "end_to_end=unavailable\r\n");
   }
+  app_st67_network_ready = false;
 }
 
 static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_running)
@@ -909,22 +915,6 @@ static void APP_PrintLwIPRuntimeSmoke(const char *context, bool scheduler_runnin
   }
 }
 
-static void APP_RunLwIPLocalLoopbackSmoke(void)
-{
-  char status_line[768];
-  const PQC_LwIPLoopbackStatus status = PQC_LwIP_Loopback_RunUdpSmoke();
-
-  if (PQC_LwIP_Loopback_StatusLine(
-          status_line, (uint32_t)sizeof(status_line), &status))
-  {
-    APP_UART_WriteString(status_line);
-  }
-  else
-  {
-    APP_UART_WriteString("lwIP local loopback smoke: context=freertos_task scheduler=running evidence=stm32-local-lwip-loopback-only protocol=udp address=127.0.0.1 result=format_failed wifi_module=unavailable link=unavailable hardware_ip_acquisition=unavailable external_ping=unavailable external_tcp=unavailable tls_handshake=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable broker_access=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n");
-  }
-}
-
 static void APP_PrintNetworkInterfaceStatus(void)
 {
   char status_line[384];
@@ -954,6 +944,11 @@ static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_run
   {
     APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
   }
+}
+
+void PQC_WolfMQTT_DiagnosticMarker(const char *marker)
+{
+  APP_UART_WriteString(marker);
 }
 
 static void APP_PrintWolfMQTTRuntimeStatus(void)
@@ -1216,7 +1211,7 @@ int main(void)
     APP_UART_WriteString("FreeRTOS networkTask create failed\r\n");
     Error_Handler();
   }
-  APP_UART_WriteString("FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=1024\r\n");
+  APP_UART_WriteString("FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=2048\r\n");
   APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE);
   /* USER CODE END RTOS_THREADS */
 
@@ -1763,18 +1758,53 @@ void StartDefaultTask(void *argument)
 /* USER CODE END Header_StartNetworkTask */
 void StartNetworkTask(void *argument)
 {
+  bool network_ready;
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
   APP_RunST67SPIBringup();
+  network_ready = app_st67_network_ready;
   APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
-  APP_RunLwIPLocalLoopbackSmoke();
+  APP_UART_WriteString("Finishing LwIP Runtime Smoke\r\n");
+  APP_UART_WriteString("Starting WolfSSL Runtime Smoke\r\n");
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
-  APP_PrintWolfMQTTRuntimeStatus();
+  APP_UART_WriteString("Finishing WolfSSL Runtime Smoke\r\n");
+  if (network_ready)
+  {
+    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch begin\r\n");
+    APP_PrintWolfMQTTRuntimeStatus();
+    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch returned\r\n");
+  }
+  else
+  {
+    APP_UART_WriteString("wolfMQTT runtime: result=skipped reason=network_not_ready end_to_end=failed\r\n");
+  }
   APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=available wifi=connected link=up tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE);
 
   osThreadExit();
+}
+
+
+void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
+{
+  (void)task;
+  APP_UART_WriteString("FATAL: FreeRTOS stack overflow task=");
+  APP_UART_WriteString((task_name != NULL) ? task_name : "unknown");
+  APP_UART_WriteString("\r\n");
+  taskDISABLE_INTERRUPTS();
+  for (;;)
+  {
+  }
+}
+
+void vApplicationMallocFailedHook(void)
+{
+  APP_UART_WriteString("FATAL: FreeRTOS allocation failed\r\n");
+  taskDISABLE_INTERRUPTS();
+  for (;;)
+  {
+  }
 }
 
 /**

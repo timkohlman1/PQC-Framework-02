@@ -28,7 +28,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#define SPI_THREAD_STACK_SIZE                   4096U
 /* USER CODE END Includes */
 
 /* Exported constants --------------------------------------------------------*/

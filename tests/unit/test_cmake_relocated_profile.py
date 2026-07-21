@@ -60,7 +60,7 @@ def test_application_emits_freertos_scheduler_uart_markers():
     assert "heap_bytes=" in main_c
     assert "default_task_stack_words=1024" in main_c
     assert "FreeRTOS defaultTask started: heartbeat active" in main_c
-    assert "FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=1024" in main_c
+    assert "FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=2048" in main_c
     assert "FreeRTOS networkTask started: initialization active" in main_c
     assert "APP_PrintFreeRTOSSchedulerStarting();" in main_c
     assert "osKernelStart();" in main_c
