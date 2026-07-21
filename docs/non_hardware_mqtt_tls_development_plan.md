@@ -834,7 +834,7 @@ Validate actual STM32-to-broker MQTT-over-TLS with lwIP, wolfSSL, wolfMQTT, and 
 ```text
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-Requirement: Implement Phase _ of the attached development plan - _. Implement classical MQTT-over-TLS runtime validation on STM32 using the established architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32 and the ST67W61M1 provides the network interface. Capture TLS handshake, MQTT connect, publish, reconnect, and relevant resource metrics only from explicit logs, UART markers, manifests, or broker evidence. Keep tests capability-gated and preserve the repository secrets policy.
+Requirement: Implement Phase M11 of the attached development plan - Classical MQTT over TLS on STM32. Implement classical MQTT-over-TLS runtime validation on STM32 using the established architecture where lwIP, wolfSSL, and wolfMQTT run on the STM32 and the ST67W61M1 provides the network interface. Capture TLS handshake, MQTT connect, publish, reconnect, and relevant resource metrics only from explicit logs, UART markers, manifests, or broker evidence. Keep tests capability-gated and preserve the repository secrets policy.
 
 ```
 
