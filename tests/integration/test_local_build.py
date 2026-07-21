@@ -137,6 +137,11 @@ def test_real_local_build_command_completes_without_flash_or_uart(
         == manifest["build"]["fingerprint_algorithm"]
     )
     assert (
+        build_record_manifest["build"]["fingerprint_file_hashes"]
+        == manifest["build"]["fingerprint_file_hashes"]
+    )
+    assert list(manifest["build"]["fingerprint_file_hashes"]) == manifest["build"]["fingerprint_inputs"]
+    assert (
         build_record_manifest["firmware"]["sha256"]
         == manifest["firmware"]["sha256"]
     )

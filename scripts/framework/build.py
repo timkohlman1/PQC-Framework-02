@@ -7,6 +7,7 @@ SSH, or touching network resources.
 
 import json
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,13 @@ from framework.fingerprint import (
     calculate_default_build_fingerprint,
 )
 from framework.manifest import read_manifest, update_manifest
+from framework.test_provenance import (
+    TEST_BUILD_PURPOSE,
+    current_build_purpose,
+    current_test_result_dir,
+    reserve_test_build_identity,
+    write_json_atomic,
+)
 from framework.generated_state import (
     build_identity,
     detect_execution_identity,
@@ -67,6 +75,8 @@ class BuildResult:
     build_record_manifest_path: Path | None = None
     build_skipped: bool = False
     build_skip_reason: str | None = None
+    build_purpose: str = "experiment"
+    build_identity: str | None = None
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
@@ -152,6 +162,8 @@ def _write_build_log(
     build_skip_reason: str | None = None,
     build_skip_detail: str | None = None,
     force_rebuild: bool = False,
+    build_purpose: str = "experiment",
+    build_identity: str | None = None,
 ) -> None:
     """Write the build log for one experiment build run."""
 
@@ -160,6 +172,8 @@ def _write_build_log(
         "==================",
         f"Timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Repository root: {repo_root}",
+        f"Build purpose: {build_purpose}",
+        f"Build identity: {build_identity if build_identity is not None else 'unavailable'}",
         f"Build number: {build_number if build_number is not None else 'unavailable'}",
         f"Build skipped: {str(build_skipped).lower()}",
         f"Build skip reason: {build_skip_reason if build_skip_reason is not None else 'none'}",
@@ -421,6 +435,9 @@ def execute_build(
 
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
+    requested_build_purpose = current_build_purpose()
+    build_purpose = requested_build_purpose if runner is default_runner else "experiment"
+    test_result_dir = current_test_result_dir()
     source = (
         capture_git_provenance(repo_root_path)
         if git_runner is None
@@ -462,6 +479,8 @@ def execute_build(
             build_skip_reason="fingerprint_error",
             build_skip_detail=fingerprint_error,
             force_rebuild=force,
+            build_purpose=build_purpose,
+            build_identity=build_identity_value if "build_identity_value" in locals() else None,
         )
         update_manifest(
             result_dir_path / "manifest.json",
@@ -486,6 +505,8 @@ def execute_build(
                 "build": {
                     "configure_preset": configure_preset,
                     "build_preset": build_preset,
+                    "purpose": build_purpose,
+                    "identity": None,
                     "return_code": FINGERPRINT_INPUT_ERROR_RETURN_CODE,
                     "duration_seconds": round(duration_seconds, 3),
                     "log": "build.log",
@@ -517,16 +538,19 @@ def execute_build(
             build_record_manifest_path=None,
             build_skipped=False,
             build_skip_reason="fingerprint_error",
+            build_purpose=build_purpose,
+            build_identity=None,
         )
 
     generated_state_scope = f"cmake-{configure_preset}"
     generated_state_identity = build_identity(
-        workflow="stm32_cmake",
-        profile=f"{configure_preset}:{build_preset}",
+        workflow=f"stm32_cmake:{build_purpose}",
+        profile=f"{configure_preset}:{build_preset}:{build_purpose}",
         input_fingerprint={
             "algorithm": build_fingerprint.algorithm,
             "fingerprint": build_fingerprint.fingerprint,
             "inputs": build_fingerprint.inputs,
+            "file_hashes": build_fingerprint.file_hashes,
         },
         toolchain={
             "configure_command": construct_configure_command(configure_preset),
@@ -534,13 +558,17 @@ def execute_build(
         },
         execution=detect_execution_identity(),
     )
-    matching_record, build_record_search_detail = _matching_build_record(
-        results_root=result_dir_path.parent,
-        current_fingerprint=build_fingerprint.fingerprint,
-        current_algorithm=build_fingerprint.algorithm,
-        experiment_id=str(bundle["experiment"]["id"]),
-        board_id=str(bundle["board"]["id"]),
-    )
+    if build_purpose == TEST_BUILD_PURPOSE:
+        matching_record = None
+        build_record_search_detail = "Automated-test builds never search or reuse the normal build pool."
+    else:
+        matching_record, build_record_search_detail = _matching_build_record(
+            results_root=result_dir_path.parent,
+            current_fingerprint=build_fingerprint.fingerprint,
+            current_algorithm=build_fingerprint.algorithm,
+            experiment_id=str(bundle["experiment"]["id"]),
+            board_id=str(bundle["board"]["id"]),
+        )
     build_skipped, skip_reason, skip_detail = _rebuild_decision(
         matching_record=matching_record,
         search_detail=build_record_search_detail,
@@ -575,6 +603,7 @@ def execute_build(
             build_fingerprint_algorithm=build_fingerprint.algorithm,
             build_number=build_number, build_skipped=True, build_skip_reason=skip_reason,
             build_skip_detail=skip_detail, force_rebuild=force,
+            build_purpose=build_purpose, build_identity=None,
         )
         record_generated_state_success(
             repo_root=repo_root_path, scope=generated_state_scope, identity=generated_state_identity,
@@ -609,9 +638,11 @@ def execute_build(
                 "source": source,
                 "build": {
                     "configure_preset": configure_preset, "build_preset": build_preset,
+                    "purpose": build_purpose, "identity": None,
                     "return_code": 0, "duration_seconds": round(duration_seconds, 3),
                     "log": "build.log", "fingerprint": build_fingerprint.fingerprint,
                     "fingerprint_inputs": build_fingerprint.inputs,
+                    "fingerprint_file_hashes": build_fingerprint.file_hashes,
                     "fingerprint_algorithm": build_fingerprint.algorithm,
                     "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                     "skipped": True, "skip_reason": skip_reason, "skip_detail": skip_detail,
@@ -632,6 +663,8 @@ def execute_build(
             result_artifacts=result_artifacts, build_record_dir=build_record_path,
             build_record_manifest_path=build_record_manifest_path, build_skipped=True,
             build_skip_reason=skip_reason,
+            build_purpose=build_purpose,
+            build_identity=build_identity_value if "build_identity_value" in locals() else None,
         )
 
     preflight_generated_state(
@@ -642,8 +675,16 @@ def execute_build(
         final_artifact_paths=[elf_path],
     )
 
+    build_identity_value = None
+    test_build_record_dir = None
+    if build_purpose == TEST_BUILD_PURPOSE:
+        if test_result_dir is None:
+            test_result_dir = result_dir_path
+        build_identity_value, test_build_record_dir = reserve_test_build_identity(test_result_dir)
+        build_number = None
     try:
-        build_number = reserve_next_build_number(repo_root_path)
+        if build_purpose != TEST_BUILD_PURPOSE:
+            build_number = reserve_next_build_number(repo_root_path)
     except BuildNumberError as exc:
         duration_seconds = perf_counter() - start
         build_number_error = str(exc)
@@ -672,6 +713,8 @@ def execute_build(
             build_skip_reason=skip_reason,
             build_skip_detail=skip_detail,
             force_rebuild=force,
+            build_purpose=build_purpose,
+            build_identity=build_identity_value if "build_identity_value" in locals() else None,
         )
         update_manifest(
             result_dir_path / "manifest.json",
@@ -696,11 +739,14 @@ def execute_build(
                 "build": {
                     "configure_preset": configure_preset,
                     "build_preset": build_preset,
+                    "purpose": build_purpose,
+                    "identity": None,
                     "return_code": BUILD_NUMBER_ERROR_RETURN_CODE,
                     "duration_seconds": round(duration_seconds, 3),
                     "log": "build.log",
                     "fingerprint": build_fingerprint.fingerprint,
                     "fingerprint_inputs": build_fingerprint.inputs,
+                    "fingerprint_file_hashes": build_fingerprint.file_hashes,
                     "fingerprint_algorithm": build_fingerprint.algorithm,
                     "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                     "build_number_error": build_number_error,
@@ -728,6 +774,8 @@ def execute_build(
             build_record_manifest_path=None,
             build_skipped=False,
             build_skip_reason=skip_reason,
+            build_purpose=build_purpose,
+            build_identity=build_identity_value if "build_identity_value" in locals() else None,
         )
 
     # Generated-state preflight may remove the configured build directory.
@@ -787,26 +835,51 @@ def execute_build(
             "log": "build.log",
             "fingerprint": build_fingerprint.fingerprint,
             "fingerprint_inputs": build_fingerprint.inputs,
+            "fingerprint_file_hashes": build_fingerprint.file_hashes,
             "fingerprint_algorithm": build_fingerprint.algorithm,
             "skipped": False,
             "skip_reason": skip_reason,
             "skip_detail": skip_detail,
             "force": force,
         }
-        build_record_path, _ = write_build_record(
-            bundle=bundle,
-            result_dir=result_dir_path,
-            build_number=build_number,
-            firmware_elf_path=elf_path,
-            firmware_artifact=artifact_relative_path.as_posix(),
-            firmware_artifact_path=str(elf_path),
-            firmware_sha256=firmware_sha256,
-            source=source,
-            build=build_record_build,
-            source_run_id=_current_run_id(result_dir_path),
-            build_log_path=log_path,
-        )
-        build_record_manifest_path = build_record_path / "manifest.json"
+        build_record_build["purpose"] = build_purpose
+        build_record_build["identity"] = build_identity_value
+        if build_purpose == TEST_BUILD_PURPOSE:
+            assert test_build_record_dir is not None
+            build_record_path = test_build_record_dir
+            shutil.copy2(log_path, build_record_path / "build.log")
+            copied = copy_firmware_artifacts_to_result(elf_path, build_record_path)
+            build_record_manifest_path = build_record_path / "manifest.json"
+            write_json_atomic(build_record_manifest_path, {
+                "schema_version": 1,
+                "record_type": "automated_test_build",
+                "build_identity": build_identity_value,
+                "build_number": None,
+                "purpose": TEST_BUILD_PURPOSE,
+                "reusable_by_normal_workflows": False,
+                "test_run_id": None if test_result_dir is None else test_result_dir.name,
+                "experiment": str(bundle["experiment"]["id"]),
+                "board": str(bundle["board"]["id"]),
+                "source": source,
+                "build": build_record_build,
+                "firmware": {"sha256": firmware_sha256, "result_artifacts": copied},
+            })
+        else:
+            assert build_number is not None
+            build_record_path, _ = write_build_record(
+                bundle=bundle,
+                result_dir=result_dir_path,
+                build_number=build_number,
+                firmware_elf_path=elf_path,
+                firmware_artifact=artifact_relative_path.as_posix(),
+                firmware_artifact_path=str(elf_path),
+                firmware_sha256=firmware_sha256,
+                source=source,
+                build=build_record_build,
+                source_run_id=_current_run_id(result_dir_path),
+                build_log_path=log_path,
+            )
+            build_record_manifest_path = build_record_path / "manifest.json"
 
     updated_manifest = update_manifest(
         result_dir_path / "manifest.json",
@@ -824,11 +897,14 @@ def execute_build(
             "build": {
                 "configure_preset": configure_preset,
                 "build_preset": build_preset,
+                "purpose": build_purpose,
+                "identity": build_identity_value,
                 "return_code": return_code,
                 "duration_seconds": round(duration_seconds, 3),
                 "log": "build.log",
                 "fingerprint": build_fingerprint.fingerprint,
                 "fingerprint_inputs": build_fingerprint.inputs,
+                "fingerprint_file_hashes": build_fingerprint.file_hashes,
                 "fingerprint_algorithm": build_fingerprint.algorithm,
                 "fingerprint_tool_versions": build_fingerprint.tool_versions or {},
                 "skipped": False,
@@ -870,4 +946,6 @@ def execute_build(
         build_record_manifest_path=build_record_manifest_path,
         build_skipped=False,
         build_skip_reason=skip_reason,
+        build_purpose=build_purpose,
+        build_identity=build_identity_value,
     )

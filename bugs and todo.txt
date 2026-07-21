@@ -8,13 +8,11 @@ unless the request will examine prior AI prompts / interactions
 
 -------------
 
-Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state. Improve the results and provenance system so pytest runs produce durable, inspectable artifacts under a clearly separate automated-test result area, including retained logs and partial evidence for failed hardware, gateway, and integration tests. Test-run identities, experiment-run identities, and build identities must remain distinct, and test-triggered builds must not enter the normal reusable build pool or consume normal build numbers.
 
-Preserve strict provenance and reuse boundaries: matching fingerprints alone must not allow normal experiment, benchmark, secure-boot, or release workflows to reuse test-only artifacts. Record what ran, what built or was reused, relevant hashes and fingerprints, referenced canonical experiment results, outcomes, unavailable artifacts, and failure stages, without mutating referenced records or retaining secrets. Update tests and canonical documentation for the new result conventions, build-purpose rules, artifact retention, and commands for locating pytest evidence.
 
 -----------
 
-Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state. Improve the build fingerprint system so that in addition to an overall fingerprint, the hash for each individual file included in the fingerprint is also recorded. The objective is so that we can easily determine which artifacts changed and which remaind the same when a build is performed (instead of re-used) as a result of a non-matching fingerprint.
+
 
 ----------------
 

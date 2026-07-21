@@ -112,6 +112,7 @@ class BuildFingerprint(NamedTuple):
 
     fingerprint: str
     inputs: list[str]
+    file_hashes: dict[str, str]
     algorithm: str = BUILD_FINGERPRINT_ALGORITHM
     tool_versions: dict[str, str] | None = None
 
@@ -283,6 +284,7 @@ def calculate_build_fingerprint(
     return BuildFingerprint(
         fingerprint=hashlib.sha256(encoded_payload).hexdigest(),
         inputs=[entry["path"] for entry in file_entries],
+        file_hashes={entry["path"]: entry["sha256"] for entry in file_entries},
         tool_versions=captured_tool_versions,
     )
 
@@ -353,6 +355,7 @@ def calculate_existing_inputs_fingerprint(
     return BuildFingerprint(
         fingerprint=hashlib.sha256(encoded_payload).hexdigest(),
         inputs=[entry["path"] for entry in file_entries],
+        file_hashes={entry["path"]: entry["sha256"] for entry in file_entries},
         algorithm=algorithm,
         tool_versions=captured_tool_versions,
     )

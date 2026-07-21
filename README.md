@@ -132,3 +132,11 @@ The `mqtt_plaintext_st67_e2e` experiment starts a gateway-side response subscrib
 ### Managed broker lifecycle for the plaintext STM32 MQTT experiment
 
 The `mqtt_plaintext_st67_e2e` gateway run owns the framework MQTT broker for the duration of that run. It stops the known framework Compose broker, deploys the current broker project, starts the classical profile, waits for a successful plaintext MQTT readiness exchange on port 1883, performs the STM32 command/response exchange, captures the complete broker log, and stops the broker in cleanup. Broker lifecycle evidence is retained beside `uart.log` as `mqtt-broker-*.log`. A readiness, log-collection, or cleanup failure is recorded as a distinct failure stage and cannot be reported as a successful end-to-end run.
+## Automated-test evidence
+
+Pytest writes incremental evidence to `results/automated-tests/<test-run-id>/`, including `manifest.json`, `pytest.log`, failure stages, and test-triggered builds. Test IDs remain separate from experiment and build identities; test builds do not consume `.build_number` or enter normal reuse.
+
+```powershell
+$run = Get-ChildItem .\results\automated-tests -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content (Join-Path $run.FullName "manifest.json"); Get-Content (Join-Path $run.FullName "pytest.log")
+```
