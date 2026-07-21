@@ -484,13 +484,13 @@ A controlled 30-second hardware run using SPI prescaler 4 completed module initi
 ## ST67 T02 normal startup and live network evidence
 
 The normal ST67 T02 startup path initializes the module and host-side lwIP,
-associates directly with the configured access point, waits for the station
-link, and obtains IPv4 configuration through host-side lwIP DHCP. Active Wi-Fi
-scanning is not part of the normal startup path because it delays association
-and can fail independently of a valid direct connection.
-
-Active scanning remains available only as an explicit diagnostic build using
-`PQC_ST67_WIFI_DIAGNOSTIC_SCAN=1`. The default is disabled.
+performs a bounded active Wi-Fi scan, associates with the configured access
+point, waits for the station link, and obtains IPv4 configuration through
+host-side lwIP DHCP. The scan runs after Wi-Fi and lwIP initialization and
+before `W6X_WiFi_Connect()`. It logs discovered SSID, RSSI, channel, security,
+and a configured-SSID summary to UART. Scan failure or timeout remains
+best-effort diagnostic evidence and does not block the configured association
+attempt.
 
 After DHCP succeeds, runtime evidence must be derived from the live station
 `netif`. The canonical marker is `lwIP runtime network:` with
@@ -500,7 +500,7 @@ pre-network smoke markers do not override later live network evidence.
 
 The gateway-mediated hardware test
 `tests/hardware/test_lwip_runtime_smoke_uart.py` validates module
-initialization, scan skipping, association, link-up, DHCP, live IPv4 evidence,
+initialization, scan completion before association, link-up, DHCP, live IPv4 evidence,
 heartbeat continuity, and absence of contradictory unavailable markers after
 the live-state marker.
 

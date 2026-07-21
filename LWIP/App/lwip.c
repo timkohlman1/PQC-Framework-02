@@ -130,19 +130,6 @@ static int32_t netif_link_sta_down_cb(void);
   * @brief  Callback function to handle status updates for WiFi AP interface.
   * @param  netif_cur: Pointer to the network interface structure.
   */
-static void wifi_ap_status_callback(struct netif *netif_cur);
-
-/**
-  * @brief  Callback to bring the network soft-ap link up.
-  * @return 0 on success, error code otherwise
-  */
-static int32_t netif_link_ap_up_cb(void);
-
-/**
-  * @brief  Callback to bring the network soft-ap link down.
-  * @return 0 on success, error code otherwise
-  */
-static int32_t netif_link_ap_down_cb(void);
 
 /**
   * @brief  Timer callback function
@@ -173,7 +160,6 @@ static err_t netif_net_init(struct netif *netif_cur);
 /**
   * @brief  Clear the table of stations connect to soft-AP
   */
-static void ap_sta_ipv4_table_clear(void);
 
 /* USER CODE BEGIN PFP */
 
@@ -407,102 +393,6 @@ int32_t ap_sta_ipv4_table_del_entry(const uint8_t *mac)
     }
   }
   return -1;
-}
-
-static void ap_sta_ipv4_table_clear(void)
-{
-  if (ap_sta_ipv4_table != NULL)
-  {
-    (void)memset(ap_sta_ipv4_table, 0, AP_STA_IPV4_TABLE_SIZE);
-  }
-}
-
-static void wifi_ap_status_callback(struct netif *netif_cur)
-{
-  const ip4_addr_t *ipv4_addr;
-
-  if (netif_cur == NULL)
-  {
-    return;
-  }
-
-  ipv4_addr = netif_ip4_addr(netif_cur);
-  if ((ipv4_addr == NULL) || ip4_addr_isany(ipv4_addr))
-  {
-    return;
-  }
-
-  for (int32_t count = 0; count < (int32_t)W6X_WIFI_MAX_CONNECTED_STATIONS; count++)
-  {
-    if ((ap_sta_ipv4_table[count].used != 0U)
-        && (memcmp(ap_sta_ipv4_table[count].mac, netif_cur->hwaddr, sizeof(ap_sta_ipv4_table[count].mac)) == 0))
-    {
-      ap_sta_ipv4_table[count].ipv4_addr = *ipv4_addr;
-      if (ap_sta_ipv4_table[count].ipv4_logged == 0U)
-      {
-        ap_sta_ipv4_table[count].ipv4_logged = 1U;
-
-        LogInfo("Station connected to soft-AP got an IP:\"%02x:%02x:%02x:%02x:%02x:%02x\",\"%s\"\r\n",
-                netif_cur->hwaddr[0], netif_cur->hwaddr[1], netif_cur->hwaddr[2],
-                netif_cur->hwaddr[3], netif_cur->hwaddr[4], netif_cur->hwaddr[5],
-                ip4addr_ntoa(ipv4_addr));
-        return;
-      }
-    }
-  }
-
-  return;
-}
-
-static int32_t netif_link_ap_up_cb(void)
-{
-  if (netif_usr_list[NETIF_AP] == NULL)
-  {
-    return -1;
-  }
-  LogInfo("\nNetif AP : Link is up\n");
-
-  netif_set_link_up(netif_usr_list[NETIF_AP]);
-
-  if (ap_sta_ipv4_table != NULL)
-  {
-    vPortFree(ap_sta_ipv4_table);
-    ap_sta_ipv4_table = NULL;
-  }
-  ap_sta_ipv4_table = (ap_sta_ipv4_entry_t *)pvPortMalloc(AP_STA_IPV4_TABLE_SIZE);
-  if (ap_sta_ipv4_table == NULL)
-  {
-    return -1;
-  }
-  ap_sta_ipv4_table_clear();
-
-  dhcpd_start(netif_usr_list[NETIF_AP], -1, -1);
-  vTaskDelay(pdMS_TO_TICKS(100));
-  (void)dhcpd_status_callback_set(netif_usr_list[NETIF_AP], wifi_ap_status_callback);
-
-  return 0;
-}
-
-static int32_t netif_link_ap_down_cb(void)
-{
-  if (netif_usr_list[NETIF_AP] == NULL)
-  {
-    return -1;
-  }
-  LogInfo("\nNetif AP : Link is down\n");
-
-  dhcpd_stop(netif_usr_list[NETIF_AP]);
-
-  ap_sta_ipv4_table_clear();
-  if (ap_sta_ipv4_table != NULL)
-  {
-    vPortFree(ap_sta_ipv4_table);
-    ap_sta_ipv4_table = NULL;
-  }
-
-  netif_set_link_down(netif_usr_list[NETIF_AP]);
-
-  return 0;
 }
 
 static void lwip_timer_callback(TimerHandle_t handle)

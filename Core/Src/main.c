@@ -46,9 +46,6 @@
 #define APP_ST67_WIFI_SCAN_TIMEOUT_MS 8000U
 #define APP_ST67_WIFI_SCAN_POLL_MS      20U
 #define APP_ST67_WIFI_SCAN_MAX_RESULTS  10U
-#ifndef PQC_ST67_WIFI_DIAGNOSTIC_SCAN
-#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN    0U
-#endif
 #define APP_ST67_ASSOC_TIMEOUT_MS      20000U
 #define APP_ST67_ASSOC_POLL_MS           250U
 #define APP_ST67_ASSOC_LOG_INTERVAL_MS  1000U
@@ -630,12 +627,8 @@ static bool APP_RunST67WiFiDhcp(void)
     return false;
   }
 
-#if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)
+  /* Best-effort RF visibility before association with the experiment AP. */
   (void)APP_RunST67WiFiScan();
-#else
-  APP_UART_WriteString(
-      "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled\r\n");
-#endif
 
   /*
    * Match the ST MQTT demonstration: zero-initialize the options structure

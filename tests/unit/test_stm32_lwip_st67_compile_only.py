@@ -274,6 +274,8 @@ def test_lwip_runtime_is_station_only_and_uses_single_sys_now_owner():
     assert ".link_sta_down_fn = netif_link_sta_down_cb" in lwip_c
     assert ".link_ap_up_fn = NULL" in lwip_c
     assert ".link_ap_down_fn = NULL" in lwip_c
+    assert "ap_sta_ipv4_table_clear" not in lwip_c
+    assert "wifi_ap_status_callback" not in lwip_c
     assert "u32_t sys_now(void)" not in lwip_c
     assert "u32_t sys_now(void)" in sys_arch_c
 
@@ -293,12 +295,14 @@ def test_wifi_config_selection_uses_compile_time_header_detection():
     assert '#    define PQC_WIFI_IPV4_MODE "unconfigured"' in wrapper
 
 
-def test_st67_normal_startup_skips_scan_and_reports_live_t02_state() -> None:
+def test_st67_normal_startup_scans_before_association_and_reports_live_t02_state() -> None:
     main_c = _read("Core/Src/main.c")
 
-    assert "#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN    0U" in main_c
-    assert "#if (PQC_ST67_WIFI_DIAGNOSTIC_SCAN != 0U)" in main_c
-    assert "ST67 Wi-Fi scan: result=skipped mode=normal diagnostic_scan=disabled" in main_c
+    scan_call = main_c.index("(void)APP_RunST67WiFiScan();")
+    connect_call = main_c.index("status = W6X_WiFi_Connect(&options);")
+    assert scan_call < connect_call
+    assert "PQC_ST67_WIFI_DIAGNOSTIC_SCAN" not in main_c
+    assert "diagnostic_scan=disabled" not in main_c
     assert "evidence=stm32-st67-t02-live-state" in main_c
     assert "network=available wifi=connected link=up ip=" in main_c
 

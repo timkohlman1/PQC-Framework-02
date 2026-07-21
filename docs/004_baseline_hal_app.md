@@ -95,10 +95,12 @@ The baseline experiment supplies SSID and PSK through `configs/experiments/basel
 
 ## ST67 T02 network startup
 
-The normal hardware startup does not perform an active access-point scan.
-It connects directly using the configured SSID and password. Diagnostic scan
-output is available only in builds that explicitly enable
-`PQC_ST67_WIFI_DIAGNOSTIC_SCAN`.
+The normal hardware startup performs a bounded active access-point scan after
+Wi-Fi and lwIP initialization and before connecting with the configured SSID
+and password. Each discovered AP is logged to UART with SSID, RSSI, channel,
+and security, followed by a summary identifying whether the configured SSID
+was observed. The scan is best-effort: scan failure or timeout is logged but
+does not prevent the subsequent configured-AP association attempt.
 
 Successful T02 runtime evidence is reported after host-side lwIP DHCP as:
 
