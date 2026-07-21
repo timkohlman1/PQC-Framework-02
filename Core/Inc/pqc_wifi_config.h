@@ -1,11 +1,6 @@
 #ifndef PQC_WIFI_CONFIG_H
 #define PQC_WIFI_CONFIG_H
 
-/*
- * Framework experiment builds generate pqc_wifi_config_generated.h in the
- * active build directory. Detect it at compile time so generation may occur
- * after CMake configuration while direct/manual builds retain safe defaults.
- */
 #if defined(__has_include)
 #  if __has_include("pqc_wifi_config_generated.h")
 #    include "pqc_wifi_config_generated.h"
@@ -13,11 +8,25 @@
 #    define PQC_WIFI_SSID ""
 #    define PQC_WIFI_PSK ""
 #    define PQC_WIFI_IPV4_MODE "unconfigured"
+#    define PQC_MQTT_ENABLED 0
+#    define PQC_MQTT_BROKER_HOST ""
+#    define PQC_MQTT_BROKER_PORT 1883
+#    define PQC_MQTT_CLIENT_ID "pqc-stm32"
+#    define PQC_MQTT_COMMAND_TOPIC "pqc/stm32/command"
+#    define PQC_MQTT_RESPONSE_TOPIC "pqc/stm32/response"
+#    define PQC_MQTT_CORRELATION_PAYLOAD "pqc-e2e"
 #  endif
 #else
 #  define PQC_WIFI_SSID ""
 #  define PQC_WIFI_PSK ""
 #  define PQC_WIFI_IPV4_MODE "unconfigured"
+#  define PQC_MQTT_ENABLED 0
+#  define PQC_MQTT_BROKER_HOST ""
+#  define PQC_MQTT_BROKER_PORT 1883
+#  define PQC_MQTT_CLIENT_ID "pqc-stm32"
+#  define PQC_MQTT_COMMAND_TOPIC "pqc/stm32/command"
+#  define PQC_MQTT_RESPONSE_TOPIC "pqc/stm32/response"
+#  define PQC_MQTT_CORRELATION_PAYLOAD "pqc-e2e"
 #endif
 
 #endif

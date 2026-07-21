@@ -248,7 +248,6 @@ def test_architecture_contains_canonical_current_capability_matrix() -> None:
         "MQTT/TLS config and result schema",
         "Deterministic fake/no-network MQTT transport",
         "Native host wolfMQTT/wolfSSL broker validation",
-        "STM32 lwIP UDP loopback",
         "STM32 wolfSSL transport boundary",
         "STM32 wolfMQTT integration",
         "ST67W61M1 hardware-backed network backend",
@@ -381,7 +380,6 @@ def test_baseline_document_matches_scheduler_and_task_smoke_sequence() -> None:
         "FreeRTOS scheduler starting:",
         "FreeRTOS defaultTask started: periodic tick task active",
         "FreeRTOS task-context smoke starting:",
-        "lwIP local loopback smoke:",
         "wolfMQTT runtime smoke:",
         "FreeRTOS task-context smoke complete:",
         "\ntick\n",
@@ -389,7 +387,6 @@ def test_baseline_document_matches_scheduler_and_task_smoke_sequence() -> None:
 
     positions = [representative.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
-    assert "evidence=stm32-local-lwip-loopback-only" in baseline
     assert "evidence=stm32-fake-no-network-initialization-only" in baseline
     assert "socket_io=not-performed" in baseline
     assert "does not provide evidence of ST67W61M1 detection" in baseline

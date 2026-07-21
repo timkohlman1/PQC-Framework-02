@@ -33,9 +33,6 @@ extern "C" {
 
 /* USER CODE BEGIN Options */
 
-/* Phase M6.6: deterministic STM32-local UDP loopback smoke. */
-#define LWIP_LOOPIF_MULTICAST 0
-
 /* USER CODE END Options */
 
 #define LWIP_STATS                    1
@@ -62,9 +59,6 @@ extern "C" {
 #define DEFAULT_TCP_RECVMBOX_SIZE     64
 #define DEFAULT_ACCEPTMBOX_SIZE       32
 
-#define LWIP_NETIF_LOOPBACK           1
-#define LWIP_HAVE_LOOPIF              1
-#define LWIP_LOOPBACK_MAX_PBUFS       0
 #define LWIP_DHCP_DOES_ACD_CHECK      0
 
 #define LWIP_CHKSUM_ALGORITHM         3

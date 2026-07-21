@@ -4,7 +4,7 @@ STM32 embedded-security experiment framework for direct-flash firmware, wolfBoot
 
 ## Current scope
 
-The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform. Implemented firmware capabilities include HAL/CMSIS-RTOS v2 FreeRTOS execution, classical and ML-DSA wolfBoot profiles, STM32-local lwIP and wolfSSL preparation, and fake/no-network wolfMQTT initialization.
+The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform. Implemented firmware capabilities include HAL/CMSIS-RTOS v2 FreeRTOS execution, classical and ML-DSA wolfBoot profiles, STM32-local lwIP and wolfSSL preparation, fake/no-network wolfMQTT initialization, and an initial plaintext ST67/lwIP wolfMQTT publish/subscribe path that still requires recorded hardware evidence before end-to-end success may be claimed.
 
 Evidence boundaries are strict:
 
@@ -14,7 +14,7 @@ Evidence boundaries are strict:
 - The unavailable transport boundary performs no socket I/O.
 - The ST67W61M1 integration supports configured-AP association, link-up, host-side lwIP DHCP, and live IPv4 evidence in capability-gated hardware runs. Earlier local smoke markers remain limited to their execution point.
 - The non-network lwIP runtime smoke exercises version, IPv4 formatting, and checksum helpers only; it does not initialize a netif or prove external networking.
-- External STM32 TCP validation, STM32 TLS handshakes, real STM32 MQTT broker operations, and end-to-end classical or PQC/hybrid MQTT-over-TLS remain unavailable.
+- The plaintext ST67/lwIP wolfMQTT path is implemented for capability-gated evaluation; successful STM32 TCP, MQTT subscribe/receive/publish, and end-to-end operation remain unproven until explicit UART, broker, and manifest evidence is recorded. STM32 TLS and PQC/hybrid MQTT-over-TLS remain unavailable.
 
 The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
 
@@ -94,7 +94,7 @@ Generated-state preflight is the primary compatibility and provenance mechanism.
 
 ## MQTT and broker orientation
 
-The repository includes framework schema validation, deterministic fake/no-network execution, classical and experimental OQS broker profiles, and native host wolfMQTT/wolfSSL compatibility validation. The canonical broker Compose file is `experiment/mqtt-broker/compose.yaml`.
+The repository includes framework schema validation, deterministic fake/no-network execution, an initial plaintext ST67/lwIP STM32 MQTT path, classical and experimental OQS broker profiles, and native host wolfMQTT/wolfSSL compatibility validation. The canonical broker Compose file is `experiment/mqtt-broker/compose.yaml`.
 
 Use `experiment/mqtt-broker/README.md` for certificate provisioning, gateway deployment, broker lifecycle commands, and the PowerShell `--client-args` forwarding contract. Those workflows produce host-side or broker-side evidence only; they do not prove wolfMQTT-on-STM32 or end-to-end wireless operation.
 

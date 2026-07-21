@@ -22,15 +22,22 @@ typedef struct
     bool transport_callbacks_present;
     bool transport_available;
     bool broker_connected;
-    bool tls_handshake_complete;
+    bool subscribed;
+    bool message_received;
     bool publish_complete;
+    bool tls_handshake_complete;
     bool reconnect_complete;
+    int last_result;
 } PQC_WolfMQTTBuildOnlyStatus;
 
 int PQC_WolfMQTT_BuildOnly_Initialize(
     PQC_WolfMQTTBackend backend,
     PQC_WolfMQTTBuildOnlyStatus *status
 );
+
+void PQC_WolfMQTT_DiagnosticMarker(const char *marker);
+
+int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status);
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend);
 

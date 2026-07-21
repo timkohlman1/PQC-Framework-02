@@ -203,6 +203,7 @@ MQTT_TLS_EVIDENCE_CLASSES = {
     "stm32_build_only",
     "stm32_runtime",
     "st67w61m1_backed",
+    "stm32_st67_plaintext_e2e",
 }
 MQTT_TLS_TRANSPORT_BACKENDS = {
     "fake_no_network",
@@ -210,6 +211,7 @@ MQTT_TLS_TRANSPORT_BACKENDS = {
     "stm32_build_only",
     "stm32_runtime",
     "st67w61m1",
+    "st67w61m1_lwip_sockets",
 }
 MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "fake_no_network": {"fake_no_network"},
@@ -217,6 +219,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "stm32_build_only": {"stm32_build_only"},
     "stm32_runtime": {"stm32_runtime"},
     "st67w61m1": {"st67w61m1_backed"},
+    "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
 }
 MQTT_TLS_MODES = {
     "disabled",
@@ -224,6 +227,7 @@ MQTT_TLS_MODES = {
     "oqs_experimental_tls",
     "not_applicable",
     "unavailable",
+    "plaintext",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -236,8 +240,8 @@ MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "latency_ms",
     "throughput_bytes_per_second",
 }
-MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed"}
-MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed"}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e"}
 
 
 def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
@@ -321,7 +325,7 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
-    if evidence_class == "host_side":
+    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
     if evidence_class == "fake_no_network" and broker:

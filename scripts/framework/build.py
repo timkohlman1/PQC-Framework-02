@@ -376,9 +376,13 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> Path:
     """Write experiment Wi-Fi configuration without exposing the PSK in command logs."""
-    network = bundle.get("experiment", {}).get("network", {})
+    experiment = bundle.get("experiment", {})
+    network = experiment.get("network", {}) if isinstance(experiment, dict) else {}
     wifi = network.get("wifi", {}) if isinstance(network, dict) else {}
     ipv4 = network.get("ipv4", {}) if isinstance(network, dict) else {}
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
+    topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
     def esc(value: str) -> str:
         return value.replace("\\", "\\\\").replace('"', '\\"')
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
@@ -389,6 +393,13 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_WIFI_SSID "{esc(str(wifi.get("ssid", "")))}"\n'
         f'#define PQC_WIFI_PSK "{esc(str(wifi.get("psk", "")))}"\n'
         f'#define PQC_WIFI_IPV4_MODE "{esc(str(ipv4.get("mode", "")))}"\n'
+        f'#define PQC_MQTT_ENABLED {1 if bool(mqtt.get("enabled", False)) else 0}\n'
+        f'#define PQC_MQTT_BROKER_HOST "{esc(str(broker.get("host", "")))}"\n'
+        f'#define PQC_MQTT_BROKER_PORT {int(broker.get("port", 1883))}\n'
+        f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
+        f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
+        f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'
+        f'#define PQC_MQTT_CORRELATION_PAYLOAD "{esc(str(mqtt.get("correlation_payload", "pqc-e2e")))}"\n'
         "#endif\n", encoding="utf-8")
     return path
 

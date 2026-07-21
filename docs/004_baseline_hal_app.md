@@ -36,7 +36,6 @@ FreeRTOS task-context smoke starting: context=freertos_task scheduler=running se
 It runs one serialized task-context smoke sequence:
 
 - lwIP helper smoke labelled `context=freertos_task scheduler=running`
-- STM32-local lwIP UDP loopback at `127.0.0.1`, labelled `evidence=stm32-local-lwip-loopback-only`
 - wolfSSL TLS-context lifecycle smoke labelled `context=freertos_task scheduler=running`
 - wolfMQTT initialization/deinitialization against unavailable callbacks, labelled `evidence=stm32-fake-no-network-initialization-only backend=fake_no_network`
 
@@ -54,7 +53,6 @@ FreeRTOS defaultTask created: name=defaultTask ...
 FreeRTOS scheduler starting: cmsis_rtos=v2 default_task=defaultTask ...
 FreeRTOS defaultTask started: periodic tick task active
 FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true
-lwIP local loopback smoke: ... evidence=stm32-local-lwip-loopback-only ... result=passed
 wolfMQTT runtime smoke: ... evidence=stm32-fake-no-network-initialization-only ... transport=unavailable
 FreeRTOS task-context smoke complete: ... network=unavailable tls_handshake=unavailable mqtt=unavailable
 tick
