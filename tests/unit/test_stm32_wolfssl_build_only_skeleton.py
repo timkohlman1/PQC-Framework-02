@@ -56,12 +56,13 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert "NO_WOLFSSL_SERVER" in settings
     assert "WOLFSSL_NO_TLS13" in settings
     assert "WOLFSSL_TLS13 0" not in settings
-    assert "WOLFSSL_STATIC_PSK" in settings
+    assert "WOLFSSL_STATIC_PSK" not in settings
+    assert "NO_CERTS" not in settings
+    assert "NO_ASN" not in settings
+    assert "CUSTOM_RAND_GENERATE_SEED" in settings
     assert "WC_NO_RNG" not in settings
     assert "CUSTOM_RAND_GENERATE_SEED" in settings
-    assert "PQC_WolfSSL_UnavailableSeed" in settings
-    assert "return -1;" in settings
-    assert "NO_CERTS" in settings
+    assert "PQC_WolfSSL_HardwareSeed" in settings
     assert "NO_SESSION_CACHE" in settings
     assert "PQC_STM32_APP_WOLFSSL_USER_SETTINGS" in wrapper
     assert '#include "pqc_wolfssl_user_settings.h"' in wrapper

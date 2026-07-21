@@ -397,8 +397,22 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
     topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
+    ca_pem = ""
+    ca_reference = certificate_refs.get("ca_certificate") if isinstance(certificate_refs, dict) else None
+    if ca_reference:
+        ca_path = repo_root / str(ca_reference)
+        if not ca_path.is_file():
+            raise ValueError(
+                "MQTT TLS CA certificate is unavailable: " + str(ca_path)
+                + ". Provision the classical broker certificates before building."
+            )
+        ca_pem = ca_path.read_text(encoding="utf-8")
+        if "BEGIN CERTIFICATE" not in ca_pem:
+            raise ValueError(f"MQTT TLS CA certificate is not PEM encoded: {ca_path}")
     def esc(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"')
+        return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "\\n")
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_wifi_config_generated.h"
@@ -414,6 +428,10 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
         f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'
         f'#define PQC_MQTT_CORRELATION_PAYLOAD "{esc(str(mqtt.get("correlation_payload", "pqc-e2e")))}"\n'
+        f'#define PQC_MQTT_TLS_MODE "{esc(str(tls.get("mode", "plaintext")))}"\n'
+        f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'
+        f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
+        f'#define PQC_MQTT_RECONNECT_ATTEMPTS {int(mqtt.get("reconnect_attempts", 0))}\n'
         "#endif\n", encoding="utf-8")
     return path
 

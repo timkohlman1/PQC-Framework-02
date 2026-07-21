@@ -586,3 +586,9 @@ Test evidence records unavailable artifacts explicitly with a producing stage
 and reason. Secrets, private key material, credentials, PSKs, tokens, and
 passwords are redacted or omitted; only approved public hashes and
 fingerprints may be retained.
+
+### Classical STM32 MQTT-over-TLS boundary
+
+The first M11 profile is `classical-server-auth`: ST67W61M1 supplies the network interface, while lwIP sockets, wolfSSL TLS 1.2, certificate verification, wolfMQTT CONNECT/publish, and one bounded reconnect run on the STM32. The firmware build embeds only the generated public broker CA certificate. The existing `classical` mutual-TLS broker profile remains separate and is not claimed as STM32-validated until client-certificate provisioning is implemented and evidenced.
+
+M11 success requires explicit UART markers for DHCP, TCP, TLS handshake, MQTT connect/publish, reconnect TLS handshake, and post-reconnect publish, together with retained broker evidence. Missing resource metrics remain unavailable rather than inferred. DTR-007 is in progress until a capability-gated hardware run supplies that evidence.

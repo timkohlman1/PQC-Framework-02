@@ -328,3 +328,21 @@ def test_st67_spi_iface_uses_clean_vendor_transfer_engine_for_controlled_test() 
     assert "APP_ST67ReadyDiagnosticSnapshot" not in spi_iface
     assert "APP_ST67ReadyDiagnosticSnapshotGet" not in spi_iface
     assert '#include "main.h"' not in spi_iface
+
+
+def test_application_memory_checkpoints_report_named_task_stacks() -> None:
+    main_c = _read("Core/Src/main.c")
+
+    assert 'APP_UART_WriteString("application task stack: stage=");' in main_c
+    assert 'APP_UART_WriteString(" task=");' in main_c
+    assert 'APP_UART_WriteString(" minimum_free_bytes=");' in main_c
+    assert 'APP_UART_WriteString(" peak_used_bytes=");' in main_c
+    assert '"defaultTask",\n        (TaskHandle_t)defaultTaskHandle' in main_c
+    assert '"networkTask",\n        (TaskHandle_t)networkTaskHandle' in main_c
+    assert '(uint32_t)defaultTask_attributes.stack_size' in main_c
+    assert '(uint32_t)networkTask_attributes.stack_size' in main_c
+    assert "if (minimum_free_bytes <= task_stack_total_bytes)" in main_c
+    assert 'APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE, pdFALSE);' in main_c
+    assert 'APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);' in main_c
+    assert "task_stack_high_water_bytes" not in main_c
+    assert "task_stack_used_bytes" not in main_c

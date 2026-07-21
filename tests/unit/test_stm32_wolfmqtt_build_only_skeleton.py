@@ -54,7 +54,8 @@ def test_real_plaintext_exchange_performs_bounded_mqtt_operations_without_tls():
         assert fragment in source
 
     assert "PQC_WOLFMQTT_COMMAND_TIMEOUT_MS" in source
-    assert "wolfSSL_connect(" not in source
+    assert "PQC_WolfMQTT_TLSRequested" in source
+    assert 'strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth")' in source
     assert "W6X_WiFi_Connect(" not in source
     assert "status->transport_available = (backend == PQC_WOLFMQTT_BACKEND_ST67W61M1);" in source
     assert "status->broker_connected = true;" in source

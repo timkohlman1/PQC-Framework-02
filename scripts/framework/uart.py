@@ -286,10 +286,19 @@ _APPLICATION_MEMORY_CHECKPOINT_PATTERN = re.compile(
     r"heap_free_bytes=(?P<heap_free_bytes>\d+)\s+"
     r"heap_min_ever_free_bytes=(?P<heap_min_ever_free_bytes>\d+)\s+"
     r"heap_current_used_bytes=(?P<heap_current_used_bytes>\d+)\s+"
-    r"heap_peak_used_bytes=(?P<heap_peak_used_bytes>\d+)\s+"
-    r"task_stack_total_bytes=(?P<task_stack_total_bytes>\d+|unavailable)\s+"
+    r"heap_peak_used_bytes=(?P<heap_peak_used_bytes>\d+)"
+    r"(?:\s+task_stack_total_bytes=(?P<task_stack_total_bytes>\d+|unavailable)\s+"
     r"task_stack_high_water_bytes=(?P<task_stack_high_water_bytes>\d+|unavailable)\s+"
-    r"task_stack_used_bytes=(?P<task_stack_used_bytes>\d+|unavailable)",
+    r"task_stack_used_bytes=(?P<task_stack_used_bytes>\d+|unavailable))?",
+    re.IGNORECASE,
+)
+_APPLICATION_TASK_STACK_PATTERN = re.compile(
+    r"application task stack:\s*"
+    r"stage=(?P<stage>[a-z0-9_]+)\s+"
+    r"task=(?P<task>[A-Za-z0-9_.-]+)\s+"
+    r"total_bytes=(?P<total_bytes>\d+)\s+"
+    r"minimum_free_bytes=(?P<minimum_free_bytes>\d+|unavailable)\s+"
+    r"peak_used_bytes=(?P<peak_used_bytes>\d+|unavailable)",
     re.IGNORECASE,
 )
 
@@ -341,24 +350,50 @@ def parse_max_stack_used_bytes(uart_output: str) -> int | None:
 
 
 def parse_application_memory_checkpoints(uart_output: str) -> list[dict[str, Any]]:
-    """Parse bounded application heap and task-stack lifecycle checkpoints."""
+    """Parse application heap checkpoints and named per-task stack evidence."""
 
     checkpoints: list[dict[str, Any]] = []
+    by_stage: dict[str, dict[str, Any]] = {}
     for match in _APPLICATION_MEMORY_CHECKPOINT_PATTERN.finditer(uart_output):
-        checkpoint: dict[str, Any] = {"stage": match.group("stage").lower()}
+        stage = match.group("stage").lower()
+        checkpoint: dict[str, Any] = {"stage": stage, "task_stacks": []}
         for field in (
             "heap_total_bytes",
             "heap_free_bytes",
             "heap_min_ever_free_bytes",
             "heap_current_used_bytes",
             "heap_peak_used_bytes",
-            "task_stack_total_bytes",
-            "task_stack_high_water_bytes",
-            "task_stack_used_bytes",
         ):
-            raw = match.group(field)
-            checkpoint[field] = None if raw.lower() == "unavailable" else int(raw)
+            checkpoint[field] = int(match.group(field))
+
+        # Preserve older UART logs by translating their anonymous current-task
+        # fields into the new task_stacks collection.
+        legacy_total = match.group("task_stack_total_bytes")
+        if legacy_total is not None:
+            legacy_minimum = match.group("task_stack_high_water_bytes")
+            legacy_peak = match.group("task_stack_used_bytes")
+            checkpoint["task_stacks"].append(
+                {
+                    "task": "current_task",
+                    "total_bytes": None if legacy_total.lower() == "unavailable" else int(legacy_total),
+                    "minimum_free_bytes": None if legacy_minimum.lower() == "unavailable" else int(legacy_minimum),
+                    "peak_used_bytes": None if legacy_peak.lower() == "unavailable" else int(legacy_peak),
+                }
+            )
         checkpoints.append(checkpoint)
+        by_stage[stage] = checkpoint
+
+    for match in _APPLICATION_TASK_STACK_PATTERN.finditer(uart_output):
+        stage = match.group("stage").lower()
+        checkpoint = by_stage.get(stage)
+        if checkpoint is None:
+            continue
+        task_stack: dict[str, Any] = {"task": match.group("task")}
+        for field in ("total_bytes", "minimum_free_bytes", "peak_used_bytes"):
+            raw = match.group(field)
+            task_stack[field] = None if raw.lower() == "unavailable" else int(raw)
+        checkpoint["task_stacks"].append(task_stack)
+
     return checkpoints
 
 
@@ -387,8 +422,9 @@ def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
         "application_checkpoints": checkpoints,
         "limitations": (
             "wolfBoot maximum stack usage and application FreeRTOS memory checkpoints are separate UART evidence. "
-            "Application heap values cover only the FreeRTOS heap implementation; task stack values cover only "
-            "the default task at the named checkpoint. Host timing, linker output, and configured sizes alone are not runtime usage evidence."
+            "Application heap values cover only the FreeRTOS heap implementation; task stack values are named, per-task "
+            "minimum-free and peak-used evidence for the application tasks reported at each checkpoint. They do not include interrupt-stack "
+            "usage or unreported middleware tasks. Host timing, linker output, and configured sizes alone are not runtime usage evidence."
             if checkpoints or max_stack_used_bytes is not None
             else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS
         ),
@@ -505,11 +541,22 @@ def _write_uart_capture_log(
         f"runtime_memory_limitations: {runtime_memory['limitations']}",
         "application_memory_checkpoints:",
         *[
-            "  " + " ".join(
-                f"{key}={value if value is not None else 'unavailable'}"
-                for key, value in checkpoint.items()
-            )
+            line
             for checkpoint in runtime_memory["application_checkpoints"]
+            for line in (
+                "  " + " ".join(
+                    f"{key}={value if value is not None else 'unavailable'}"
+                    for key, value in checkpoint.items()
+                    if key != "task_stacks"
+                ),
+                *(
+                    "    task_stack " + " ".join(
+                        f"{key}={value if value is not None else 'unavailable'}"
+                        for key, value in task_stack.items()
+                    )
+                    for task_stack in checkpoint["task_stacks"]
+                ),
+            )
         ],
         "",
         "Capture command",

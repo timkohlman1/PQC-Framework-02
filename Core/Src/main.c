@@ -989,7 +989,45 @@ static void APP_PrintUnavailable(void)
   APP_UART_WriteString("unavailable");
 }
 
-static void APP_PrintApplicationMemoryCheckpoint(const char *stage, BaseType_t include_task_stack)
+static void APP_PrintTaskStackCheckpoint(const char *stage,
+                                             const char *task_name,
+                                             TaskHandle_t task_handle,
+                                             uint32_t task_stack_total_bytes)
+{
+  UBaseType_t minimum_free_words;
+  uint32_t minimum_free_bytes;
+
+  APP_UART_WriteString("application task stack: stage=");
+  APP_UART_WriteString(stage);
+  APP_UART_WriteString(" task=");
+  APP_UART_WriteString(task_name);
+  APP_UART_WriteString(" total_bytes=");
+  APP_UART_WriteUint32(task_stack_total_bytes);
+  APP_UART_WriteString(" minimum_free_bytes=");
+
+  minimum_free_words = uxTaskGetStackHighWaterMark(task_handle);
+  minimum_free_bytes =
+      (uint32_t)minimum_free_words * (uint32_t)sizeof(StackType_t);
+
+  if (minimum_free_bytes <= task_stack_total_bytes)
+  {
+    APP_UART_WriteUint32(minimum_free_bytes);
+    APP_UART_WriteString(" peak_used_bytes=");
+    APP_UART_WriteUint32(task_stack_total_bytes - minimum_free_bytes);
+  }
+  else
+  {
+    APP_PrintUnavailable();
+    APP_UART_WriteString(" peak_used_bytes=");
+    APP_PrintUnavailable();
+  }
+
+  APP_UART_WriteString("\r\n");
+}
+
+static void APP_PrintApplicationMemoryCheckpoint(const char *stage,
+                                                 BaseType_t include_default_task,
+                                                 BaseType_t include_network_task)
 {
   size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
   size_t heap_free_bytes = xPortGetFreeHeapSize();
@@ -1009,33 +1047,25 @@ static void APP_PrintApplicationMemoryCheckpoint(const char *stage, BaseType_t i
   APP_UART_WriteUint32((uint32_t)heap_current_used_bytes);
   APP_UART_WriteString(" heap_peak_used_bytes=");
   APP_UART_WriteUint32((uint32_t)heap_peak_used_bytes);
-  APP_UART_WriteString(" task_stack_total_bytes=");
-
-  if (include_task_stack != pdFALSE)
-  {
-    UBaseType_t stack_high_water_words = uxTaskGetStackHighWaterMark(NULL);
-    uint32_t stack_total_bytes = (uint32_t)defaultTask_attributes.stack_size;
-    uint32_t stack_high_water_bytes = (uint32_t)stack_high_water_words * (uint32_t)sizeof(StackType_t);
-    uint32_t stack_used_bytes =
-        (stack_high_water_bytes <= stack_total_bytes) ?
-        (stack_total_bytes - stack_high_water_bytes) : 0U;
-
-    APP_UART_WriteUint32(stack_total_bytes);
-    APP_UART_WriteString(" task_stack_high_water_bytes=");
-    APP_UART_WriteUint32(stack_high_water_bytes);
-    APP_UART_WriteString(" task_stack_used_bytes=");
-    APP_UART_WriteUint32(stack_used_bytes);
-  }
-  else
-  {
-    APP_PrintUnavailable();
-    APP_UART_WriteString(" task_stack_high_water_bytes=");
-    APP_PrintUnavailable();
-    APP_UART_WriteString(" task_stack_used_bytes=");
-    APP_PrintUnavailable();
-  }
-
   APP_UART_WriteString("\r\n");
+
+  if (include_default_task == pdTRUE)
+  {
+    APP_PrintTaskStackCheckpoint(
+        stage,
+        "defaultTask",
+        (TaskHandle_t)defaultTaskHandle,
+        (uint32_t)defaultTask_attributes.stack_size);
+  }
+
+  if (include_network_task == pdTRUE)
+  {
+    APP_PrintTaskStackCheckpoint(
+        stage,
+        "networkTask",
+        (TaskHandle_t)networkTaskHandle,
+        (uint32_t)networkTask_attributes.stack_size);
+  }
 }
 
 static void APP_PrintApplicationClock(const char *name, uint32_t value)
@@ -1205,7 +1235,7 @@ int main(void)
     Error_Handler();
   }
   APP_UART_WriteString("FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=2048\r\n");
-  APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE);
+  APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE, pdFALSE);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -1735,7 +1765,7 @@ void StartDefaultTask(void *argument)
 
     if (runtime_checkpoint_reported == pdFALSE)
     {
-      APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE);
+      APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE, pdFALSE);
       runtime_checkpoint_reported = pdTRUE;
     }
   }
@@ -1773,7 +1803,7 @@ void StartNetworkTask(void *argument)
   }
   APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=available wifi=connected link=up tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
-  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE);
+  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
 
   osThreadExit();
 }

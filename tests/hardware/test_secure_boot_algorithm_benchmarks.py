@@ -430,8 +430,13 @@ def _assert_profile_benchmark_manifest(
         checkpoints = manifest["uart"]["application_memory_checkpoints"]
         checkpoint_by_stage = {checkpoint["stage"]: checkpoint for checkpoint in checkpoints}
         assert {"pre_scheduler", "default_task_runtime"}.issubset(checkpoint_by_stage)
-        assert checkpoint_by_stage["pre_scheduler"]["task_stack_used_bytes"] is None
-        assert checkpoint_by_stage["default_task_runtime"]["task_stack_used_bytes"] >= 0
+        assert checkpoint_by_stage["pre_scheduler"]["task_stacks"] == []
+        default_runtime_stacks = {
+            item["task"]: item
+            for item in checkpoint_by_stage["default_task_runtime"]["task_stacks"]
+        }
+        assert default_runtime_stacks["defaultTask"]["peak_used_bytes"] >= 0
+        assert default_runtime_stacks["networkTask"]["peak_used_bytes"] >= 0
         assert manifest["runtime_memory"]["heap_used_bytes"] >= checkpoint_by_stage["pre_scheduler"]["heap_peak_used_bytes"]
         assert sample["verification_time_source"] == "framework_derived_from_uart_cycles_and_reported_hclk"
         assert sample["verification_cycles_source"] == "uart_explicit_verification_cycles_marker"

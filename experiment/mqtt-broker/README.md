@@ -224,3 +224,12 @@ The framework's `mqtt_plaintext_st67_e2e` run starts `mosquitto_sub` on the resp
 ## Experiment-managed lifecycle
 
 The real STM32 plaintext MQTT gateway experiment manages this Compose project transactionally. It stops only the configured framework Compose project, deploys and starts the classical profile, verifies the port 1883 listener with a bounded MQTT publish/subscribe readiness exchange, then collects the full Compose broker log and stops the project after the hardware exchange. The run retains deploy, start, status, readiness, broker, and stop logs in its result directory. Manual `deploy`, `start`, `status`, and `stop` commands remain available for broker-only diagnosis, but are not required before the managed hardware experiment.
+
+## Classical STM32 TLS profiles
+
+Phase M11 keeps two distinct classical TLS profiles:
+
+- `classical-server-auth` uses TLS 1.2 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
+- `classical` retains the existing mutual-TLS listener and client-certificate requirement.
+
+Provision the runtime certificates before building the server-authenticated STM32 experiment because the build embeds only `runtime/classical/certs/ca.crt` as public trust material. Private keys remain under ignored runtime state and are not copied into firmware results or manifests.

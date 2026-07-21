@@ -85,6 +85,7 @@ set(STM32_Drivers_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_spi.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_spi_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rng.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_at/modem_cmd_handler.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_at/w61_at_ble.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_at/w61_at_common.c

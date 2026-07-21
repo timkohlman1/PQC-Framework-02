@@ -108,9 +108,9 @@ MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
 
 
-def _is_plaintext_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
+def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
-    return isinstance(mqtt, dict) and mqtt.get("evidence_class") == "stm32_st67_plaintext_e2e"
+    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
 
 
 
@@ -155,14 +155,16 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
     gateway_alias = str(bundle["host"]["alias"])
     host = shlex.quote(str(broker["host"]))
     port = int(broker["port"])
+    tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
+    tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
     topic = "pqc/framework/readiness"
     message = "ready"
     script = (
         f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
         'attempt=$((attempt + 1)); response_file=/tmp/pqc-mqtt-ready.$$; rm -f "$response_file"; '
-        f'mosquitto_sub -h {host} -p {port} -t {topic} -C 1 -W 2 >"$response_file" & sub_pid=$!; '
+        f'mosquitto_sub -h {host} -p {port} {tls_args} -t {topic} -C 1 -W 2 >"$response_file" & sub_pid=$!; '
         'sleep 0.2; '
-        f'mosquitto_pub -h {host} -p {port} -t {topic} -m {message} >/dev/null 2>&1 || true; '
+        f'mosquitto_pub -h {host} -p {port} {tls_args} -t {topic} -m {message} >/dev/null 2>&1 || true; '
         'wait "$sub_pid"; rc=$?; response=$(tr -d "\r\n " <"$response_file"); rm -f "$response_file"; '
         f'if [ "$rc" -eq 0 ] && [ "$response" = {message} ]; then echo "broker_ready attempt=$attempt"; exit 0; fi; '
         f'sleep {delay_seconds}; done; echo "broker_not_ready attempts=$attempt"; exit 1'
@@ -185,25 +187,29 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
 
 def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> tuple[bool, str]:
     steps: dict[str, Any] = {}
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
-        ("start", "start", [*common, "--profile", "classical"]),
+        ("start", "start", [*common, "--profile", profile]),
         ("status", "status", common),
     ):
         result = _run_mqtt_broker_step(repo_root=repo_root, result_dir=result_dir, step_name=step_name, subcommand=subcommand, extra_args=extra)
         steps[step_name] = {"return_code": result.return_code, "log": f"mqtt-broker-{step_name}.log"}
         if result.return_code != 0:
-            update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": "classical", "steps": steps, "readiness_passed": False, "failure_stage": f"broker_{step_name}"}})
+            update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": f"broker_{step_name}"}})
             return False, f"broker_{step_name}"
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
     steps["readiness"] = {"return_code": readiness.return_code, "log": "mqtt-broker-readiness.log"}
-    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": "classical", "steps": steps, "readiness_passed": readiness.return_code == 0, "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness"}})
+    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": readiness.return_code == 0, "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness"}})
     return readiness.return_code == 0, ("none" if readiness.return_code == 0 else "broker_readiness")
 
 
 def _collect_and_stop_managed_mqtt_broker(*, repo_root: Path, result_dir: Path) -> tuple[int, int]:
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
@@ -241,15 +247,17 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
     return values
 
 
-def _mqtt_e2e_required_uart_markers() -> tuple[str, ...]:
-    return (
-        "ST67 DHCP: result=passed",
-        "mqtt_connect=passed",
-        "mqtt_subscribe=passed",
-        "mqtt_receive=passed",
-        "mqtt_publish=passed",
-        "end_to_end=passed",
-    )
+def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    markers = [
+        "ST67 DHCP: result=passed", "mqtt_connect=passed",
+        "mqtt_subscribe=passed", "mqtt_receive=passed",
+        "mqtt_publish=passed", "end_to_end=passed",
+    ]
+    if isinstance(mqtt, dict) and mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e":
+        markers.extend(("tls_handshake=passed", "reconnect=passed",
+                        "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
+    return tuple(markers)
 
 
 def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path, duration_seconds: int, restart_command: str):
@@ -273,6 +281,8 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     baud = int(bundle["host"]["uart"]["baud"])
     broker_host = shlex.quote(str(broker["host"]))
     broker_port = int(broker["port"])
+    tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
+    tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
     command_topic = shlex.quote(str(topics["command"]))
     response_topic = shlex.quote(str(topics["response"]))
     command_value = shlex.quote(command_payload)
@@ -283,12 +293,12 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
-        f'mosquitto_sub -h {broker_host} -p {broker_port} -t {response_topic} -C 1 -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
+        f'mosquitto_sub -h {broker_host} -p {broker_port} {tls_args} -t {response_topic} -C 1 -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
         f'timeout {int(duration_seconds)}s cat {device} >"$uart_file" & capture_pid=$!; '
         f"{restart_command} 1>&2; reset_rc=$?; attempts=0; "
         f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
         f"sleep {publish_interval}; attempts=$((attempts + 1)); "
-        f"mosquitto_pub -h {broker_host} -p {broker_port} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
+        f"mosquitto_pub -h {broker_host} -p {broker_port} {tls_args} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
         'wait "$subscriber_pid"; subscriber_rc=$?; wait "$capture_pid"; capture_rc=$?; '
         'response=$(tr -d "\r\n " <"$response_file"); cat "$uart_file"; '
         f'expected={shlex.quote(expected_response)}; matched=0; [ "$response" = "$expected" ] && matched=1; '
@@ -309,7 +319,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
 
     uart_result = None
     marker: dict[str, Any] = {"marker_present": False}
-    missing_uart_markers = list(_mqtt_e2e_required_uart_markers())
+    missing_uart_markers = list(_mqtt_e2e_required_uart_markers(bundle))
     broker_response_passed = False
     passed = False
     failure_stage = "uart"
@@ -318,7 +328,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     try:
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=duration_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
-        missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers() if item not in uart_result.capture.stdout]
+        missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers(bundle) if item not in uart_result.capture.stdout]
         broker_response_passed = marker.get("subscriber_rc") == 0 and marker.get("response_matched") == "1"
         passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
         failure_stage = "none"
@@ -464,6 +474,7 @@ MQTT_TLS_EVIDENCE_CLASSES = {
     "stm32_runtime",
     "st67w61m1_backed",
     "stm32_st67_plaintext_e2e",
+    "stm32_st67_classical_tls_e2e",
 }
 MQTT_TLS_TRANSPORT_BACKENDS = {
     "fake_no_network",
@@ -472,6 +483,7 @@ MQTT_TLS_TRANSPORT_BACKENDS = {
     "stm32_runtime",
     "st67w61m1",
     "st67w61m1_lwip_sockets",
+    "st67w61m1_lwip_wolfssl",
 }
 MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "fake_no_network": {"fake_no_network"},
@@ -480,6 +492,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "stm32_runtime": {"stm32_runtime"},
     "st67w61m1": {"st67w61m1_backed"},
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
+    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e"},
 }
 MQTT_TLS_MODES = {
     "disabled",
@@ -488,6 +501,8 @@ MQTT_TLS_MODES = {
     "not_applicable",
     "unavailable",
     "plaintext",
+    "classical_tls_server_auth",
+    "classical_tls_mutual",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -500,8 +515,8 @@ MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "latency_ms",
     "throughput_bytes_per_second",
 }
-MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e"}
-MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e"}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
 
 
 def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
@@ -585,7 +600,7 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
-    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e"}:
+    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
     if evidence_class == "fake_no_network" and broker:
@@ -1807,7 +1822,7 @@ def _run_full_baseline_with_existing_build(
         print(f"Return code: {flash_result.return_code}")
         return flash_result.return_code
 
-    if _is_plaintext_st67_mqtt_e2e(bundle):
+    if _is_st67_mqtt_e2e(bundle):
         uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
             bundle=bundle,
             repo_root=repo_root,
@@ -1840,7 +1855,7 @@ def _run_full_baseline_with_existing_build(
         referenced_build_manifest=verification.manifest_path,
     )
 
-    print(("MQTT end-to-end run passed" if _is_plaintext_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
+    print(("MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
     print("-------------------" if final_return_code == 0 else "-------------------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
@@ -1992,7 +2007,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Return code: {flash_result.return_code}")
         return flash_result.return_code
 
-    if _is_plaintext_st67_mqtt_e2e(bundle):
+    if _is_st67_mqtt_e2e(bundle):
         uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
             bundle=bundle,
             repo_root=repo_root,
@@ -2025,7 +2040,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
     )
 
-    print(("MQTT end-to-end run passed" if _is_plaintext_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
+    print(("MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
     print("-------------------" if final_return_code == 0 else "-------------------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
