@@ -128,3 +128,7 @@ The `mqtt_plaintext_st67_e2e` experiment starts a gateway-side response subscrib
     --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml `
     --uart-duration-seconds 30
 ```
+
+### Managed broker lifecycle for the plaintext STM32 MQTT experiment
+
+The `mqtt_plaintext_st67_e2e` gateway run owns the framework MQTT broker for the duration of that run. It stops the known framework Compose broker, deploys the current broker project, starts the classical profile, waits for a successful plaintext MQTT readiness exchange on port 1883, performs the STM32 command/response exchange, captures the complete broker log, and stops the broker in cleanup. Broker lifecycle evidence is retained beside `uart.log` as `mqtt-broker-*.log`. A readiness, log-collection, or cleanup failure is recorded as a distinct failure stage and cannot be reported as a successful end-to-end run.

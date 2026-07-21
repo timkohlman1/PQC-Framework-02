@@ -548,3 +548,7 @@ End-to-end success requires recorded evidence of DHCP acquisition, TCP/MQTT conn
 ### Automated plaintext MQTT orchestration evidence
 
 The `stm32_st67_plaintext_e2e` experiment class uses one bounded gateway operation that starts the response subscriber before MCU reset, captures UART from reset, and republishes the non-retained command at a configured interval until the response arrives or the attempt limit is reached. A successful record requires matching STM32 UART protocol markers and an independently observed response payload. The result retains `mqtt-publisher.log`, `mqtt-subscriber.log`, and an `mqtt_e2e` manifest block with the failure stage, publication count, response verdict, and missing UART markers.
+
+### Managed broker evidence for STM32 plaintext MQTT
+
+The `stm32_st67_plaintext_e2e` evidence class owns the framework Mosquitto Compose project during each run. The workflow stops any prior instance of that known project, deploys the current broker configuration, starts the classical profile, performs a bounded plaintext MQTT readiness exchange, runs the STM32 command/response exchange, captures complete broker logs, and stops the project in guaranteed cleanup. Result folders retain broker deploy, start, status, readiness, log, and stop evidence. Broker lifecycle failures remain distinct from STM32 exchange failures, and a successful exchange does not mask failed log collection or cleanup.

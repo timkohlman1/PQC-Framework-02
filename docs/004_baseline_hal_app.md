@@ -124,3 +124,7 @@ A 30-second provenance-backed UART capture verified module initialization, confi
 ## Plaintext MQTT runtime verdict
 
 For the `mqtt_plaintext_st67_e2e` profile, the normal boot and tick markers remain necessary but are not sufficient. The run passes only when UART reports DHCP, MQTT CONNECT, SUBSCRIBE, command receive, response publish, and `end_to_end=passed`, and the gateway subscriber independently receives the configured correlation response.
+
+### Plaintext MQTT broker lifecycle evidence
+
+The `mqtt_plaintext_st67_e2e` experiment is not a generic baseline-only run. Before resetting the application it stops the known framework broker project, deploys and starts the classical broker profile, and waits for a successful MQTT readiness exchange on the plaintext listener. After the STM32 response is independently received, the framework retains the full broker log and stops the broker. End-to-end success therefore requires firmware UART markers, independent subscriber receipt, broker readiness, broker-log collection, and successful broker cleanup.

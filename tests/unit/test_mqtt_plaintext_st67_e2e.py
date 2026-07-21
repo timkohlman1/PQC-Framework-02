@@ -85,3 +85,22 @@ def test_mqtt_e2e_marker_parser_tolerates_ansi_prefixes():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert "marker_index = line.find(marker_prefix)" in source
     assert "marker_line = line[marker_index:].strip()" in source
+
+
+def test_mqtt_e2e_run_manages_broker_lifecycle_and_retains_logs():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    for marker in (
+        "_start_managed_mqtt_broker",
+        "_wait_for_plaintext_mqtt_broker",
+        "_collect_and_stop_managed_mqtt_broker",
+        '("stop-existing", "stop"',
+        '("deploy", "deploy"',
+        '("start", "start"',
+        "mqtt-broker-readiness.log",
+        "mqtt-broker-log.log",
+        "mqtt-broker-stop.log",
+        "cleanup_completed",
+        "broker_log_collection",
+        "broker_stop",
+    ):
+        assert marker in source
