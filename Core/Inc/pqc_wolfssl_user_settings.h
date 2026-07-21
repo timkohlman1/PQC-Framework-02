@@ -12,6 +12,7 @@
 #define NO_ERROR_STRINGS
 #define NO_OLD_TLS
 #define WOLFSSL_NO_ASM
+#define WOLFSSL_SP_MATH_ALL
 #define USE_SLOW_SHA256
 #define WC_NO_HARDEN
 #define NO_WOLFSSL_SERVER
@@ -31,6 +32,7 @@
 #define NO_RC4
 #define NO_PWDBASED
 #define NO_SESSION_CACHE
+#define NO_ASN_TIME
 
 int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size);
 #define CUSTOM_RAND_GENERATE_SEED PQC_WolfSSL_HardwareSeed

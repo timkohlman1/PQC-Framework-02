@@ -85,11 +85,14 @@ set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/ecc.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/kdf.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/logging.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sp_int.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
 )
 
 foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)

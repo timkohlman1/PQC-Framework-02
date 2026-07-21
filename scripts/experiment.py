@@ -207,13 +207,18 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     return readiness.return_code == 0, ("none" if readiness.return_code == 0 else "broker_readiness")
 
 
-def _collect_and_stop_managed_mqtt_broker(*, repo_root: Path, result_dir: Path) -> tuple[int, int]:
+def _collect_and_stop_managed_mqtt_broker(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+) -> tuple[int, int]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
-        extra_args=[*common, "--profile", "classical", "--tail", "100000"],
+        extra_args=[*common, "--profile", profile, "--tail", "100000"],
     )
     stop_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
@@ -263,7 +268,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
 def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path, duration_seconds: int, restart_command: str):
     broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     if not broker_started:
-        _collect_and_stop_managed_mqtt_broker(repo_root=repo_root, result_dir=result_dir)
+        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
     experiment = bundle["experiment"]
@@ -339,7 +344,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         elif missing_uart_markers:
             failure_stage = "mqtt_uart_markers"
     finally:
-        broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(repo_root=repo_root, result_dir=result_dir)
+        broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     if passed and broker_log_rc != 0:
         passed = False
         failure_stage = "broker_log_collection"

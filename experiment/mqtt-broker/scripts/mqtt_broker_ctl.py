@@ -21,6 +21,12 @@ OQS_IMAGE = "openquantumsafe/mosquitto:latest"
 OQS_KEM_GROUP = "mlkem768"
 OQS_CA_ALGORITHM = "mldsa65"
 OQS_LEAF_ALGORITHM = "falcon512"
+BROKER_PROFILE_SERVICES = {
+    "classical": "mqtt-classical",
+    "classical-server-auth": "mqtt-classical-server-auth",
+    "oqs": "mqtt-oqs",
+}
+BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
 HOST_BROKER_EVIDENCE_CLASS = "host_side"
 HOST_BROKER_EVIDENCE_LABEL = "host-side/broker-side MQTT/TLS compatibility evidence"
 HOST_BROKER_EVIDENCE_BOUNDARY = (
@@ -443,6 +449,7 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
     env: list[str] = []
     if getattr(args, "classical_port", None):
         env.append(f"MQTT_CLASSICAL_TLS_PORT={args.classical_port}")
+        env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
     if getattr(args, "oqs_port", None):
         env.append(f"MQTT_OQS_TLS_PORT={args.oqs_port}")
     return env
@@ -466,9 +473,24 @@ def start(args: argparse.Namespace) -> None:
 
 
 def stop(args: argparse.Namespace) -> None:
-    compose_remote(args, ["--profile", "classical", "--profile", "oqs", "down", "--remove-orphans"])
+    compose_remote(
+        args,
+        [
+            "--profile",
+            "classical",
+            "--profile",
+            "classical-server-auth",
+            "--profile",
+            "oqs",
+            "down",
+            "--remove-orphans",
+        ],
+    )
     host = load_host_config(repo_root() / args.host_config)
-    cleanup_command = "docker rm -f pqc-mqtt-classical pqc-mqtt-oqs >/dev/null 2>&1 || true"
+    cleanup_command = (
+        "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
+        "pqc-mqtt-oqs >/dev/null 2>&1 || true"
+    )
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 
 
@@ -477,7 +499,7 @@ def status(args: argparse.Namespace) -> None:
 
 
 def logs(args: argparse.Namespace) -> None:
-    service = "mqtt-oqs" if args.profile == "oqs" else "mqtt-classical"
+    service = BROKER_PROFILE_SERVICES[args.profile]
     compose_remote(args, ["logs", "--tail", str(args.tail), service])
 
 
@@ -654,7 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser = sub.add_parser("start", help="start a broker profile on the gateway")
     add_common_remote_options(start_parser)
     add_port_options(start_parser)
-    start_parser.add_argument("--profile", choices=("classical", "oqs"), default="classical")
+    start_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     start_parser.set_defaults(func=start)
 
     stop_parser = sub.add_parser("stop", help="stop broker services on the gateway")
@@ -670,7 +692,7 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser = sub.add_parser("logs", help="show gateway broker logs")
     add_common_remote_options(logs_parser)
     add_port_options(logs_parser)
-    logs_parser.add_argument("--profile", choices=("classical", "oqs"), default="classical")
+    logs_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     logs_parser.add_argument("--tail", type=int, default=100)
     logs_parser.set_defaults(func=logs)
 

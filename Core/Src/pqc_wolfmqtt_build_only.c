@@ -7,6 +7,14 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "pqc_wifi_config.h"
+
+/* wolfSSL uses RNG as a legacy type alias. STM32 CMSIS uses the same name
+ * for the hardware peripheral pointer. Drop the CMSIS macro before wolfSSL
+ * headers and address the peripheral explicitly through RNG_BASE below. */
+#ifdef RNG
+#undef RNG
+#endif
+
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfssl/ssl.h"
 #include "wolfssl/wolfcrypt/random.h"
@@ -33,25 +41,57 @@ typedef struct {
     size_t payload_length;
 } PQC_WolfMQTTMessageContext;
 
-static RNG_HandleTypeDef s_rng;
+#define PQC_WOLFSSL_RNG_READY_SPIN_LIMIT 1000000UL
+#define PQC_STM32_RNG ((RNG_TypeDef *)RNG_BASE)
+
 static bool s_rng_ready;
+
+static int PQC_WolfSSL_WaitForRegisterBit(volatile uint32_t *reg, uint32_t mask)
+{
+    uint32_t spins = PQC_WOLFSSL_RNG_READY_SPIN_LIMIT;
+    while (((*reg) & mask) == 0U) {
+        if (spins-- == 0U) return -1;
+    }
+    return 0;
+}
+
+static int PQC_WolfSSL_InitializeHardwareRng(void)
+{
+    if (s_rng_ready) return 0;
+
+    /* The STM32L4 RNG is clocked from the 48 MHz clock domain. The reset
+     * selection uses HSI48, so enable it explicitly and bound the wait. */
+    RCC->CRRCR |= RCC_CRRCR_HSI48ON;
+    if (PQC_WolfSSL_WaitForRegisterBit(&RCC->CRRCR, RCC_CRRCR_HSI48RDY) != 0) return -1;
+
+    RCC->AHB2ENR |= RCC_AHB2ENR_RNGEN;
+    __DSB();
+    PQC_STM32_RNG->CR |= RNG_CR_RNGEN;
+    s_rng_ready = true;
+    return 0;
+}
 
 int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size)
 {
     unsigned int offset = 0U;
     if ((output == NULL) && (size != 0U)) return -1;
-    if (!s_rng_ready) {
-        __HAL_RCC_RNG_CLK_ENABLE();
-        memset(&s_rng, 0, sizeof(s_rng));
-        s_rng.Instance = RNG;
-        if (HAL_RNG_Init(&s_rng) != HAL_OK) return -1;
-        s_rng_ready = true;
-    }
+    if (PQC_WolfSSL_InitializeHardwareRng() != 0) return -1;
+
     while (offset < size) {
-        uint32_t word = 0U;
+        uint32_t spins = PQC_WOLFSSL_RNG_READY_SPIN_LIMIT;
+        uint32_t status;
+        uint32_t word;
         unsigned int remaining;
         unsigned int copy_length;
-        if (HAL_RNG_GenerateRandomNumber(&s_rng, &word) != HAL_OK) return -1;
+
+        do {
+            status = PQC_STM32_RNG->SR;
+            if ((status & (RNG_SR_CECS | RNG_SR_SECS)) != 0U) return -1;
+            if ((status & RNG_SR_DRDY) != 0U) break;
+        } while (spins-- != 0U);
+
+        if ((status & RNG_SR_DRDY) == 0U) return -1;
+        word = PQC_STM32_RNG->DR;
         remaining = size - offset;
         copy_length = remaining < sizeof(word) ? remaining : sizeof(word);
         memcpy(output + offset, &word, copy_length);
