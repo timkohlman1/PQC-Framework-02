@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -72,7 +73,13 @@ from framework.manifest import (
     read_manifest,
     update_manifest,
 )
-from framework.uart import DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_RESTART_COMMAND, execute_uart_capture, execute_uart_monitor
+from framework.uart import (
+    DEFAULT_CAPTURE_DURATION_SECONDS,
+    DEFAULT_RESTART_COMMAND,
+    CommandExecution,
+    execute_uart_capture,
+    execute_uart_monitor,
+)
 from framework.mqtt_fake_transport import (
     FAKE_MQTT_VALID_OUTCOMES,
     FakeMqttTransportConfigError,
@@ -92,6 +99,133 @@ from framework.benchmark_aggregation import (
     resolve_manifest_inputs,
     write_benchmark_summary_outputs,
 )
+
+
+
+
+MQTT_E2E_MARKER_PREFIX = "PQC_MQTT_E2E"
+MQTT_E2E_FAILURE_RETURN_CODE = 12
+
+
+def _is_plaintext_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    return isinstance(mqtt, dict) and mqtt.get("evidence_class") == "stm32_st67_plaintext_e2e"
+
+
+def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
+    marker_line = ""
+    marker_prefix = MQTT_E2E_MARKER_PREFIX + " "
+    for line in stderr.splitlines():
+        marker_index = line.find(marker_prefix)
+        if marker_index >= 0:
+            marker_line = line[marker_index:].strip()
+            break
+    values: dict[str, Any] = {"marker_present": bool(marker_line)}
+    if not marker_line:
+        return values
+    for token in marker_line.split()[1:]:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        values[key] = value
+    for key in ("subscriber_rc", "publish_attempts"):
+        if key in values:
+            try:
+                values[key] = int(values[key])
+            except ValueError:
+                pass
+    return values
+
+
+def _mqtt_e2e_required_uart_markers() -> tuple[str, ...]:
+    return (
+        "ST67 DHCP: result=passed",
+        "mqtt_connect=passed",
+        "mqtt_subscribe=passed",
+        "mqtt_receive=passed",
+        "mqtt_publish=passed",
+        "end_to_end=passed",
+    )
+
+
+def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path, duration_seconds: int, restart_command: str):
+    experiment = bundle["experiment"]
+    mqtt = experiment["mqtt"]
+    broker = mqtt["broker"]
+    topics = mqtt["topics"]
+    orchestration = mqtt.get("orchestration", {})
+    command_payload = str(mqtt.get("command_payload", "run"))
+    expected_response = str(mqtt["correlation_payload"])
+    publish_interval = int(orchestration.get("publish_interval_seconds", 1))
+    max_attempts = int(orchestration.get("max_publish_attempts", max(1, duration_seconds - 2)))
+
+    gateway_alias = str(bundle["host"]["alias"])
+    device = shlex.quote(str(bundle["host"]["uart"]["device"]))
+    baud = int(bundle["host"]["uart"]["baud"])
+    broker_host = shlex.quote(str(broker["host"]))
+    broker_port = int(broker["port"])
+    command_topic = shlex.quote(str(topics["command"]))
+    response_topic = shlex.quote(str(topics["response"]))
+    command_value = shlex.quote(command_payload)
+    response_file = "/tmp/pqc-mqtt-e2e-response.$$"
+    uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
+
+    script = (
+        f"response_file={response_file}; uart_file={uart_file}; "
+        'rm -f "$response_file" "$uart_file"; '
+        f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
+        f'mosquitto_sub -h {broker_host} -p {broker_port} -t {response_topic} -C 1 -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
+        f'timeout {int(duration_seconds)}s cat {device} >"$uart_file" & capture_pid=$!; '
+        f"{restart_command} 1>&2; reset_rc=$?; attempts=0; "
+        f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
+        f"sleep {publish_interval}; attempts=$((attempts + 1)); "
+        f"mosquitto_pub -h {broker_host} -p {broker_port} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
+        'wait "$subscriber_pid"; subscriber_rc=$?; wait "$capture_pid"; capture_rc=$?; '
+        'response=$(tr -d "\r\n " <"$response_file"); cat "$uart_file"; '
+        f'expected={shlex.quote(expected_response)}; matched=0; [ "$response" = "$expected" ] && matched=1; '
+        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts response_matched=$matched response=$response" 1>&2; '
+        'rm -f "$response_file" "$uart_file"; '
+        'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$capture_rc"'
+    )
+    ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+
+    def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
+        start = time.perf_counter()
+        completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+        execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
+        (result_dir / "mqtt-publisher.log").write_text(f"Command payload: {command_payload}\nPublish interval seconds: {publish_interval}\nMaximum attempts: {max_attempts}\n{completed.stderr}", encoding="utf-8")
+        marker = _parse_mqtt_e2e_marker(completed.stderr)
+        (result_dir / "mqtt-subscriber.log").write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return execution
+
+    uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=duration_seconds, restart_command=restart_command)
+    marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
+    missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers() if item not in uart_result.capture.stdout]
+    broker_response_passed = marker.get("subscriber_rc") == 0 and marker.get("response_matched") == "1"
+    passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
+    failure_stage = "none"
+    if uart_result.return_code != 0:
+        failure_stage = "uart"
+    elif not broker_response_passed:
+        failure_stage = "broker_response"
+    elif missing_uart_markers:
+        failure_stage = "mqtt_uart_markers"
+    update_manifest(result_dir / "manifest.json", {
+        "mqtt_e2e": {
+            "return_code": 0 if passed else MQTT_E2E_FAILURE_RETURN_CODE,
+            "failure_stage": failure_stage,
+            "command_topic": topics["command"],
+            "response_topic": topics["response"],
+            "command_payload": command_payload,
+            "expected_response": expected_response,
+            "broker_response_passed": broker_response_passed,
+            "publish_attempts": marker.get("publish_attempts"),
+            "missing_uart_markers": missing_uart_markers,
+            "publisher_log": "mqtt-publisher.log",
+            "subscriber_log": "mqtt-subscriber.log",
+        }
+    })
+    return uart_result, (0 if passed else MQTT_E2E_FAILURE_RETURN_CODE), failure_stage
 
 
 class ConfigError(Exception):
@@ -1547,16 +1681,24 @@ def _run_full_baseline_with_existing_build(
         print(f"Return code: {flash_result.return_code}")
         return flash_result.return_code
 
-    uart_result = execute_uart_capture(
-        bundle=bundle,
-        repo_root=repo_root,
-        result_dir=result_dir,
-        duration_seconds=args.uart_duration_seconds,
-        restart_command=_monitor_restart_command(bundle, None),
-    )
-
-    final_return_code = uart_result.return_code
-    failure_stage = "none" if final_return_code == 0 else "uart"
+    if _is_plaintext_st67_mqtt_e2e(bundle):
+        uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+    else:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+        final_return_code = uart_result.return_code
+        failure_stage = "none" if final_return_code == 0 else "uart"
     _record_run_summary(
         result_dir=result_dir,
         final_return_code=final_return_code,
@@ -1572,7 +1714,7 @@ def _run_full_baseline_with_existing_build(
         referenced_build_manifest=verification.manifest_path,
     )
 
-    print("Baseline run passed" if final_return_code == 0 else "Baseline run failed during uart")
+    print(("MQTT end-to-end run passed" if _is_plaintext_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
     print("-------------------" if final_return_code == 0 else "-------------------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")
@@ -1724,16 +1866,24 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Return code: {flash_result.return_code}")
         return flash_result.return_code
 
-    uart_result = execute_uart_capture(
-        bundle=bundle,
-        repo_root=repo_root,
-        result_dir=result_dir,
-        duration_seconds=args.uart_duration_seconds,
-        restart_command=_monitor_restart_command(bundle, None),
-    )
-
-    final_return_code = uart_result.return_code
-    failure_stage = "none" if final_return_code == 0 else "uart"
+    if _is_plaintext_st67_mqtt_e2e(bundle):
+        uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+    else:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+        final_return_code = uart_result.return_code
+        failure_stage = "none" if final_return_code == 0 else "uart"
     _record_run_summary(
         result_dir=result_dir,
         final_return_code=final_return_code,
@@ -1749,7 +1899,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
     )
 
-    print("Baseline run passed" if final_return_code == 0 else "Baseline run failed during uart")
+    print(("MQTT end-to-end run passed" if _is_plaintext_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
     print("-------------------" if final_return_code == 0 else "-------------------------------")
     print(f"Run ID: {manifest['run_id']}")
     print(f"Result directory: {result_dir}")

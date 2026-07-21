@@ -22,7 +22,6 @@ services:
         exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
-      - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
       - "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883"
     volumes:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

@@ -59,3 +59,29 @@ def test_plaintext_exchange_emits_progress_markers():
         "wolfMQTT: cleanup begin",
     ):
         assert marker in source
+
+
+def test_experiment_run_orchestrates_and_verdicts_mqtt_e2e():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    for marker in (
+        "_execute_mqtt_e2e_uart_capture",
+        "mosquitto_sub",
+        "mosquitto_pub",
+        "mqtt-publisher.log",
+        "mqtt-subscriber.log",
+        "broker_response_passed",
+        "missing_uart_markers",
+        "MQTT end-to-end run passed",
+    ):
+        assert marker in source
+
+
+def test_mqtt_plaintext_port_is_declared_once():
+    compose = Path("experiment/mqtt-broker/compose.yaml").read_text(encoding="utf-8")
+    assert compose.count('${MQTT_PLAINTEXT_PORT:-1883}:1883') == 1
+
+
+def test_mqtt_e2e_marker_parser_tolerates_ansi_prefixes():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert "marker_index = line.find(marker_prefix)" in source
+    assert "marker_line = line[marker_index:].strip()" in source

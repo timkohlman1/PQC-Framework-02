@@ -119,3 +119,8 @@ The ST67 SPI transfer engine remains aligned with the X-CUBE-ST67W61 vendor `spi
 
 A 30-second provenance-backed UART capture verified module initialization, configured-AP association, link-up, DHCP assignment, and live IPv4 evidence without `Invalid magic 0xffff`, `waiting for spi txn ready timeouted`, or SPI transaction-timeout messages. This does not establish sustained external traffic, TLS, MQTT, broker access, or end-to-end protocol success.
 
+
+
+## Plaintext MQTT runtime verdict
+
+For the `mqtt_plaintext_st67_e2e` profile, the normal boot and tick markers remain necessary but are not sufficient. The run passes only when UART reports DHCP, MQTT CONNECT, SUBSCRIBE, command receive, response publish, and `end_to_end=passed`, and the gateway subscriber independently receives the configured correlation response.

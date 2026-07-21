@@ -117,3 +117,14 @@ configured tuple directory is completely absent. A partial, corrupted, or
 algorithm-incompatible persistent tuple fails safely. Application signing does
 not create a private key independently; run the matching `build-wolfboot`
 profile first when initializing a new signing identity.
+
+
+### Plaintext STM32 MQTT end-to-end run
+
+The `mqtt_plaintext_st67_e2e` experiment starts a gateway-side response subscriber before resetting the MCU, repeatedly publishes the configured command during the bounded startup window, and requires both the STM32 UART success markers and the independently received broker response. Evidence is retained as `uart.log`, `mqtt-publisher.log`, `mqtt-subscriber.log`, and `manifest.json` in the run result directory. A generic boot/tick pass is not sufficient for this profile.
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml `
+    --uart-duration-seconds 30
+```

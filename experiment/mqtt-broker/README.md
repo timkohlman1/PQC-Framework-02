@@ -215,3 +215,8 @@ OQS broker logs are emitted to Docker stdout only. The OQS profile disables Mosq
 ## OQS image user compatibility
 
 The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+
+
+## STM32 plaintext command/response orchestration
+
+The framework's `mqtt_plaintext_st67_e2e` run starts `mosquitto_sub` on the response topic before resetting the board. Because the command publication is intentionally non-retained, it publishes the configured command repeatedly during the bounded startup window rather than relying on a fixed delay. The run succeeds only when the expected response is received and the UART log contains all MQTT end-to-end success markers.

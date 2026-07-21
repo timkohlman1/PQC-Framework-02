@@ -543,3 +543,8 @@ private keys.
 The `mqtt_plaintext_st67_e2e` profile extends the working ST67 Wi-Fi/DHCP path with a bounded wolfMQTT exchange over lwIP sockets. The firmware connects to the gateway broker on TCP port 1883, subscribes to a command topic, waits for one message, and publishes a correlation acknowledgement on a response topic. The existing TLS listener remains separate on port 8883.
 
 End-to-end success requires recorded evidence of DHCP acquisition, TCP/MQTT connection, subscription, inbound delivery, outbound publication, and receipt of the expected correlation value by an independent gateway subscriber. Firmware UART markers alone prove the STM32-side observations but do not by themselves prove that the gateway received the response. TLS, reconnect, latency, and throughput remain unavailable for this baseline and must not be inferred.
+
+
+### Automated plaintext MQTT orchestration evidence
+
+The `stm32_st67_plaintext_e2e` experiment class uses one bounded gateway operation that starts the response subscriber before MCU reset, captures UART from reset, and republishes the non-retained command at a configured interval until the response arrives or the attempt limit is reached. A successful record requires matching STM32 UART protocol markers and an independently observed response payload. The result retains `mqtt-publisher.log`, `mqtt-subscriber.log`, and an `mqtt_e2e` manifest block with the failure stage, publication count, response verdict, and missing UART markers.
