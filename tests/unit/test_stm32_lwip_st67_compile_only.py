@@ -346,3 +346,109 @@ def test_application_memory_checkpoints_report_named_task_stacks() -> None:
     assert 'APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);' in main_c
     assert "task_stack_high_water_bytes" not in main_c
     assert "task_stack_used_bytes" not in main_c
+
+def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    helper_start = source.index(
+        "static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)"
+    )
+    helper_end = source.index(
+        "static int32_t spi_txrx(", helper_start
+    )
+    helper = source[helper_start:helper_end]
+
+    assert helper.count("spi_port_is_ready() == 1") == 2
+    assert (
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+        in helper
+    )
+    assert helper.index("spi_port_is_ready() == 1") < helper.index(
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+    )
+    assert helper.rindex("spi_port_is_ready() == 1") > helper.index(
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+    )
+    assert helper.count(
+        "spi_clear_event(engine, SPI_EVT_TXN_RDY)"
+    ) == 2
+    assert "(spi_wait_txn_ready(engine) == 0)" in source
+    assert (
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0"
+        not in source
+    )
+
+def test_st67_short_full_duplex_spi_transactions_use_polling_completion() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    txrx_start = source.index(
+        "static int32_t spi_txrx(struct spi_xfer_engine *engine"
+    )
+    txrx_end = source.index(
+        "static int32_t spi_rx(struct spi_xfer_engine *engine", txrx_start
+    )
+    txrx = source[txrx_start:txrx_end]
+
+    assert "#define SPI_POLL_FULL_DUPLEX_MAX_BYTES  256U" in source
+    assert (
+        "if ((len <= SPI_DMA_XFER_SIZE_THRESHOLD) ||\n"
+        "      (len <= SPI_POLL_FULL_DUPLEX_MAX_BYTES))"
+        in txrx
+    )
+    assert (
+        "spi_port_transfer(tx_buf, rx_buf, len, "
+        "SPI_WAIT_POLL_XFER_TIMEOUT_MS)"
+        in txrx
+    )
+    assert "spi_port_transfer_dma(tx_buf, rx_buf, len)" in txrx
+    assert (
+        'spi txrx transaction timeouted: mode=dma len=%" PRIu16'
+        in txrx
+    )
+
+
+def test_st67_moderate_receive_only_spi_transactions_use_chunked_polling() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    rx_start = source.index(
+        "static int32_t spi_rx(struct spi_xfer_engine *engine"
+    )
+    rx_end = source.index(
+        "static int32_t spi_xfer_one(", rx_start
+    )
+    rx = source[rx_start:rx_end]
+
+    assert "#define SPI_POLL_RX_MAX_BYTES           2048U" in source
+    assert "if (len <= SPI_POLL_RX_MAX_BYTES)" in rx
+    assert "while (remaining > 0U)" in rx
+    assert "if (chunk > SPI_DMA_XFER_SIZE_THRESHOLD)" in rx
+    assert "chunk = SPI_DMA_XFER_SIZE_THRESHOLD;" in rx
+    assert (
+        "spi_port_transfer(NULL, rxp, chunk, "
+        "SPI_WAIT_POLL_XFER_TIMEOUT_MS)"
+        in rx
+    )
+
+
+def test_st67_large_receive_only_spi_transactions_remain_on_dma() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    rx_start = source.index(
+        "static int32_t spi_rx(struct spi_xfer_engine *engine"
+    )
+    rx_end = source.index(
+        "static int32_t spi_xfer_one(", rx_start
+    )
+    rx = source[rx_start:rx_end]
+
+    assert "spi_port_transfer_dma(NULL, rx_buf, len)" in rx
+    assert 'spi rx transaction timeouted: mode=dma len=%" PRIu16' in rx
+

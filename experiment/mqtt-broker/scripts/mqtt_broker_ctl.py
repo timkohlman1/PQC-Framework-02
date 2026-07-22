@@ -13,7 +13,8 @@ BROKER_RELATIVE_DIR = Path("experiment/mqtt-broker")
 DEFAULT_HOST_CONFIG = Path("configs/hosts/gateway.yaml")
 DEFAULT_REMOTE_DIR = "~/pqc-framework-02/experiment/mqtt-broker"
 DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
-DEFAULT_SERVER_NAME = "pqc-gateway1"
+DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
+DEFAULT_SERVER_ALIAS = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
 CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
@@ -265,7 +266,11 @@ def provision_classical_certs(args: argparse.Namespace) -> None:
     client_conf = cert_dir / "client-openssl.cnf"
     healthcheck_conf = cert_dir / "healthcheck-openssl.cnf"
     write_ca_openssl_config(ca_conf)
-    write_server_openssl_config(server_conf, [server_name, "localhost", *extra_names], ip_addresses)
+    write_server_openssl_config(
+        server_conf,
+        [server_name, DEFAULT_SERVER_ALIAS, "localhost", *extra_names],
+        ip_addresses,
+    )
     write_client_openssl_config(client_conf, client_name)
     write_client_openssl_config(healthcheck_conf, healthcheck_name)
 

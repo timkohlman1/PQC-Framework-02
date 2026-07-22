@@ -132,9 +132,25 @@ def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     assert "orchestration:\n    host: 10.1.1.18" in config
 
 
-def test_server_certificate_profile_contains_selected_fqdn_san():
-    profile = Path("experiment/mqtt-broker/runtime/classical/certs/server-openssl.cnf").read_text(encoding="utf-8")
-    assert "DNS.3 = pqc-gateway1.pqcnet" in profile
+def test_classical_certificate_provisioning_defaults_to_selected_fqdn():
+    source = Path(
+        "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"' in source
+    assert 'DEFAULT_SERVER_ALIAS = "pqc-gateway1"' in source
+    assert (
+        "[server_name, DEFAULT_SERVER_ALIAS, "
+        '"localhost", *extra_names]'
+        in source
+    )
+
+
+def test_runtime_server_certificate_profile_contains_selected_fqdn_san():
+    profile = Path(
+        "experiment/mqtt-broker/runtime/classical/certs/server-openssl.cnf"
+    ).read_text(encoding="utf-8")
+    assert "pqc-gateway1.pqcnet" in profile
 
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
