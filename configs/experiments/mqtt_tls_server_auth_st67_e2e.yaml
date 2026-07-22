@@ -19,9 +19,10 @@ mqtt:
   transport_backend: st67w61m1_lwip_wolfssl
   broker_profile: classical-server-auth
   broker:
-    host: 10.1.1.18
+    host: pqc-gateway1.pqcnet
     port: 8883
-    server_name: pqc-gateway1
+    server_name: pqc-gateway1.pqcnet
+    dns_required: true
   client_id: pqc-stm32-tls-e2e
   topics:
     command: pqc/experiments/stm32/tls/command
@@ -29,6 +30,8 @@ mqtt:
   command_payload: run
   correlation_payload: pqc-stm32-tls-e2e-ok
   reconnect_attempts: 1
+  orchestration:
+    host: 10.1.1.18
   tls:
     mode: classical_tls_server_auth
     certificate_refs:

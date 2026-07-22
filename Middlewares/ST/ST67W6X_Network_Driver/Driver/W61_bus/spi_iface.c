@@ -600,7 +600,22 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
       (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0))
   {
     SPI_STAT_INC(&engine->stat, wait_txn_timeouts, 1U);
-    spi_err("waiting for spi txn ready timeouted\n");
+    spi_err("waiting for spi txn ready timeouted: state=%" PRIi32
+            " wait_txn_rdy=%" PRIi32 " ready_gpio=%" PRIi32
+            " txbuf_present=%" PRIi32 " txbuf_len=%" PRIu16
+            " txq_waiting=%" PRIu32 " event_bits=0x%" PRIx32
+            " heap_free=%" PRIu32 " heap_min=%" PRIu32
+            " task_stack_min_words=%" PRIu32 "\n",
+            engine->state,
+            wait_txn_rdy,
+            spi_port_is_ready(),
+            (txbuf != NULL) ? 1 : 0,
+            (txbuf != NULL) ? txbuf->len : 0U,
+            (uint32_t)uxQueueMessagesWaiting(engine->txq),
+            (uint32_t)xEventGroupGetBits(engine->event),
+            (uint32_t)xPortGetFreeHeapSize(),
+            (uint32_t)xPortGetMinimumEverFreeHeapSize(),
+            (uint32_t)uxTaskGetStackHighWaterMark(NULL));
     return -1;
   }
 
@@ -662,9 +677,22 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   ret = spi_header_validate(psh);
   if (ret == 0)
   {
-    spi_err("Invalid spi header from peer, magic 0x%" PRIx16 ", len (%" PRIu16 ", 0x%" PRIx16 "), version %" PRIu16
-            ", type %" PRIx16 "flags 0x%" PRIx16 ", rsvd 0x%" PRIx16 "\n",
-            psh->magic, psh->len, psh->len, psh->version, psh->type, psh->flags, psh->rsvd);
+    {
+      const uint8_t *raw = (const uint8_t *)psh;
+      spi_err("Invalid spi header from peer, magic 0x%" PRIx16
+              ", len (%" PRIu16 ", 0x%" PRIx16 "), version %" PRIu16
+              ", type %" PRIx16 " flags 0x%" PRIx16 ", rsvd 0x%" PRIx16
+              ", raw=%02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+              " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+              ", xfer_size=%" PRIu16 " state=%" PRIi32
+              " ready_gpio=%" PRIi32 " event_bits=0x%" PRIx32 "\n",
+              psh->magic, psh->len, psh->len, psh->version, psh->type,
+              psh->flags, psh->rsvd,
+              raw[0], raw[1], raw[2], raw[3],
+              raw[4], raw[5], raw[6], raw[7],
+              xfer_size, engine->state, spi_port_is_ready(),
+              (uint32_t)xEventGroupGetBits(engine->event));
+    }
     SPI_STAT_INC(&engine->stat, hdr_err, 1U);
     goto out;
   }

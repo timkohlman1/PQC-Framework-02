@@ -1514,3 +1514,26 @@ def test_full_baseline_flash_uses_selected_build_result_artifact():
         artifact_path_override=build_result.elf_path,
     )'''
     assert expected_call_fragment in experiment_source
+
+
+def test_generated_wifi_header_contains_experiment_dns_requirement(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "network": {"wifi": {}, "ipv4": {}},
+            "mqtt": {
+                "enabled": True,
+                "broker": {
+                    "host": "pqc-gateway1.pqcnet",
+                    "port": 8883,
+                    "dns_required": True,
+                },
+                "topics": {},
+                "tls": {},
+            },
+        }
+    }
+    header = _write_wifi_config_header(bundle, tmp_path, "Debug").read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_BROKER_HOST "pqc-gateway1.pqcnet"' in header
+    assert "#define PQC_MQTT_DNS_REQUIRED 1" in header

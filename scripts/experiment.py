@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import ipaddress
 import json
 import shlex
 import subprocess
@@ -108,6 +109,24 @@ MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
 
 
+def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the host used by gateway-side broker control clients.
+
+    Firmware uses mqtt.broker.host so DNS and TLS identity evidence reflect the
+    experiment endpoint. Gateway-side readiness and command/response clients may
+    use mqtt.orchestration.host to avoid coupling host orchestration to the
+    firmware DNS path or certificate identity.
+    """
+    mqtt = bundle["experiment"]["mqtt"]
+    broker = mqtt["broker"]
+    orchestration = mqtt.get("orchestration", {})
+    if isinstance(orchestration, dict):
+        configured = str(orchestration.get("host", "")).strip()
+        if configured:
+            return configured
+    return str(broker["host"])
+
+
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
@@ -153,7 +172,7 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
     mqtt = bundle["experiment"]["mqtt"]
     broker = mqtt["broker"]
     gateway_alias = str(bundle["host"]["alias"])
-    host = shlex.quote(str(broker["host"]))
+    host = shlex.quote(_mqtt_orchestration_host(bundle))
     port = int(broker["port"])
     tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
     tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
@@ -259,9 +278,13 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         "mqtt_subscribe=passed", "mqtt_receive=passed",
         "mqtt_publish=passed", "end_to_end=passed",
     ]
-    if isinstance(mqtt, dict) and mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e":
-        markers.extend(("tls_handshake=passed", "reconnect=passed",
-                        "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
+    if isinstance(mqtt, dict):
+        broker = mqtt.get("broker", {})
+        if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
+            markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
+        if mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e":
+            markers.extend(("tls_handshake=passed", "reconnect=passed",
+                            "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
     return tuple(markers)
 
 
@@ -284,7 +307,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     gateway_alias = str(bundle["host"]["alias"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
     baud = int(bundle["host"]["uart"]["baud"])
-    broker_host = shlex.quote(str(broker["host"]))
+    broker_host = shlex.quote(_mqtt_orchestration_host(bundle))
     broker_port = int(broker["port"])
     tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
     tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
@@ -602,12 +625,33 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
                 "mqtt.tls.certificate_refs must not reference private key files in Phase M2"
             )
 
+    orchestration = mqtt_config.get("orchestration", {})
+    if orchestration and not isinstance(orchestration, dict):
+        raise ConfigError("experiment config mqtt.orchestration field must be a mapping")
+    if isinstance(orchestration, dict) and "host" in orchestration:
+        orchestration_host = orchestration.get("host")
+        if not isinstance(orchestration_host, str) or not orchestration_host.strip():
+            raise ConfigError("mqtt.orchestration.host must be a non-empty hostname or IP address")
+
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
     if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
+        broker_host = str(broker.get("host", "")).strip()
+        dns_required = broker.get("dns_required", False)
+        if not isinstance(dns_required, bool):
+            raise ConfigError("mqtt.broker.dns_required must be a boolean")
+        try:
+            ipaddress.ip_address(broker_host)
+            broker_host_is_ip = True
+        except ValueError:
+            broker_host_is_ip = False
+        if not broker_host_is_ip and not dns_required:
+            raise ConfigError(
+                "mqtt.broker.dns_required must be true when mqtt.broker.host is a hostname"
+            )
     if evidence_class == "fake_no_network" and broker:
         raise ConfigError("fake_no_network MQTT configs must not configure a real broker endpoint")
 

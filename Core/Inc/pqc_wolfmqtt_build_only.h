@@ -21,12 +21,16 @@ typedef struct
     bool client_initialized;
     bool transport_callbacks_present;
     bool transport_available;
-    bool broker_connected;
+    bool tcp_connected;
+    bool mqtt_connected;
     bool subscribed;
     bool message_received;
     bool publish_complete;
     bool tls_handshake_complete;
     bool reconnect_complete;
+    int tls_connect_result;
+    int tls_error;
+    int tls_io_error;
     int last_result;
 } PQC_WolfMQTTBuildOnlyStatus;
 

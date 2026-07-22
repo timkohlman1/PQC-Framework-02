@@ -424,6 +424,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_ENABLED {1 if bool(mqtt.get("enabled", False)) else 0}\n'
         f'#define PQC_MQTT_BROKER_HOST "{esc(str(broker.get("host", "")))}"\n'
         f'#define PQC_MQTT_BROKER_PORT {int(broker.get("port", 1883))}\n'
+        f'#define PQC_MQTT_DNS_REQUIRED {1 if bool(broker.get("dns_required", False)) else 0}\n'
         f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
         f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'

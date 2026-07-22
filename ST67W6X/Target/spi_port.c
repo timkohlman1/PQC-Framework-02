@@ -200,6 +200,15 @@ int32_t spi_port_transfer(void *tx_buf, void *rx_buf, uint16_t len, uint32_t tim
 
   /* USER CODE END spi_port_transfer_2 */
 
+  if (status != HAL_OK)
+  {
+    LogError("SPI diagnostic: mode=poll len=%u status=%u hal_state=%u hal_error=0x%08lx ready=%ld\n",
+             (unsigned int)len,
+             (unsigned int)status,
+             (unsigned int)NCP_SPI_HANDLE.State,
+             (unsigned long)HAL_SPI_GetError(&NCP_SPI_HANDLE),
+             (long)spi_port_is_ready());
+  }
   return ((status == HAL_OK) ? 0 : -1);
   /* USER CODE BEGIN spi_port_transfer_End */
 
@@ -243,6 +252,16 @@ int32_t spi_port_transfer_dma(void *tx_buf, void *rx_buf, uint16_t len)
 
   /* USER CODE END spi_port_transfer_dma_2 */
 
+  if (status != HAL_OK)
+  {
+    LogError("SPI diagnostic: mode=dma len=%u tx_present=%u status=%u hal_state=%u hal_error=0x%08lx ready=%ld\n",
+             (unsigned int)len,
+             (tx_buf != NULL) ? 1U : 0U,
+             (unsigned int)status,
+             (unsigned int)NCP_SPI_HANDLE.State,
+             (unsigned long)HAL_SPI_GetError(&NCP_SPI_HANDLE),
+             (long)spi_port_is_ready());
+  }
   return ((status == HAL_OK) ? 0 : -1);
   /* USER CODE BEGIN spi_port_transfer_dma_End */
 

@@ -16,7 +16,7 @@ def test_stm32_tls_path_uses_wolfssl_over_lwip_and_hardware_rng():
     for marker in (
         "RCC_CRRCR_HSI48ON", "RNG_SR_CECS", "RNG_SR_SECS", "RNG_SR_DRDY",
         "PQC_WOLFSSL_RNG_READY_SPIN_LIMIT", "wolfSSL_CTX_load_verify_buffer",
-        "wolfSSL_check_domain_name", "wolfSSL_connect", "wolfSSL_read", "wolfSSL_write",
+        "wolfSSL_check_ip_address", "wolfSSL_connect", "wolfSSL_read", "wolfSSL_write",
         "tls_handshake=", "reconnect_tls_handshake=", "reconnect_publish=",
         "wolfMQTT plaintext exchange: function entered",
     ):
@@ -58,3 +58,107 @@ def test_broker_controller_accepts_server_auth_profile_and_selects_matching_serv
     assert 'service = BROKER_PROFILE_SERVICES[args.profile]' in source
     assert '"--profile",\n            "classical-server-auth"' in source
     assert 'MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT' in source
+
+
+def test_tls_diagnostics_distinguish_tcp_tls_and_mqtt_state():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
+    for marker in (
+        "WOLFSSL_CBIO_ERR_WANT_READ",
+        "WOLFSSL_CBIO_ERR_WANT_WRITE",
+        'PQC_WolfMQTT_DiagnosticCode("ca_load"',
+        'PQC_WolfMQTT_DiagnosticCode("peer_ip_check"',
+        'PQC_WolfMQTT_DiagnosticCode("handshake"',
+        "tls_connect_result=",
+        "tls_error=",
+        "tls_io_error=",
+        "first.tcp_connected",
+        "first.mqtt_connected",
+    ):
+        assert marker in source
+    assert "bool tcp_connected;" in header
+    assert "bool mqtt_connected;" in header
+    assert "bool broker_connected;" not in header
+
+
+def test_tls_peer_ip_setup_precedes_ca_load_and_cannot_report_mqtt_success_on_failure():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    peer_ip = source.index("wolfSSL_check_ip_address")
+    ca_load = source.index("wolfSSL_CTX_load_verify_buffer")
+    assert peer_ip < ca_load
+    assert 'PQC_WolfMQTT_DiagnosticCode("peer_ip_check"' in source
+    assert 'return MQTT_CODE_ERROR_TLS_CONNECT;' in source
+    assert 'result = MQTT_CODE_SUCCESS;\n    PQC_WolfMQTT_DiagnosticCode("tcp_connect"' in source
+    assert 'wolfSSL_check_domain_name(socket_context->tls, PQC_MQTT_TLS_SERVER_NAME)' in source
+    assert 'PQC_WolfMQTT_CloseTransport(socket_context); return result;' not in source
+
+
+
+def test_m11_config_uses_experiment_selected_fqdn_and_requires_dns():
+    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    assert "host: pqc-gateway1.pqcnet" in config
+    assert "server_name: pqc-gateway1.pqcnet" in config
+    assert "dns_required: true" in config
+
+
+def test_firmware_reports_dns_server_and_resolution_and_selects_tls_identity_type():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    for marker in (
+        '"ST67 DNS: required=%s server0=%s',
+        '"ST67 DNS lookup: result=passed hostname=%s ipv4=%s',
+        '"ST67 DNS lookup: result=failed hostname=%s error=%d required=%s',
+        "dns_getserver(0)",
+        "lwip_getaddrinfo(host",
+        "PQC_MQTT_TLS_SERVER_NAME",
+        "wolfSSL_check_domain_name",
+        "wolfSSL_check_ip_address",
+    ):
+        assert marker in source
+
+
+def test_dns_required_controls_uart_pass_markers():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'bool(broker.get("dns_required", False))' in source
+    assert '"ST67 DNS: required=true"' in source
+    assert '"ST67 DNS lookup: result=passed"' in source
+
+
+def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    assert "def _mqtt_orchestration_host(" in source
+    assert source.count("shlex.quote(_mqtt_orchestration_host(bundle))") == 2
+    assert 'configured = str(orchestration.get("host", "")).strip()' in source
+    assert "orchestration:\n    host: 10.1.1.18" in config
+
+
+def test_server_certificate_profile_contains_selected_fqdn_san():
+    profile = Path("experiment/mqtt-broker/runtime/classical/certs/server-openssl.cnf").read_text(encoding="utf-8")
+    assert "DNS.3 = pqc-gateway1.pqcnet" in profile
+
+
+def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'mqtt_config.get("orchestration", {})' in source
+    assert 'mqtt.orchestration.host must be a non-empty hostname or IP address' in source
+
+
+def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    broker = Path(
+        "experiment/mqtt-broker/config/classical-server-auth/mosquitto.conf"
+    ).read_text(encoding="utf-8")
+
+    for marker in (
+        "#define HAVE_TLS_EXTENSIONS",
+        "#define HAVE_SUPPORTED_CURVES",
+        "#define HAVE_AESGCM",
+    ):
+        assert marker in settings
+
+    suite = "ECDHE-ECDSA-AES128-GCM-SHA256"
+    assert f'"{suite}"' in source
+    assert 'wolfSSL_CTX_set_cipher_list(' in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("cipher_list"' in source
+    assert f"ciphers {suite}" in broker
