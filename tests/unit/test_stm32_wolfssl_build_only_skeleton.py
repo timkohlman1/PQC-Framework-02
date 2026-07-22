@@ -64,7 +64,7 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert "WOLFSSL_TLS13 0" not in settings
     assert "WOLFSSL_STATIC_PSK" not in settings
     assert "NO_CERTS" not in settings
-    assert "NO_ASN" not in settings
+    assert "NO_ASN" not in defined_macros
     assert "CUSTOM_RAND_GENERATE_SEED" in settings
     assert "WC_NO_RNG" not in settings
     assert "CUSTOM_RAND_GENERATE_SEED" in settings
@@ -84,7 +84,7 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert "RNG_SR_DRDY" in mqtt_source
     assert "#undef RNG" in mqtt_source
     assert "PQC_STM32_RNG" in mqtt_source
-    assert "RNG->" not in mqtt_source
+    assert not re.search(r"(?<![A-Za-z0-9_])RNG\s*->", mqtt_source)
     assert not re.search(
         r"(?m)^\s*#\s*define\s+HAL_RNG_MODULE_ENABLED\b",
         hal_conf,

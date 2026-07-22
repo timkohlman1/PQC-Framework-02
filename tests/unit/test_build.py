@@ -200,7 +200,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert f"Output ELF path: {artifact_path}" in build_log
     assert f"Output ELF SHA-256: {expected_sha256}" in build_log
     assert "Build number: 1" in build_log
-    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v2" in build_log
+    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v3" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
     assert "- configs/boot/direct_flash.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
@@ -233,7 +233,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["build"]["log"] == "build.log"
     assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "1")
     assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "1" / "manifest.json")
-    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v2"
+    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v3"
     assert isinstance(manifest["build"]["fingerprint"], str)
     assert len(manifest["build"]["fingerprint"]) == 64
     assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]

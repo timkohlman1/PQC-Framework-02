@@ -7,6 +7,14 @@ def _read(relative_path: str) -> str:
     return Path(relative_path).read_text(encoding="utf-8")
 
 
+def _function_definition(source: str, signature: str, next_signature: str) -> str:
+    """Return a C function definition, skipping any earlier prototype."""
+
+    definition_start = source.index(f"{signature}\n{{")
+    definition_end = source.index(next_signature, definition_start + len(signature))
+    return source[definition_start:definition_end]
+
+
 def test_lwip_and_st67_sources_are_wired_into_generated_cmake() -> None:
     cmake = _read("cmake/stm32cubemx/CMakeLists.txt")
 
@@ -352,13 +360,11 @@ def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
         "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
     )
 
-    helper_start = source.index(
-        "static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)"
+    helper = _function_definition(
+        source,
+        "static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)",
+        "static int32_t spi_txrx(",
     )
-    helper_end = source.index(
-        "static int32_t spi_txrx(", helper_start
-    )
-    helper = source[helper_start:helper_end]
 
     assert helper.count("spi_port_is_ready() == 1") == 2
     assert (
@@ -385,13 +391,11 @@ def test_st67_short_full_duplex_spi_transactions_use_polling_completion() -> Non
         "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
     )
 
-    txrx_start = source.index(
-        "static int32_t spi_txrx(struct spi_xfer_engine *engine"
+    txrx = _function_definition(
+        source,
+        "static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_buf, uint16_t len)",
+        "static int32_t spi_rx(",
     )
-    txrx_end = source.index(
-        "static int32_t spi_rx(struct spi_xfer_engine *engine", txrx_start
-    )
-    txrx = source[txrx_start:txrx_end]
 
     assert "#define SPI_POLL_FULL_DUPLEX_MAX_BYTES  256U" in source
     assert (
@@ -416,13 +420,11 @@ def test_st67_moderate_receive_only_spi_transactions_use_chunked_polling() -> No
         "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
     )
 
-    rx_start = source.index(
-        "static int32_t spi_rx(struct spi_xfer_engine *engine"
+    rx = _function_definition(
+        source,
+        "static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len)",
+        "static int32_t spi_xfer_one(",
     )
-    rx_end = source.index(
-        "static int32_t spi_xfer_one(", rx_start
-    )
-    rx = source[rx_start:rx_end]
 
     assert "#define SPI_POLL_RX_MAX_BYTES           2048U" in source
     assert "if (len <= SPI_POLL_RX_MAX_BYTES)" in rx
@@ -441,13 +443,11 @@ def test_st67_large_receive_only_spi_transactions_remain_on_dma() -> None:
         "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
     )
 
-    rx_start = source.index(
-        "static int32_t spi_rx(struct spi_xfer_engine *engine"
+    rx = _function_definition(
+        source,
+        "static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len)",
+        "static int32_t spi_xfer_one(",
     )
-    rx_end = source.index(
-        "static int32_t spi_xfer_one(", rx_start
-    )
-    rx = source[rx_start:rx_end]
 
     assert "spi_port_transfer_dma(NULL, rx_buf, len)" in rx
     assert 'spi rx transaction timeouted: mode=dma len=%" PRIu16' in rx

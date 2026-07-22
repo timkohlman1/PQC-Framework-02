@@ -739,6 +739,7 @@ def test_validate_mqtt_tls_config_accepts_host_side_schema_with_broker_reference
     config["mqtt"]["broker"] = {
         "host": "pqc-gateway1",
         "port": 8883,
+        "dns_required": True,
     }
 
     experiment_cli.validate_experiment_config(config)
@@ -820,6 +821,7 @@ def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend()
     config["mqtt"]["broker"] = {
         "host": "pqc-gateway1",
         "port": 8883,
+        "dns_required": True,
     }
     config["mqtt"]["tls"] = {"mode": "classical_tls"}
     config["mqtt"]["fake_transport"] = {

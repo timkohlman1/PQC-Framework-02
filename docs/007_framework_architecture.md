@@ -593,4 +593,6 @@ fingerprints may be retained.
 
 The first M11 profile is `classical-server-auth`: ST67W61M1 supplies the network interface, while lwIP sockets, wolfSSL TLS 1.2, certificate verification, wolfMQTT CONNECT/publish, and one bounded reconnect run on the STM32. The firmware build embeds only the generated public broker CA certificate. The existing `classical` mutual-TLS broker profile remains separate and is not claimed as STM32-validated until client-certificate provisioning is implemented and evidenced.
 
+The configured public CA certificate is a build-defining input. Its repository-relative path and content SHA-256 are included in the normal firmware build fingerprint and durable per-file fingerprint evidence. Regenerating or replacing the CA certificate therefore invalidates prior reusable builds and requires a new compilation and build record. Private CA keys and other private certificate material remain excluded from firmware fingerprints, manifests, and result artifacts.
+
 M11 success requires explicit UART markers for DHCP, TCP, TLS handshake, MQTT connect/publish, reconnect TLS handshake, and post-reconnect publish, together with retained broker evidence. Missing resource metrics remain unavailable rather than inferred. DTR-007 is in progress until a capability-gated hardware run supplies that evidence.
