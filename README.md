@@ -4,7 +4,7 @@ STM32 embedded-security experiment framework for direct-flash firmware, wolfBoot
 
 ## Current scope
 
-The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform. Implemented firmware capabilities include HAL/CMSIS-RTOS v2 FreeRTOS execution, classical and ML-DSA wolfBoot profiles, STM32-local lwIP and wolfSSL preparation, fake/no-network wolfMQTT initialization, and an initial plaintext ST67/lwIP wolfMQTT publish/subscribe path that still requires recorded hardware evidence before end-to-end success may be claimed.
+The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform. Implemented firmware capabilities include HAL/CMSIS-RTOS v2 FreeRTOS execution, classical and ML-DSA wolfBoot profiles, STM32-local lwIP and wolfSSL preparation, fake/no-network wolfMQTT initialization, and recorded plaintext, classical TLS, and hybrid P-256 plus ML-KEM-768 MQTT-over-TLS paths through the ST67/lwIP transport.
 
 Evidence boundaries are strict:
 
@@ -14,7 +14,7 @@ Evidence boundaries are strict:
 - The unavailable transport boundary performs no socket I/O.
 - The ST67W61M1 integration supports configured-AP association, link-up, host-side lwIP DHCP, and live IPv4 evidence in capability-gated hardware runs. Earlier local smoke markers remain limited to their execution point.
 - The non-network lwIP runtime smoke exercises version, IPv4 formatting, and checksum helpers only; it does not initialize a netif or prove external networking.
-- The plaintext ST67/lwIP wolfMQTT path is implemented for capability-gated evaluation; successful STM32 TCP, MQTT subscribe/receive/publish, and end-to-end operation remain unproven until explicit UART, broker, and manifest evidence is recorded. STM32 TLS and PQC/hybrid MQTT-over-TLS remain unavailable.
+- MQTT capability claims remain run-specific: only retained UART, broker, subscriber, and manifest evidence can establish plaintext, classical TLS, or hybrid PQC success.
 
 The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
 
@@ -104,39 +104,4 @@ Private signing keys, credentials, real `.env` files, generated broker runtime s
 
 Do not claim build, signing, flashing, gateway, hardware, UART, runtime, timing, memory, benchmark, MQTT/TLS, Wi-Fi, or end-to-end success without explicit logs, manifests, or equivalent evidence from the relevant workflow. A skipped capability-gated test is not evidence that the capability succeeded.
 
-## Persistent wolfBoot signing tuples
-
-Signing identities are selected by the signing and wolfBoot build profiles.
-The complete reusable tuple is stored locally under
-`secrets/wolfboot/tuples/<tuple-id>/`. Files copied into `tools/wolfboot/` are
-disposable build material and are recreated from the persistent tuple on every
-build when necessary.
-
-A new tuple is generated atomically by the owning wolfBoot build when the
-configured tuple directory is completely absent. A partial, corrupted, or
-algorithm-incompatible persistent tuple fails safely. Application signing does
-not create a private key independently; run the matching `build-wolfboot`
-profile first when initializing a new signing identity.
-
-
-### Plaintext STM32 MQTT end-to-end run
-
-The `mqtt_plaintext_st67_e2e` experiment starts a gateway-side response subscriber before resetting the MCU, repeatedly publishes the configured command during the bounded startup window, and requires both the STM32 UART success markers and the independently received broker response. Evidence is retained as `uart.log`, `mqtt-publisher.log`, `mqtt-subscriber.log`, and `manifest.json` in the run result directory. A generic boot/tick pass is not sufficient for this profile.
-
-```powershell
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml `
-    --uart-duration-seconds 30
-```
-
-### Managed broker lifecycle for the plaintext STM32 MQTT experiment
-
-The `mqtt_plaintext_st67_e2e` gateway run owns the framework MQTT broker for the duration of that run. It stops the known framework Compose broker, deploys the current broker project, starts the classical profile, waits for a successful plaintext MQTT readiness exchange on port 1883, performs the STM32 command/response exchange, captures the complete broker log, and stops the broker in cleanup. Broker lifecycle evidence is retained beside `uart.log` as `mqtt-broker-*.log`. A readiness, log-collection, or cleanup failure is recorded as a distinct failure stage and cannot be reported as a successful end-to-end run.
-## Automated-test evidence
-
-Pytest writes incremental evidence to `results/automated-tests/<test-run-id>/`, including `manifest.json`, `pytest.log`, failure stages, and test-triggered builds. Test IDs remain separate from experiment and build identities; test builds do not consume `.build_number` or enter normal reuse.
-
-```powershell
-$run = Get-ChildItem .\results\automated-tests -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Get-Content (Join-Path $run.FullName "manifest.json"); Get-Content (Join-Path $run.FullName "pytest.log")
-```
+Detailed signing-tuple, automated-test evidence, MQTT broker lifecycle, classical TLS, and hybrid PQC procedures are owned by `docs/005_remote_flash_workflow.md`, `docs/007_framework_architecture.md`, and `experiment/mqtt-broker/README.md`.

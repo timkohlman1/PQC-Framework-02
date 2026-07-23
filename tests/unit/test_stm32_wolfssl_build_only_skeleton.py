@@ -19,10 +19,13 @@ def test_stm32_wolfssl_tls_context_sources_are_wired_into_firmware():
         "wolfcrypt/src/aes.c",
         "wolfcrypt/src/hash.c",
         "wolfcrypt/src/hmac.c",
+        "wolfcrypt/src/kdf.c",
         "wolfcrypt/src/memory.c",
         "wolfcrypt/src/random.c",
         "wolfcrypt/src/sha256.c",
+        "wolfcrypt/src/sp_int.c",
         "wolfcrypt/src/wc_port.c",
+        "wolfcrypt/src/wolfmath.c",
     ):
         assert source in root_cmake
     assert "add_library(pqc_wolfssl_stm32_build_only STATIC" in root_cmake
@@ -30,6 +33,9 @@ def test_stm32_wolfssl_tls_context_sources_are_wired_into_firmware():
     assert "WOLFSSL_USER_SETTINGS" in root_cmake
     assert "PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1" in root_cmake
     assert "PQC_WOLFSSL_SOURCE_BUILD=1" in root_cmake
+    assert "wolfcrypt/src/sp_int.c" in root_cmake
+    assert "wolfcrypt/src/wolfmath.c" in root_cmake
+    assert "wolfcrypt/src/integer.c" not in root_cmake
 
 
 def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
@@ -54,15 +60,36 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert "WOLFSSL_USER_IO" in settings
     assert "WOLFSSL_NO_SOCK" in settings
     assert "NO_WOLFSSL_SERVER" in settings
-    assert "WOLFSSL_NO_TLS13" in settings
+    assert "WOLFSSL_NO_TLS13" not in settings
     assert "WOLFSSL_TLS13 0" not in settings
-    assert "WOLFSSL_STATIC_PSK" in settings
+    assert "WOLFSSL_STATIC_PSK" not in settings
+    assert "NO_CERTS" not in settings
+    assert "NO_ASN" not in defined_macros
+    assert "CUSTOM_RAND_GENERATE_SEED" in settings
     assert "WC_NO_RNG" not in settings
     assert "CUSTOM_RAND_GENERATE_SEED" in settings
-    assert "PQC_WolfSSL_UnavailableSeed" in settings
-    assert "return -1;" in settings
-    assert "NO_CERTS" in settings
+    assert "PQC_WolfSSL_HardwareSeed" in settings
     assert "NO_SESSION_CACHE" in settings
+    assert "WOLFSSL_SP_MATH_ALL" in defined_macros
+    assert "NO_ASN_TIME" in settings
+
+    mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    hal_conf = Path("Core/Inc/stm32l4xx_hal_conf.h").read_text(encoding="utf-8")
+    cmake = Path("cmake/stm32cubemx/CMakeLists.txt").read_text(encoding="utf-8")
+    assert "HAL_RNG_GenerateRandomNumber" not in mqtt_source
+    assert "HAL_RNG_Init" not in mqtt_source
+    assert "PQC_WOLFSSL_RNG_READY_SPIN_LIMIT" in mqtt_source
+    assert "RNG_SR_CECS" in mqtt_source
+    assert "RNG_SR_SECS" in mqtt_source
+    assert "RNG_SR_DRDY" in mqtt_source
+    assert "#undef RNG" in mqtt_source
+    assert "PQC_STM32_RNG" in mqtt_source
+    assert not re.search(r"(?<![A-Za-z0-9_])RNG\s*->", mqtt_source)
+    assert not re.search(
+        r"(?m)^\s*#\s*define\s+HAL_RNG_MODULE_ENABLED\b",
+        hal_conf,
+    )
+    assert "stm32l4xx_hal_rng.c" not in cmake
     assert "PQC_STM32_APP_WOLFSSL_USER_SETTINGS" in wrapper
     assert '#include "pqc_wolfssl_user_settings.h"' in wrapper
 
@@ -222,7 +249,11 @@ def test_phase_m6_5_wolfssl_smoke_runs_serialized_in_freertos_task_without_threa
     assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke();" in source
     assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c
     assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in main_c
-    assert "serialized=true" in main_c
+    network_start = main_c.rindex("void StartNetworkTask(void *argument)")
+    network_body = main_c[network_start:]
+    assert network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);') < network_body.index(
+        'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);'
+    )
     assert "WOLFSSL_FREERTOS" not in settings
     assert "WOLFSSL_CMSIS_RTOS" not in settings
     assert "#define SINGLE_THREADED" in settings

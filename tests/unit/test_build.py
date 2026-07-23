@@ -200,7 +200,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert f"Output ELF path: {artifact_path}" in build_log
     assert f"Output ELF SHA-256: {expected_sha256}" in build_log
     assert "Build number: 1" in build_log
-    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v2" in build_log
+    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v3" in build_log
     assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
     assert "- configs/boot/direct_flash.yaml" in build_log
     assert "- Core/Inc/main.h" in build_log
@@ -233,7 +233,7 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert manifest["build"]["log"] == "build.log"
     assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "1")
     assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "1" / "manifest.json")
-    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v2"
+    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v3"
     assert isinstance(manifest["build"]["fingerprint"], str)
     assert len(manifest["build"]["fingerprint"]) == 64
     assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
@@ -1514,3 +1514,97 @@ def test_full_baseline_flash_uses_selected_build_result_artifact():
         artifact_path_override=build_result.elf_path,
     )'''
     assert expected_call_fragment in experiment_source
+
+
+def test_generated_wifi_header_contains_experiment_dns_requirement(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "network": {"wifi": {}, "ipv4": {}},
+            "mqtt": {
+                "enabled": True,
+                "broker": {
+                    "host": "pqc-gateway1.pqcnet",
+                    "port": 8883,
+                    "dns_required": True,
+                },
+                "topics": {},
+                "tls": {},
+            },
+        }
+    }
+    header = _write_wifi_config_header(bundle, tmp_path, "Debug").read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_BROKER_HOST "pqc-gateway1.pqcnet"' in header
+    assert "#define PQC_MQTT_DNS_REQUIRED 1" in header
+
+
+def test_pqc_hybrid_wifi_header_requires_explicit_supported_server_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {"mode": "pqc_hybrid_tls_server_auth"},
+            }
+        }
+    }
+
+    try:
+        _write_wifi_config_header(bundle, tmp_path, "Debug")
+    except ValueError as error:
+        assert "missing tls.server_signature_algorithm" in str(error)
+    else:
+        raise AssertionError("missing PQC server signature algorithm was accepted")
+
+
+def test_pqc_hybrid_wifi_header_rejects_falcon_leaf_profile(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "falcon512",
+                },
+            }
+        }
+    }
+
+    try:
+        _write_wifi_config_header(bundle, tmp_path, "Debug")
+    except ValueError as error:
+        assert "falcon512 is incompatible" in str(error)
+        assert "mldsa65" in str(error)
+    else:
+        raise AssertionError("incompatible Falcon server signature algorithm was accepted")
+
+
+def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    ca_path = tmp_path / "runtime" / "ca.crt"
+    ca_path.parent.mkdir(parents=True)
+    ca_pem = "-----BEGIN CERTIFICATE-----\ntest-public-ca\n-----END CERTIFICATE-----\n"
+    ca_path.write_text(ca_pem, encoding="utf-8")
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "mldsa65",
+                    "certificate_refs": {"ca_certificate": "runtime/ca.crt"},
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    expected_hash = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
+    assert f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{expected_hash}"' in text
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "mldsa65"' in text

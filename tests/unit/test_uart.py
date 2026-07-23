@@ -284,8 +284,10 @@ def test_parse_application_memory_checkpoints_uses_explicit_exact_markers():
     uart = load_uart_module()
     output = (
         "FreeRTOS scheduler starting: heap_bytes=40000 default_task_stack_words=512\n"
-        "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400 task_stack_total_bytes=unavailable task_stack_high_water_bytes=unavailable task_stack_used_bytes=unavailable\n"
-        "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800 task_stack_total_bytes=2048 task_stack_high_water_bytes=1500 task_stack_used_bytes=548\n"
+        "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400\n"
+        "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800\n"
+        "application task stack: stage=default_task_runtime task=defaultTask total_bytes=2048 minimum_free_bytes=1500 peak_used_bytes=548\n"
+        "application task stack: stage=default_task_runtime task=networkTask total_bytes=4096 minimum_free_bytes=3000 peak_used_bytes=1096\n"
     )
 
     checkpoints = uart.parse_application_memory_checkpoints(output)
@@ -293,14 +295,48 @@ def test_parse_application_memory_checkpoints_uses_explicit_exact_markers():
         "pre_scheduler",
         "default_task_runtime",
     ]
-    assert checkpoints[0]["task_stack_used_bytes"] is None
+    assert checkpoints[0]["task_stacks"] == []
     assert checkpoints[1]["heap_peak_used_bytes"] == 2800
-    assert checkpoints[1]["task_stack_used_bytes"] == 548
+    assert checkpoints[1]["task_stacks"] == [
+        {
+            "task": "defaultTask",
+            "total_bytes": 2048,
+            "minimum_free_bytes": 1500,
+            "peak_used_bytes": 548,
+        },
+        {
+            "task": "networkTask",
+            "total_bytes": 4096,
+            "minimum_free_bytes": 3000,
+            "peak_used_bytes": 1096,
+        },
+    ]
     assert uart.parse_heap_used_bytes(output) == 2400
     evidence = uart._runtime_memory_evidence(output)
     assert evidence["heap_used_bytes"] == 2800
     assert evidence["heap_metric_source"] == "uart_explicit_application_memory_checkpoint"
 
+
+
+def test_parse_application_memory_checkpoints_preserves_legacy_stack_fields():
+    uart = load_uart_module()
+    output = (
+        "application memory checkpoint: stage=legacy heap_total_bytes=40000 "
+        "heap_free_bytes=37000 heap_min_ever_free_bytes=36000 "
+        "heap_current_used_bytes=3000 heap_peak_used_bytes=4000 "
+        "task_stack_total_bytes=2048 task_stack_high_water_bytes=1500 "
+        "task_stack_used_bytes=548\n"
+    )
+
+    checkpoints = uart.parse_application_memory_checkpoints(output)
+    assert checkpoints[0]["task_stacks"] == [
+        {
+            "task": "current_task",
+            "total_bytes": 2048,
+            "minimum_free_bytes": 1500,
+            "peak_used_bytes": 548,
+        }
+    ]
 
 def test_heap_parser_does_not_infer_usage_from_scheduler_configuration():
     uart = load_uart_module()
@@ -410,9 +446,12 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
                 "application clock hclk_hz: 120000000\n"
                 "application clock pclk1_hz: 120000000\n"
                 "application clock pclk2_hz: 120000000\n"
-                "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400 task_stack_total_bytes=unavailable task_stack_high_water_bytes=unavailable task_stack_used_bytes=unavailable\n"
-                "application memory checkpoint: stage=default_task_start heap_total_bytes=40000 heap_free_bytes=37520 heap_min_ever_free_bytes=37440 heap_current_used_bytes=2480 heap_peak_used_bytes=2560 task_stack_total_bytes=2048 task_stack_high_water_bytes=1600 task_stack_used_bytes=448\n"
-                "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800 task_stack_total_bytes=2048 task_stack_high_water_bytes=1500 task_stack_used_bytes=548\n"
+                "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400\n"
+                "application memory checkpoint: stage=default_task_start heap_total_bytes=40000 heap_free_bytes=37520 heap_min_ever_free_bytes=37440 heap_current_used_bytes=2480 heap_peak_used_bytes=2560\n"
+                "application task stack: stage=default_task_start task=defaultTask total_bytes=2048 minimum_free_bytes=1600 peak_used_bytes=448\n"
+                "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800\n"
+                "application task stack: stage=default_task_runtime task=defaultTask total_bytes=2048 minimum_free_bytes=1500 peak_used_bytes=548\n"
+                "application task stack: stage=default_task_runtime task=networkTask total_bytes=4096 minimum_free_bytes=3000 peak_used_bytes=1096\n"
                 "stm32-basic_hal1 boot v0.1.0\n"
                 "tick\n"
                 "tick\n"
@@ -466,7 +505,7 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert manifest["application_clock"]["clock_hz"]["sysclk_hz"] == 120000000
     assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
     assert manifest["runtime_memory"]["application_checkpoints"][-1]["heap_peak_used_bytes"] == 2800
-    assert manifest["uart"]["application_memory_checkpoints"][-1]["task_stack_used_bytes"] == 548
+    assert manifest["uart"]["application_memory_checkpoints"][-1]["task_stacks"][0]["peak_used_bytes"] == 548
     assert manifest["uart"]["verification_result_code"] == 0
     assert manifest["boot_timing"]["derived_verification_time_ms"] == 21.25
     assert manifest["boot_timing"]["verification_cycles"] == 1360000

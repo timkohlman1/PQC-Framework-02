@@ -4,7 +4,7 @@ This directory contains the gateway-hosted MQTT broker service for transport-sec
 
 The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`. The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
 
-The Docker wrappers are the normal command path. Direct host-native Python, raw `docker run`, and `docker compose` commands are diagnostic fallback only. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; firmware flash/UART workflows are owned by `docs/005_remote_flash_workflow.md`; the canonical capability matrix is `docs/007_framework_architecture.md`.
+Framework build, test, and experiment workflows use the Docker wrappers. Broker administration is the exception: run `mqtt_broker_ctl.py` with host-native Python because it uses the development host SSH configuration. There is no `dev.ps1 mqtt-broker` subcommand. Raw `docker run` and `docker compose` commands remain diagnostic fallback only. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; firmware flash/UART workflows are owned by `docs/005_remote_flash_workflow.md`; the canonical capability matrix is `docs/007_framework_architecture.md`.
 
 ## Profiles
 
@@ -38,39 +38,43 @@ experiment/mqtt-broker/.env
 ## Provision localhost-only classical TLS material
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
 
 This creates a local development CA, localhost server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 ## Provision remote OQS TLS material
 
-The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithms are `mldsa65` for the CA and `falcon512` for the leaf certificates. The validation group is `mlkem768`.
+The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithm is `mldsa65` for both the CA and leaf certificates. This matches the STM32 wolfSSL profile, which enables ML-DSA-65 verification and does not enable Falcon. The hybrid TLS group is `SecP256r1MLKEM768`.
+
+Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct script invocation below is the supported host-native administration path because it uses the host SSH configuration. The framework-level `dev.ps1 experiment mqtt-broker-experiment` command remains the normal recorded orchestration path.
 
 Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Validate OQS mutual TLS after starting the profile:
+Provisioning verifies the generated chain and the server certificate/private-key match before succeeding. It copies the public OQS CA certificate and non-secret certificate provenance back under `experiment/mqtt-broker/runtime/oqs/certs/` for firmware embedding and inspection. Private keys remain on the gateway.
+
+Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls --oqs-group SecP256r1MLKEM768 --host-config configs/hosts/gateway.yaml
 ```
 
 ## Deploy to the gateway
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 ```
 
 Preview remote commands without running them:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
 ```
 
 ## Framework-level broker experiment orchestration
@@ -91,31 +95,31 @@ The result manifest labels this path as `host-side/broker-side MQTT/TLS compatib
 Start the classical TLS broker:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
 ```
 
 Start the experimental OQS broker:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 ```
 
 Check status:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
 ```
 
 Show logs:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
 ```
 
 Stop broker services:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
 ## Host-side broker compatibility validation
@@ -123,8 +127,8 @@ Stop broker services:
 After provisioning, deploying, and starting a profile, the broker utility can validate MQTT publish/subscribe through host-side client containers:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
 ```
 
 The validation command output includes the evidence class, evidence label, profile, and evidence boundary before running the client checks. This output is broker/client compatibility evidence only.
@@ -165,7 +169,7 @@ Local and gateway Docker success must be confirmed from command output or logs b
 Provision certificates with the host config so the server certificate includes the gateway IP address as an IP subject alternative name:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
 External TLS validation can use the configured IP address:
@@ -224,3 +228,39 @@ The framework's `mqtt_plaintext_st67_e2e` run starts `mosquitto_sub` on the resp
 ## Experiment-managed lifecycle
 
 The real STM32 plaintext MQTT gateway experiment manages this Compose project transactionally. It stops only the configured framework Compose project, deploys and starts the classical profile, verifies the port 1883 listener with a bounded MQTT publish/subscribe readiness exchange, then collects the full Compose broker log and stops the project after the hardware exchange. The run retains deploy, start, status, readiness, broker, and stop logs in its result directory. Manual `deploy`, `start`, `status`, and `stop` commands remain available for broker-only diagnosis, but are not required before the managed hardware experiment.
+
+## Classical STM32 TLS profiles
+
+Phase M11 keeps two distinct classical TLS profiles:
+
+- `classical-server-auth` uses TLS 1.2 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
+- `classical` retains the existing mutual-TLS listener and client-certificate requirement.
+
+Provision the runtime certificates before building the server-authenticated STM32 experiment because the build embeds only `runtime/classical/certs/ca.crt` as public trust material. Private keys remain under ignored runtime state and are not copied into firmware results or manifests.
+
+## STM32 reconnect validation
+
+The server-authenticated STM32 experiment performs one initial MQTT-over-TLS command/response exchange and, when `mqtt.reconnect_attempts` is non-zero, one reconnect exchange. The gateway orchestration keeps publishing the command until it receives both expected response messages or reaches its bounded timeout. It validates each response line against the configured correlation payload and records the observed and expected response counts in `mqtt-subscriber.log` and the experiment manifest.
+
+A reconnect that starts but fails is reported as `reconnect=failed`; `reconnect=not_run` is reserved for cases where reconnect was not configured or the initial exchange failed before reconnect could start.
+
+
+### MQTT UART completion and logging
+
+Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.
+
+## Hybrid PQC server-authenticated profile
+
+The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = SecP256r1MLKEM768` so the Mosquitto server process can select the same hybrid key share as the client.
+
+Provision OQS certificates after deployment. The provisioning command retrieves only the public CA certificate for the local firmware build. The strict TLS validator fails when OpenSSL exits unsuccessfully, no peer certificate is presented, the cipher is `(NONE)`, TLS 1.3 is not negotiated, or certificate verification fails.
+
+### OQS container resolution
+
+Gateway-managed OQS readiness and STM32 command/response orchestration resolve the running `mqtt-oqs` container by its Docker Compose project and service labels, then invoke the bundled OQS-enabled `mosquitto_sub` and `mosquitto_pub` with `docker exec`. The workflow does not rely on `docker compose exec`, because some gateway Compose versions may list the project while failing to resolve its running service. Readiness requires exactly one running labelled container, successful subscriber and publisher exit codes, and the exact `ready` payload. Failure logs retain container-resolution and client output diagnostics.
+
+## OQS certificate compatibility boundary
+
+The STM32 PQC TLS profile currently supports `mldsa65` for server authentication. The experiment configuration must declare `mqtt.tls.server_signature_algorithm: mldsa65`. The build fails before compilation when the configured server signature algorithm is missing or incompatible. Changing the public CA certificate changes the firmware build fingerprint and regenerates the embedded trust anchor.
+
+Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS clients may support Falcon, but that does not establish compatibility with the firmware client.

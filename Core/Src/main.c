@@ -193,6 +193,11 @@ static bool APP_CStringEquals(const uint8_t *left, const char *right)
   return (left[index] == 0U) && (right[index] == '\0');
 }
 
+#ifndef PQC_WIFI_SCAN_VERBOSE
+#define PQC_WIFI_SCAN_VERBOSE 0
+#endif
+
+static volatile bool app_experiment_complete = false;
 static volatile bool app_wifi_scan_complete = false;
 static volatile int32_t app_wifi_scan_status = (int32_t)W6X_STATUS_ERROR;
 static volatile uint32_t app_wifi_scan_count = 0U;
@@ -213,6 +218,7 @@ static void APP_ST67WiFiScanCallback(int32_t status, W6X_WiFi_Scan_Result_t *res
     {
       W6X_WiFi_Ap_t *ap = &results->AP[count];
 
+#if PQC_WIFI_SCAN_VERBOSE
       APP_UART_WriteString("ST67 Wi-Fi scan result: index=");
       APP_UART_WriteUint32(count);
       APP_UART_WriteString(" ssid=");
@@ -224,6 +230,7 @@ static void APP_ST67WiFiScanCallback(int32_t status, W6X_WiFi_Scan_Result_t *res
       APP_UART_WriteString(" security=");
       APP_UART_WriteString(W6X_WiFi_SecurityToStr((uint32_t)ap->Security));
       APP_UART_WriteString("\r\n");
+#endif
 
       if (APP_CStringEquals(ap->SSID, PQC_WIFI_SSID) &&
           (!app_wifi_scan_configured_ssid_found || (ap->RSSI > app_wifi_scan_best_rssi)))
@@ -989,7 +996,45 @@ static void APP_PrintUnavailable(void)
   APP_UART_WriteString("unavailable");
 }
 
-static void APP_PrintApplicationMemoryCheckpoint(const char *stage, BaseType_t include_task_stack)
+static void APP_PrintTaskStackCheckpoint(const char *stage,
+                                             const char *task_name,
+                                             TaskHandle_t task_handle,
+                                             uint32_t task_stack_total_bytes)
+{
+  UBaseType_t minimum_free_words;
+  uint32_t minimum_free_bytes;
+
+  APP_UART_WriteString("application task stack: stage=");
+  APP_UART_WriteString(stage);
+  APP_UART_WriteString(" task=");
+  APP_UART_WriteString(task_name);
+  APP_UART_WriteString(" total_bytes=");
+  APP_UART_WriteUint32(task_stack_total_bytes);
+  APP_UART_WriteString(" minimum_free_bytes=");
+
+  minimum_free_words = uxTaskGetStackHighWaterMark(task_handle);
+  minimum_free_bytes =
+      (uint32_t)minimum_free_words * (uint32_t)sizeof(StackType_t);
+
+  if (minimum_free_bytes <= task_stack_total_bytes)
+  {
+    APP_UART_WriteUint32(minimum_free_bytes);
+    APP_UART_WriteString(" peak_used_bytes=");
+    APP_UART_WriteUint32(task_stack_total_bytes - minimum_free_bytes);
+  }
+  else
+  {
+    APP_PrintUnavailable();
+    APP_UART_WriteString(" peak_used_bytes=");
+    APP_PrintUnavailable();
+  }
+
+  APP_UART_WriteString("\r\n");
+}
+
+static void APP_PrintApplicationMemoryCheckpoint(const char *stage,
+                                                 BaseType_t include_default_task,
+                                                 BaseType_t include_network_task)
 {
   size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
   size_t heap_free_bytes = xPortGetFreeHeapSize();
@@ -1009,33 +1054,25 @@ static void APP_PrintApplicationMemoryCheckpoint(const char *stage, BaseType_t i
   APP_UART_WriteUint32((uint32_t)heap_current_used_bytes);
   APP_UART_WriteString(" heap_peak_used_bytes=");
   APP_UART_WriteUint32((uint32_t)heap_peak_used_bytes);
-  APP_UART_WriteString(" task_stack_total_bytes=");
-
-  if (include_task_stack != pdFALSE)
-  {
-    UBaseType_t stack_high_water_words = uxTaskGetStackHighWaterMark(NULL);
-    uint32_t stack_total_bytes = (uint32_t)defaultTask_attributes.stack_size;
-    uint32_t stack_high_water_bytes = (uint32_t)stack_high_water_words * (uint32_t)sizeof(StackType_t);
-    uint32_t stack_used_bytes =
-        (stack_high_water_bytes <= stack_total_bytes) ?
-        (stack_total_bytes - stack_high_water_bytes) : 0U;
-
-    APP_UART_WriteUint32(stack_total_bytes);
-    APP_UART_WriteString(" task_stack_high_water_bytes=");
-    APP_UART_WriteUint32(stack_high_water_bytes);
-    APP_UART_WriteString(" task_stack_used_bytes=");
-    APP_UART_WriteUint32(stack_used_bytes);
-  }
-  else
-  {
-    APP_PrintUnavailable();
-    APP_UART_WriteString(" task_stack_high_water_bytes=");
-    APP_PrintUnavailable();
-    APP_UART_WriteString(" task_stack_used_bytes=");
-    APP_PrintUnavailable();
-  }
-
   APP_UART_WriteString("\r\n");
+
+  if (include_default_task == pdTRUE)
+  {
+    APP_PrintTaskStackCheckpoint(
+        stage,
+        "defaultTask",
+        (TaskHandle_t)defaultTaskHandle,
+        (uint32_t)defaultTask_attributes.stack_size);
+  }
+
+  if (include_network_task == pdTRUE)
+  {
+    APP_PrintTaskStackCheckpoint(
+        stage,
+        "networkTask",
+        (TaskHandle_t)networkTaskHandle,
+        (uint32_t)networkTask_attributes.stack_size);
+  }
 }
 
 static void APP_PrintApplicationClock(const char *name, uint32_t value)
@@ -1205,7 +1242,7 @@ int main(void)
     Error_Handler();
   }
   APP_UART_WriteString("FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=2048\r\n");
-  APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE);
+  APP_PrintApplicationMemoryCheckpoint("pre_scheduler", pdFALSE, pdFALSE);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -1723,6 +1760,7 @@ void StartDefaultTask(void *argument)
   const char task_started_msg[] = "FreeRTOS defaultTask started: heartbeat active\r\n";
   const char tick_msg[] = "tick\r\n";
   BaseType_t runtime_checkpoint_reported = pdFALSE;
+  uint32_t heartbeat_seconds = 0U;
 
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
 
@@ -1730,12 +1768,16 @@ void StartDefaultTask(void *argument)
   for(;;)
   {
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
-    HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
+    if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))
+    {
+      HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
+    }
+    heartbeat_seconds++;
     osDelay(1000);
 
     if (runtime_checkpoint_reported == pdFALSE)
     {
-      APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE);
+      APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE, pdFALSE);
       runtime_checkpoint_reported = pdTRUE;
     }
   }
@@ -1755,25 +1797,20 @@ void StartNetworkTask(void *argument)
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
   APP_RunST67SPIBringup();
   network_ready = app_st67_network_ready;
-  APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
-  APP_UART_WriteString("Finishing LwIP Runtime Smoke\r\n");
-  APP_UART_WriteString("Starting WolfSSL Runtime Smoke\r\n");
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
-  APP_UART_WriteString("Finishing WolfSSL Runtime Smoke\r\n");
   if (network_ready)
   {
-    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch begin\r\n");
     APP_PrintWolfMQTTRuntimeStatus();
-    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch returned\r\n");
   }
   else
   {
     APP_UART_WriteString("wolfMQTT runtime: result=skipped reason=network_not_ready end_to_end=failed\r\n");
   }
-  APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=available wifi=connected link=up tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
-  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE);
+  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
+  app_experiment_complete = true;
+  APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done\r\n");
 
   osThreadExit();
 }

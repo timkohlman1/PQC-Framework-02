@@ -315,3 +315,49 @@ def test_mqtt_broker_experiment_marks_step_timeout_failed(tmp_path, monkeypatch)
     assert step["timed_out"] is True
     assert step["status"] == "failed"
     assert "partial output" in (tmp_path / "results" / "2026-07-04_005_mqtt_classical_broker" / "provision_classical_certs.log").read_text(encoding="utf-8")
+
+
+def test_pqc_experiment_resolves_oqs_container_by_compose_labels():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+
+    assert "label=com.docker.compose.project=pqc-framework-mqtt-broker" in source
+    assert "label=com.docker.compose.service=mqtt-oqs" in source
+    assert "--filter status=running" in source
+    assert 'docker exec -i "$oqs_container_id" mosquitto_sub' in source
+    assert 'docker exec -i "$oqs_container_id" mosquitto_pub' in source
+    assert "docker compose --profile oqs exec -T mqtt-oqs" not in source
+
+
+def test_pqc_readiness_requires_subscriber_and_publisher_success():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+
+    assert 'pub_rc=$?' in source
+    assert 'sub_rc=$?' in source
+    assert '[ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ]' in source
+    assert 'oqs_container_resolution_failed count=$oqs_container_count' in source
+    assert "mosquitto_pub" in source
+    assert ">/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?" in source
+
+
+def test_pqc_uart_capture_uses_profile_hard_limit_and_final_marker_check():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))' in source
+    assert 'timeout {hard_limit_seconds}s cat' in source
+    assert 'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"' in source
+    assert 'hard_limit_seconds={hard_limit_seconds}' in source
+
+
+def test_pqc_command_publisher_failures_are_retained():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'publish_failures=$((publish_failures + 1))' in source
+    assert 'publish_failures=$publish_failures' in source
+    assert 'last_publish_rc=$publish_rc' in source
+    assert 'mosquitto_pub' in source
+    assert 'publish_rc=$?' in source
+
+
+def test_mqtt_uart_completion_is_observed_before_waiting_for_subscriber():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
+    assert capture_block.index('grep -Fq "$completion_marker" "$uart_file"') < capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
+    assert "duration_seconds=hard_limit_seconds" in capture_block

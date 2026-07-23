@@ -49,6 +49,9 @@ MQTT_TLS_EVIDENCE_LABELS = {
     "stm32_build_only": "STM32 build-only evidence",
     "stm32_runtime": "STM32 runtime evidence",
     "st67w61m1_backed": "future ST67W61M1-backed evidence",
+    "stm32_st67_plaintext_e2e": "STM32/ST67W61M1 plaintext MQTT end-to-end evidence",
+    "stm32_st67_classical_tls_e2e": "STM32/ST67W61M1 classical TLS MQTT end-to-end evidence",
+    "stm32_st67_pqc_hybrid_tls_e2e": "STM32/ST67W61M1 hybrid P-256+ML-KEM-768 TLS 1.3 MQTT end-to-end evidence",
 }
 
 

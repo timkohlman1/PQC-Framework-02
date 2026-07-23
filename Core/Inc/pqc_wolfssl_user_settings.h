@@ -1,14 +1,6 @@
 #ifndef PQC_WOLFSSL_USER_SETTINGS_H
 #define PQC_WOLFSSL_USER_SETTINGS_H
 
-/*
- * Phase M6.1 STM32 wolfSSL TLS-context lifecycle configuration.
- *
- * This enables only the library surface needed to initialize wolfSSL, create
- * and free a TLS 1.2 client WOLFSSL_CTX, and clean up global wolfSSL state.
- * It does not enable sockets, certificate loading, private-key loading, MQTT,
- * Wi-Fi, or an ST67W61M1 transport backend.
- */
 #define SINGLE_THREADED
 #define NO_FILESYSTEM
 #define NO_WRITEV
@@ -20,45 +12,48 @@
 #define NO_ERROR_STRINGS
 #define NO_OLD_TLS
 #define WOLFSSL_NO_ASM
+#define WOLFSSL_SP_MATH_ALL
 #define USE_SLOW_SHA256
 #define WC_NO_HARDEN
-
-/* Client-only TLS 1.2 context support. */
 #define NO_WOLFSSL_SERVER
-#define WOLFSSL_NO_TLS13
-#define WOLFSSL_STATIC_PSK
-
-/*
- * Phase M6.1 does not provide a cryptographic entropy source. random.c is
- * linked because wolfSSL client-context code references RNG lifecycle APIs,
- * but this callback deliberately fails if any later code attempts to seed an
- * RNG. Context creation/free must not consume entropy in this phase.
- */
-static inline int PQC_WolfSSL_UnavailableSeed(unsigned char* output,
-                                               unsigned int size)
-{
-    (void)output;
-    (void)size;
-    return -1;
-}
-#define CUSTOM_RAND_GENERATE_SEED PQC_WolfSSL_UnavailableSeed
-
-/* Keep the enabled cryptographic surface narrow. */
+#define WOLFSSL_TLS13
+#define HAVE_HKDF
+#define WOLFSSL_EXPERIMENTAL_SETTINGS
+#define WOLFSSL_HAVE_MLKEM
+#define WOLFSSL_PQC_HYBRIDS
+#define WOLFSSL_SMALL_STACK
+#define WOLFSSL_TLSX_PQC_MLKEM_STORE_OBJ
+#define WOLFSSL_MLKEM_MAKEKEY_SMALL_MEM
+#define WOLFSSL_HAVE_MLDSA
+#define WOLFSSL_MLDSA_VERIFY_ONLY
+#define WOLFSSL_NO_ML_DSA_44
+#define WOLFSSL_NO_ML_DSA_87
+#define WOLFSSL_NO_ML_KEM_512
+#define WOLFSSL_NO_ML_KEM_1024
+#define WOLFSSL_SHA3
+#define WOLFSSL_SHAKE128
+#define WOLFSSL_SHAKE256
+#define HAVE_ECC
+#define HAVE_TLS_EXTENSIONS
+#define HAVE_SUPPORTED_CURVES
+#define HAVE_AESGCM
+#define ECC_TIMING_RESISTANT
+#define WOLFSSL_BASE64_ENCODE
+#define WOLFSSL_PEM_TO_DER
+#define WOLFSSL_CERT_GEN_CACHE
 #define NO_DH
 #define NO_DSA
 #define NO_RSA
-#define NO_ECC
 #define NO_MD5
 #define NO_SHA
 #define NO_SHA512
 #define NO_DES3
 #define NO_RC4
 #define NO_PWDBASED
-#define NO_CODING
-#define NO_ASN
-#define NO_CERTS
 #define NO_SESSION_CACHE
+#define NO_ASN_TIME
 
-/* AES/HMAC/SHA-256 remain available for the minimal TLS client build. */
+int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size);
+#define CUSTOM_RAND_GENERATE_SEED PQC_WolfSSL_HardwareSeed
 
-#endif /* PQC_WOLFSSL_USER_SETTINGS_H */
+#endif

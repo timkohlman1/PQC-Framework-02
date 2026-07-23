@@ -154,6 +154,30 @@ static struct spi_xfer_engine xfer_engine = {0};
 /** SPI buffer alignment mask */
 #define SPI_BUF_ALIGN_MASK              (0x0003U)
 
+/**
+  * Maximum short full-duplex transfer handled synchronously.
+  *
+  * The STM32 TLS path exchanges control records that are slightly larger than
+  * SPI_DMA_XFER_SIZE_THRESHOLD. Recorded hardware evidence showed that the
+  * ST67 receive-only DMA path completed, while a 94-byte first-part
+  * full-duplex transfer entered DMA and never produced SPI_EVT_HW_XFER_DONE.
+  * Keep large full-duplex frames on DMA, but use the bounded polling path for
+  * short control transactions so completion does not depend on the combined
+  * SPI/DMA callback path.
+  */
+#define SPI_POLL_FULL_DUPLEX_MAX_BYTES  256U
+
+/**
+  * Maximum receive-only remainder handled synchronously.
+  *
+  * The TLS server flight produced a receive-only second transaction below
+  * this bound whose DMA completion event was not delivered. Polling is
+  * performed in SPI_DMA_XFER_SIZE_THRESHOLD-sized chunks because the port
+  * layer's receive-only polling helper uses a bounded dummy transmit buffer.
+  * Larger receive-only payloads remain on DMA.
+  */
+#define SPI_POLL_RX_MAX_BYTES           2048U
+
 /** SPI transfer trace points */
 enum
 {
@@ -242,6 +266,14 @@ static int32_t spi_wait_event(void *evnt_ctx, uint32_t event, int32_t timeout_ms
   * @return 0 on success, negative error code on failure
   */
 static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t event);
+
+/**
+  * @brief  Wait for the transaction-ready condition without losing an
+  *         already-asserted level or an edge arriving around the wait.
+  * @param  engine: Pointer to the SPI transfer engine
+  * @return 1 when the peer is ready, 0 on timeout
+  */
+static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine);
 
 /**
   * @brief  Perform a full-duplex SPI transfer
@@ -491,6 +523,39 @@ static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t e
   return 0;
 }
 
+static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)
+{
+  /*
+   * SPI_RDY is a level as well as an interrupt source. The transfer task can
+   * consume SPI_EVT_TXN_RDY while selecting work, or the rising edge can occur
+   * immediately before this nested wait. In either case, waiting only for a
+   * fresh event can block while the physical READY input is already asserted.
+   */
+  if (spi_port_is_ready() == 1)
+  {
+    (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
+    return 1;
+  }
+
+  if (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) != 0)
+  {
+    return 1;
+  }
+
+  /*
+   * Close the check/wait race in the opposite direction: an edge arriving at
+   * timeout may not be represented in the returned event bits yet, but the
+   * asserted GPIO level is sufficient to proceed with the transaction.
+   */
+  if (spi_port_is_ready() == 1)
+  {
+    (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
+    return 1;
+  }
+
+  return 0;
+}
+
 static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_buf, uint16_t len)
 {
   int32_t status;
@@ -505,7 +570,8 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
     return 0;
   }
 
-  if (len <= SPI_DMA_XFER_SIZE_THRESHOLD)
+  if ((len <= SPI_DMA_XFER_SIZE_THRESHOLD) ||
+      (len <= SPI_POLL_FULL_DUPLEX_MAX_BYTES))
   {
     status = spi_port_transfer(tx_buf, rx_buf, len, SPI_WAIT_POLL_XFER_TIMEOUT_MS);
     if (status < 0)
@@ -527,7 +593,13 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
     /* Wait for spi transaction completion. */
     if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
     {
-      spi_err("spi txrx transaction timeouted\n");
+      spi_err("spi txrx transaction timeouted: mode=dma len=%" PRIu16
+              " state=%" PRIi32 " ready_gpio=%" PRIi32
+              " event_bits=0x%" PRIx32 "\n",
+              len,
+              engine->state,
+              spi_port_is_ready(),
+              (uint32_t)xEventGroupGetBits(engine->event));
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
       return -3;
     }
@@ -550,14 +622,33 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
     return 0;
   }
 
-  if (len <= SPI_DMA_XFER_SIZE_THRESHOLD)
+  if (len <= SPI_POLL_RX_MAX_BYTES)
   {
-    status = spi_port_transfer(NULL, rx_buf, len, SPI_WAIT_POLL_XFER_TIMEOUT_MS);
-    if (status < 0)
+    uint8_t *rxp = (uint8_t *)rx_buf;
+    uint16_t remaining = len;
+
+    while (remaining > 0U)
     {
-      spi_err("spi rx failed, %" PRIi32 "\n", status);
-      SPI_STAT_INC(&engine->stat, io_err, 1U);
-      return -2;
+      uint16_t chunk = remaining;
+
+      if (chunk > SPI_DMA_XFER_SIZE_THRESHOLD)
+      {
+        chunk = SPI_DMA_XFER_SIZE_THRESHOLD;
+      }
+
+      status = spi_port_transfer(NULL, rxp, chunk, SPI_WAIT_POLL_XFER_TIMEOUT_MS);
+      if (status < 0)
+      {
+        spi_err("spi rx failed: mode=poll len=%" PRIu16
+                " chunk=%" PRIu16 " remaining=%" PRIu16
+                " status=%" PRIi32 "\n",
+                len, chunk, remaining, status);
+        SPI_STAT_INC(&engine->stat, io_err, 1U);
+        return -2;
+      }
+
+      rxp += chunk;
+      remaining = (uint16_t)(remaining - chunk);
     }
   }
   else
@@ -572,7 +663,13 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
     /* Wait for spi transaction completion. */
     if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
     {
-      spi_err("spi rx transaction timeouted\n");
+      spi_err("spi rx transaction timeouted: mode=dma len=%" PRIu16
+              " state=%" PRIi32 " ready_gpio=%" PRIi32
+              " event_bits=0x%" PRIx32 "\n",
+              len,
+              engine->state,
+              spi_port_is_ready(),
+              (uint32_t)xEventGroupGetBits(engine->event));
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
       return -3;
     }
@@ -597,10 +694,25 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   spi_trace(SPI_TP_NONE, "wait_txn_rdy %" PRIi32 "\n", wait_txn_rdy);
   engine->state = SPI_XFER_STATE_FIRST_PART;
   if ((wait_txn_rdy != 0) &&
-      (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0))
+      (spi_wait_txn_ready(engine) == 0))
   {
     SPI_STAT_INC(&engine->stat, wait_txn_timeouts, 1U);
-    spi_err("waiting for spi txn ready timeouted\n");
+    spi_err("waiting for spi txn ready timeouted: state=%" PRIi32
+            " wait_txn_rdy=%" PRIi32 " ready_gpio=%" PRIi32
+            " txbuf_present=%" PRIi32 " txbuf_len=%" PRIu16
+            " txq_waiting=%" PRIu32 " event_bits=0x%" PRIx32
+            " heap_free=%" PRIu32 " heap_min=%" PRIu32
+            " task_stack_min_words=%" PRIu32 "\n",
+            engine->state,
+            wait_txn_rdy,
+            spi_port_is_ready(),
+            (txbuf != NULL) ? 1 : 0,
+            (txbuf != NULL) ? txbuf->len : 0U,
+            (uint32_t)uxQueueMessagesWaiting(engine->txq),
+            (uint32_t)xEventGroupGetBits(engine->event),
+            (uint32_t)xPortGetFreeHeapSize(),
+            (uint32_t)xPortGetMinimumEverFreeHeapSize(),
+            (uint32_t)uxTaskGetStackHighWaterMark(NULL));
     return -1;
   }
 
@@ -662,9 +774,22 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   ret = spi_header_validate(psh);
   if (ret == 0)
   {
-    spi_err("Invalid spi header from peer, magic 0x%" PRIx16 ", len (%" PRIu16 ", 0x%" PRIx16 "), version %" PRIu16
-            ", type %" PRIx16 "flags 0x%" PRIx16 ", rsvd 0x%" PRIx16 "\n",
-            psh->magic, psh->len, psh->len, psh->version, psh->type, psh->flags, psh->rsvd);
+    {
+      const uint8_t *raw = (const uint8_t *)psh;
+      spi_err("Invalid spi header from peer, magic 0x%" PRIx16
+              ", len (%" PRIu16 ", 0x%" PRIx16 "), version %" PRIu16
+              ", type %" PRIx16 " flags 0x%" PRIx16 ", rsvd 0x%" PRIx16
+              ", raw=%02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+              " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+              ", xfer_size=%" PRIu16 " state=%" PRIi32
+              " ready_gpio=%" PRIi32 " event_bits=0x%" PRIx32 "\n",
+              psh->magic, psh->len, psh->len, psh->version, psh->type,
+              psh->flags, psh->rsvd,
+              raw[0], raw[1], raw[2], raw[3],
+              raw[4], raw[5], raw[6], raw[7],
+              xfer_size, engine->state, spi_port_is_ready(),
+              (uint32_t)xEventGroupGetBits(engine->event));
+    }
     SPI_STAT_INC(&engine->stat, hdr_err, 1U);
     goto out;
   }

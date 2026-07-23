@@ -9,6 +9,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -397,8 +398,38 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
     topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
+    ca_pem = ""
+    ca_sha256 = ""
+    server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
+    if tls.get("mode") == "pqc_hybrid_tls_server_auth":
+        if not server_signature_algorithm:
+            raise ValueError(
+                "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
+                "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
+            )
+        supported_server_signature_algorithms = {"mldsa65"}
+        if server_signature_algorithm not in supported_server_signature_algorithms:
+            raise ValueError(
+                "MQTT TLS server signature algorithm " + server_signature_algorithm
+                + " is incompatible with the STM32 wolfSSL profile; supported algorithms: "
+                + ", ".join(sorted(supported_server_signature_algorithms))
+            )
+    ca_reference = certificate_refs.get("ca_certificate") if isinstance(certificate_refs, dict) else None
+    if ca_reference:
+        ca_path = repo_root / str(ca_reference)
+        if not ca_path.is_file():
+            raise ValueError(
+                "MQTT TLS CA certificate is unavailable: " + str(ca_path)
+                + ". Provision the classical broker certificates before building."
+            )
+        ca_pem = ca_path.read_text(encoding="utf-8")
+        ca_sha256 = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
+        if "BEGIN CERTIFICATE" not in ca_pem:
+            raise ValueError(f"MQTT TLS CA certificate is not PEM encoded: {ca_path}")
     def esc(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"')
+        return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "\\n")
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_wifi_config_generated.h"
@@ -410,10 +441,17 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_ENABLED {1 if bool(mqtt.get("enabled", False)) else 0}\n'
         f'#define PQC_MQTT_BROKER_HOST "{esc(str(broker.get("host", "")))}"\n'
         f'#define PQC_MQTT_BROKER_PORT {int(broker.get("port", 1883))}\n'
+        f'#define PQC_MQTT_DNS_REQUIRED {1 if bool(broker.get("dns_required", False)) else 0}\n'
         f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
         f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'
         f'#define PQC_MQTT_CORRELATION_PAYLOAD "{esc(str(mqtt.get("correlation_payload", "pqc-e2e")))}"\n'
+        f'#define PQC_MQTT_TLS_MODE "{esc(str(tls.get("mode", "plaintext")))}"\n'
+        f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'
+        f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{ca_sha256}"\n'
+        f'#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "{esc(server_signature_algorithm)}"\n'
+        f'#define PQC_MQTT_RECONNECT_ATTEMPTS {int(mqtt.get("reconnect_attempts", 0))}\n'
         "#endif\n", encoding="utf-8")
     return path
 
@@ -822,6 +860,8 @@ def execute_build(
         build_skip_reason=skip_reason,
         build_skip_detail=skip_detail,
         force_rebuild=force,
+        build_purpose=build_purpose,
+        build_identity=build_identity_value,
     )
 
     build_record_path = None

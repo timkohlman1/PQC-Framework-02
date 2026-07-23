@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-and-tools-v2"
+BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-and-tools-v3"
 
 
 
@@ -234,6 +234,19 @@ def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> li
 
     if boot_id:
         inputs.append(f"configs/boot/{boot_id}.yaml")
+
+    mqtt = experiment.get("mqtt", {})
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
+    ca_certificate = (
+        certificate_refs.get("ca_certificate")
+        if isinstance(certificate_refs, dict)
+        else None
+    )
+    if ca_certificate is not None:
+        ca_certificate_path = str(ca_certificate).strip()
+        if ca_certificate_path:
+            inputs.append(ca_certificate_path)
 
     return [
         *inputs,

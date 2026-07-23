@@ -13,14 +13,21 @@ BROKER_RELATIVE_DIR = Path("experiment/mqtt-broker")
 DEFAULT_HOST_CONFIG = Path("configs/hosts/gateway.yaml")
 DEFAULT_REMOTE_DIR = "~/pqc-framework-02/experiment/mqtt-broker"
 DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
-DEFAULT_SERVER_NAME = "pqc-gateway1"
+DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
+DEFAULT_SERVER_ALIAS = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
 CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
 OQS_IMAGE = "openquantumsafe/mosquitto:latest"
-OQS_KEM_GROUP = "mlkem768"
+OQS_KEM_GROUP = "SecP256r1MLKEM768"
 OQS_CA_ALGORITHM = "mldsa65"
-OQS_LEAF_ALGORITHM = "falcon512"
+OQS_LEAF_ALGORITHM = "mldsa65"
+BROKER_PROFILE_SERVICES = {
+    "classical": "mqtt-classical",
+    "classical-server-auth": "mqtt-classical-server-auth",
+    "oqs": "mqtt-oqs",
+}
+BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
 HOST_BROKER_EVIDENCE_CLASS = "host_side"
 HOST_BROKER_EVIDENCE_LABEL = "host-side/broker-side MQTT/TLS compatibility evidence"
 HOST_BROKER_EVIDENCE_BOUNDARY = (
@@ -259,7 +266,11 @@ def provision_classical_certs(args: argparse.Namespace) -> None:
     client_conf = cert_dir / "client-openssl.cnf"
     healthcheck_conf = cert_dir / "healthcheck-openssl.cnf"
     write_ca_openssl_config(ca_conf)
-    write_server_openssl_config(server_conf, [server_name, "localhost", *extra_names], ip_addresses)
+    write_server_openssl_config(
+        server_conf,
+        [server_name, DEFAULT_SERVER_ALIAS, "localhost", *extra_names],
+        ip_addresses,
+    )
     write_client_openssl_config(client_conf, client_name)
     write_client_openssl_config(healthcheck_conf, healthcheck_name)
 
@@ -382,6 +393,22 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
         f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/healthcheck.key",
         "openssl req -new -key /certs/healthcheck.key -out /certs/healthcheck.csr -config /certs/healthcheck-openssl.cnf",
         f"openssl x509 -req -in /certs/healthcheck.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/healthcheck.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/healthcheck-openssl.cnf",
+        "openssl verify -CAfile /certs/ca.crt /certs/server.crt /certs/client.crt /certs/healthcheck.crt",
+        "openssl pkey -in /certs/server.key -pubout -out /tmp/server-key.pub",
+        "openssl x509 -in /certs/server.crt -pubkey -noout -out /tmp/server-cert.pub",
+        "cmp /tmp/server-key.pub /tmp/server-cert.pub",
+        "{ "
+        "echo oqs_certificate_profile_version=1; "
+        f"echo ca_algorithm={shlex.quote(args.ca_algorithm)}; "
+        f"echo leaf_algorithm={shlex.quote(args.leaf_algorithm)}; "
+        "openssl x509 -in /certs/ca.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
+        "openssl x509 -in /certs/server.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
+        "echo server_certificate_text_begin; "
+        "openssl x509 -in /certs/server.crt -noout -text; "
+        "echo server_certificate_text_end; "
+        "echo chain_verified=true; echo server_private_key_match_verified=true; "
+        "} > /certs/certificate-provenance.txt",
+        "rm -f /tmp/server-key.pub /tmp/server-cert.pub",
         "chmod -R a+rX /certs",
     ])
     command = (
@@ -389,8 +416,24 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
         f"-lc {shlex.quote(script)}"
     )
     run_command(["ssh", target, command], dry_run=args.dry_run)
+
+    local_cert_dir = broker_root() / "runtime" / "oqs" / "certs"
+    local_ca_path = local_cert_dir / "ca.crt"
     if not args.dry_run:
-        print(f"Provisioned remote OQS MQTT TLS material under {cert_dir}")
+        local_cert_dir.mkdir(parents=True, exist_ok=True)
+    run_command(
+        ["scp", f"{target}:{cert_dir}/ca.crt", str(local_ca_path)],
+        dry_run=args.dry_run,
+    )
+    local_provenance_path = local_cert_dir / "certificate-provenance.txt"
+    run_command(
+        ["scp", f"{target}:{cert_dir}/certificate-provenance.txt", str(local_provenance_path)],
+        dry_run=args.dry_run,
+    )
+    if not args.dry_run:
+        print(f"Provisioned and verified remote OQS MQTT TLS material under {cert_dir}")
+        print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
+        print(f"Copied public certificate provenance to {display_path(local_provenance_path)}")
 
 
 def deploy(args: argparse.Namespace) -> None:
@@ -443,6 +486,7 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
     env: list[str] = []
     if getattr(args, "classical_port", None):
         env.append(f"MQTT_CLASSICAL_TLS_PORT={args.classical_port}")
+        env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
     if getattr(args, "oqs_port", None):
         env.append(f"MQTT_OQS_TLS_PORT={args.oqs_port}")
     return env
@@ -466,9 +510,24 @@ def start(args: argparse.Namespace) -> None:
 
 
 def stop(args: argparse.Namespace) -> None:
-    compose_remote(args, ["--profile", "classical", "--profile", "oqs", "down", "--remove-orphans"])
+    compose_remote(
+        args,
+        [
+            "--profile",
+            "classical",
+            "--profile",
+            "classical-server-auth",
+            "--profile",
+            "oqs",
+            "down",
+            "--remove-orphans",
+        ],
+    )
     host = load_host_config(repo_root() / args.host_config)
-    cleanup_command = "docker rm -f pqc-mqtt-classical pqc-mqtt-oqs >/dev/null 2>&1 || true"
+    cleanup_command = (
+        "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
+        "pqc-mqtt-oqs >/dev/null 2>&1 || true"
+    )
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 
 
@@ -477,7 +536,7 @@ def status(args: argparse.Namespace) -> None:
 
 
 def logs(args: argparse.Namespace) -> None:
-    service = "mqtt-oqs" if args.profile == "oqs" else "mqtt-classical"
+    service = BROKER_PROFILE_SERVICES[args.profile]
     compose_remote(args, ["logs", "--tail", str(args.tail), service])
 
 
@@ -486,24 +545,31 @@ def validate_oqs_tls(args: argparse.Namespace) -> None:
     target = ssh_target(host)
     cert_dir = f"{args.remote_dir}/runtime/oqs/certs"
     port = str(args.oqs_port or 8884)
-    validation_script = (
-        "set -eu; "
-        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'; "
-        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'; "
-        "echo 'Evidence profile: oqs'; "
-        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'; "
-        "rm -f /tmp/pqc-oqs-tls-validate.log; "
-        "echo | openssl s_client "
-        f"-connect 127.0.0.1:{port} "
-        "-tls1_3 "
-        f"-groups {shlex.quote(args.oqs_group)} "
-        "-CAfile /certs/ca.crt "
-        "-cert /certs/client.crt "
-        "-key /certs/client.key "
-        "-verify_return_error 2>&1 | tee /tmp/pqc-oqs-tls-validate.log; "
-        "grep -q 'Verify return code: 0 (ok)' /tmp/pqc-oqs-tls-validate.log; "
-        "grep -q 'Protocol: TLSv1.3' /tmp/pqc-oqs-tls-validate.log"
-    )
+    validation_script = "\n".join([
+        "set -eu",
+        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'",
+        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'",
+        "echo 'Evidence profile: oqs'",
+        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'",
+        f"echo 'Requested TLS group: {args.oqs_group}'",
+        "rm -f /tmp/pqc-oqs-tls-validate.log",
+        (
+            "if ! output=$(echo | openssl s_client "
+            f"-connect 127.0.0.1:{port} "
+            "-tls1_3 "
+            f"-groups {shlex.quote(args.oqs_group)} "
+            "-CAfile /certs/ca.crt "
+            "-verify_return_error 2>&1); then "
+            "printf '%s\\n' \"$output\" | tee /tmp/pqc-oqs-tls-validate.log; exit 1; fi"
+        ),
+        "printf '%s\\n' \"$output\" | tee /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'New, TLSv1.3' /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'Certificate chain' /tmp/pqc-oqs-tls-validate.log",
+        "! grep -q 'no peer certificate available' /tmp/pqc-oqs-tls-validate.log",
+        "! grep -q 'Cipher is (NONE)' /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'Verify return code: 0 (ok)' /tmp/pqc-oqs-tls-validate.log",
+        f"echo 'Negotiated forced TLS group: {args.oqs_group}'",
+    ])
     command = (
         f"docker run --rm --network host -v {remote_shell_path(cert_dir)}:/certs:ro --entrypoint sh {shlex.quote(args.image)} "
         f"-lc {shlex.quote('timeout 20 sh -lc ' + shlex.quote(validation_script))}"
@@ -633,7 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--dry-run", action="store_true")
     provision.set_defaults(func=provision_classical_certs)
 
-    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS mutual-TLS material on the gateway")
+    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS server-authenticated TLS material on the gateway")
     add_common_remote_options(oqs_provision)
     oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     oqs_provision.add_argument("--extra-dns-name", action="append")
@@ -654,7 +720,7 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser = sub.add_parser("start", help="start a broker profile on the gateway")
     add_common_remote_options(start_parser)
     add_port_options(start_parser)
-    start_parser.add_argument("--profile", choices=("classical", "oqs"), default="classical")
+    start_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     start_parser.set_defaults(func=start)
 
     stop_parser = sub.add_parser("stop", help="stop broker services on the gateway")
@@ -670,11 +736,11 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser = sub.add_parser("logs", help="show gateway broker logs")
     add_common_remote_options(logs_parser)
     add_port_options(logs_parser)
-    logs_parser.add_argument("--profile", choices=("classical", "oqs"), default="classical")
+    logs_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     logs_parser.add_argument("--tail", type=int, default=100)
     logs_parser.set_defaults(func=logs)
 
-    validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS mutual-TLS handshake using an OQS-enabled OpenSSL client container")
+    validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)
     add_port_options(validate_oqs)
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)

@@ -739,6 +739,7 @@ def test_validate_mqtt_tls_config_accepts_host_side_schema_with_broker_reference
     config["mqtt"]["broker"] = {
         "host": "pqc-gateway1",
         "port": 8883,
+        "dns_required": True,
     }
 
     experiment_cli.validate_experiment_config(config)
@@ -820,6 +821,7 @@ def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend()
     config["mqtt"]["broker"] = {
         "host": "pqc-gateway1",
         "port": 8883,
+        "dns_required": True,
     }
     config["mqtt"]["tls"] = {"mode": "classical_tls"}
     config["mqtt"]["fake_transport"] = {
@@ -849,3 +851,39 @@ def test_validate_experiment_network_requires_valid_wifi_and_dhcp():
     config["network"]["wifi"]["psk"] = "short"
     with pytest.raises(experiment_cli.ConfigError, match="between 8 and 63 bytes"):
         experiment_cli.validate_experiment_config(config)
+
+
+def _minimal_mqtt_dns_config(host: str, dns_required):
+    return {
+        "mqtt": {
+            "schema_version": 1,
+            "evidence_class": "stm32_st67_classical_tls_e2e",
+            "transport_backend": "st67w61m1_lwip_wolfssl",
+            "broker": {"host": host, "port": 8883, "dns_required": dns_required},
+            "tls": {"mode": "classical_tls_server_auth", "certificate_refs": {}},
+            "result_schema": {"unavailable_metrics": {}},
+        }
+    }
+
+
+def test_mqtt_hostname_requires_dns_required_true():
+    experiment_cli = load_experiment_module()
+    with pytest.raises(experiment_cli.ConfigError, match="dns_required must be true"):
+        experiment_cli.validate_mqtt_tls_config(
+            _minimal_mqtt_dns_config("pqc-gateway1.pqcnet", False)
+        )
+
+
+def test_mqtt_ip_literal_allows_dns_not_required():
+    experiment_cli = load_experiment_module()
+    experiment_cli.validate_mqtt_tls_config(
+        _minimal_mqtt_dns_config("10.1.1.18", False)
+    )
+
+
+def test_mqtt_dns_required_must_be_boolean():
+    experiment_cli = load_experiment_module()
+    with pytest.raises(experiment_cli.ConfigError, match="dns_required must be a boolean"):
+        experiment_cli.validate_mqtt_tls_config(
+            _minimal_mqtt_dns_config("pqc-gateway1.pqcnet", "true")
+        )

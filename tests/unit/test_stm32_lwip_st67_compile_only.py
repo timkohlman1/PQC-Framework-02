@@ -7,6 +7,14 @@ def _read(relative_path: str) -> str:
     return Path(relative_path).read_text(encoding="utf-8")
 
 
+def _function_definition(source: str, signature: str, next_signature: str) -> str:
+    """Return a C function definition, skipping any earlier prototype."""
+
+    definition_start = source.index(f"{signature}\n{{")
+    definition_end = source.index(next_signature, definition_start + len(signature))
+    return source[definition_start:definition_end]
+
+
 def test_lwip_and_st67_sources_are_wired_into_generated_cmake() -> None:
     cmake = _read("cmake/stm32cubemx/CMakeLists.txt")
 
@@ -293,6 +301,16 @@ def test_wifi_config_selection_uses_compile_time_header_detection():
     assert 'PQC_WIFI_CONFIG_GENERATED_AVAILABLE' not in wrapper
     assert '#    define PQC_WIFI_SSID ""' in wrapper
     assert '#    define PQC_WIFI_IPV4_MODE "unconfigured"' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_MODE' in wrapper
+    assert '#define PQC_MQTT_TLS_MODE "plaintext"' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_SERVER_NAME' in wrapper
+    assert '#define PQC_MQTT_TLS_SERVER_NAME ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_CA_PEM' in wrapper
+    assert '#define PQC_MQTT_TLS_CA_PEM ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_CA_PEM_SHA256' in wrapper
+    assert '#define PQC_MQTT_TLS_CA_PEM_SHA256 ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM' in wrapper
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM ""' in wrapper
 
 
 def test_st67_normal_startup_scans_before_association_and_reports_live_t02_state() -> None:
@@ -328,3 +346,119 @@ def test_st67_spi_iface_uses_clean_vendor_transfer_engine_for_controlled_test() 
     assert "APP_ST67ReadyDiagnosticSnapshot" not in spi_iface
     assert "APP_ST67ReadyDiagnosticSnapshotGet" not in spi_iface
     assert '#include "main.h"' not in spi_iface
+
+
+def test_application_memory_checkpoints_report_named_task_stacks() -> None:
+    main_c = _read("Core/Src/main.c")
+
+    assert 'APP_UART_WriteString("application task stack: stage=");' in main_c
+    assert 'APP_UART_WriteString(" task=");' in main_c
+    assert 'APP_UART_WriteString(" minimum_free_bytes=");' in main_c
+    assert 'APP_UART_WriteString(" peak_used_bytes=");' in main_c
+    assert '"defaultTask",\n        (TaskHandle_t)defaultTaskHandle' in main_c
+    assert '"networkTask",\n        (TaskHandle_t)networkTaskHandle' in main_c
+    assert '(uint32_t)defaultTask_attributes.stack_size' in main_c
+    assert '(uint32_t)networkTask_attributes.stack_size' in main_c
+    assert "if (minimum_free_bytes <= task_stack_total_bytes)" in main_c
+    assert 'APP_PrintApplicationMemoryCheckpoint("default_task_runtime", pdTRUE, pdFALSE);' in main_c
+    assert 'APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);' in main_c
+    assert "task_stack_high_water_bytes" not in main_c
+    assert "task_stack_used_bytes" not in main_c
+
+def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    helper = _function_definition(
+        source,
+        "static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)",
+        "static int32_t spi_txrx(",
+    )
+
+    assert helper.count("spi_port_is_ready() == 1") == 2
+    assert (
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+        in helper
+    )
+    assert helper.index("spi_port_is_ready() == 1") < helper.index(
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+    )
+    assert helper.rindex("spi_port_is_ready() == 1") > helper.index(
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
+    )
+    assert helper.count(
+        "spi_clear_event(engine, SPI_EVT_TXN_RDY)"
+    ) == 2
+    assert "(spi_wait_txn_ready(engine) == 0)" in source
+    assert (
+        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0"
+        not in source
+    )
+
+def test_st67_short_full_duplex_spi_transactions_use_polling_completion() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    txrx = _function_definition(
+        source,
+        "static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_buf, uint16_t len)",
+        "static int32_t spi_rx(",
+    )
+
+    assert "#define SPI_POLL_FULL_DUPLEX_MAX_BYTES  256U" in source
+    assert (
+        "if ((len <= SPI_DMA_XFER_SIZE_THRESHOLD) ||\n"
+        "      (len <= SPI_POLL_FULL_DUPLEX_MAX_BYTES))"
+        in txrx
+    )
+    assert (
+        "spi_port_transfer(tx_buf, rx_buf, len, "
+        "SPI_WAIT_POLL_XFER_TIMEOUT_MS)"
+        in txrx
+    )
+    assert "spi_port_transfer_dma(tx_buf, rx_buf, len)" in txrx
+    assert (
+        'spi txrx transaction timeouted: mode=dma len=%" PRIu16'
+        in txrx
+    )
+
+
+def test_st67_moderate_receive_only_spi_transactions_use_chunked_polling() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    rx = _function_definition(
+        source,
+        "static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len)",
+        "static int32_t spi_xfer_one(",
+    )
+
+    assert "#define SPI_POLL_RX_MAX_BYTES           2048U" in source
+    assert "if (len <= SPI_POLL_RX_MAX_BYTES)" in rx
+    assert "while (remaining > 0U)" in rx
+    assert "if (chunk > SPI_DMA_XFER_SIZE_THRESHOLD)" in rx
+    assert "chunk = SPI_DMA_XFER_SIZE_THRESHOLD;" in rx
+    assert (
+        "spi_port_transfer(NULL, rxp, chunk, "
+        "SPI_WAIT_POLL_XFER_TIMEOUT_MS)"
+        in rx
+    )
+
+
+def test_st67_large_receive_only_spi_transactions_remain_on_dma() -> None:
+    source = _read(
+        "Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c"
+    )
+
+    rx = _function_definition(
+        source,
+        "static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len)",
+        "static int32_t spi_xfer_one(",
+    )
+
+    assert "spi_port_transfer_dma(NULL, rx_buf, len)" in rx
+    assert 'spi rx transaction timeouted: mode=dma len=%" PRIu16' in rx
+

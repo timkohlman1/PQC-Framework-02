@@ -44,12 +44,18 @@ def test_network_task_has_extra_stack_and_explicit_fault_diagnostics():
     assert "configUSE_MALLOC_FAILED_HOOK             1" in freertos
 
 
-def test_plaintext_exchange_emits_progress_markers():
+def test_mqtt_exchange_uses_concise_structured_runtime_evidence():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-    assert "wolfMQTT plaintext exchange: dispatch begin" in main_c
-    for marker in (
-        "wolfMQTT plaintext exchange: function entered",
+    combined = main_c + source
+
+    assert "wolfMQTT runtime: context=%s scheduler=%s" in source
+    assert "mqtt_connect=%s" in source
+    assert "mqtt_publish=%s" in source
+    assert "end_to_end=%s" in source
+    assert "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done" in main_c
+    assert "wolfMQTT plaintext exchange:" not in combined
+    for removed_phase_marker in (
         "wolfMQTT: client init begin",
         "wolfMQTT: TCP connect begin",
         "wolfMQTT: MQTT connect begin",
@@ -58,7 +64,7 @@ def test_plaintext_exchange_emits_progress_markers():
         "wolfMQTT: publish begin",
         "wolfMQTT: cleanup begin",
     ):
-        assert marker in source
+        assert removed_phase_marker not in source
 
 
 def test_experiment_run_orchestrates_and_verdicts_mqtt_e2e():

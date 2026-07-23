@@ -68,7 +68,7 @@ def test_build_fingerprint_is_deterministic(tmp_path):
     second = fingerprint.calculate_default_build_fingerprint(sample_bundle(), repo_root)
 
     assert first == second
-    assert first.algorithm == "sha256-build-inputs-and-tools-v2"
+    assert first.algorithm == "sha256-build-inputs-and-tools-v3"
     assert len(first.fingerprint) == 64
     assert first.inputs == sorted(first.inputs)
     assert list(first.file_hashes) == first.inputs
@@ -340,3 +340,55 @@ def test_tool_version_change_changes_fingerprint(tmp_path):
 
     assert before.fingerprint != after.fingerprint
     assert after.tool_versions == {"cmake": "cmake 3.31", "gcc": "13.2"}
+
+
+def mqtt_tls_bundle() -> dict[str, dict[str, object]]:
+    bundle = sample_bundle()
+    bundle["experiment"] = dict(bundle["experiment"])
+    bundle["experiment"]["mqtt"] = {
+        "tls": {
+            "certificate_refs": {
+                "ca_certificate": "experiment/mqtt-broker/runtime/classical/certs/ca.crt"
+            }
+        }
+    }
+    return bundle
+
+
+def test_mqtt_tls_ca_certificate_is_fingerprinted_and_recorded(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+    ca_path = repo_root / "experiment/mqtt-broker/runtime/classical/certs/ca.crt"
+    ca_path.parent.mkdir(parents=True)
+    ca_path.write_text("-----BEGIN CERTIFICATE-----\nca-a\n-----END CERTIFICATE-----\n", encoding="utf-8")
+
+    before = fingerprint.calculate_default_build_fingerprint(mqtt_tls_bundle(), repo_root)
+    ca_relative = "experiment/mqtt-broker/runtime/classical/certs/ca.crt"
+
+    assert ca_relative in before.inputs
+    assert ca_relative in before.file_hashes
+
+    ca_path.write_text("-----BEGIN CERTIFICATE-----\nca-b\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    after = fingerprint.calculate_default_build_fingerprint(mqtt_tls_bundle(), repo_root)
+
+    assert before.fingerprint != after.fingerprint
+    assert before.file_hashes[ca_relative] != after.file_hashes[ca_relative]
+
+
+def test_missing_configured_mqtt_tls_ca_certificate_fails_fingerprinting(tmp_path):
+    fingerprint = load_fingerprint_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    write_required_inputs(repo_root)
+
+    try:
+        fingerprint.calculate_default_build_fingerprint(mqtt_tls_bundle(), repo_root)
+    except fingerprint.FingerprintInputError as exc:
+        assert (
+            "Required build fingerprint input is missing: "
+            "experiment/mqtt-broker/runtime/classical/certs/ca.crt"
+        ) in str(exc)
+    else:
+        raise AssertionError("missing configured CA certificate must fail fingerprinting")

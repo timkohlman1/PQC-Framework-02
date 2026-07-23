@@ -35,7 +35,7 @@ def test_wolfmqtt_supports_fake_and_real_st67_lwip_transport_boundaries():
     assert "MqttClient_DeInit(" in source
 
 
-def test_real_plaintext_exchange_performs_bounded_mqtt_operations_without_tls():
+def test_real_mqtt_exchange_performs_bounded_mqtt_operations():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
     for fragment in (
@@ -54,10 +54,11 @@ def test_real_plaintext_exchange_performs_bounded_mqtt_operations_without_tls():
         assert fragment in source
 
     assert "PQC_WOLFMQTT_COMMAND_TIMEOUT_MS" in source
-    assert "wolfSSL_connect(" not in source
+    assert "PQC_WolfMQTT_TLSRequested" in source
+    assert 'strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth")' in source
     assert "W6X_WiFi_Connect(" not in source
     assert "status->transport_available = (backend == PQC_WOLFMQTT_BACKEND_ST67W61M1);" in source
-    assert "status->broker_connected = true;" in source
+    assert "status->mqtt_connected = true;" in source
     assert "status->subscribed = true;" in source
     assert "status->message_received = true;" in source
     assert "status->publish_complete = true;" in source
@@ -106,3 +107,65 @@ def test_phase_m7_uses_project_user_settings_without_generated_options_header():
     assert cmake.count("WOLFMQTT_USER_SETTINGS") >= 2
     assert cmake.count("WOLFMQTT_NO_STDIO") >= 2
     assert "wolfmqtt/options.h" not in cmake
+
+
+def test_tls_handshake_result_is_recorded_inside_lwip_connect_function():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    connect = source.index("result = wolfSSL_connect(socket_context->tls);")
+    record = source.index("socket_context->tls_connect_result = result;", connect)
+    failure_check = source.index("if (result != WOLFSSL_SUCCESS) {", record)
+
+    assert connect < record < failure_check
+
+
+def test_pqc_hybrid_group_array_matches_mutable_wolfssl_api():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert "int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" in source
+    assert "const int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" not in source
+
+def test_mlkem_portable_implementation_sources_are_wired_without_arch_assembly():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+
+    assert "wolfcrypt/src/wc_mlkem.c" in cmake
+    assert "wolfcrypt/src/wc_mlkem_poly.c" in cmake
+    assert "wolfcrypt/src/wc_mlkem_asm.S" not in cmake
+
+
+
+def test_mldsa_portable_verifier_and_ca_status_are_wired():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert "wolfcrypt/src/wc_mldsa.c" in cmake
+    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+    assert "pqc_group_config=%s ca_load=%s pqc_group=%s" in source
+
+
+def test_handshake_instrumentation_does_not_change_network_task_size():
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert ".stack_size = 2048 * 4" in main_c
+    assert "wolfMQTT TLS handshake boundary: stage=%s" in mqtt_source
+
+
+def test_mlkem_resource_controls_avoid_large_client_key_share_stack_object():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    assert "WOLFSSL_SMALL_STACK" in settings
+    assert "WOLFSSL_TLSX_PQC_MLKEM_STORE_OBJ" in settings
+    assert "WOLFSSL_MLKEM_MAKEKEY_SMALL_MEM" in settings
+
+
+def test_clienthello_diagnostics_do_not_log_key_share_payload():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    diagnostic_start = source.index(
+        "static void PQC_WolfMQTT_DiagnosticClientHelloSignatureAlgorithms"
+    )
+    diagnostic_end = source.index(
+        "static int PQC_WolfSSL_IOSend", diagnostic_start
+    )
+    diagnostic = source[diagnostic_start:diagnostic_end]
+    assert "0x000dU" in diagnostic
+    assert "0x0032U" in diagnostic
+    assert "0x0033U" not in diagnostic
+    assert "key_share" not in diagnostic

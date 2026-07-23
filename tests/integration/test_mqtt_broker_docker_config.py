@@ -75,6 +75,25 @@ def _service(config: dict[str, Any], name: str) -> dict[str, Any]:
     return service
 
 
+def _published_port_for_target(service: dict[str, Any], target: int) -> str:
+    ports = service.get("ports")
+    assert isinstance(ports, list)
+
+    matches = [
+        port
+        for port in ports
+        if isinstance(port, dict) and port.get("target") == target
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one published mapping for target port {target}, "
+        f"found {matches!r}"
+    )
+
+    published = matches[0].get("published")
+    assert isinstance(published, str)
+    return published
+
+
 @pytest.mark.integration
 @pytest.mark.docker
 def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
@@ -102,12 +121,13 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     assert "/mosquitto/log" in classical_mount_targets
 
     assert "/mosquitto/config/mosquitto.conf" in oqs_mount_targets
+    assert "/mosquitto/config/openssl.cnf" in oqs_mount_targets
     assert "/mosquitto/config/aclfile.source" in oqs_mount_targets
     assert "/mosquitto/config/certs" in oqs_mount_targets
     assert "/mosquitto/data" not in oqs_mount_targets
     assert "/mosquitto/log" not in oqs_mount_targets
 
-    assert oqs["environment"]["OPENSSL_CONF"] == "/opt/oqssa/ssl/openssl.cnf"
+    assert oqs["environment"]["OPENSSL_CONF"] == "/mosquitto/config/openssl.cnf"
     assert oqs["environment"]["OPENSSL_MODULES"] == "/opt/oqssa/lib64/ossl-modules"
 
 
@@ -124,7 +144,5 @@ def test_mqtt_broker_compose_config_renders_port_overrides_without_gateway():
     classical = _service(config, "mqtt-classical")
     oqs = _service(config, "mqtt-oqs")
 
-    assert classical["ports"][0]["published"] == "28883"
-    assert classical["ports"][0]["target"] == 8883
-    assert oqs["ports"][0]["published"] == "28884"
-    assert oqs["ports"][0]["target"] == 8883
+    assert _published_port_for_target(classical, 8883) == "28883"
+    assert _published_port_for_target(oqs, 8883) == "28884"
