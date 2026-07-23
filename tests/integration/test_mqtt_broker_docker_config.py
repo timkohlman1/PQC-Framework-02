@@ -102,12 +102,13 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     assert "/mosquitto/log" in classical_mount_targets
 
     assert "/mosquitto/config/mosquitto.conf" in oqs_mount_targets
+    assert "/mosquitto/config/openssl.cnf" in oqs_mount_targets
     assert "/mosquitto/config/aclfile.source" in oqs_mount_targets
     assert "/mosquitto/config/certs" in oqs_mount_targets
     assert "/mosquitto/data" not in oqs_mount_targets
     assert "/mosquitto/log" not in oqs_mount_targets
 
-    assert oqs["environment"]["OPENSSL_CONF"] == "/opt/oqssa/ssl/openssl.cnf"
+    assert oqs["environment"]["OPENSSL_CONF"] == "/mosquitto/config/openssl.cnf"
     assert oqs["environment"]["OPENSSL_MODULES"] == "/opt/oqssa/lib64/ossl-modules"
 
 

@@ -38,39 +38,43 @@ experiment/mqtt-broker/.env
 ## Provision localhost-only classical TLS material
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
 
 This creates a local development CA, localhost server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 ## Provision remote OQS TLS material
 
-The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithms are `mldsa65` for the CA and `falcon512` for the leaf certificates. The validation group is `mlkem768`.
+The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithms are `mldsa65` for the CA and `falcon512` for the leaf certificates. The hybrid TLS group is `SecP256r1MLKEM768`.
+
+Run gateway broker administration with the active host Python environment. Do not use `dev.ps1 run` for these SSH-dependent commands unless the container has the required SSH configuration and gateway hostname resolution.
 
 Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Validate OQS mutual TLS after starting the profile:
+Provisioning copies only the public OQS CA certificate back to `experiment/mqtt-broker/runtime/oqs/certs/ca.crt` for firmware embedding. Private keys remain on the gateway.
+
+Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls --oqs-group SecP256r1MLKEM768 --host-config configs/hosts/gateway.yaml
 ```
 
 ## Deploy to the gateway
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 ```
 
 Preview remote commands without running them:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --dry-run
 ```
 
 ## Framework-level broker experiment orchestration
@@ -91,31 +95,31 @@ The result manifest labels this path as `host-side/broker-side MQTT/TLS compatib
 Start the classical TLS broker:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile classical
 ```
 
 Start the experimental OQS broker:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
 ```
 
 Check status:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py status
 ```
 
 Show logs:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py logs --profile classical
 ```
 
 Stop broker services:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py stop
 ```
 
 ## Host-side broker compatibility validation
@@ -123,8 +127,8 @@ Stop broker services:
 After provisioning, deploying, and starting a profile, the broker utility can validate MQTT publish/subscribe through host-side client containers:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
 ```
 
 The validation command output includes the evidence class, evidence label, profile, and evidence boundary before running the client checks. This output is broker/client compatibility evidence only.
@@ -165,7 +169,7 @@ Local and gateway Docker success must be confirmed from command output or logs b
 Provision certificates with the host config so the server certificate includes the gateway IP address as an IP subject alternative name:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
 ```
 
 External TLS validation can use the configured IP address:
@@ -244,3 +248,13 @@ A reconnect that starts but fails is reported as `reconnect=failed`; `reconnect=
 ### MQTT UART completion and logging
 
 Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.
+
+## Hybrid PQC server-authenticated profile
+
+The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = SecP256r1MLKEM768` so the Mosquitto server process can select the same hybrid key share as the client.
+
+Provision OQS certificates after deployment. The provisioning command retrieves only the public CA certificate for the local firmware build. The strict TLS validator fails when OpenSSL exits unsuccessfully, no peer certificate is presented, the cipher is `(NONE)`, TLS 1.3 is not negotiated, or certificate verification fails.
+
+### OQS container resolution
+
+Gateway-managed OQS readiness and STM32 command/response orchestration resolve the running `mqtt-oqs` container by its Docker Compose project and service labels, then invoke the bundled OQS-enabled `mosquitto_sub` and `mosquitto_pub` with `docker exec`. The workflow does not rely on `docker compose exec`, because some gateway Compose versions may list the project while failing to resolve its running service. Readiness requires exactly one running labelled container, successful subscriber and publisher exit codes, and the exact `ready` payload. Failure logs retain container-resolution and client output diagnostics.

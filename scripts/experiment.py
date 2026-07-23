@@ -131,7 +131,7 @@ def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
 
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
-    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
+    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
 
 
 
@@ -176,20 +176,45 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
     gateway_alias = str(bundle["host"]["alias"])
     host = shlex.quote(_mqtt_orchestration_host(bundle))
     port = int(broker["port"])
-    tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
-    tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
+    tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+    pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
+    tls_args = ("--cafile /mosquitto/config/certs/ca.crt" if pqc_hybrid else "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt") if tls_enabled else ""
+    mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
+    mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
+    client_host = "127.0.0.1" if pqc_hybrid else host
+    client_port = 8883 if pqc_hybrid else port
     topic = "pqc/framework/readiness"
     message = "ready"
+    oqs_container_lookup = (
+        'oqs_container_ids=$(docker ps '
+        '--filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
+        '--filter label=com.docker.compose.service=mqtt-oqs '
+        '--filter status=running --format "{{.ID}}"); '
+        'oqs_container_count=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | wc -l); '
+        'oqs_container_id=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | head -n 1); '
+    ) if pqc_hybrid else ""
+    oqs_failure_diagnostics = (
+        'echo "oqs_container_resolution_failed count=$oqs_container_count"; '
+        'docker compose version 2>&1 || true; docker compose ls 2>&1 || true; '
+        'docker ps -a --filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
+        '--filter label=com.docker.compose.service=mqtt-oqs --no-trunc 2>&1 || true; '
+    ) if pqc_hybrid else ""
     script = (
         f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
         'attempt=$((attempt + 1)); response_file=/tmp/pqc-mqtt-ready.$$; rm -f "$response_file"; '
-        f'mosquitto_sub -h {host} -p {port} {tls_args} -t {topic} -C 1 -W 2 >"$response_file" & sub_pid=$!; '
-        'sleep 0.2; '
-        f'mosquitto_pub -h {host} -p {port} {tls_args} -t {topic} -m {message} >/dev/null 2>&1 || true; '
-        'wait "$sub_pid"; rc=$?; '
-        'response=$(paste -sd, "$response_file"); '
-        f'if [ "$rc" -eq 0 ] && [ "$response" = {message} ]; then echo "broker_ready attempt=$attempt"; exit 0; fi; '
-        f'sleep {delay_seconds}; done; echo "broker_not_ready attempts=$attempt"; exit 1'
+        f'{oqs_container_lookup}'
+        + ('if [ "$oqs_container_count" -ne 1 ]; then sleep ' + str(delay_seconds) + '; continue; fi; ' if pqc_hybrid else '')
+        + f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -t {topic} -C 1 -W 2 >"$response_file" 2>&1 & sub_pid=$!; '
+        + 'sleep 0.2; '
+        + f'{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
+        + 'wait "$sub_pid"; sub_rc=$?; '
+        + 'response=$(paste -sd, "$response_file"); '
+        + f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] && [ "$response" = {message} ]; then echo "broker_ready attempt=$attempt"; exit 0; fi; '
+        + f'sleep {delay_seconds}; done; '
+        + f'{oqs_failure_diagnostics}'
+        + 'echo "subscriber_output:"; cat /tmp/pqc-mqtt-ready.$$ 2>/dev/null || true; '
+        + 'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+        + 'echo "broker_not_ready attempts=$attempt"; exit 1'
     )
     command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
     start = time.perf_counter()
@@ -305,9 +330,12 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         broker = mqtt.get("broker", {})
         if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
             markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
-        if mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e":
+        if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
             markers.extend(("tls_handshake=passed", "reconnect=passed",
                             "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
+        if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
+            markers.extend(("evidence=stm32-st67-pqc-hybrid-tls-e2e",
+                            "pqc_group=passed", "reconnect_pqc_group=passed"))
     return tuple(markers)
 
 
@@ -327,7 +355,8 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
     expected_response_count = 2 if reconnect_attempts > 0 else 1
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
-    max_attempts = int(orchestration.get("max_publish_attempts", max(1, duration_seconds - 2)))
+    hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
+    max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
     completion_grace_seconds = int(orchestration.get("completion_grace_seconds", 3))
 
     gateway_alias = str(bundle["host"]["alias"])
@@ -335,30 +364,50 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     baud = int(bundle["host"]["uart"]["baud"])
     broker_host = shlex.quote(_mqtt_orchestration_host(bundle))
     broker_port = int(broker["port"])
-    tls_enabled = mqtt.get("evidence_class") == "stm32_st67_classical_tls_e2e"
-    tls_args = "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt" if tls_enabled else ""
+    tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+    pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
+    tls_args = ("--cafile /mosquitto/config/certs/ca.crt" if pqc_hybrid else "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt") if tls_enabled else ""
+    mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
+    mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
+    client_host = "127.0.0.1" if pqc_hybrid else broker_host
+    client_port = 8883 if pqc_hybrid else broker_port
     command_topic = shlex.quote(str(topics["command"]))
     response_topic = shlex.quote(str(topics["response"]))
     command_value = shlex.quote(command_payload)
     response_file = "/tmp/pqc-mqtt-e2e-response.$$"
     uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
+    oqs_container_setup = (
+        'oqs_container_ids=$(docker ps '
+        '--filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
+        '--filter label=com.docker.compose.service=mqtt-oqs '
+        '--filter status=running --format "{{.ID}}"); '
+        'oqs_container_count=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | wc -l); '
+        'oqs_container_id=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | head -n 1); '
+        'if [ "$oqs_container_count" -ne 1 ]; then '
+        'echo "oqs_container_resolution_failed count=$oqs_container_count"; '
+        'docker ps -a --filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
+        '--filter label=com.docker.compose.service=mqtt-oqs --no-trunc; exit 1; fi; '
+    ) if pqc_hybrid else ""
 
     script = (
+        f'{oqs_container_setup}'
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
-        f'mosquitto_sub -h {broker_host} -p {broker_port} {tls_args} -t {response_topic} -C {expected_response_count} -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
-        f'timeout {int(duration_seconds)}s cat {device} >"$uart_file" & capture_pid=$!; '
-        f"{restart_command} 1>&2; reset_rc=$?; attempts=0; "
+        f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -t {response_topic} -C {expected_response_count} -W {hard_limit_seconds} >"$response_file" & subscriber_pid=$!; '
+        f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
+        f"{restart_command} 1>&2; reset_rc=$?; attempts=0; publish_failures=0; publish_rc=0; "
         f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
         f"sleep {publish_interval}; attempts=$((attempts + 1)); "
-        f"mosquitto_pub -h {broker_host} -p {broker_port} {tls_args} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
+        f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
+        'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
         'wait "$subscriber_pid"; subscriber_rc=$?; '
         f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
         'while kill -0 "$capture_pid" 2>/dev/null; do '
         'if grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; sleep 0.2; done; '
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'wait "$capture_pid"; capture_rc=$?; '
+        'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
         'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
         'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
         'cat "$uart_file"; '
@@ -367,9 +416,10 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         'matched_count=$(grep -Fxc "$expected" "$response_file" || true); ' 
         'matched=0; [ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
         'response=$(paste -sd, "$response_file"); '
-        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
-        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={duration_seconds} raw_capture_rc=$capture_rc" 1>&2; '
-        'rm -f "$response_file" "$uart_file"; '
+        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
+        'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
+        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+        'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
         'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
     )
     ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
@@ -552,6 +602,7 @@ MQTT_TLS_EVIDENCE_CLASSES = {
     "st67w61m1_backed",
     "stm32_st67_plaintext_e2e",
     "stm32_st67_classical_tls_e2e",
+    "stm32_st67_pqc_hybrid_tls_e2e",
 }
 MQTT_TLS_TRANSPORT_BACKENDS = {
     "fake_no_network",
@@ -569,7 +620,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "stm32_runtime": {"stm32_runtime"},
     "st67w61m1": {"st67w61m1_backed"},
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
-    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e"},
+    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
 }
 MQTT_TLS_MODES = {
     "disabled",
@@ -580,6 +631,7 @@ MQTT_TLS_MODES = {
     "plaintext",
     "classical_tls_server_auth",
     "classical_tls_mutual",
+    "pqc_hybrid_tls_server_auth",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -592,8 +644,8 @@ MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "latency_ms",
     "throughput_bytes_per_second",
 }
-MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
-MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
 
 
 def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
@@ -685,7 +737,7 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
-    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e"}:
+    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
         broker_host = str(broker.get("host", "")).strip()

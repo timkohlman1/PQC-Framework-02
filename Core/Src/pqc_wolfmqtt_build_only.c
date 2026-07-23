@@ -37,6 +37,7 @@ typedef struct {
     bool tls_requested;
     bool tcp_connected;
     bool tls_handshake_complete;
+    bool pqc_group_negotiated;
     int tls_connect_result;
     int tls_error;
     int tls_io_error;
@@ -196,7 +197,13 @@ int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size)
 
 static bool PQC_WolfMQTT_TLSRequested(void)
 {
-    return strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0;
+    return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0);
+}
+
+static bool PQC_WolfMQTT_PQCHybridRequested(void)
+{
+    return strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0;
 }
 
 #ifndef PQC_WOLFMQTT_TLS_IO_TRACE
@@ -329,7 +336,8 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     if (!socket_context->tls_requested) return MQTT_CODE_SUCCESS;
 
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: context create begin\r\n");
-    socket_context->tls_ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+    socket_context->tls_ctx = wolfSSL_CTX_new(
+        PQC_WolfMQTT_PQCHybridRequested() ? wolfTLSv1_3_client_method() : wolfTLSv1_2_client_method());
     if (socket_context->tls_ctx == NULL) {
         PQC_WolfMQTT_DiagnosticCode("context_create", -1, 0);
         PQC_WolfMQTT_CloseTransport(socket_context); return -1;
@@ -337,13 +345,16 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     wolfSSL_SetIORecv(socket_context->tls_ctx, PQC_WolfSSL_IORecv);
     wolfSSL_SetIOSend(socket_context->tls_ctx, PQC_WolfSSL_IOSend);
 
-    /* Keep the embedded client and the managed Mosquitto profile on one
-     * explicit TLS 1.2 cipher suite. This suite matches the ECDSA P-256
-     * broker certificate and avoids relying on library-default overlap. */
-    result = wolfSSL_CTX_set_cipher_list(
-        socket_context->tls_ctx,
-        "ECDHE-ECDSA-AES128-GCM-SHA256");
-    PQC_WolfMQTT_DiagnosticCode("cipher_list", result, 0);
+    if (PQC_WolfMQTT_PQCHybridRequested()) {
+        int groups[] = { WOLFSSL_SECP256R1MLKEM768 };
+        result = wolfSSL_CTX_set_groups(socket_context->tls_ctx, groups, 1);
+        PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);
+    } else {
+        result = wolfSSL_CTX_set_cipher_list(
+            socket_context->tls_ctx,
+            "ECDHE-ECDSA-AES128-GCM-SHA256");
+        PQC_WolfMQTT_DiagnosticCode("cipher_list", result, 0);
+    }
     if (result != WOLFSSL_SUCCESS) {
         PQC_WolfMQTT_CloseTransport(socket_context);
         return MQTT_CODE_ERROR_TLS_CONNECT;
@@ -395,6 +406,21 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     PQC_WolfMQTT_DiagnosticCode("handshake", result, 0);
     socket_context->tls_handshake_complete = true;
+    if (PQC_WolfMQTT_PQCHybridRequested()) {
+        const char *curve_name = wolfSSL_get_curve_name(socket_context->tls);
+        char marker[192];
+        socket_context->pqc_group_negotiated =
+            (curve_name != NULL) && (strstr(curve_name, "MLKEM768") != NULL);
+        (void)snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS: protocol=TLSv1.3 configured_group=SecP256r1MLKEM768 negotiated_group=%s pqc_group=%s\r\n",
+            curve_name != NULL ? curve_name : "unavailable",
+            socket_context->pqc_group_negotiated ? "passed" : "failed");
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+        if (!socket_context->pqc_group_negotiated) {
+            PQC_WolfMQTT_CloseTransport(socket_context);
+            return MQTT_CODE_ERROR_TLS_CONNECT;
+        }
+    }
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
     return MQTT_CODE_SUCCESS;
 }
@@ -476,6 +502,7 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     status->last_result = result;
     status->tcp_connected = socket_context.tcp_connected;
     status->tls_handshake_complete = socket_context.tls_handshake_complete;
+    status->pqc_group_negotiated = socket_context.pqc_group_negotiated;
     status->tls_connect_result = socket_context.tls_connect_result;
     status->tls_error = socket_context.tls_error;
     status->tls_io_error = socket_context.tls_io_error;
@@ -514,14 +541,16 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
     if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) { reconnect_attempted=true; reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); } else memset(&second,0,sizeof(second));
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Cleanup();
     written=snprintf(buffer,size,
-      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
-      context,scheduler_running?"running":"not_started",PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e",
+      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
+      context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e"),
       PQC_WolfMQTT_BackendName(first.backend),result,first.transport_available?"available":"unavailable",first.tcp_connected?"passed":"failed",
       first.tls_handshake_complete?"passed":(PQC_WolfMQTT_TLSRequested()?"failed":"not_required"),
+      PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_negotiated?"passed":"failed"):"not_required",
       first.tls_connect_result,first.tls_error,first.tls_io_error,first.mqtt_connected?"passed":"failed",
       first.subscribed?"passed":"failed",first.message_received?"passed":"failed",first.publish_complete?"passed":"failed",
       reconnect_attempted?(reconnect_result==MQTT_CODE_SUCCESS?"passed":"failed"):"not_run",
       reconnect_attempted?(second.tls_handshake_complete?"passed":"failed"):"not_run",
+      reconnect_attempted?(PQC_WolfMQTT_PQCHybridRequested()?(second.pqc_group_negotiated?"passed":"failed"):"not_required"):"not_run",
       reconnect_attempted?(second.publish_complete?"passed":"failed"):"not_run",
       (first.publish_complete&&((PQC_MQTT_RECONNECT_ATTEMPTS==0)||second.publish_complete))?"passed":"failed",
       PQC_MQTT_BROKER_HOST,(unsigned)PQC_MQTT_BROKER_PORT,PQC_MQTT_CORRELATION_PAYLOAD);

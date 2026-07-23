@@ -83,17 +83,18 @@ services:
     ports:
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
     environment:
-      OPENSSL_CONF: "/opt/oqssa/ssl/openssl.cnf"
+      OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
       OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
     volumes:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
       - ./runtime/oqs/certs:/mosquitto/config/certs:ro
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups mlkem768 -CAfile /mosquitto/config/certs/ca.crt -cert /mosquitto/config/certs/healthcheck.crt -key /mosquitto/config/certs/healthcheck.key -verify_return_error 2>&1\" | grep -q 'Verify return code: 0 (ok)'",
+          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /mosquitto/config/certs/ca.crt -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
         ]
       interval: 30s
       timeout: 12s

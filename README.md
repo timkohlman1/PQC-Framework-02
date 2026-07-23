@@ -143,8 +143,22 @@ Get-Content (Join-Path $run.FullName "manifest.json"); Get-Content (Join-Path $r
 Provision the local classical broker certificates, then run the server-authenticated M11 experiment:
 
 ```powershell
-.\scripts\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-classical --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --host-config configs/hosts/gateway.yaml
 .\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml
 ```
 
 The build embeds only the public CA certificate. Runtime private keys remain excluded from Git and result artifacts.
+
+### PQC MQTT over TLS 1.3
+
+The initial PQC end-to-end profile is `configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml`. It uses server-authenticated TLS 1.3 with the `SecP256r1MLKEM768` hybrid key exchange and no client certificate. A passing result requires the UART evidence to report `pqc_group=passed`; a successful TLS connection using a different group is treated as failure.
+
+```powershell
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls --oqs-group SecP256r1MLKEM768 --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml
+```
+
+The broker administration commands run with host-native Python because they use the development host's SSH configuration. OQS provisioning copies only the public CA certificate back into the ignored local runtime tree for firmware embedding.

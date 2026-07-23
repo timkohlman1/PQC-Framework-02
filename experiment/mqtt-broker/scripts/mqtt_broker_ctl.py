@@ -19,7 +19,7 @@ DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
 CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
 OQS_IMAGE = "openquantumsafe/mosquitto:latest"
-OQS_KEM_GROUP = "mlkem768"
+OQS_KEM_GROUP = "SecP256r1MLKEM768"
 OQS_CA_ALGORITHM = "mldsa65"
 OQS_LEAF_ALGORITHM = "falcon512"
 BROKER_PROFILE_SERVICES = {
@@ -400,8 +400,18 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
         f"-lc {shlex.quote(script)}"
     )
     run_command(["ssh", target, command], dry_run=args.dry_run)
+
+    local_cert_dir = broker_root() / "runtime" / "oqs" / "certs"
+    local_ca_path = local_cert_dir / "ca.crt"
+    if not args.dry_run:
+        local_cert_dir.mkdir(parents=True, exist_ok=True)
+    run_command(
+        ["scp", f"{target}:{cert_dir}/ca.crt", str(local_ca_path)],
+        dry_run=args.dry_run,
+    )
     if not args.dry_run:
         print(f"Provisioned remote OQS MQTT TLS material under {cert_dir}")
+        print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
 
 
 def deploy(args: argparse.Namespace) -> None:
@@ -513,24 +523,31 @@ def validate_oqs_tls(args: argparse.Namespace) -> None:
     target = ssh_target(host)
     cert_dir = f"{args.remote_dir}/runtime/oqs/certs"
     port = str(args.oqs_port or 8884)
-    validation_script = (
-        "set -eu; "
-        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'; "
-        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'; "
-        "echo 'Evidence profile: oqs'; "
-        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'; "
-        "rm -f /tmp/pqc-oqs-tls-validate.log; "
-        "echo | openssl s_client "
-        f"-connect 127.0.0.1:{port} "
-        "-tls1_3 "
-        f"-groups {shlex.quote(args.oqs_group)} "
-        "-CAfile /certs/ca.crt "
-        "-cert /certs/client.crt "
-        "-key /certs/client.key "
-        "-verify_return_error 2>&1 | tee /tmp/pqc-oqs-tls-validate.log; "
-        "grep -q 'Verify return code: 0 (ok)' /tmp/pqc-oqs-tls-validate.log; "
-        "grep -q 'Protocol: TLSv1.3' /tmp/pqc-oqs-tls-validate.log"
-    )
+    validation_script = "\n".join([
+        "set -eu",
+        f"echo 'Evidence class: {HOST_BROKER_EVIDENCE_CLASS}'",
+        f"echo 'Evidence label: {HOST_BROKER_EVIDENCE_LABEL}'",
+        "echo 'Evidence profile: oqs'",
+        f"echo 'Evidence boundary: {HOST_BROKER_EVIDENCE_BOUNDARY}'",
+        f"echo 'Requested TLS group: {args.oqs_group}'",
+        "rm -f /tmp/pqc-oqs-tls-validate.log",
+        (
+            "if ! output=$(echo | openssl s_client "
+            f"-connect 127.0.0.1:{port} "
+            "-tls1_3 "
+            f"-groups {shlex.quote(args.oqs_group)} "
+            "-CAfile /certs/ca.crt "
+            "-verify_return_error 2>&1); then "
+            "printf '%s\\n' \"$output\" | tee /tmp/pqc-oqs-tls-validate.log; exit 1; fi"
+        ),
+        "printf '%s\\n' \"$output\" | tee /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'New, TLSv1.3' /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'Certificate chain' /tmp/pqc-oqs-tls-validate.log",
+        "! grep -q 'no peer certificate available' /tmp/pqc-oqs-tls-validate.log",
+        "! grep -q 'Cipher is (NONE)' /tmp/pqc-oqs-tls-validate.log",
+        "grep -q 'Verify return code: 0 (ok)' /tmp/pqc-oqs-tls-validate.log",
+        f"echo 'Negotiated forced TLS group: {args.oqs_group}'",
+    ])
     command = (
         f"docker run --rm --network host -v {remote_shell_path(cert_dir)}:/certs:ro --entrypoint sh {shlex.quote(args.image)} "
         f"-lc {shlex.quote('timeout 20 sh -lc ' + shlex.quote(validation_script))}"
@@ -660,7 +677,7 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--dry-run", action="store_true")
     provision.set_defaults(func=provision_classical_certs)
 
-    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS mutual-TLS material on the gateway")
+    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS server-authenticated TLS material on the gateway")
     add_common_remote_options(oqs_provision)
     oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     oqs_provision.add_argument("--extra-dns-name", action="append")
@@ -701,7 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument("--tail", type=int, default=100)
     logs_parser.set_defaults(func=logs)
 
-    validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS mutual-TLS handshake using an OQS-enabled OpenSSL client container")
+    validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)
     add_port_options(validate_oqs)
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)

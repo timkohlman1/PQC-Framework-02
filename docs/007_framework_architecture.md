@@ -605,3 +605,21 @@ For the classical server-authenticated STM32 MQTT-over-TLS experiment, reconnect
 ### MQTT UART completion and logging
 
 Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.
+
+### Hybrid PQC MQTT/TLS profile
+
+The framework includes an explicit STM32/ST67W61M1 MQTT-over-TLS 1.3 profile using `SecP256r1MLKEM768` with conventional server certificate authentication and no mutual TLS. Evidence is valid only when retained UART output records `tls_handshake=passed`, `pqc_group=passed`, the MQTT transaction stages, reconnect outcome, and `end_to_end=passed`. Classical fallback is not accepted as PQC evidence. Hardware success remains unverified until a recorded gateway experiment supplies those markers and matching broker logs.
+
+
+OQS gateway orchestration resolves the running broker container by Docker Compose project/service labels and uses direct `docker exec` for the OQS-enabled MQTT clients. Readiness requires exactly one running `mqtt-oqs` container, zero exit status from both subscriber and publisher, and an exact response payload. This avoids treating Compose service-discovery inconsistencies as broker failures and preserves explicit diagnostics when container resolution fails.
+
+### OQS MQTT broker TLS group configuration
+
+The OQS Mosquitto profile mounts a project-owned OpenSSL configuration that activates the default and OQS providers and sets the TLS default group to `SecP256r1MLKEM768`. This is required because provider algorithm availability alone does not make the Mosquitto server context select that hybrid key share. OQS certificate provisioning runs on the gateway and copies only the public CA certificate back to the ignored local runtime tree for firmware embedding. The host-side TLS validator requires a successful OpenSSL exit, a presented peer certificate, a negotiated non-`NONE` cipher, TLS 1.3, and successful certificate verification; broker-side validation remains host/broker evidence only.
+
+
+### PQC MQTT TLS group and capture requirements
+
+The STM32 wolfSSL profile for `SecP256r1MLKEM768` must enable the current wolfSSL ML-KEM feature guards `WOLFSSL_HAVE_MLKEM` and `WOLFSSL_PQC_HYBRIDS`. Legacy Kyber-only macros are not sufficient because the pinned wolfSSL supported-group API only registers the hybrid named group under those guards.
+
+The PQC MQTT experiment sets a 60-second UART hard limit because ST67 initialization, Wi-Fi association, DHCP, DNS and the hybrid TLS handshake all occur inside the same capture. Successful runs still terminate early after the explicit completion marker and configured grace interval. After the capture process exits, orchestration performs a final marker check to avoid misclassifying a marker written at the timeout boundary. MQTT command publisher failures are counted and retained in the result evidence rather than suppressed.

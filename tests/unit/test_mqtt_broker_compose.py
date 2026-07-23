@@ -358,38 +358,37 @@ def test_mqtt_remote_cleanup_command_removes_root_owned_mosquitto_paths():
     assert "'~/" not in command
 
 
-def test_oqs_mosquitto_config_enforces_mutual_tls_with_project_certs():
+def test_oqs_mosquitto_config_enforces_server_authenticated_tls_with_project_certs():
     config = _read(BROKER_ROOT / "config" / "oqs" / "mosquitto.conf")
-    acl = _read(BROKER_ROOT / "config" / "oqs" / "aclfile")
 
     assert "listener 8883 0.0.0.0" in config
     assert "tls_version tlsv1.3" in config
     assert "allow_anonymous false" in config
-    assert "require_certificate true" in config
-    assert "use_identity_as_username true" in config
+    assert "require_certificate false" in config
+    assert "use_identity_as_username false" in config
     assert "cafile /mosquitto/config/certs/ca.crt" in config
     assert "certfile /mosquitto/config/certs/server.crt" in config
     assert "keyfile /mosquitto/config/certs/server.key" in config
     assert "acl_file /tmp/mosquitto-aclfile" in config
-    assert "user mosquitto" not in config
     assert "user nobody" in config
-    assert "user pqc-mqtt-client" in acl
-    assert "user pqc-mqtt-server-healthcheck" in acl
 
-
-def test_oqs_compose_uses_project_managed_mutual_tls_mounts_and_healthcheck():
+def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthcheck():
     compose = _read(BROKER_ROOT / "compose.yaml")
+    openssl_config = _read(BROKER_ROOT / "config" / "oqs" / "openssl.cnf")
 
     assert "./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in compose
+    assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
     assert "./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro" in compose
     assert "./runtime/oqs/certs:/mosquitto/config/certs:ro" in compose
-    assert "OPENSSL_CONF" in compose
+    assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "OPENSSL_MODULES" in compose
-    assert "-groups mlkem768" in compose
-    assert "healthcheck.crt" in compose
-    assert "healthcheck.key" in compose
+    assert "-groups SecP256r1MLKEM768" in compose
+    assert "New, TLSv1.3" in compose
+    assert "Certificate chain" in compose
+    assert "Cipher is (NONE)" in compose
     assert "Verify return code: 0 (ok)" in compose
-
+    assert "Groups = SecP256r1MLKEM768" in openssl_config
+    assert "oqsprovider = oqsprovider_sect" in openssl_config
 
 def test_mqtt_control_script_has_provision_and_validation_subcommands():
     module = _load_ctl_module()
@@ -404,7 +403,7 @@ def test_mqtt_control_script_has_provision_and_validation_subcommands():
     assert oqs.ca_algorithm == "mldsa65"
     assert oqs.leaf_algorithm == "falcon512"
     assert validate.command == "validate-oqs-tls"
-    assert validate.oqs_group == "mlkem768"
+    assert validate.oqs_group == "SecP256r1MLKEM768"
     assert classical_mqtt.command == "validate-classical-mqtt"
     assert classical_mqtt.topic == "pqc/test/e2e"
     assert classical_mqtt.message == "pqc-classical-mqtt-e2e"
@@ -504,9 +503,11 @@ def test_mqtt_oqs_cert_provisioning_runs_on_gateway_with_oqs_provider_image(tmp_
     assert "openssl genpkey -algorithm falcon512 -out /certs/client.key" in command_text
     assert "IP.2 = 10.1.1.18" in command_text
     assert "$HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs" in command_text
+    assert "scp timk@pqc-gateway1:~/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs/ca.crt" in command_text
+    assert "experiment/mqtt-broker/runtime/oqs/certs/ca.crt" in command_text.replace("\\", "/")
 
 
-def test_mqtt_oqs_tls_validation_uses_client_certificate_and_mlkem_group(tmp_path, monkeypatch):
+def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshake(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
@@ -531,12 +532,16 @@ def test_mqtt_oqs_tls_validation_uses_client_certificate_and_mlkem_group(tmp_pat
     assert "openquantumsafe/mosquitto:latest" in command_text
     assert "--network host" in command_text
     assert "-connect 127.0.0.1:28884" in command_text
-    assert "-groups mlkem768" in command_text
+    assert "-groups SecP256r1MLKEM768" in command_text
     assert "-CAfile /certs/ca.crt" in command_text
-    assert "-cert /certs/client.crt" in command_text
-    assert "-key /certs/client.key" in command_text
+    assert "-cert /certs/client.crt" not in command_text
+    assert "-key /certs/client.key" not in command_text
     assert "-verify_return_error" in command_text
-
+    assert "New, TLSv1.3" in command_text
+    assert "Certificate chain" in command_text
+    assert "no peer certificate available" in command_text
+    assert "Cipher is (NONE)" in command_text
+    assert "Verify return code: 0 (ok)" in command_text
 
 
 def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
