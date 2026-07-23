@@ -146,11 +146,22 @@ def test_classical_certificate_provisioning_defaults_to_selected_fqdn():
     )
 
 
-def test_runtime_server_certificate_profile_contains_selected_fqdn_san():
-    profile = Path(
-        "experiment/mqtt-broker/runtime/classical/certs/server-openssl.cnf"
-    ).read_text(encoding="utf-8")
-    assert "pqc-gateway1.pqcnet" in profile
+def test_server_certificate_profile_contains_selected_fqdn_san(tmp_path):
+    module = _load_mqtt_broker_ctl_module()
+    profile_path = tmp_path / "server-openssl.cnf"
+
+    module.write_server_openssl_config(
+        profile_path,
+        ["pqc-gateway1.pqcnet", "pqc-gateway1", "localhost"],
+        ["127.0.0.1"],
+    )
+
+    profile = profile_path.read_text(encoding="utf-8")
+
+    assert "CN = pqc-gateway1.pqcnet" in profile
+    assert "DNS.1 = pqc-gateway1.pqcnet" in profile
+    assert "DNS.2 = pqc-gateway1" in profile
+    assert "DNS.3 = localhost" in profile
 
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
