@@ -860,6 +860,8 @@ def execute_build(
         build_skip_reason=skip_reason,
         build_skip_detail=skip_detail,
         force_rebuild=force,
+        build_purpose=build_purpose,
+        build_identity=build_identity_value,
     )
 
     build_record_path = None
