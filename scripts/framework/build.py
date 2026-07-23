@@ -9,6 +9,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -400,6 +401,21 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
     ca_pem = ""
+    ca_sha256 = ""
+    server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
+    if tls.get("mode") == "pqc_hybrid_tls_server_auth":
+        if not server_signature_algorithm:
+            raise ValueError(
+                "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
+                "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
+            )
+        supported_server_signature_algorithms = {"mldsa65"}
+        if server_signature_algorithm not in supported_server_signature_algorithms:
+            raise ValueError(
+                "MQTT TLS server signature algorithm " + server_signature_algorithm
+                + " is incompatible with the STM32 wolfSSL profile; supported algorithms: "
+                + ", ".join(sorted(supported_server_signature_algorithms))
+            )
     ca_reference = certificate_refs.get("ca_certificate") if isinstance(certificate_refs, dict) else None
     if ca_reference:
         ca_path = repo_root / str(ca_reference)
@@ -409,6 +425,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
                 + ". Provision the classical broker certificates before building."
             )
         ca_pem = ca_path.read_text(encoding="utf-8")
+        ca_sha256 = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
         if "BEGIN CERTIFICATE" not in ca_pem:
             raise ValueError(f"MQTT TLS CA certificate is not PEM encoded: {ca_path}")
     def esc(value: str) -> str:
@@ -432,6 +449,8 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_TLS_MODE "{esc(str(tls.get("mode", "plaintext")))}"\n'
         f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{ca_sha256}"\n'
+        f'#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "{esc(server_signature_algorithm)}"\n'
         f'#define PQC_MQTT_RECONNECT_ATTEMPTS {int(mqtt.get("reconnect_attempts", 0))}\n'
         "#endif\n", encoding="utf-8")
     return path

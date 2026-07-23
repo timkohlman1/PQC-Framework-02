@@ -354,3 +354,10 @@ def test_pqc_command_publisher_failures_are_retained():
     assert 'last_publish_rc=$publish_rc' in source
     assert 'mosquitto_pub' in source
     assert 'publish_rc=$?' in source
+
+
+def test_mqtt_uart_completion_is_observed_before_waiting_for_subscriber():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
+    assert capture_block.index('grep -Fq "$completion_marker" "$uart_file"') < capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
+    assert "duration_seconds=hard_limit_seconds" in capture_block

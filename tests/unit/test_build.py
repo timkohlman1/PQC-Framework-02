@@ -1537,3 +1537,74 @@ def test_generated_wifi_header_contains_experiment_dns_requirement(tmp_path):
     header = _write_wifi_config_header(bundle, tmp_path, "Debug").read_text(encoding="utf-8")
     assert '#define PQC_MQTT_BROKER_HOST "pqc-gateway1.pqcnet"' in header
     assert "#define PQC_MQTT_DNS_REQUIRED 1" in header
+
+
+def test_pqc_hybrid_wifi_header_requires_explicit_supported_server_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {"mode": "pqc_hybrid_tls_server_auth"},
+            }
+        }
+    }
+
+    try:
+        _write_wifi_config_header(bundle, tmp_path, "Debug")
+    except ValueError as error:
+        assert "missing tls.server_signature_algorithm" in str(error)
+    else:
+        raise AssertionError("missing PQC server signature algorithm was accepted")
+
+
+def test_pqc_hybrid_wifi_header_rejects_falcon_leaf_profile(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "falcon512",
+                },
+            }
+        }
+    }
+
+    try:
+        _write_wifi_config_header(bundle, tmp_path, "Debug")
+    except ValueError as error:
+        assert "falcon512 is incompatible" in str(error)
+        assert "mldsa65" in str(error)
+    else:
+        raise AssertionError("incompatible Falcon server signature algorithm was accepted")
+
+
+def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    ca_path = tmp_path / "runtime" / "ca.crt"
+    ca_path.parent.mkdir(parents=True)
+    ca_pem = "-----BEGIN CERTIFICATE-----\ntest-public-ca\n-----END CERTIFICATE-----\n"
+    ca_path.write_text(ca_pem, encoding="utf-8")
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "mldsa65",
+                    "certificate_refs": {"ca_certificate": "runtime/ca.crt"},
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    expected_hash = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
+    assert f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{expected_hash}"' in text
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "mldsa65"' in text

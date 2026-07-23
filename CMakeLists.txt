@@ -95,6 +95,8 @@ set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sp_int.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
+    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mldsa.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
 )
 

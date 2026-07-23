@@ -397,15 +397,15 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -t {response_topic} -C {expected_response_count} -W {hard_limit_seconds} >"$response_file" & subscriber_pid=$!; '
         f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
         f"{restart_command} 1>&2; reset_rc=$?; attempts=0; publish_failures=0; publish_rc=0; "
-        f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
+        f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
+        f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
+        'if grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
         f"sleep {publish_interval}; attempts=$((attempts + 1)); "
         f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
         'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
-        'wait "$subscriber_pid"; subscriber_rc=$?; '
-        f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
-        'while kill -0 "$capture_pid" 2>/dev/null; do '
-        'if grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; sleep 0.2; done; '
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
+        'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
+        'wait "$subscriber_pid"; subscriber_rc=$?; '
         'wait "$capture_pid"; capture_rc=$?; '
         'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
         'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
@@ -443,7 +443,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     broker_log_rc = 1
     broker_stop_rc = 1
     try:
-        uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=duration_seconds, restart_command=restart_command)
+        uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=hard_limit_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
         capture_marker = _parse_mqtt_uart_capture_marker(uart_result.capture.stderr)
         missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers(bundle) if item not in uart_result.capture.stdout]

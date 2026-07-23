@@ -122,3 +122,48 @@ def test_pqc_hybrid_group_array_matches_mutable_wolfssl_api():
 
     assert "int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" in source
     assert "const int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" not in source
+
+def test_mlkem_portable_implementation_sources_are_wired_without_arch_assembly():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+
+    assert "wolfcrypt/src/wc_mlkem.c" in cmake
+    assert "wolfcrypt/src/wc_mlkem_poly.c" in cmake
+    assert "wolfcrypt/src/wc_mlkem_asm.S" not in cmake
+
+
+
+def test_mldsa_portable_verifier_and_ca_status_are_wired():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert "wolfcrypt/src/wc_mldsa.c" in cmake
+    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+    assert "pqc_group_config=%s ca_load=%s pqc_group=%s" in source
+
+
+def test_handshake_instrumentation_does_not_change_network_task_size():
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert ".stack_size = 2048 * 4" in main_c
+    assert "wolfMQTT TLS handshake boundary: stage=%s" in mqtt_source
+
+
+def test_mlkem_resource_controls_avoid_large_client_key_share_stack_object():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    assert "WOLFSSL_SMALL_STACK" in settings
+    assert "WOLFSSL_TLSX_PQC_MLKEM_STORE_OBJ" in settings
+    assert "WOLFSSL_MLKEM_MAKEKEY_SMALL_MEM" in settings
+
+
+def test_clienthello_diagnostics_do_not_log_key_share_payload():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    diagnostic_start = source.index(
+        "static void PQC_WolfMQTT_DiagnosticClientHelloSignatureAlgorithms"
+    )
+    diagnostic_end = source.index(
+        "static int PQC_WolfSSL_IOSend", diagnostic_start
+    )
+    diagnostic = source[diagnostic_start:diagnostic_end]
+    assert "0x000dU" in diagnostic
+    assert "0x0032U" in diagnostic
+    assert "0x0033U" not in diagnostic
+    assert "key_share" not in diagnostic

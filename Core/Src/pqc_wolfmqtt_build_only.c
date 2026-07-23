@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "lwip/inet.h"
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
@@ -37,6 +39,8 @@ typedef struct {
     bool tls_requested;
     bool tcp_connected;
     bool tls_handshake_complete;
+    bool pqc_group_configured;
+    bool ca_loaded;
     bool pqc_group_negotiated;
     int tls_connect_result;
     int tls_error;
@@ -63,6 +67,30 @@ static void PQC_WolfMQTT_DiagnosticCode(const char *stage, int result, int error
     char marker[160];
     int written = snprintf(marker, sizeof(marker),
         "wolfMQTT TLS: stage=%s result=%d error=%d\r\n", stage, result, error);
+    if ((written > 0) && ((size_t)written < sizeof(marker))) {
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+}
+
+
+static void PQC_WolfMQTT_DiagnosticHandshakeBoundary(
+    const char *stage, uint32_t started_ms)
+{
+    char marker[224];
+    uint32_t now_ms = HAL_GetTick();
+    UBaseType_t minimum_free_words = uxTaskGetStackHighWaterMark(NULL);
+    size_t heap_free_bytes = xPortGetFreeHeapSize();
+    size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
+    int written = snprintf(marker, sizeof(marker),
+        "wolfMQTT TLS handshake boundary: stage=%s tick_ms=%lu elapsed_ms=%lu "
+        "task_stack_minimum_free_bytes=%lu heap_free_bytes=%lu "
+        "heap_min_ever_free_bytes=%lu\r\n",
+        stage,
+        (unsigned long)now_ms,
+        (unsigned long)(now_ms - started_ms),
+        (unsigned long)(minimum_free_words * sizeof(StackType_t)),
+        (unsigned long)heap_free_bytes,
+        (unsigned long)heap_min_free_bytes);
     if ((written > 0) && ((size_t)written < sizeof(marker))) {
         PQC_WolfMQTT_DiagnosticMarker(marker);
     }
@@ -230,6 +258,10 @@ static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *cont
     (void)ssl;
 
     socket_context->tls_recv_calls++;
+    if (socket_context->tls_recv_calls == 1U) {
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS IO: direction=recv stage=first_callback_entry\r\n");
+    }
     errno = 0;
     result = lwip_recv(socket_context->socket_fd, buffer, (size_t)length, 0);
     saved_errno = errno;
@@ -259,6 +291,130 @@ static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *cont
     return WOLFSSL_CBIO_ERR_GENERAL;
 }
 
+
+static unsigned int PQC_WolfMQTT_ReadUint16(const unsigned char *input)
+{
+    return ((unsigned int)input[0] << 8) | (unsigned int)input[1];
+}
+
+static void PQC_WolfMQTT_DiagnosticSignatureExtension(
+    const char *name, const unsigned char *data, size_t data_length)
+{
+    char marker[320];
+    size_t offset = 0U;
+    int written;
+
+    written = snprintf(marker, sizeof(marker),
+        "wolfMQTT TLS ClientHello: extension=%s length=%lu schemes=",
+        name, (unsigned long)data_length);
+    if ((written <= 0) || ((size_t)written >= sizeof(marker))) {
+        return;
+    }
+    offset = (size_t)written;
+
+    if (data_length < 2U) {
+        (void)snprintf(marker + offset, sizeof(marker) - offset, "malformed\r\n");
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+        return;
+    }
+
+    {
+        size_t list_length = (size_t)PQC_WolfMQTT_ReadUint16(data);
+        size_t index;
+        if ((list_length + 2U > data_length) || ((list_length % 2U) != 0U)) {
+            (void)snprintf(marker + offset, sizeof(marker) - offset,
+                "malformed\r\n");
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+            return;
+        }
+
+        for (index = 0U; index < list_length; index += 2U) {
+            unsigned int scheme = PQC_WolfMQTT_ReadUint16(data + 2U + index);
+            int appended = snprintf(marker + offset, sizeof(marker) - offset,
+                "%s0x%04x", index == 0U ? "" : ",", scheme);
+            if ((appended <= 0) ||
+                ((size_t)appended >= (sizeof(marker) - offset))) {
+                break;
+            }
+            offset += (size_t)appended;
+        }
+    }
+
+    if (offset + 3U < sizeof(marker)) {
+        marker[offset++] = '\r';
+        marker[offset++] = '\n';
+        marker[offset] = '\0';
+    }
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+}
+
+static void PQC_WolfMQTT_DiagnosticClientHelloSignatureAlgorithms(
+    const unsigned char *record, size_t record_length)
+{
+    size_t position;
+    size_t extensions_end;
+
+    /* TLS record header, ClientHello handshake header and fixed fields. */
+    if ((record == NULL) || (record_length < 44U) ||
+        (record[0] != 0x16U) || (record[5] != 0x01U)) {
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS ClientHello: signature_extensions=unavailable reason=not_complete_client_hello\r\n");
+        return;
+    }
+
+    position = 9U + 2U + 32U;
+    if (position >= record_length) return;
+
+    /* Legacy session ID. */
+    position += 1U + (size_t)record[position];
+    if (position + 2U > record_length) return;
+
+    /* Cipher suites. */
+    {
+        size_t suites_length = (size_t)PQC_WolfMQTT_ReadUint16(record + position);
+        position += 2U + suites_length;
+    }
+    if (position >= record_length) return;
+
+    /* Legacy compression methods. */
+    position += 1U + (size_t)record[position];
+    if (position + 2U > record_length) return;
+
+    {
+        size_t extensions_length =
+            (size_t)PQC_WolfMQTT_ReadUint16(record + position);
+        position += 2U;
+        if (position + extensions_length > record_length) {
+            PQC_WolfMQTT_DiagnosticMarker(
+                "wolfMQTT TLS ClientHello: signature_extensions=unavailable reason=fragmented_extensions\r\n");
+            return;
+        }
+        extensions_end = position + extensions_length;
+    }
+
+    while (position + 4U <= extensions_end) {
+        unsigned int extension_type =
+            PQC_WolfMQTT_ReadUint16(record + position);
+        size_t extension_length =
+            (size_t)PQC_WolfMQTT_ReadUint16(record + position + 2U);
+        position += 4U;
+        if (position + extension_length > extensions_end) {
+            break;
+        }
+
+        if (extension_type == 0x000dU) {
+            PQC_WolfMQTT_DiagnosticSignatureExtension(
+                "signature_algorithms", record + position, extension_length);
+        }
+        else if (extension_type == 0x0032U) {
+            PQC_WolfMQTT_DiagnosticSignatureExtension(
+                "signature_algorithms_cert", record + position,
+                extension_length);
+        }
+        position += extension_length;
+    }
+}
+
 static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *context)
 {
     PQC_WolfMQTTSocketContext *socket_context = context;
@@ -271,6 +427,18 @@ static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *cont
     (void)ssl;
 
     socket_context->tls_send_calls++;
+    if (socket_context->tls_send_calls == 1U) {
+        PQC_WolfMQTT_DiagnosticClientHelloSignatureAlgorithms(
+            (const unsigned char *)buffer, (size_t)length);
+        char first_send_marker[160];
+        int first_send_written = snprintf(first_send_marker, sizeof(first_send_marker),
+            "wolfMQTT TLS IO: direction=send stage=first_callback_entry requested=%d\r\n",
+            length);
+        if ((first_send_written > 0) &&
+            ((size_t)first_send_written < sizeof(first_send_marker))) {
+            PQC_WolfMQTT_DiagnosticMarker(first_send_marker);
+        }
+    }
     errno = 0;
     result = lwip_send(socket_context->socket_fd, buffer, (size_t)length, 0);
     saved_errno = errno;
@@ -348,6 +516,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     if (PQC_WolfMQTT_PQCHybridRequested()) {
         int groups[] = { WOLFSSL_SECP256R1MLKEM768 };
         result = wolfSSL_CTX_set_groups(socket_context->tls_ctx, groups, 1);
+        socket_context->pqc_group_configured = (result == WOLFSSL_SUCCESS);
         PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);
     } else {
         result = wolfSSL_CTX_set_cipher_list(
@@ -384,9 +553,21 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         return MQTT_CODE_ERROR_TLS_CONNECT;
     }
 
+    {
+        char marker[224];
+        int written = snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS trust anchor: pem_sha256=%s server_signature_algorithm=%s\r\n",
+            PQC_MQTT_TLS_CA_PEM_SHA256,
+            PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM);
+        if ((written > 0) && ((size_t)written < sizeof(marker))) {
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+        }
+    }
+
     result = wolfSSL_CTX_load_verify_buffer(socket_context->tls_ctx,
         (const unsigned char *)PQC_MQTT_TLS_CA_PEM,
         (long)strlen(PQC_MQTT_TLS_CA_PEM), WOLFSSL_FILETYPE_PEM);
+    socket_context->ca_loaded = (result == WOLFSSL_SUCCESS);
     PQC_WolfMQTT_DiagnosticCode("ca_load", result, 0);
     if (result != WOLFSSL_SUCCESS) {
         PQC_WolfMQTT_CloseTransport(socket_context);
@@ -395,7 +576,12 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     wolfSSL_SetIOReadCtx(socket_context->tls, socket_context);
     wolfSSL_SetIOWriteCtx(socket_context->tls, socket_context);
 
-    result = wolfSSL_connect(socket_context->tls);
+    {
+        uint32_t handshake_started_ms = HAL_GetTick();
+        PQC_WolfMQTT_DiagnosticHandshakeBoundary("before_connect", handshake_started_ms);
+        result = wolfSSL_connect(socket_context->tls);
+        PQC_WolfMQTT_DiagnosticHandshakeBoundary("after_connect", handshake_started_ms);
+    }
     socket_context->tls_connect_result = result;
     if (result != WOLFSSL_SUCCESS) {
         int error = wolfSSL_get_error(socket_context->tls, result);
@@ -502,6 +688,8 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     status->last_result = result;
     status->tcp_connected = socket_context.tcp_connected;
     status->tls_handshake_complete = socket_context.tls_handshake_complete;
+    status->pqc_group_configured = socket_context.pqc_group_configured;
+    status->ca_loaded = socket_context.ca_loaded;
     status->pqc_group_negotiated = socket_context.pqc_group_negotiated;
     status->tls_connect_result = socket_context.tls_connect_result;
     status->tls_error = socket_context.tls_error;
@@ -541,11 +729,13 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
     if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) { reconnect_attempted=true; reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); } else memset(&second,0,sizeof(second));
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Cleanup();
     written=snprintf(buffer,size,
-      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
+      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s pqc_group_config=%s ca_load=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
       context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e"),
       PQC_WolfMQTT_BackendName(first.backend),result,first.transport_available?"available":"unavailable",first.tcp_connected?"passed":"failed",
       first.tls_handshake_complete?"passed":(PQC_WolfMQTT_TLSRequested()?"failed":"not_required"),
-      PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_negotiated?"passed":"failed"):"not_required",
+      PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_configured?"passed":"failed"):"not_required",
+      PQC_WolfMQTT_TLSRequested()?(first.ca_loaded?"passed":"failed"):"not_required",
+      PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_negotiated?"passed":(first.tls_handshake_complete?"failed":"not_run")):"not_required",
       first.tls_connect_result,first.tls_error,first.tls_io_error,first.mqtt_connected?"passed":"failed",
       first.subscribed?"passed":"failed",first.message_received?"passed":"failed",first.publish_complete?"passed":"failed",
       reconnect_attempted?(reconnect_result==MQTT_CODE_SUCCESS?"passed":"failed"):"not_run",

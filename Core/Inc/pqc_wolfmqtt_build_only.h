@@ -27,6 +27,8 @@ typedef struct
     bool message_received;
     bool publish_complete;
     bool tls_handshake_complete;
+    bool pqc_group_configured;
+    bool ca_loaded;
     bool pqc_group_negotiated;
     bool reconnect_complete;
     int tls_connect_result;

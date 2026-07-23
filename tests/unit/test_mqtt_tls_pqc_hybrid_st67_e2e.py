@@ -14,11 +14,17 @@ def test_stm32_wolfssl_enables_tls13_mlkem768_and_strict_group_check():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-    for marker in ("WOLFSSL_TLS13", "WOLFSSL_HAVE_MLKEM", "WOLFSSL_PQC_HYBRIDS", "WOLFSSL_NO_ML_KEM_512", "WOLFSSL_NO_ML_KEM_1024", "WOLFSSL_SHA3"):
+    for marker in ("WOLFSSL_TLS13", "WOLFSSL_HAVE_MLKEM", "WOLFSSL_PQC_HYBRIDS", "WOLFSSL_NO_ML_KEM_512", "WOLFSSL_NO_ML_KEM_1024", "WOLFSSL_SHA3", "WOLFSSL_SHAKE128", "WOLFSSL_SHAKE256"):
         assert marker in settings
     assert "WOLFSSL_NO_TLS13" not in settings
-    for source_file in ("src/tls13.c", "wolfcrypt/src/sha3.c", "wolfcrypt/src/wc_mlkem.c"):
+    for source_file in (
+        "src/tls13.c",
+        "wolfcrypt/src/sha3.c",
+        "wolfcrypt/src/wc_mlkem.c",
+        "wolfcrypt/src/wc_mlkem_poly.c",
+    ):
         assert source_file in cmake
+    assert "wolfcrypt/src/wc_mlkem_asm.S" not in cmake
     for marker in ("wolfTLSv1_3_client_method", "WOLFSSL_SECP256R1MLKEM768", "wolfSSL_CTX_set_groups", "wolfSSL_get_curve_name", 'strstr(curve_name, "MLKEM768")', "pqc_group=%s"):
         assert marker in source
 
@@ -58,3 +64,46 @@ def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     hybrid_case = "case WOLFSSL_SECP256R1MLKEM768:"
     assert hybrid_case in api
     assert api.index("#ifdef WOLFSSL_PQC_HYBRIDS") < api.index(hybrid_case)
+
+
+def test_mldsa_65_ca_verification_support_is_wired():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    for marker in ("WOLFSSL_HAVE_MLDSA", "WOLFSSL_MLDSA_VERIFY_ONLY", "WOLFSSL_NO_ML_DSA_44", "WOLFSSL_NO_ML_DSA_87"):
+        assert marker in settings
+    assert "wolfcrypt/src/wc_mldsa.c" in cmake
+    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+
+
+def test_tls_handshake_boundary_instrumentation_is_wired():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("before_connect"' in source
+    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("after_connect"' in source
+    assert "uxTaskGetStackHighWaterMark(NULL)" in source
+    assert "xPortGetFreeHeapSize()" in source
+    assert "xPortGetMinimumEverFreeHeapSize()" in source
+    assert "direction=send stage=first_callback_entry" in source
+    assert "direction=recv stage=first_callback_entry" in source
+
+
+def test_mlkem_client_key_share_uses_bounded_stack_and_scratch_memory():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
+    experiment = Path(
+        "configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "#define WOLFSSL_SMALL_STACK" in settings
+    assert "#define WOLFSSL_TLSX_PQC_MLKEM_STORE_OBJ" in settings
+    assert "#define WOLFSSL_MLKEM_MAKEKEY_SMALL_MEM" in settings
+    assert "hard_limit_seconds: 180" in experiment
+
+
+def test_clienthello_signature_algorithm_diagnostics_are_wired():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert "PQC_WolfMQTT_DiagnosticClientHelloSignatureAlgorithms" in source
+    assert 'extension="signature_algorithms"' not in source
+    assert '"signature_algorithms"' in source
+    assert '"signature_algorithms_cert"' in source
+    assert "0x000dU" in source
+    assert "0x0032U" in source
+    assert "0x%04x" in source

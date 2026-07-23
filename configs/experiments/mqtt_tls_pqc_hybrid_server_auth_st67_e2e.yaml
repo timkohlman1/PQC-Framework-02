@@ -33,10 +33,11 @@ mqtt:
   orchestration:
     host: 10.1.1.18
     completion_grace_seconds: 3
-    hard_limit_seconds: 60
+    hard_limit_seconds: 180
   tls:
     mode: pqc_hybrid_tls_server_auth
     key_exchange_group: SecP256r1MLKEM768
+    server_signature_algorithm: mldsa65
     certificate_refs:
       ca_certificate: experiment/mqtt-broker/runtime/oqs/certs/ca.crt
   result_schema:

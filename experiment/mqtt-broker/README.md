@@ -45,9 +45,9 @@ This creates a local development CA, localhost server certificate, and client ce
 
 ## Provision remote OQS TLS material
 
-The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithms are `mldsa65` for the CA and `falcon512` for the leaf certificates. The hybrid TLS group is `SecP256r1MLKEM768`.
+The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithm is `mldsa65` for both the CA and leaf certificates. This matches the STM32 wolfSSL profile, which enables ML-DSA-65 verification and does not enable Falcon. The hybrid TLS group is `SecP256r1MLKEM768`.
 
-Run gateway broker administration with the active host Python environment. Do not use `dev.ps1 run` for these SSH-dependent commands unless the container has the required SSH configuration and gateway hostname resolution.
+Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct script invocation below is the supported host-native administration path because it uses the host SSH configuration. The framework-level `dev.ps1 experiment mqtt-broker-experiment` command remains the normal recorded orchestration path.
 
 Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
 
@@ -56,7 +56,7 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Provisioning copies only the public OQS CA certificate back to `experiment/mqtt-broker/runtime/oqs/certs/ca.crt` for firmware embedding. Private keys remain on the gateway.
+Provisioning verifies the generated chain and the server certificate/private-key match before succeeding. It copies the public OQS CA certificate and non-secret certificate provenance back under `experiment/mqtt-broker/runtime/oqs/certs/` for firmware embedding and inspection. Private keys remain on the gateway.
 
 Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
@@ -258,3 +258,9 @@ Provision OQS certificates after deployment. The provisioning command retrieves 
 ### OQS container resolution
 
 Gateway-managed OQS readiness and STM32 command/response orchestration resolve the running `mqtt-oqs` container by its Docker Compose project and service labels, then invoke the bundled OQS-enabled `mosquitto_sub` and `mosquitto_pub` with `docker exec`. The workflow does not rely on `docker compose exec`, because some gateway Compose versions may list the project while failing to resolve its running service. Readiness requires exactly one running labelled container, successful subscriber and publisher exit codes, and the exact `ready` payload. Failure logs retain container-resolution and client output diagnostics.
+
+## OQS certificate compatibility boundary
+
+The STM32 PQC TLS profile currently supports `mldsa65` for server authentication. The experiment configuration must declare `mqtt.tls.server_signature_algorithm: mldsa65`. The build fails before compilation when the configured server signature algorithm is missing or incompatible. Changing the public CA certificate changes the firmware build fingerprint and regenerates the embedded trust anchor.
+
+Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS clients may support Falcon, but that does not establish compatibility with the firmware client.

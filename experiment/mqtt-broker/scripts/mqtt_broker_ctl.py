@@ -21,7 +21,7 @@ CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
 OQS_IMAGE = "openquantumsafe/mosquitto:latest"
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
 OQS_CA_ALGORITHM = "mldsa65"
-OQS_LEAF_ALGORITHM = "falcon512"
+OQS_LEAF_ALGORITHM = "mldsa65"
 BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
     "classical-server-auth": "mqtt-classical-server-auth",
@@ -393,6 +393,22 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
         f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/healthcheck.key",
         "openssl req -new -key /certs/healthcheck.key -out /certs/healthcheck.csr -config /certs/healthcheck-openssl.cnf",
         f"openssl x509 -req -in /certs/healthcheck.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/healthcheck.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/healthcheck-openssl.cnf",
+        "openssl verify -CAfile /certs/ca.crt /certs/server.crt /certs/client.crt /certs/healthcheck.crt",
+        "openssl pkey -in /certs/server.key -pubout -out /tmp/server-key.pub",
+        "openssl x509 -in /certs/server.crt -pubkey -noout -out /tmp/server-cert.pub",
+        "cmp /tmp/server-key.pub /tmp/server-cert.pub",
+        "{ "
+        "echo oqs_certificate_profile_version=1; "
+        f"echo ca_algorithm={shlex.quote(args.ca_algorithm)}; "
+        f"echo leaf_algorithm={shlex.quote(args.leaf_algorithm)}; "
+        "openssl x509 -in /certs/ca.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
+        "openssl x509 -in /certs/server.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
+        "echo server_certificate_text_begin; "
+        "openssl x509 -in /certs/server.crt -noout -text; "
+        "echo server_certificate_text_end; "
+        "echo chain_verified=true; echo server_private_key_match_verified=true; "
+        "} > /certs/certificate-provenance.txt",
+        "rm -f /tmp/server-key.pub /tmp/server-cert.pub",
         "chmod -R a+rX /certs",
     ])
     command = (
@@ -409,9 +425,15 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
         ["scp", f"{target}:{cert_dir}/ca.crt", str(local_ca_path)],
         dry_run=args.dry_run,
     )
+    local_provenance_path = local_cert_dir / "certificate-provenance.txt"
+    run_command(
+        ["scp", f"{target}:{cert_dir}/certificate-provenance.txt", str(local_provenance_path)],
+        dry_run=args.dry_run,
+    )
     if not args.dry_run:
-        print(f"Provisioned remote OQS MQTT TLS material under {cert_dir}")
+        print(f"Provisioned and verified remote OQS MQTT TLS material under {cert_dir}")
         print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
+        print(f"Copied public certificate provenance to {display_path(local_provenance_path)}")
 
 
 def deploy(args: argparse.Namespace) -> None:
