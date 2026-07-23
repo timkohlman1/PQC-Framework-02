@@ -233,3 +233,9 @@ Phase M11 keeps two distinct classical TLS profiles:
 - `classical` retains the existing mutual-TLS listener and client-certificate requirement.
 
 Provision the runtime certificates before building the server-authenticated STM32 experiment because the build embeds only `runtime/classical/certs/ca.crt` as public trust material. Private keys remain under ignored runtime state and are not copied into firmware results or manifests.
+
+## STM32 reconnect validation
+
+The server-authenticated STM32 experiment performs one initial MQTT-over-TLS command/response exchange and, when `mqtt.reconnect_attempts` is non-zero, one reconnect exchange. The gateway orchestration keeps publishing the command until it receives both expected response messages or reaches its bounded timeout. It validates each response line against the configured correlation payload and records the observed and expected response counts in `mqtt-subscriber.log` and the experiment manifest.
+
+A reconnect that starts but fails is reported as `reconnect=failed`; `reconnect=not_run` is reserved for cases where reconnect was not configured or the initial exchange failed before reconnect could start.

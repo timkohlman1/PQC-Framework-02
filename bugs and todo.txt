@@ -8,6 +8,12 @@ unless the request will examine prior AI prompts / interactions
 
 -----------
 
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+I would like the experiment runs to produce some more verbose outputs in addition to reporting the result file paths and return code. 
+
+For example,  if it builds the application, it should say it's building the application, or that it's skipping the build, and the reasons why it builds or skips. If it checks gateway availability, it should report this. If it builds a secure boot image, it should report this.  It should report what crypto it's using. When it compiles, it should report the number of warnings, that type of thing. If it's orchestrating a MQTT broker experiment, it should report what the broker framework is doing (eg. deploying, starting, publishing, subscribing, stopping etc). I don't want to report everything that's recorded in the manifest, but it should report the key stages, and pertient details for each stage if it can fit within 2-3 lines of text and so the user knows what the framework is doing at a point in time. It should also have a time/date stamp in the left hand column in an appropriate format. The user should have enough information on the console to understand what's going on and what components are being run / tested, which crypto algorithms are used in each area is very important because it's a crypto evaluation framework.
+
 -----------
 
 -----------

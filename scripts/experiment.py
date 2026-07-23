@@ -184,7 +184,8 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
         f'mosquitto_sub -h {host} -p {port} {tls_args} -t {topic} -C 1 -W 2 >"$response_file" & sub_pid=$!; '
         'sleep 0.2; '
         f'mosquitto_pub -h {host} -p {port} {tls_args} -t {topic} -m {message} >/dev/null 2>&1 || true; '
-        'wait "$sub_pid"; rc=$?; response=$(tr -d "\r\n " <"$response_file"); rm -f "$response_file"; '
+        'wait "$sub_pid"; rc=$?; '
+        'response=$(paste -sd, "$response_file"); '
         f'if [ "$rc" -eq 0 ] && [ "$response" = {message} ]; then echo "broker_ready attempt=$attempt"; exit 0; fi; '
         f'sleep {delay_seconds}; done; echo "broker_not_ready attempts=$attempt"; exit 1'
     )
@@ -262,7 +263,7 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
             continue
         key, value = token.split("=", 1)
         values[key] = value
-    for key in ("subscriber_rc", "publish_attempts"):
+    for key in ("subscriber_rc", "publish_attempts", "response_count", "expected_response_count"):
         if key in values:
             try:
                 values[key] = int(values[key])
@@ -301,6 +302,8 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     orchestration = mqtt.get("orchestration", {})
     command_payload = str(mqtt.get("command_payload", "run"))
     expected_response = str(mqtt["correlation_payload"])
+    reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
+    expected_response_count = 2 if reconnect_attempts > 0 else 1
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, duration_seconds - 2)))
 
@@ -321,16 +324,20 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
-        f'mosquitto_sub -h {broker_host} -p {broker_port} {tls_args} -t {response_topic} -C 1 -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
+        f'mosquitto_sub -h {broker_host} -p {broker_port} {tls_args} -t {response_topic} -C {expected_response_count} -W {int(duration_seconds)} >"$response_file" & subscriber_pid=$!; '
         f'timeout {int(duration_seconds)}s cat {device} >"$uart_file" & capture_pid=$!; '
         f"{restart_command} 1>&2; reset_rc=$?; attempts=0; "
         f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
         f"sleep {publish_interval}; attempts=$((attempts + 1)); "
         f"mosquitto_pub -h {broker_host} -p {broker_port} {tls_args} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
         'wait "$subscriber_pid"; subscriber_rc=$?; wait "$capture_pid"; capture_rc=$?; '
-        'response=$(tr -d "\r\n " <"$response_file"); cat "$uart_file"; '
-        f'expected={shlex.quote(expected_response)}; matched=0; [ "$response" = "$expected" ] && matched=1; '
-        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts response_matched=$matched response=$response" 1>&2; '
+        'cat "$uart_file"; '
+        f'expected={shlex.quote(expected_response)}; expected_count={expected_response_count}; '
+        'response_count=$(grep -c . "$response_file" || true); ' 
+        'matched_count=$(grep -Fxc "$expected" "$response_file" || true); ' 
+        'matched=0; [ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
+        'response=$(paste -sd, "$response_file"); '
+        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
         'rm -f "$response_file" "$uart_file"; '
         'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$capture_rc"'
     )
@@ -340,7 +347,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         start = time.perf_counter()
         completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
-        (result_dir / "mqtt-publisher.log").write_text(f"Command payload: {command_payload}\nPublish interval seconds: {publish_interval}\nMaximum attempts: {max_attempts}\n{completed.stderr}", encoding="utf-8")
+        (result_dir / "mqtt-publisher.log").write_text(f"Command payload: {command_payload}\nPublish interval seconds: {publish_interval}\nMaximum attempts: {max_attempts}\nExpected response count: {expected_response_count}\n{completed.stderr}", encoding="utf-8")
         marker = _parse_mqtt_e2e_marker(completed.stderr)
         (result_dir / "mqtt-subscriber.log").write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return execution
@@ -357,7 +364,12 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=duration_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
         missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers(bundle) if item not in uart_result.capture.stdout]
-        broker_response_passed = marker.get("subscriber_rc") == 0 and marker.get("response_matched") == "1"
+        broker_response_passed = (
+            marker.get("subscriber_rc") == 0
+            and marker.get("response_matched") == "1"
+            and marker.get("response_count") == expected_response_count
+            and marker.get("expected_response_count") == expected_response_count
+        )
         passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
         failure_stage = "none"
         if uart_result.return_code != 0:

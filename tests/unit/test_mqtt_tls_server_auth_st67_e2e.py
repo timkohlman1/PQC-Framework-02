@@ -178,3 +178,39 @@ def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite(
     assert 'wolfSSL_CTX_set_cipher_list(' in source
     assert 'PQC_WolfMQTT_DiagnosticCode("cipher_list"' in source
     assert f"ciphers {suite}" in broker
+
+
+def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'expected_response_count = 2 if reconnect_attempts > 0 else 1' in source
+    assert '-C {expected_response_count}' in source
+    assert 'response_count=$(grep -c . "$response_file" || true)' in source
+    assert 'matched_count=$(grep -Fxc "$expected" "$response_file" || true)' in source
+    assert 'marker.get("response_count") == expected_response_count' in source
+    assert 'marker.get("expected_response_count") == expected_response_count' in source
+
+
+def test_gateway_reconnect_orchestration_keeps_publishing_until_all_responses_arrive():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    subscriber = source.index('mosquitto_sub -h {broker_host}')
+    publisher_loop = source.index('while kill -0 "$subscriber_pid"', subscriber)
+    response_validation = source.index('response_count=$(grep -c .', publisher_loop)
+    assert subscriber < publisher_loop < response_validation
+
+
+def test_firmware_reports_attempted_reconnect_failure_as_failed_not_not_run():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    assert 'bool reconnect_attempted=false;' in source
+    assert 'reconnect_attempted=true;' in source
+    assert 'reconnect_attempted?(reconnect_result==MQTT_CODE_SUCCESS?"passed":"failed"):"not_run"' in source
+    assert 'reconnect_attempted?(second.tls_handshake_complete?"passed":"failed"):"not_run"' in source
+    assert 'reconnect_attempted?(second.publish_complete?"passed":"failed"):"not_run"' in source
+
+def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    publish = source.index("mosquitto_pub -h {host}")
+    wait = source.index('wait "$sub_pid"; rc=$?;', publish)
+    response = source.index('response=$(paste -sd, "$response_file")', wait)
+    readiness_check = source.index('if [ "$rc" -eq 0 ]', response)
+    assert publish < wait < response < readiness_check
+

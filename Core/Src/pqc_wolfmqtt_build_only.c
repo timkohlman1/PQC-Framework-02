@@ -513,12 +513,12 @@ int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status) { ret
 
 bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context,bool scheduler_running)
 {
-    PQC_WolfMQTTBuildOnlyStatus first, second; int result, reconnect_result=MQTT_CODE_SUCCESS; int written;
+    PQC_WolfMQTTBuildOnlyStatus first, second; int result, reconnect_result=MQTT_CODE_SUCCESS; int written; bool reconnect_attempted=false;
     if((buffer==NULL)||(size==0U)||(context==NULL)) return false;
 #if (PQC_MQTT_ENABLED != 0)
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Init();
     result=PQC_WolfMQTT_RunExchangeCycle(&first,0U);
-    if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); else memset(&second,0,sizeof(second));
+    if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) { reconnect_attempted=true; reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); } else memset(&second,0,sizeof(second));
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Cleanup();
     written=snprintf(buffer,size,
       "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
@@ -527,8 +527,9 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
       first.tls_handshake_complete?"passed":(PQC_WolfMQTT_TLSRequested()?"failed":"not_required"),
       first.tls_connect_result,first.tls_error,first.tls_io_error,first.mqtt_connected?"passed":"failed",
       first.subscribed?"passed":"failed",first.message_received?"passed":"failed",first.publish_complete?"passed":"failed",
-      (PQC_MQTT_RECONNECT_ATTEMPTS>0&&reconnect_result==MQTT_CODE_SUCCESS)?"passed":"not_run",
-      second.tls_handshake_complete?"passed":"not_run",second.publish_complete?"passed":"not_run",
+      reconnect_attempted?(reconnect_result==MQTT_CODE_SUCCESS?"passed":"failed"):"not_run",
+      reconnect_attempted?(second.tls_handshake_complete?"passed":"failed"):"not_run",
+      reconnect_attempted?(second.publish_complete?"passed":"failed"):"not_run",
       (first.publish_complete&&((PQC_MQTT_RECONNECT_ATTEMPTS==0)||second.publish_complete))?"passed":"failed",
       PQC_MQTT_BROKER_HOST,(unsigned)PQC_MQTT_BROKER_PORT,PQC_MQTT_CORRELATION_PAYLOAD);
 #else
