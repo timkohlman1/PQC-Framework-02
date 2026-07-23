@@ -105,6 +105,8 @@ from framework.benchmark_aggregation import (
 
 
 MQTT_E2E_MARKER_PREFIX = "PQC_MQTT_E2E"
+MQTT_UART_CAPTURE_MARKER_PREFIX = "PQC_UART_CAPTURE"
+MQTT_COMPLETION_MARKER = "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done"
 MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
 
@@ -272,12 +274,32 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
     return values
 
 
+def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
+    for line in stderr.splitlines():
+        if not line.startswith(MQTT_UART_CAPTURE_MARKER_PREFIX + " "):
+            continue
+        values: dict[str, Any] = {"marker_present": True}
+        for token in line.split()[1:]:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            if key in {"completion_marker_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
+                try:
+                    values[key] = int(value)
+                    continue
+                except ValueError:
+                    pass
+            values[key] = value
+        return values
+    return {"marker_present": False}
+
+
 def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     markers = [
         "ST67 DHCP: result=passed", "mqtt_connect=passed",
         "mqtt_subscribe=passed", "mqtt_receive=passed",
-        "mqtt_publish=passed", "end_to_end=passed",
+        "mqtt_publish=passed", "end_to_end=passed", MQTT_COMPLETION_MARKER,
     ]
     if isinstance(mqtt, dict):
         broker = mqtt.get("broker", {})
@@ -306,6 +328,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     expected_response_count = 2 if reconnect_attempts > 0 else 1
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, duration_seconds - 2)))
+    completion_grace_seconds = int(orchestration.get("completion_grace_seconds", 3))
 
     gateway_alias = str(bundle["host"]["alias"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
@@ -330,7 +353,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f'while kill -0 "$subscriber_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
         f"sleep {publish_interval}; attempts=$((attempts + 1)); "
         f"mosquitto_pub -h {broker_host} -p {broker_port} {tls_args} -t {command_topic} -m {command_value} >/dev/null 2>&1 || true; done; "
-        'wait "$subscriber_pid"; subscriber_rc=$?; wait "$capture_pid"; capture_rc=$?; '
+        'wait "$subscriber_pid"; subscriber_rc=$?; '
+        f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
+        'while kill -0 "$capture_pid" 2>/dev/null; do '
+        'if grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; sleep 0.2; done; '
+        f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
+        'wait "$capture_pid"; capture_rc=$?; '
+        'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
+        'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
         'cat "$uart_file"; '
         f'expected={shlex.quote(expected_response)}; expected_count={expected_response_count}; '
         'response_count=$(grep -c . "$response_file" || true); ' 
@@ -338,8 +368,9 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         'matched=0; [ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
         'response=$(paste -sd, "$response_file"); '
         f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
+        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={duration_seconds} raw_capture_rc=$capture_rc" 1>&2; '
         'rm -f "$response_file" "$uart_file"; '
-        'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$capture_rc"'
+        'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
     )
     ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
 
@@ -354,6 +385,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
 
     uart_result = None
     marker: dict[str, Any] = {"marker_present": False}
+    capture_marker: dict[str, Any] = {"marker_present": False}
     missing_uart_markers = list(_mqtt_e2e_required_uart_markers(bundle))
     broker_response_passed = False
     passed = False
@@ -363,6 +395,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     try:
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=duration_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
+        capture_marker = _parse_mqtt_uart_capture_marker(uart_result.capture.stderr)
         missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers(bundle) if item not in uart_result.capture.stdout]
         broker_response_passed = (
             marker.get("subscriber_rc") == 0
@@ -399,6 +432,10 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "missing_uart_markers": missing_uart_markers,
             "publisher_log": "mqtt-publisher.log",
             "subscriber_log": "mqtt-subscriber.log",
+            "capture_termination_reason": capture_marker.get("termination_reason") if uart_result is not None else None,
+            "completion_marker_present": capture_marker.get("completion_marker_present") if uart_result is not None else None,
+            "completion_grace_seconds": completion_grace_seconds,
+            "hard_limit_seconds": duration_seconds,
         }
     })
     return uart_result, (0 if passed else MQTT_E2E_FAILURE_RETURN_CODE), failure_stage

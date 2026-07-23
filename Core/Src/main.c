@@ -193,6 +193,11 @@ static bool APP_CStringEquals(const uint8_t *left, const char *right)
   return (left[index] == 0U) && (right[index] == '\0');
 }
 
+#ifndef PQC_WIFI_SCAN_VERBOSE
+#define PQC_WIFI_SCAN_VERBOSE 0
+#endif
+
+static volatile bool app_experiment_complete = false;
 static volatile bool app_wifi_scan_complete = false;
 static volatile int32_t app_wifi_scan_status = (int32_t)W6X_STATUS_ERROR;
 static volatile uint32_t app_wifi_scan_count = 0U;
@@ -213,6 +218,7 @@ static void APP_ST67WiFiScanCallback(int32_t status, W6X_WiFi_Scan_Result_t *res
     {
       W6X_WiFi_Ap_t *ap = &results->AP[count];
 
+#if PQC_WIFI_SCAN_VERBOSE
       APP_UART_WriteString("ST67 Wi-Fi scan result: index=");
       APP_UART_WriteUint32(count);
       APP_UART_WriteString(" ssid=");
@@ -224,6 +230,7 @@ static void APP_ST67WiFiScanCallback(int32_t status, W6X_WiFi_Scan_Result_t *res
       APP_UART_WriteString(" security=");
       APP_UART_WriteString(W6X_WiFi_SecurityToStr((uint32_t)ap->Security));
       APP_UART_WriteString("\r\n");
+#endif
 
       if (APP_CStringEquals(ap->SSID, PQC_WIFI_SSID) &&
           (!app_wifi_scan_configured_ssid_found || (ap->RSSI > app_wifi_scan_best_rssi)))
@@ -1753,6 +1760,7 @@ void StartDefaultTask(void *argument)
   const char task_started_msg[] = "FreeRTOS defaultTask started: heartbeat active\r\n";
   const char tick_msg[] = "tick\r\n";
   BaseType_t runtime_checkpoint_reported = pdFALSE;
+  uint32_t heartbeat_seconds = 0U;
 
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
 
@@ -1760,7 +1768,11 @@ void StartDefaultTask(void *argument)
   for(;;)
   {
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
-    HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
+    if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))
+    {
+      HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
+    }
+    heartbeat_seconds++;
     osDelay(1000);
 
     if (runtime_checkpoint_reported == pdFALSE)
@@ -1785,25 +1797,20 @@ void StartNetworkTask(void *argument)
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
   APP_RunST67SPIBringup();
   network_ready = app_st67_network_ready;
-  APP_UART_WriteString("FreeRTOS task-context smoke starting: context=freertos_task scheduler=running serialized=true\r\n");
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
-  APP_UART_WriteString("Finishing LwIP Runtime Smoke\r\n");
-  APP_UART_WriteString("Starting WolfSSL Runtime Smoke\r\n");
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
-  APP_UART_WriteString("Finishing WolfSSL Runtime Smoke\r\n");
   if (network_ready)
   {
-    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch begin\r\n");
     APP_PrintWolfMQTTRuntimeStatus();
-    APP_UART_WriteString("wolfMQTT plaintext exchange: dispatch returned\r\n");
   }
   else
   {
     APP_UART_WriteString("wolfMQTT runtime: result=skipped reason=network_not_ready end_to_end=failed\r\n");
   }
-  APP_UART_WriteString("FreeRTOS task-context smoke complete: context=freertos_task scheduler=running network=available wifi=connected link=up tls_handshake=unavailable mqtt=unavailable\r\n");
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
+  app_experiment_complete = true;
+  APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done\r\n");
 
   osThreadExit();
 }

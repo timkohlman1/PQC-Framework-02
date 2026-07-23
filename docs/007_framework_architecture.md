@@ -600,3 +600,8 @@ M11 success requires explicit UART markers for DHCP, TCP, TLS handshake, MQTT co
 ### MQTT reconnect evidence
 
 For the classical server-authenticated STM32 MQTT-over-TLS experiment, reconnect evidence requires a second complete command/response exchange. The gateway subscriber therefore remains active for the initial and reconnect responses, and command publication continues until both exact correlation responses are observed or the bounded orchestration timeout expires. The recorded evidence includes expected and observed response counts. Firmware status distinguishes an unattempted reconnect (`not_run`) from an attempted reconnect that fails (`failed`). A successful reconnect claim requires the second TLS handshake, MQTT connection/subscription, command receive, and response publish to complete.
+
+
+### MQTT UART completion and logging
+
+Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.

@@ -239,3 +239,8 @@ Provision the runtime certificates before building the server-authenticated STM3
 The server-authenticated STM32 experiment performs one initial MQTT-over-TLS command/response exchange and, when `mqtt.reconnect_attempts` is non-zero, one reconnect exchange. The gateway orchestration keeps publishing the command until it receives both expected response messages or reaches its bounded timeout. It validates each response line against the configured correlation payload and records the observed and expected response counts in `mqtt-subscriber.log` and the experiment manifest.
 
 A reconnect that starts but fails is reported as `reconnect=failed`; `reconnect=not_run` is reserved for cases where reconnect was not configured or the initial exchange failed before reconnect could start.
+
+
+### MQTT UART completion and logging
+
+Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.

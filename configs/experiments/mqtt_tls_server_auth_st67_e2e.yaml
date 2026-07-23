@@ -32,6 +32,7 @@ mqtt:
   reconnect_attempts: 1
   orchestration:
     host: 10.1.1.18
+    completion_grace_seconds: 3
   tls:
     mode: classical_tls_server_auth
     certificate_refs:

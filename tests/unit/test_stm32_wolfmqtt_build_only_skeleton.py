@@ -35,7 +35,7 @@ def test_wolfmqtt_supports_fake_and_real_st67_lwip_transport_boundaries():
     assert "MqttClient_DeInit(" in source
 
 
-def test_real_plaintext_exchange_performs_bounded_mqtt_operations_without_tls():
+def test_real_mqtt_exchange_performs_bounded_mqtt_operations():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
     for fragment in (
@@ -107,3 +107,11 @@ def test_phase_m7_uses_project_user_settings_without_generated_options_header():
     assert cmake.count("WOLFMQTT_USER_SETTINGS") >= 2
     assert cmake.count("WOLFMQTT_NO_STDIO") >= 2
     assert "wolfmqtt/options.h" not in cmake
+
+
+def test_tls_handshake_result_is_recorded_inside_lwip_connect_function():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    expected_sequence = """    result = wolfSSL_connect(socket_context->tls);\n    socket_context->tls_connect_result = result;\n    if (result != WOLFSSL_SUCCESS) {"""
+    assert expected_sequence in source
+    assert "wolfSSL_connect(socket_context->tls);\n    }\n    socket_context->tls_connect_result" not in source

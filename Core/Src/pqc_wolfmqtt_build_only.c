@@ -199,6 +199,10 @@ static bool PQC_WolfMQTT_TLSRequested(void)
     return strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0;
 }
 
+#ifndef PQC_WOLFMQTT_TLS_IO_TRACE
+#define PQC_WOLFMQTT_TLS_IO_TRACE 0
+#endif
+
 static int PQC_WolfMQTT_SetTimeout(int socket_fd, int option, int timeout_ms)
 {
     struct timeval timeout;
@@ -210,10 +214,12 @@ static int PQC_WolfMQTT_SetTimeout(int socket_fd, int option, int timeout_ms)
 static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *context)
 {
     PQC_WolfMQTTSocketContext *socket_context = context;
+#if PQC_WOLFMQTT_TLS_IO_TRACE
     char marker[192];
+    int written;
+#endif
     int result;
     int saved_errno;
-    int written;
     (void)ssl;
 
     socket_context->tls_recv_calls++;
@@ -224,6 +230,7 @@ static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *cont
         socket_context->tls_recv_bytes += (unsigned int)result;
     }
 
+#if PQC_WOLFMQTT_TLS_IO_TRACE
     written = snprintf(marker, sizeof(marker),
         "wolfMQTT TLS IO: direction=recv call=%u requested=%d result=%d errno=%d "
         "recv_bytes=%u send_bytes=%u\r\n",
@@ -232,6 +239,7 @@ static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *cont
     if ((written > 0) && ((size_t)written < sizeof(marker))) {
         PQC_WolfMQTT_DiagnosticMarker(marker);
     }
+#endif
 
     if (result > 0) return result;
     if (result == 0) return WOLFSSL_CBIO_ERR_CONN_CLOSE;
@@ -247,10 +255,12 @@ static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *cont
 static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *context)
 {
     PQC_WolfMQTTSocketContext *socket_context = context;
+#if PQC_WOLFMQTT_TLS_IO_TRACE
     char marker[192];
+    int written;
+#endif
     int result;
     int saved_errno;
-    int written;
     (void)ssl;
 
     socket_context->tls_send_calls++;
@@ -261,6 +271,7 @@ static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *cont
         socket_context->tls_send_bytes += (unsigned int)result;
     }
 
+#if PQC_WOLFMQTT_TLS_IO_TRACE
     written = snprintf(marker, sizeof(marker),
         "wolfMQTT TLS IO: direction=send call=%u requested=%d result=%d errno=%d "
         "recv_bytes=%u send_bytes=%u\r\n",
@@ -269,6 +280,7 @@ static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *cont
     if ((written > 0) && ((size_t)written < sizeof(marker))) {
         PQC_WolfMQTT_DiagnosticMarker(marker);
     }
+#endif
 
     if (result >= 0) return result;
     socket_context->tls_io_error = saved_errno;
@@ -371,19 +383,8 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     wolfSSL_SetIOReadCtx(socket_context->tls, socket_context);
     wolfSSL_SetIOWriteCtx(socket_context->tls, socket_context);
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake begin\r\n");
+
     result = wolfSSL_connect(socket_context->tls);
-    {
-        char marker[192];
-        int written = snprintf(marker, sizeof(marker),
-            "wolfMQTT TLS IO summary: recv_calls=%u recv_bytes=%u "
-            "send_calls=%u send_bytes=%u\r\n",
-            socket_context->tls_recv_calls, socket_context->tls_recv_bytes,
-            socket_context->tls_send_calls, socket_context->tls_send_bytes);
-        if ((written > 0) && ((size_t)written < sizeof(marker))) {
-            PQC_WolfMQTT_DiagnosticMarker(marker);
-        }
-    }
     socket_context->tls_connect_result = result;
     if (result != WOLFSSL_SUCCESS) {
         int error = wolfSSL_get_error(socket_context->tls, result);
@@ -462,7 +463,6 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     int result;
     memset(status, 0, sizeof(*status)); status->backend = PQC_WOLFMQTT_BACKEND_ST67W61M1;
     status->transport_callbacks_present = true; status->transport_available = true;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT plaintext exchange: function entered\r\n");
     memset(&client,0,sizeof(client)); memset(&network,0,sizeof(network)); memset(&socket_context,0,sizeof(socket_context));
     memset(&message_context,0,sizeof(message_context)); socket_context.socket_fd=-1; socket_context.tls_requested=PQC_WolfMQTT_TLSRequested();
     network.context = &socket_context;
@@ -470,10 +470,8 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     network.read = PQC_WolfMQTT_LwIPRead;
     network.write = PQC_WolfMQTT_LwIPWrite;
     network.disconnect = PQC_WolfMQTT_LwIPDisconnect;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: client init begin\r\n");
     result=MqttClient_Init(&client,&network,PQC_WolfMQTT_MessageCallback,tx,sizeof(tx),rx,sizeof(rx),PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
     status->last_result=result; if(result!=MQTT_CODE_SUCCESS) return result; status->client_initialized=true; client.ctx=&message_context;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: TCP connect begin\r\n");
     result=MqttClient_NetConnect(&client,PQC_MQTT_BROKER_HOST,(word16)PQC_MQTT_BROKER_PORT,PQC_WOLFMQTT_COMMAND_TIMEOUT_MS,0,NULL);
     status->last_result = result;
     status->tcp_connected = socket_context.tcp_connected;
@@ -483,28 +481,23 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     status->tls_io_error = socket_context.tls_io_error;
     if (result != MQTT_CODE_SUCCESS) goto cleanup;
     memset(&connect,0,sizeof(connect)); connect.keep_alive_sec=PQC_WOLFMQTT_KEEPALIVE_SECONDS; connect.clean_session=1; connect.client_id=PQC_MQTT_CLIENT_ID;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: MQTT connect begin\r\n");
     result=MqttClient_Connect(&client,&connect); status->last_result=result;
     if(result!=MQTT_CODE_SUCCESS) goto cleanup;
     status->mqtt_connected = true;
     memset(&topic,0,sizeof(topic)); topic.topic_filter=PQC_MQTT_COMMAND_TOPIC; topic.qos=MQTT_QOS_0;
     memset(&subscribe,0,sizeof(subscribe)); subscribe.packet_id=PQC_WOLFMQTT_PACKET_ID_SUBSCRIBE; subscribe.topic_count=1; subscribe.topics=&topic;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: subscribe begin\r\n");
     result=MqttClient_Subscribe(&client,&subscribe); status->last_result = result;
     if (result != MQTT_CODE_SUCCESS) goto cleanup;
     status->subscribed = true;
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: wait message begin\r\n");
     result=MqttClient_WaitMessage(&client,PQC_WOLFMQTT_COMMAND_TIMEOUT_MS); status->last_result=result;
     if ((result != MQTT_CODE_SUCCESS) || !message_context.received) goto cleanup;
     status->message_received = true;
     memset(&publish,0,sizeof(publish)); publish.topic_name=PQC_MQTT_RESPONSE_TOPIC; publish.qos=MQTT_QOS_0;
     publish.packet_id=(word16)(PQC_WOLFMQTT_PACKET_ID_PUBLISH+cycle); publish.buffer=(byte*)PQC_MQTT_CORRELATION_PAYLOAD;
     publish.total_len=(word32)strlen(PQC_MQTT_CORRELATION_PAYLOAD);
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: publish begin\r\n");
     result=MqttClient_Publish(&client,&publish); status->last_result = result;
     if (result == MQTT_CODE_SUCCESS) status->publish_complete = true;
 cleanup:
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT: cleanup begin\r\n");
     if(status->mqtt_connected) (void)MqttClient_Disconnect(&client);
     (void)MqttClient_NetDisconnect(&client); MqttClient_DeInit(&client); return status->last_result;
 }

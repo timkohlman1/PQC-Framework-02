@@ -137,12 +137,13 @@ def test_phase_m6_5_task_context_smoke_runs_in_network_task_and_is_separate_from
 
     assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
     assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
-    assert "FreeRTOS task-context smoke starting:" not in default_body
+    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' not in default_body
+    assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' not in default_body
     assert r'const char tick_msg[] = "tick\r\n";' in default_body
 
     started_index = network_body.index("FreeRTOS networkTask started: initialization active")
-    phase_index = network_body.index("FreeRTOS task-context smoke starting:")
     lwip_index = network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
     wolfssl_index = network_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
-    complete_index = network_body.index("FreeRTOS task-context smoke complete:")
-    assert started_index < phase_index < lwip_index < wolfssl_index < complete_index
+    mqtt_index = network_body.index("APP_PrintWolfMQTTRuntimeStatus();")
+    completion_index = network_body.index("PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done")
+    assert started_index < lwip_index < wolfssl_index < mqtt_index < completion_index

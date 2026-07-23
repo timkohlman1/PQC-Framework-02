@@ -249,7 +249,11 @@ def test_phase_m6_5_wolfssl_smoke_runs_serialized_in_freertos_task_without_threa
     assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke();" in source
     assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c
     assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in main_c
-    assert "serialized=true" in main_c
+    network_start = main_c.rindex("void StartNetworkTask(void *argument)")
+    network_body = main_c[network_start:]
+    assert network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);') < network_body.index(
+        'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);'
+    )
     assert "WOLFSSL_FREERTOS" not in settings
     assert "WOLFSSL_CMSIS_RTOS" not in settings
     assert "#define SINGLE_THREADED" in settings
