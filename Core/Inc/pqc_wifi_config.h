@@ -31,4 +31,24 @@
 #  define PQC_MQTT_CORRELATION_PAYLOAD "pqc-e2e"
 #endif
 
+#ifndef PQC_MQTT_TLS_MODE
+#define PQC_MQTT_TLS_MODE "plaintext"
+#endif
+
+#ifndef PQC_MQTT_TLS_SERVER_NAME
+#define PQC_MQTT_TLS_SERVER_NAME ""
+#endif
+
+#ifndef PQC_MQTT_TLS_CA_PEM
+#define PQC_MQTT_TLS_CA_PEM ""
+#endif
+
+#ifndef PQC_MQTT_TLS_CA_PEM_SHA256
+#define PQC_MQTT_TLS_CA_PEM_SHA256 ""
+#endif
+
+#ifndef PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM
+#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM ""
+#endif
+
 #endif

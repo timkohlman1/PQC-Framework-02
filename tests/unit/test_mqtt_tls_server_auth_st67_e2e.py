@@ -1,4 +1,22 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
 from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MQTT_BROKER_CTL = REPO_ROOT / "experiment" / "mqtt-broker" / "scripts" / "mqtt_broker_ctl.py"
+
+
+def _load_mqtt_broker_ctl_module():
+    spec = importlib.util.spec_from_file_location("mqtt_broker_ctl_tls_server_auth_test", MQTT_BROKER_CTL)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_server_authenticated_tls_profile_is_separate_from_mutual_tls():
@@ -157,11 +175,11 @@ def test_server_certificate_profile_contains_selected_fqdn_san(tmp_path):
     )
 
     profile = profile_path.read_text(encoding="utf-8")
-
     assert "CN = pqc-gateway1.pqcnet" in profile
     assert "DNS.1 = pqc-gateway1.pqcnet" in profile
     assert "DNS.2 = pqc-gateway1" in profile
     assert "DNS.3 = localhost" in profile
+    assert "IP.1 = 127.0.0.1" in profile
 
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():

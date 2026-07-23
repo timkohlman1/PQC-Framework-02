@@ -301,6 +301,16 @@ def test_wifi_config_selection_uses_compile_time_header_detection():
     assert 'PQC_WIFI_CONFIG_GENERATED_AVAILABLE' not in wrapper
     assert '#    define PQC_WIFI_SSID ""' in wrapper
     assert '#    define PQC_WIFI_IPV4_MODE "unconfigured"' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_MODE' in wrapper
+    assert '#define PQC_MQTT_TLS_MODE "plaintext"' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_SERVER_NAME' in wrapper
+    assert '#define PQC_MQTT_TLS_SERVER_NAME ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_CA_PEM' in wrapper
+    assert '#define PQC_MQTT_TLS_CA_PEM ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_CA_PEM_SHA256' in wrapper
+    assert '#define PQC_MQTT_TLS_CA_PEM_SHA256 ""' in wrapper
+    assert '#ifndef PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM' in wrapper
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM ""' in wrapper
 
 
 def test_st67_normal_startup_scans_before_association_and_reports_live_t02_state() -> None:
