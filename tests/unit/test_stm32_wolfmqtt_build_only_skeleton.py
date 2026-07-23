@@ -112,9 +112,11 @@ def test_phase_m7_uses_project_user_settings_without_generated_options_header():
 def test_tls_handshake_result_is_recorded_inside_lwip_connect_function():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
-    expected_sequence = """    result = wolfSSL_connect(socket_context->tls);\n    socket_context->tls_connect_result = result;\n    if (result != WOLFSSL_SUCCESS) {"""
-    assert expected_sequence in source
-    assert "wolfSSL_connect(socket_context->tls);\n    }\n    socket_context->tls_connect_result" not in source
+    connect = source.index("result = wolfSSL_connect(socket_context->tls);")
+    record = source.index("socket_context->tls_connect_result = result;", connect)
+    failure_check = source.index("if (result != WOLFSSL_SUCCESS) {", record)
+
+    assert connect < record < failure_check
 
 
 def test_pqc_hybrid_group_array_matches_mutable_wolfssl_api():

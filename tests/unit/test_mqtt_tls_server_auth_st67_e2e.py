@@ -192,8 +192,9 @@ def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
 
 def test_gateway_reconnect_orchestration_keeps_publishing_until_all_responses_arrive():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    subscriber = source.index('mosquitto_sub -h {broker_host}')
-    publisher_loop = source.index('while kill -0 "$subscriber_pid"', subscriber)
+    subscriber = source.index("mqtt_sub =")
+    subscriber_command = source.index("f'{mqtt_sub} -h {client_host}", subscriber)
+    publisher_loop = source.index('while kill -0 "$capture_pid"', subscriber_command)
     response_validation = source.index('response_count=$(grep -c .', publisher_loop)
     assert subscriber < publisher_loop < response_validation
 
@@ -208,11 +209,12 @@ def test_firmware_reports_attempted_reconnect_failure_as_failed_not_not_run():
 
 def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    publish = source.index("mosquitto_pub -h {host}")
-    wait = source.index('wait "$sub_pid"; rc=$?;', publish)
+    publish = source.index("mqtt_pub =")
+    publish_command = source.index("f'{mqtt_pub} -h {client_host}", publish)
+    wait = source.index('wait "$sub_pid"; sub_rc=$?;', publish_command)
     response = source.index('response=$(paste -sd, "$response_file")', wait)
-    readiness_check = source.index('if [ "$rc" -eq 0 ]', response)
-    assert publish < wait < response < readiness_check
+    readiness_check = source.index('if [ "$sub_rc" -eq 0 ]', response)
+    assert publish < publish_command < wait < response < readiness_check
 
 
 

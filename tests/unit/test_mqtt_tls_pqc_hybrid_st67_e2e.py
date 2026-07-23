@@ -53,7 +53,7 @@ def test_config_schema_accepts_pqc_evidence_and_mode():
 
 def test_pqc_profile_uses_extended_uart_hard_limit():
     config = Path("configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert "hard_limit_seconds: 60" in config
+    assert "hard_limit_seconds: 180" in config
 
 
 def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():

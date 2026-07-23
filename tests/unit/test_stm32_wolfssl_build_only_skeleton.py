@@ -60,7 +60,7 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert "WOLFSSL_USER_IO" in settings
     assert "WOLFSSL_NO_SOCK" in settings
     assert "NO_WOLFSSL_SERVER" in settings
-    assert "WOLFSSL_NO_TLS13" in settings
+    assert "WOLFSSL_NO_TLS13" not in settings
     assert "WOLFSSL_TLS13 0" not in settings
     assert "WOLFSSL_STATIC_PSK" not in settings
     assert "NO_CERTS" not in settings

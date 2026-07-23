@@ -8,7 +8,7 @@ Default OQS cryptographic choices:
 
 ```text
 CA signature algorithm: mldsa65
-server key algorithm: falcon512
+server key algorithm: mldsa65
 TLS key-share group: SecP256r1MLKEM768
 TLS version: TLS 1.3
 client authentication: disabled
@@ -36,10 +36,11 @@ Generated broker certificate material is written on the gateway under:
 ~/pqc-framework-02/experiment/mqtt-broker/runtime/oqs/certs/
 ```
 
-Private keys remain on the gateway. Only the public CA certificate is copied back to the development repository at:
+Private keys remain on the gateway. Only the public CA certificate and non-secret certificate provenance are copied back to the development repository at:
 
 ```text
 experiment/mqtt-broker/runtime/oqs/certs/ca.crt
+experiment/mqtt-broker/runtime/oqs/certs/certificate-provenance.txt
 ```
 
 Generated runtime certificate material must not be committed.
@@ -51,6 +52,8 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls `
     --oqs-group SecP256r1MLKEM768 `
     --host-config configs/hosts/gateway.yaml
 ```
+
+Confirm negotiated algorithms from both broker-side validation and STM32 UART evidence.
 
 A valid result must show TLS 1.3, a negotiated non-`NONE` cipher, a presented and verified certificate chain, and the forced `SecP256r1MLKEM768` group.
 

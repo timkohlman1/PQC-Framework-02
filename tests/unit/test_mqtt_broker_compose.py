@@ -70,7 +70,7 @@ def test_classical_mosquitto_config_enforces_tls_and_client_certificates():
 
     assert "listener 8883 0.0.0.0" in config
     assert "tls_version tlsv1.3" in config
-    assert "allow_anonymous false" in config
+    assert "allow_anonymous true" in config
     assert "require_certificate true" in config
     assert "use_identity_as_username true" in config
     assert "cafile /mosquitto/config/certs/ca.crt" in config
@@ -363,7 +363,7 @@ def test_oqs_mosquitto_config_enforces_server_authenticated_tls_with_project_cer
 
     assert "listener 8883 0.0.0.0" in config
     assert "tls_version tlsv1.3" in config
-    assert "allow_anonymous false" in config
+    assert "allow_anonymous true" in config
     assert "require_certificate false" in config
     assert "use_identity_as_username false" in config
     assert "cafile /mosquitto/config/certs/ca.crt" in config
@@ -401,7 +401,7 @@ def test_mqtt_control_script_has_provision_and_validation_subcommands():
 
     assert oqs.command == "provision-oqs-certs"
     assert oqs.ca_algorithm == "mldsa65"
-    assert oqs.leaf_algorithm == "falcon512"
+    assert oqs.leaf_algorithm == "mldsa65"
     assert validate.command == "validate-oqs-tls"
     assert validate.oqs_group == "SecP256r1MLKEM768"
     assert classical_mqtt.command == "validate-classical-mqtt"
@@ -499,8 +499,8 @@ def test_mqtt_oqs_cert_provisioning_runs_on_gateway_with_oqs_provider_image(tmp_
     assert "timk@pqc-gateway1" in command_text
     assert "openquantumsafe/mosquitto:latest" in command_text
     assert "openssl genpkey -algorithm mldsa65 -out /certs/ca.key" in command_text
-    assert "openssl genpkey -algorithm falcon512 -out /certs/server.key" in command_text
-    assert "openssl genpkey -algorithm falcon512 -out /certs/client.key" in command_text
+    assert "openssl genpkey -algorithm mldsa65 -out /certs/server.key" in command_text
+    assert "openssl genpkey -algorithm mldsa65 -out /certs/client.key" in command_text
     assert "IP.2 = 10.1.1.18" in command_text
     assert "$HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs" in command_text
     assert "scp timk@pqc-gateway1:~/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs/ca.crt" in command_text

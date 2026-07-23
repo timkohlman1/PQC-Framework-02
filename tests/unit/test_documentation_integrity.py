@@ -433,7 +433,7 @@ def test_operational_commands_use_docker_wrappers_by_default() -> None:
     assert "diagnostic fallback only" in workflow
     assert ".\\scripts\\dev.ps1 experiment-gateway" in gateway
     assert ".\\scripts\\dev.ps1 experiment build-wolfboot" in workflow
-    assert ".\\scripts\\dev.ps1 run python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py" in broker
+    assert "python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py" in broker
     assert "Diagnostic fallback: local Docker smoke test" in broker
     assert "Diagnostic fallback: raw gateway-capable container execution" in broker
 
