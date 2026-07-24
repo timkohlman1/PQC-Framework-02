@@ -41,7 +41,7 @@ experiment/mqtt-broker/.env
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
 ```
 
-This creates a local development CA, localhost server certificate, and client certificate under `experiment/mqtt-broker/runtime/classical/certs/`. These files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
+This creates a local development CA, localhost server certificate, and client certificate under `secrets/mqtt/server-ecdsa-p256/`. These generated files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
 
 ## Provision remote OQS TLS material
 
@@ -49,14 +49,14 @@ The OQS profile generates its CA, server, client, and healthcheck certificates o
 
 Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct script invocation below is the supported host-native administration path because it uses the host SSH configuration. The framework-level `dev.ps1 experiment mqtt-broker-experiment` command remains the normal recorded orchestration path.
 
-Deploy the compose project first, then provision OQS certificates into the remote runtime directory:
+Provisioning and deployment are normally performed automatically by the experiment prerequisite phase. For broker-only diagnosis, the equivalent direct commands are:
 
 ```powershell
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Provisioning verifies the generated chain and the server certificate/private-key match before succeeding. It copies the public OQS CA certificate and non-secret certificate provenance back under `experiment/mqtt-broker/runtime/oqs/certs/` for firmware embedding and inspection. Private keys remain on the gateway.
+Provisioning verifies the generated chain and the server certificate/private-key match before succeeding. It records the selected tuple under `secrets/mqtt/server-mldsa65/` and deploys that profile to the corresponding gateway path. The experiment runner resolves this profile before build fingerprinting and broker startup.
 
 Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
@@ -142,9 +142,9 @@ For PowerShell, pass upstream wolfMQTT options after `--client-args` and quote e
   --result-json results/host-wolfmqtt/classical-gateway-validation.json `
   run `
   --client-args '-h' 10.1.1.18 '-p' 8883 '-t' `
-  '-A' /workspace/experiment/mqtt-broker/runtime/classical/certs/ca.crt `
-  '-K' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.key `
-  '-c' /workspace/experiment/mqtt-broker/runtime/classical/certs/client.crt
+  '-A' /workspace/secrets/mqtt/server-ecdsa-p256/ca.crt `
+  '-K' /workspace/secrets/mqtt/server-ecdsa-p256/client.key `
+  '-c' /workspace/secrets/mqtt/server-ecdsa-p256/client.crt
 ```
 
 This is native host wolfMQTT/wolfSSL compatibility evidence only. It does not prove wolfMQTT-on-STM32, ST67W61M1 operation, or end-to-end wireless behavior.
@@ -236,7 +236,7 @@ Phase M11 keeps two distinct classical TLS profiles:
 - `classical-server-auth` uses TLS 1.2 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
 - `classical` retains the existing mutual-TLS listener and client-certificate requirement.
 
-Provision the runtime certificates before building the server-authenticated STM32 experiment because the build embeds only `runtime/classical/certs/ca.crt` as public trust material. Private keys remain under ignored runtime state and are not copied into firmware results or manifests.
+The experiment prerequisite phase provisions or reuses `secrets/mqtt/server-ecdsa-p256` before fingerprinting. The build embeds only that profile’s public `ca.crt`; private keys remain generated dependency state and are not copied into firmware results or manifests.
 
 ## STM32 reconnect validation
 

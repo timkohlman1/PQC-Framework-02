@@ -79,3 +79,6 @@ experiment/mqtt-broker/.env
 
 # Persistent wolfBoot signing tuples are local authoritative state
 secrets/wolfboot/tuples/
+
+# Canonical local cryptographic material
+/secrets/

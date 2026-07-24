@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import shlex
 import shutil
 import subprocess
@@ -50,6 +52,18 @@ def repo_root() -> Path:
 
 def broker_root() -> Path:
     return repo_root() / BROKER_RELATIVE_DIR
+
+
+def certificate_profile_dir(profile_id: str) -> Path:
+    return repo_root() / "secrets" / "mqtt" / profile_id
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_simple_yaml(path: Path) -> dict[str, Any]:
@@ -249,7 +263,7 @@ def _host_address_from_args(args: argparse.Namespace) -> str | None:
 
 def provision_classical_certs(args: argparse.Namespace) -> None:
     ensure_openssl()
-    cert_dir = broker_root() / "runtime/classical/certs"
+    cert_dir = certificate_profile_dir(args.certificate_profile)
     cert_dir.mkdir(parents=True, exist_ok=True)
 
     host_address = _host_address_from_args(args)
@@ -294,6 +308,16 @@ def provision_classical_certs(args: argparse.Namespace) -> None:
     if not args.dry_run:
         for path in cert_dir.glob("*.key"):
             path.chmod(0o600)
+        provenance = {
+            "schema_version": 1,
+            "profile_id": args.certificate_profile,
+            "profile_kind": "classical",
+            "ca_algorithm": "ecdsa-p256",
+            "leaf_algorithm": "ecdsa-p256",
+            "ca_sha256": _sha256(cert_dir / "ca.crt"),
+            "server_certificate_sha256": _sha256(cert_dir / "server.crt"),
+        }
+        (cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"Provisioned local classical MQTT TLS material under {display_path(cert_dir)}")
 
 
@@ -365,7 +389,7 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
     remote_dir = args.remote_dir
-    cert_dir = f"{remote_dir}/runtime/oqs/certs"
+    cert_dir = f"{remote_dir}/secrets/mqtt/{args.certificate_profile}"
     host_address = host.address
     extra_ips = args.extra_ip_address or []
     extra_names = args.extra_dns_name or []
@@ -417,7 +441,7 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
     )
     run_command(["ssh", target, command], dry_run=args.dry_run)
 
-    local_cert_dir = broker_root() / "runtime" / "oqs" / "certs"
+    local_cert_dir = certificate_profile_dir(args.certificate_profile)
     local_ca_path = local_cert_dir / "ca.crt"
     if not args.dry_run:
         local_cert_dir.mkdir(parents=True, exist_ok=True)
@@ -433,6 +457,14 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
     if not args.dry_run:
         print(f"Provisioned and verified remote OQS MQTT TLS material under {cert_dir}")
         print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
+        provenance = {
+            "schema_version": 1,
+            "profile_id": args.certificate_profile,
+            "profile_kind": "oqs",
+            "ca_sha256": _sha256(local_ca_path),
+            "remote_provenance_sha256": _sha256(local_provenance_path),
+        }
+        (local_cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"Copied public certificate provenance to {display_path(local_provenance_path)}")
 
 
@@ -449,18 +481,23 @@ def deploy(args: argparse.Namespace) -> None:
         (source_root / "config", f"{remote_dir}/"),
     ]
     # Classical TLS material is generated locally and copied to the gateway.
-    # OQS TLS material is generated on the gateway by provision-oqs-certs using
-    # the OQS-enabled container, so deploy must not overwrite or chmod the
-    # gateway-owned runtime/oqs tree.
-    runtime_classical_dir = source_root / "runtime" / "classical"
-    if runtime_classical_dir.exists():
-        directory_copies.append((runtime_classical_dir, f"{remote_dir}/runtime/"))
+    # All MQTT TLS material is canonical below local secrets/mqtt and is copied
+    # to the gateway only as deployment state. The gateway copy is never authoritative.
+    secrets_mqtt_dir = repo_root() / "secrets" / "mqtt"
+    if secrets_mqtt_dir.exists():
+        directory_copies.append((secrets_mqtt_dir, f"{remote_dir}/secrets/"))
 
     target = ssh_target(host)
     run_command([
         "ssh",
         target,
-        f"mkdir -p {remote_shell_path(remote_dir)} {remote_shell_path(remote_dir + '/scripts')} {remote_shell_path(remote_dir + '/runtime')}",
+        (
+            f"mkdir -p {remote_shell_path(remote_dir)} "
+            f"{remote_shell_path(remote_dir + '/scripts')} "
+            f"{remote_shell_path(remote_dir + '/runtime')} "
+            f"{remote_shell_path(remote_dir + '/secrets')} "
+            f"{remote_shell_path(remote_dir + '/secrets/mqtt')}"
+        ),
     ], dry_run=args.dry_run)
     for source_path, remote_target_dir in file_copies:
         run_command(["scp", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
@@ -468,8 +505,8 @@ def deploy(args: argparse.Namespace) -> None:
         run_command(["scp", "-r", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
 
     permission_targets = [f"{remote_dir}/config"]
-    if runtime_classical_dir.exists():
-        permission_targets.append(f"{remote_dir}/runtime/classical")
+    if secrets_mqtt_dir.exists():
+        permission_targets.append(f"{remote_dir}/secrets/mqtt")
     run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
 
 
@@ -489,6 +526,8 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
         env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
     if getattr(args, "oqs_port", None):
         env.append(f"MQTT_OQS_TLS_PORT={args.oqs_port}")
+    if getattr(args, "certificate_profile", None):
+        env.append(f"MQTT_CERTIFICATE_PROFILE={args.certificate_profile}")
     return env
 
 
@@ -543,7 +582,7 @@ def logs(args: argparse.Namespace) -> None:
 def validate_oqs_tls(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{args.remote_dir}/runtime/oqs/certs"
+    cert_dir = f"{args.remote_dir}/secrets/mqtt/{args.certificate_profile}"
     port = str(args.oqs_port or 8884)
     validation_script = "\n".join([
         "set -eu",
@@ -600,13 +639,13 @@ def validate_mqtt_pubsub(
     args: argparse.Namespace,
     *,
     profile: str,
-    cert_subdir: str,
+    certificate_profile: str,
     port: int,
     image: str,
 ) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{args.remote_dir}/runtime/{cert_subdir}/certs"
+    cert_dir = f"{args.remote_dir}/secrets/mqtt/{certificate_profile}"
     topic = args.topic
     message = args.message
     subscriber_name = docker_safe_name(f"{args.project_name}-{profile}-sub")[:63]
@@ -656,7 +695,7 @@ def validate_classical_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="classical",
-        cert_subdir="classical",
+        certificate_profile=args.certificate_profile or "server-ecdsa-p256",
         port=args.classical_port or 8883,
         image=args.image,
     )
@@ -666,13 +705,14 @@ def validate_oqs_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="oqs",
-        cert_subdir="oqs",
+        certificate_profile=args.certificate_profile or "server-mldsa65",
         port=args.oqs_port or 8884,
         image=args.image,
     )
 
 
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/mqtt")
     parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME, help="Docker Compose project name")
@@ -689,6 +729,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     provision = sub.add_parser("provision-certs", help="generate local classical MQTT TLS material")
+    provision.add_argument("--certificate-profile", default="server-ecdsa-p256")
     provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     provision.add_argument("--extra-dns-name", action="append")
     provision.add_argument("--extra-ip-address", action="append")
@@ -701,6 +742,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS server-authenticated TLS material on the gateway")
     add_common_remote_options(oqs_provision)
+    oqs_provision.set_defaults(certificate_profile="server-mldsa65")
     oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     oqs_provision.add_argument("--extra-dns-name", action="append")
     oqs_provision.add_argument("--extra-ip-address", action="append")
@@ -743,6 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)
     add_port_options(validate_oqs)
+    validate_oqs.set_defaults(certificate_profile="server-mldsa65")
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)
     validate_oqs.add_argument("--image", default=OQS_IMAGE)
     validate_oqs.set_defaults(func=validate_oqs_tls)
@@ -754,6 +797,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_classical_mqtt_parser)
     add_port_options(validate_classical_mqtt_parser)
+    validate_classical_mqtt_parser.set_defaults(certificate_profile="server-ecdsa-p256")
     validate_classical_mqtt_parser.add_argument("--image", default=CLASSICAL_IMAGE)
     validate_classical_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_classical_mqtt_parser.add_argument("--message", default="pqc-classical-mqtt-e2e")
@@ -765,6 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_oqs_mqtt_parser)
     add_port_options(validate_oqs_mqtt_parser)
+    validate_oqs_mqtt_parser.set_defaults(certificate_profile="server-mldsa65")
     validate_oqs_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
     validate_oqs_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_oqs_mqtt_parser.add_argument("--message", default="pqc-oqs-mqtt-e2e")

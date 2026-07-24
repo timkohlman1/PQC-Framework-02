@@ -26,7 +26,7 @@ services:
     volumes:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
-      - ./runtime/classical/certs:/mosquitto/config/certs:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
       - ./data/classical:/mosquitto/data
       - ./log/classical:/mosquitto/log
     healthcheck:
@@ -49,7 +49,7 @@ services:
       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
     volumes:
       - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./runtime/classical/certs:/mosquitto/config/certs:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
       - ./data/classical-server-auth:/mosquitto/data
       - ./log/classical-server-auth:/mosquitto/log
     healthcheck:
@@ -89,7 +89,7 @@ services:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
-      - ./runtime/oqs/certs:/mosquitto/config/certs:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-mldsa65}:/mosquitto/config/certs:ro
     healthcheck:
       test:
         [

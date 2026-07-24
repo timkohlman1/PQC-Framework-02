@@ -731,10 +731,9 @@ def test_validate_mqtt_tls_config_accepts_host_side_schema_with_broker_reference
     config["mqtt"]["transport_backend"] = "host_socket"
     config["mqtt"]["tls"] = {
         "mode": "classical_tls",
-        "certificate_refs": {
-            "ca_certificate": "experiment/mqtt-broker/runtime/classical/ca.crt",
-            "client_certificate": "experiment/mqtt-broker/runtime/classical/client.crt",
-        },
+        "certificate_profile": "server-ecdsa-p256",
+        "certificate_authority_algorithm": "ecdsa-p256",
+        "server_certificate_algorithm": "ecdsa-p256",
     }
     config["mqtt"]["broker"] = {
         "host": "pqc-gateway1",
@@ -781,7 +780,7 @@ def test_validate_mqtt_tls_config_rejects_private_key_references():
         },
     }
 
-    with pytest.raises(experiment_cli.ConfigError, match="private key"):
+    with pytest.raises(experiment_cli.ConfigError, match="must not be declared"):
         experiment_cli.validate_experiment_config(config)
 
 
@@ -823,7 +822,12 @@ def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend()
         "port": 8883,
         "dns_required": True,
     }
-    config["mqtt"]["tls"] = {"mode": "classical_tls"}
+    config["mqtt"]["tls"] = {
+        "mode": "classical_tls",
+        "certificate_profile": "server-ecdsa-p256",
+        "certificate_authority_algorithm": "ecdsa-p256",
+        "server_certificate_algorithm": "ecdsa-p256",
+    }
     config["mqtt"]["fake_transport"] = {
         "connect_outcome": "success",
     }
@@ -860,7 +864,12 @@ def _minimal_mqtt_dns_config(host: str, dns_required):
             "evidence_class": "stm32_st67_classical_tls_e2e",
             "transport_backend": "st67w61m1_lwip_wolfssl",
             "broker": {"host": host, "port": 8883, "dns_required": dns_required},
-            "tls": {"mode": "classical_tls_server_auth", "certificate_refs": {}},
+            "tls": {
+                "mode": "classical_tls_server_auth",
+                "certificate_profile": "server-ecdsa-p256",
+                "certificate_authority_algorithm": "ecdsa-p256",
+                "server_certificate_algorithm": "ecdsa-p256",
+            },
             "result_schema": {"unavailable_metrics": {}},
         }
     }

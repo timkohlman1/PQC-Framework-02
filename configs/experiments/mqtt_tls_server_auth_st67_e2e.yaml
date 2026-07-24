@@ -35,8 +35,9 @@ mqtt:
     completion_grace_seconds: 3
   tls:
     mode: classical_tls_server_auth
-    certificate_refs:
-      ca_certificate: experiment/mqtt-broker/runtime/classical/certs/ca.crt
+    certificate_profile: server-ecdsa-p256
+    certificate_authority_algorithm: ecdsa-p256
+    server_certificate_algorithm: ecdsa-p256
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.

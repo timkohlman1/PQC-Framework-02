@@ -1,0 +1,412 @@
+diff --git a/experiment/mqtt-broker/compose.yaml b/experiment/mqtt-broker/compose.yaml
+index f7b6cdb..7e87de3 100644
+--- a/experiment/mqtt-broker/compose.yaml
++++ b/experiment/mqtt-broker/compose.yaml
+@@ -26,7 +26,7 @@ services:
+     volumes:
+       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+       - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
+-      - ./runtime/classical/certs:/mosquitto/config/certs:ro
++      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+       - ./data/classical:/mosquitto/data
+       - ./log/classical:/mosquitto/log
+     healthcheck:
+@@ -49,7 +49,7 @@ services:
+       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
+     volumes:
+       - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+-      - ./runtime/classical/certs:/mosquitto/config/certs:ro
++      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+       - ./data/classical-server-auth:/mosquitto/data
+       - ./log/classical-server-auth:/mosquitto/log
+     healthcheck:
+@@ -89,7 +89,7 @@ services:
+       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+       - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
+       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
+-      - ./runtime/oqs/certs:/mosquitto/config/certs:ro
++      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-mldsa65}:/mosquitto/config/certs:ro
+     healthcheck:
+       test:
+         [
+diff --git a/experiment/mqtt-broker/scripts/mqtt_broker_ctl.py b/experiment/mqtt-broker/scripts/mqtt_broker_ctl.py
+index 10559af..f4abaf8 100644
+--- a/experiment/mqtt-broker/scripts/mqtt_broker_ctl.py
++++ b/experiment/mqtt-broker/scripts/mqtt_broker_ctl.py
+@@ -2,6 +2,8 @@
+ from __future__ import annotations
+ 
+ import argparse
++import hashlib
++import json
+ import shlex
+ import shutil
+ import subprocess
+@@ -52,6 +54,18 @@ def broker_root() -> Path:
+     return repo_root() / BROKER_RELATIVE_DIR
+ 
+ 
++def certificate_profile_dir(profile_id: str) -> Path:
++    return repo_root() / "secrets" / "mqtt" / profile_id
++
++
++def _sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
+ def load_simple_yaml(path: Path) -> dict[str, Any]:
+     root: dict[str, Any] = {}
+     stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+@@ -249,7 +263,7 @@ def _host_address_from_args(args: argparse.Namespace) -> str | None:
+ 
+ def provision_classical_certs(args: argparse.Namespace) -> None:
+     ensure_openssl()
+-    cert_dir = broker_root() / "runtime/classical/certs"
++    cert_dir = certificate_profile_dir(args.certificate_profile)
+     cert_dir.mkdir(parents=True, exist_ok=True)
+ 
+     host_address = _host_address_from_args(args)
+@@ -294,6 +308,16 @@ def provision_classical_certs(args: argparse.Namespace) -> None:
+     if not args.dry_run:
+         for path in cert_dir.glob("*.key"):
+             path.chmod(0o600)
++        provenance = {
++            "schema_version": 1,
++            "profile_id": args.certificate_profile,
++            "profile_kind": "classical",
++            "ca_algorithm": "ecdsa-p256",
++            "leaf_algorithm": "ecdsa-p256",
++            "ca_sha256": _sha256(cert_dir / "ca.crt"),
++            "server_certificate_sha256": _sha256(cert_dir / "server.crt"),
++        }
++        (cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+         print(f"Provisioned local classical MQTT TLS material under {display_path(cert_dir)}")
+ 
+ 
+@@ -365,7 +389,7 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
+     host = load_host_config(repo_root() / args.host_config)
+     target = ssh_target(host)
+     remote_dir = args.remote_dir
+-    cert_dir = f"{remote_dir}/runtime/oqs/certs"
++    cert_dir = f"{remote_dir}/secrets/mqtt/{args.certificate_profile}"
+     host_address = host.address
+     extra_ips = args.extra_ip_address or []
+     extra_names = args.extra_dns_name or []
+@@ -417,7 +441,7 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
+     )
+     run_command(["ssh", target, command], dry_run=args.dry_run)
+ 
+-    local_cert_dir = broker_root() / "runtime" / "oqs" / "certs"
++    local_cert_dir = certificate_profile_dir(args.certificate_profile)
+     local_ca_path = local_cert_dir / "ca.crt"
+     if not args.dry_run:
+         local_cert_dir.mkdir(parents=True, exist_ok=True)
+@@ -433,6 +457,14 @@ def provision_oqs_certs(args: argparse.Namespace) -> None:
+     if not args.dry_run:
+         print(f"Provisioned and verified remote OQS MQTT TLS material under {cert_dir}")
+         print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
++        provenance = {
++            "schema_version": 1,
++            "profile_id": args.certificate_profile,
++            "profile_kind": "oqs",
++            "ca_sha256": _sha256(local_ca_path),
++            "remote_provenance_sha256": _sha256(local_provenance_path),
++        }
++        (local_cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+         print(f"Copied public certificate provenance to {display_path(local_provenance_path)}")
+ 
+ 
+@@ -449,12 +481,11 @@ def deploy(args: argparse.Namespace) -> None:
+         (source_root / "config", f"{remote_dir}/"),
+     ]
+     # Classical TLS material is generated locally and copied to the gateway.
+-    # OQS TLS material is generated on the gateway by provision-oqs-certs using
+-    # the OQS-enabled container, so deploy must not overwrite or chmod the
+-    # gateway-owned runtime/oqs tree.
+-    runtime_classical_dir = source_root / "runtime" / "classical"
+-    if runtime_classical_dir.exists():
+-        directory_copies.append((runtime_classical_dir, f"{remote_dir}/runtime/"))
++    # All MQTT TLS material is canonical below local secrets/mqtt and is copied
++    # to the gateway only as deployment state. The gateway copy is never authoritative.
++    secrets_mqtt_dir = repo_root() / "secrets" / "mqtt"
++    if secrets_mqtt_dir.exists():
++        directory_copies.append((secrets_mqtt_dir, f"{remote_dir}/secrets/"))
+ 
+     target = ssh_target(host)
+     run_command([
+@@ -468,8 +499,8 @@ def deploy(args: argparse.Namespace) -> None:
+         run_command(["scp", "-r", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
+ 
+     permission_targets = [f"{remote_dir}/config"]
+-    if runtime_classical_dir.exists():
+-        permission_targets.append(f"{remote_dir}/runtime/classical")
++    if secrets_mqtt_dir.exists():
++        permission_targets.append(f"{remote_dir}/secrets/mqtt")
+     run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
+ 
+ 
+@@ -489,6 +520,8 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
+         env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
+     if getattr(args, "oqs_port", None):
+         env.append(f"MQTT_OQS_TLS_PORT={args.oqs_port}")
++    if getattr(args, "certificate_profile", None):
++        env.append(f"MQTT_CERTIFICATE_PROFILE={args.certificate_profile}")
+     return env
+ 
+ 
+@@ -673,6 +706,7 @@ def validate_oqs_mqtt(args: argparse.Namespace) -> None:
+ 
+ 
+ def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
++    parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/mqtt")
+     parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
+     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
+     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME, help="Docker Compose project name")
+@@ -689,6 +723,7 @@ def build_parser() -> argparse.ArgumentParser:
+     sub = parser.add_subparsers(dest="command", required=True)
+ 
+     provision = sub.add_parser("provision-certs", help="generate local classical MQTT TLS material")
++    provision.add_argument("--certificate-profile", default="server-ecdsa-p256")
+     provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
+     provision.add_argument("--extra-dns-name", action="append")
+     provision.add_argument("--extra-ip-address", action="append")
+@@ -701,6 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS server-authenticated TLS material on the gateway")
+     add_common_remote_options(oqs_provision)
++    oqs_provision.set_defaults(certificate_profile="server-mldsa65")
+     oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
+     oqs_provision.add_argument("--extra-dns-name", action="append")
+     oqs_provision.add_argument("--extra-ip-address", action="append")
+diff --git a/scripts/experiment.py b/scripts/experiment.py
+index 245cf8b..fdc4da6 100644
+--- a/scripts/experiment.py
++++ b/scripts/experiment.py
+@@ -94,6 +94,11 @@ from framework.secure_boot_flash import (
+     _classical_profile_metadata,
+     execute_secure_boot_flash,
+ )
++from framework.external_dependencies import (
++    ExternalDependencyError,
++    prepare_external_dependencies,
++    resolve_signing_material,
++)
+ from framework.benchmark_aggregation import (
+     BenchmarkAggregationError,
+     aggregate_benchmark_manifests,
+@@ -236,7 +241,11 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root:
+     steps: dict[str, Any] = {}
+     mqtt = bundle.get("experiment", {}).get("mqtt", {})
+     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
++    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
++    certificate_profile = str(tls.get("certificate_profile", "")).strip() if isinstance(tls, dict) else ""
+     common = ["--host-config", "configs/hosts/gateway.yaml"]
++    if certificate_profile:
++        common.extend(["--certificate-profile", certificate_profile])
+     for step_name, subcommand, extra in (
+         ("stop-existing", "stop", common),
+         ("deploy", "deploy", common),
+@@ -706,25 +715,16 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
+         )
+ 
+     certificate_refs = tls_config.get("certificate_refs", {})
+-    if certificate_refs and not isinstance(certificate_refs, dict):
+-        raise ConfigError("experiment config mqtt.tls.certificate_refs field must be a mapping")
+-    if certificate_refs and tls_mode in {"disabled", "not_applicable", "unavailable"}:
++    if certificate_refs:
+         raise ConfigError(
+-            "mqtt.tls.certificate_refs requires mqtt.tls.mode to be classical_tls or oqs_experimental_tls"
+-        )
+-    for ref_name, ref_value in certificate_refs.items():
+-        if not isinstance(ref_value, str) or not ref_value.strip():
+-            raise ConfigError(f"mqtt.tls.certificate_refs.{ref_name} must be a non-empty path reference")
+-        lowered_ref_name = str(ref_name).lower()
+-        lowered_ref_value = ref_value.lower()
+-        if "private" in lowered_ref_name or "key" in lowered_ref_name:
+-            raise ConfigError(
+-                "mqtt.tls.certificate_refs must not include private key references in Phase M2"
+-            )
+-        if lowered_ref_value.endswith((".key", ".pem.key")):
+-            raise ConfigError(
+-                "mqtt.tls.certificate_refs must not reference private key files in Phase M2"
+-            )
++            "mqtt.tls.certificate_refs is resolved by the experiment prerequisite phase and must not be declared in YAML"
++        )
++    if tls_mode not in {"disabled", "plaintext", "not_applicable", "unavailable"}:
++        certificate_profile = tls_config.get("certificate_profile")
++        if not isinstance(certificate_profile, str) or not certificate_profile.strip():
++            raise ConfigError("TLS experiments must declare mqtt.tls.certificate_profile")
++        if "/" in certificate_profile or "\\" in certificate_profile or certificate_profile in {".", ".."}:
++            raise ConfigError("mqtt.tls.certificate_profile must be an identifier, not a path")
+ 
+     orchestration = mqtt_config.get("orchestration", {})
+     if orchestration and not isinstance(orchestration, dict):
+@@ -1365,6 +1365,24 @@ def run_create_run_command(args: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def _prepare_dependencies_for_result(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> dict[str, dict[str, Any]]:
++    try:
++        context = prepare_external_dependencies(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
++    except ExternalDependencyError as exc:
++        update_manifest(result_dir / "manifest.json", {
++            "status": "failed",
++            "failure_stage": "external_dependencies",
++            "external_dependencies": {"status": "failed", "reason": str(exc)},
++        })
++        raise
++    public_context = context.public_manifest(repo_root)
++    if public_context:
++        update_manifest(result_dir / "manifest.json", {
++            "external_dependencies": {"status": "prepared", **public_context},
++        })
++    return bundle
++
++
+ def run_build_command(args: argparse.Namespace) -> int:
+     """Run the build command."""
+ 
+@@ -1383,6 +1401,11 @@ def run_build_command(args: argparse.Namespace) -> int:
+         }
+     result_dir, manifest = create_result_folder(bundle, args.results_dir)
+     repo_root = repo_root_from_experiment_path(args.experiment)
++    try:
++        bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
++    except ExternalDependencyError as exc:
++        print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
++        return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
+     configure_preset = args.configure_preset or args.build_preset
+ 
+     build_result = execute_build(
+@@ -2025,6 +2048,11 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
+     bundle = load_experiment_bundle(args.experiment)
+     result_dir, manifest = create_result_folder(bundle, args.results_dir)
+     repo_root = repo_root_from_experiment_path(args.experiment)
++    try:
++        bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
++    except ExternalDependencyError as exc:
++        print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
++        return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
+     configure_preset = args.configure_preset or args.build_preset
+     start = perf_counter()
+ 
+@@ -2286,6 +2314,16 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
+     profile = load_config(args.profile)
+     validate_application_signing_profile_config(profile)
+     repo_root = repo_root_from_signing_profile_path(args.profile)
++    try:
++        signing_context = resolve_signing_material(profile=profile, repo_root=repo_root)
++    except ExternalDependencyError as exc:
++        print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
++        return 14
++    profile = {
++        **profile,
++        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
++        "resolved_signing_context": signing_context.public_manifest(repo_root),
++    }
+ 
+     result = execute_application_signing(
+         profile=profile,
+diff --git a/tests/unit/test_mqtt_broker_compose.py b/tests/unit/test_mqtt_broker_compose.py
+index 5d96af2..f28014d 100644
+--- a/tests/unit/test_mqtt_broker_compose.py
++++ b/tests/unit/test_mqtt_broker_compose.py
+@@ -151,7 +151,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
+     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+     broker_root = tmp_path / "experiment" / "mqtt-broker"
+     (broker_root / "scripts" / "__pycache__").mkdir(parents=True)
+-    (broker_root / "runtime" / "classical").mkdir(parents=True)
++    (tmp_path / "secrets" / "mqtt" / "server-ecdsa-p256").mkdir(parents=True)
+     commands = []
+ 
+     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+@@ -165,7 +165,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
+     assert "__pycache__" not in command_text
+     assert "mqtt_broker_ctl.cpython" not in command_text
+     assert any(command[0] == "scp" and command[1].endswith("mqtt_broker_ctl.py") for command in commands)
+-    assert any(command[0:2] == ["scp", "-r"] and command[2].replace("\\", "/").endswith("runtime/classical") for command in commands)
++    assert any(command[0:2] == ["scp", "-r"] and command[2].replace("\\", "/").endswith("secrets/mqtt") for command in commands)
+ 
+ 
+ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(tmp_path, monkeypatch):
+@@ -173,7 +173,7 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
+     host_config = tmp_path / "gateway.yaml"
+     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+     broker_root = tmp_path / "experiment" / "mqtt-broker"
+-    (broker_root / "runtime" / "classical").mkdir(parents=True)
++    (tmp_path / "secrets" / "mqtt" / "server-ecdsa-p256").mkdir(parents=True)
+     commands = []
+ 
+     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+@@ -190,8 +190,8 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
+     ]
+     assert permission_commands
+     assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
+-    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical" in permission_commands[-1][-1]
+-    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime/oqs" not in permission_commands[-1][-1]
++    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt" in permission_commands[-1][-1]
++    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime" not in permission_commands[-1][-1]
+ 
+ 
+ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
+@@ -199,7 +199,7 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
+     host_config = tmp_path / "gateway.yaml"
+     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+     broker_root = tmp_path / "experiment" / "mqtt-broker"
+-    (broker_root / "runtime" / "classical").mkdir(parents=True)
++    (tmp_path / "secrets" / "mqtt" / "server-ecdsa-p256").mkdir(parents=True)
+     commands = []
+ 
+     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+@@ -210,8 +210,8 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
+     module.deploy(args)
+ 
+     command_text = "\n".join(" ".join(command) for command in commands)
+-    assert "runtime/classical" in command_text
+-    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical" in command_text
++    assert "secrets/mqtt" in command_text
++    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt" in command_text
+     assert "runtime/oqs" not in command_text
+ 
+ 
+@@ -295,12 +295,13 @@ def test_mqtt_cert_provisioning_uses_explicit_openssl_configs_and_host_ip_san(tm
+         "pqc-gateway1",
+         "--host-config",
+         str(host_config),
++        "--dry-run",
+     ])
+     module.provision_classical_certs(args)
+ 
+     flat_commands = [" ".join(command) for command in commands]
+     req_commands = [command for command in flat_commands if command.startswith("openssl req ")]
+-    server_conf = tmp_path / "runtime" / "classical" / "certs" / "server-openssl.cnf"
++    server_conf = tmp_path / "secrets" / "mqtt" / "server-ecdsa-p256" / "server-openssl.cnf"
+     server_conf_text = server_conf.read_text(encoding="utf-8")
+ 
+     assert req_commands
+@@ -379,7 +380,7 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
+     assert "./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in compose
+     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
+     assert "./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro" in compose
+-    assert "./runtime/oqs/certs:/mosquitto/config/certs:ro" in compose
++    assert "./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-mldsa65}:/mosquitto/config/certs:ro" in compose
+     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
+     assert "OPENSSL_MODULES" in compose
+     assert "-groups SecP256r1MLKEM768" in compose
+@@ -502,9 +503,9 @@ def test_mqtt_oqs_cert_provisioning_runs_on_gateway_with_oqs_provider_image(tmp_
+     assert "openssl genpkey -algorithm mldsa65 -out /certs/server.key" in command_text
+     assert "openssl genpkey -algorithm mldsa65 -out /certs/client.key" in command_text
+     assert "IP.2 = 10.1.1.18" in command_text
+-    assert "$HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs" in command_text
+-    assert "scp timk@pqc-gateway1:~/pqc-framework-02/tmp/pytest-mqtt-broker-test/runtime/oqs/certs/ca.crt" in command_text
+-    assert "experiment/mqtt-broker/runtime/oqs/certs/ca.crt" in command_text.replace("\\", "/")
++    assert "$HOME/pqc-framework-02/tmp/pytest-mqtt-broker-test/secrets/mqtt/server-mldsa65" in command_text
++    assert "scp timk@pqc-gateway1:~/pqc-framework-02/tmp/pytest-mqtt-broker-test/secrets/mqtt/server-mldsa65/ca.crt" in command_text
++    assert "secrets/mqtt/server-mldsa65/ca.crt" in command_text.replace("\\", "/")
+ 
+ 
+ def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshake(tmp_path, monkeypatch):

@@ -361,3 +361,17 @@ def test_mqtt_uart_completion_is_observed_before_waiting_for_subscriber():
     capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
     assert capture_block.index('grep -Fq "$completion_marker" "$uart_file"') < capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
     assert "duration_seconds=hard_limit_seconds" in capture_block
+
+
+def test_classical_gateway_mqtt_clients_use_resolved_certificate_profile():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+
+    assert "secrets/mqtt/" in source
+    assert "{certificate_profile}/ca.crt" in source
+    assert "runtime/classical/certs/ca.crt" not in source
+
+
+def test_oqs_gateway_clients_keep_container_certificate_mount_path():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+
+    assert 'return "/mosquitto/config/certs/ca.crt"' in source

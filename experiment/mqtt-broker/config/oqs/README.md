@@ -33,17 +33,17 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs `
 Generated broker certificate material is written on the gateway under:
 
 ```text
-~/pqc-framework-02/experiment/mqtt-broker/runtime/oqs/certs/
+~/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt/server-mldsa65/
 ```
 
 Private keys remain on the gateway. Only the public CA certificate and non-secret certificate provenance are copied back to the development repository at:
 
 ```text
-experiment/mqtt-broker/runtime/oqs/certs/ca.crt
-experiment/mqtt-broker/runtime/oqs/certs/certificate-provenance.txt
+secrets/mqtt/server-mldsa65/ca.crt
+secrets/mqtt/server-mldsa65/certificate-provenance.txt
 ```
 
-Generated runtime certificate material must not be committed.
+Generated certificate-profile material remains ignored generated dependency state and must not be committed.
 
 Validate the broker-side TLS handshake with:
 

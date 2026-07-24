@@ -105,3 +105,7 @@ Private signing keys, credentials, real `.env` files, generated broker runtime s
 Do not claim build, signing, flashing, gateway, hardware, UART, runtime, timing, memory, benchmark, MQTT/TLS, Wi-Fi, or end-to-end success without explicit logs, manifests, or equivalent evidence from the relevant workflow. A skipped capability-gated test is not evidence that the capability succeeded.
 
 Detailed signing-tuple, automated-test evidence, MQTT broker lifecycle, classical TLS, and hybrid PQC procedures are owned by `docs/005_remote_flash_workflow.md`, `docs/007_framework_architecture.md`, and `experiment/mqtt-broker/README.md`.
+
+### Declared certificate prerequisites
+
+TLS experiment profiles declare `mqtt.tls.certificate_profile`. Running `experiment build` or `experiment-gateway run` prepares or reuses the matching tuple under `secrets/mqtt/<profile>/`, validates public provenance, and passes the resolved CA into build fingerprinting. Do not invoke certificate provisioning as a separate prerequisite and do not place authoritative certificates under `experiment/mqtt-broker/runtime/`.

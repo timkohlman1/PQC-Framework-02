@@ -591,7 +591,7 @@ fingerprints may be retained.
 
 ### Classical STM32 MQTT-over-TLS boundary
 
-The first M11 profile is `classical-server-auth`: ST67W61M1 supplies the network interface, while lwIP sockets, wolfSSL TLS 1.2, certificate verification, wolfMQTT CONNECT/publish, and one bounded reconnect run on the STM32. The firmware build embeds only the generated public broker CA certificate. The existing `classical` mutual-TLS broker profile remains separate and is not claimed as STM32-validated until client-certificate provisioning is implemented and evidenced.
+The first M11 profile is `server-ecdsa-p256`: ST67W61M1 supplies the network interface, while lwIP sockets, wolfSSL TLS 1.2, certificate verification, wolfMQTT CONNECT/publish, and one bounded reconnect run on the STM32. The firmware build embeds only the generated public broker CA certificate. The existing `classical` mutual-TLS broker profile remains separate and is not claimed as STM32-validated until client-certificate provisioning is implemented and evidenced.
 
 The configured public CA certificate is a build-defining input. Its repository-relative path and content SHA-256 are included in the normal firmware build fingerprint and durable per-file fingerprint evidence. Regenerating or replacing the CA certificate therefore invalidates prior reusable builds and requires a new compilation and build record. Private CA keys and other private certificate material remain excluded from firmware fingerprints, manifests, and result artifacts.
 
@@ -623,3 +623,9 @@ The OQS Mosquitto profile mounts a project-owned OpenSSL configuration that acti
 The STM32 wolfSSL profile for `SecP256r1MLKEM768` must enable the current wolfSSL ML-KEM feature guards `WOLFSSL_HAVE_MLKEM` and `WOLFSSL_PQC_HYBRIDS`. Legacy Kyber-only macros are not sufficient because the pinned wolfSSL supported-group API only registers the hybrid named group under those guards.
 
 The PQC MQTT experiment sets a 60-second UART hard limit because ST67 initialization, Wi-Fi association, DHCP, DNS and the hybrid TLS handshake all occur inside the same capture. Successful runs still terminate early after the explicit completion marker and configured grace interval. After the capture process exits, orchestration performs a final marker check to avoid misclassifying a marker written at the timeout boundary. MQTT command publisher failures are counted and retained in the result evidence rather than suppressed.
+
+## External cryptographic prerequisite phase
+
+Executable experiment plans prepare declared external dependencies before build fingerprinting. `prepare_external_dependencies()` resolves MQTT TLS certificate profiles and returns a resolved context consumed by fingerprinting, generated build configuration, broker deployment, and manifest creation. TLS YAML uses `mqtt.tls.certificate_profile`; direct `certificate_refs` in source YAML are prohibited.
+
+Secure-boot signing similarly resolves the complete signing tuple below `secrets/wolfboot/tuples/` before invoking signing. Missing or partial tuples fail before signing. Tuple creation remains owned by the wolfBoot preparation workflow; application signing does not silently reconstruct key material.

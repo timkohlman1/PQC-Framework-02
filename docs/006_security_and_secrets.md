@@ -134,3 +134,9 @@ material, secret environment values, or generated authentication files. Secret-
 bearing fields are redacted before JSON manifests are written. A test may
 reference a canonical non-secret result record by identity, path, and hash, but
 must not copy secret material or mutate the referenced record.
+
+## Cryptographic prerequisite ownership
+
+The repository-local, ignored `secrets/` hierarchy is the single source of truth for MQTT TLS and wolfBoot signing material. Experiment YAML declares profile identifiers, not certificate or private-key paths. The experiment runner resolves and prepares the declared profile before fingerprinting, build generation, broker deployment, signing, or execution.
+
+Runtime, build, broker-compose, and result directories are not authoritative key stores. They may contain bounded deployment copies where required, but no workflow may select material by discovering whichever file happens to be present there. Partial tuples and public/provenance hash mismatches fail closed. Manifests retain profile identifiers and public hashes only; private key bytes are never retained in results.

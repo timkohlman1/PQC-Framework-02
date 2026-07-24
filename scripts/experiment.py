@@ -94,6 +94,11 @@ from framework.secure_boot_flash import (
     _classical_profile_metadata,
     execute_secure_boot_flash,
 )
+from framework.external_dependencies import (
+    ExternalDependencyError,
+    prepare_external_dependencies,
+    resolve_signing_material,
+)
 from framework.benchmark_aggregation import (
     BenchmarkAggregationError,
     aggregate_benchmark_manifests,
@@ -109,6 +114,25 @@ MQTT_UART_CAPTURE_MARKER_PREFIX = "PQC_UART_CAPTURE"
 MQTT_COMPLETION_MARKER = "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done"
 MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
+
+
+def _mqtt_remote_ca_file(bundle: dict[str, dict[str, Any]], *, inside_oqs_container: bool) -> str:
+    """Return the CA path for gateway-side MQTT clients.
+
+    OQS clients execute inside the broker container, where the selected profile
+    is mounted at /mosquitto/config/certs. Classical clients execute directly
+    on the gateway and must use the deployed canonical profile copy.
+    """
+    if inside_oqs_container:
+        return "/mosquitto/config/certs/ca.crt"
+    tls = bundle["experiment"]["mqtt"].get("tls", {})
+    certificate_profile = str(tls.get("certificate_profile", "")).strip()
+    if not certificate_profile:
+        raise ConfigError("TLS experiments must declare mqtt.tls.certificate_profile")
+    return (
+        "$HOME/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt/"
+        f"{certificate_profile}/ca.crt"
+    )
 
 
 def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
@@ -178,7 +202,7 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
     port = int(broker["port"])
     tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
     pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
-    tls_args = ("--cafile /mosquitto/config/certs/ca.crt" if pqc_hybrid else "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt") if tls_enabled else ""
+    tls_args = f"--cafile {_mqtt_remote_ca_file(bundle, inside_oqs_container=pqc_hybrid)}" if tls_enabled else ""
     mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
     mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
     client_host = "127.0.0.1" if pqc_hybrid else host
@@ -236,7 +260,11 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     steps: dict[str, Any] = {}
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    certificate_profile = str(tls.get("certificate_profile", "")).strip() if isinstance(tls, dict) else ""
     common = ["--host-config", "configs/hosts/gateway.yaml"]
+    if certificate_profile:
+        common.extend(["--certificate-profile", certificate_profile])
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
@@ -366,7 +394,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     broker_port = int(broker["port"])
     tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
     pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
-    tls_args = ("--cafile /mosquitto/config/certs/ca.crt" if pqc_hybrid else "--cafile $HOME/pqc-framework-02/experiment/mqtt-broker/runtime/classical/certs/ca.crt") if tls_enabled else ""
+    tls_args = f"--cafile {_mqtt_remote_ca_file(bundle, inside_oqs_container=pqc_hybrid)}" if tls_enabled else ""
     mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
     mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
     client_host = "127.0.0.1" if pqc_hybrid else broker_host
@@ -706,25 +734,16 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         )
 
     certificate_refs = tls_config.get("certificate_refs", {})
-    if certificate_refs and not isinstance(certificate_refs, dict):
-        raise ConfigError("experiment config mqtt.tls.certificate_refs field must be a mapping")
-    if certificate_refs and tls_mode in {"disabled", "not_applicable", "unavailable"}:
+    if certificate_refs:
         raise ConfigError(
-            "mqtt.tls.certificate_refs requires mqtt.tls.mode to be classical_tls or oqs_experimental_tls"
+            "mqtt.tls.certificate_refs is resolved by the experiment prerequisite phase and must not be declared in YAML"
         )
-    for ref_name, ref_value in certificate_refs.items():
-        if not isinstance(ref_value, str) or not ref_value.strip():
-            raise ConfigError(f"mqtt.tls.certificate_refs.{ref_name} must be a non-empty path reference")
-        lowered_ref_name = str(ref_name).lower()
-        lowered_ref_value = ref_value.lower()
-        if "private" in lowered_ref_name or "key" in lowered_ref_name:
-            raise ConfigError(
-                "mqtt.tls.certificate_refs must not include private key references in Phase M2"
-            )
-        if lowered_ref_value.endswith((".key", ".pem.key")):
-            raise ConfigError(
-                "mqtt.tls.certificate_refs must not reference private key files in Phase M2"
-            )
+    if tls_mode not in {"disabled", "plaintext", "not_applicable", "unavailable"}:
+        certificate_profile = tls_config.get("certificate_profile")
+        if not isinstance(certificate_profile, str) or not certificate_profile.strip():
+            raise ConfigError("TLS experiments must declare mqtt.tls.certificate_profile")
+        if "/" in certificate_profile or "\\" in certificate_profile or certificate_profile in {".", ".."}:
+            raise ConfigError("mqtt.tls.certificate_profile must be an identifier, not a path")
 
     orchestration = mqtt_config.get("orchestration", {})
     if orchestration and not isinstance(orchestration, dict):
@@ -1365,6 +1384,24 @@ def run_create_run_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare_dependencies_for_result(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> dict[str, dict[str, Any]]:
+    try:
+        context = prepare_external_dependencies(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    except ExternalDependencyError as exc:
+        update_manifest(result_dir / "manifest.json", {
+            "status": "failed",
+            "failure_stage": "external_dependencies",
+            "external_dependencies": {"status": "failed", "reason": str(exc)},
+        })
+        raise
+    public_context = context.public_manifest(repo_root)
+    if public_context:
+        update_manifest(result_dir / "manifest.json", {
+            "external_dependencies": {"status": "prepared", **public_context},
+        })
+    return bundle
+
+
 def run_build_command(args: argparse.Namespace) -> int:
     """Run the build command."""
 
@@ -1383,6 +1420,11 @@ def run_build_command(args: argparse.Namespace) -> int:
         }
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
+    try:
+        bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    except ExternalDependencyError as exc:
+        print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
 
     build_result = execute_build(
@@ -2025,6 +2067,11 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     bundle = load_experiment_bundle(args.experiment)
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
+    try:
+        bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    except ExternalDependencyError as exc:
+        print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
     start = perf_counter()
 
@@ -2286,6 +2333,16 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
     profile = load_config(args.profile)
     validate_application_signing_profile_config(profile)
     repo_root = repo_root_from_signing_profile_path(args.profile)
+    try:
+        signing_context = resolve_signing_material(profile=profile, repo_root=repo_root)
+    except ExternalDependencyError as exc:
+        print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
+        return 14
+    profile = {
+        **profile,
+        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
+        "resolved_signing_context": signing_context.public_manifest(repo_root),
+    }
 
     result = execute_application_signing(
         profile=profile,

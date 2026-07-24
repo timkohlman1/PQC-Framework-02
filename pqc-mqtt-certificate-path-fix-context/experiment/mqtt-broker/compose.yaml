@@ -1,0 +1,102 @@
+services:
+  mqtt-classical:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    profiles: ["classical"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        if id mosquitto >/dev/null 2>&1; then
+          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        elif id nobody >/dev/null 2>&1; then
+          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        else
+          chown 0:0 /tmp/mosquitto-aclfile
+          chmod 0644 /tmp/mosquitto-aclfile
+        fi
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
+      - "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883"
+    volumes:
+      - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+      - ./data/classical:/mosquitto/data
+      - ./log/classical:/mosquitto/log
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mqtt-classical-server-auth:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    profiles: ["classical-server-auth"]
+    user: "0:0"
+    ports:
+      - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
+    volumes:
+      - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+      - ./data/classical-server-auth:/mosquitto/data
+      - ./log/classical-server-auth:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "test -r /mosquitto/config/certs/ca.crt && test -r /mosquitto/config/certs/server.crt && test -r /mosquitto/config/certs/server.key"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+  mqtt-oqs:
+    image: openquantumsafe/mosquitto:latest
+    restart: unless-stopped
+    profiles: ["oqs"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        if id mosquitto >/dev/null 2>&1; then
+          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        elif id nobody >/dev/null 2>&1; then
+          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
+          chmod 0640 /tmp/mosquitto-aclfile
+        else
+          chown 0:0 /tmp/mosquitto-aclfile
+          chmod 0644 /tmp/mosquitto-aclfile
+        fi
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "${MQTT_OQS_TLS_PORT:-8884}:8883"
+    environment:
+      OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
+      OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
+    volumes:
+      - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
+      - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
+      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-mldsa65}:/mosquitto/config/certs:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /mosquitto/config/certs/ca.crt -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
+        ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 10s

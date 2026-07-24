@@ -38,8 +38,9 @@ mqtt:
     mode: pqc_hybrid_tls_server_auth
     key_exchange_group: SecP256r1MLKEM768
     server_signature_algorithm: mldsa65
-    certificate_refs:
-      ca_certificate: experiment/mqtt-broker/runtime/oqs/certs/ca.crt
+    certificate_profile: server-mldsa65
+    certificate_authority_algorithm: mldsa65
+    server_certificate_algorithm: mldsa65
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
