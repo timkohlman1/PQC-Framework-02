@@ -339,11 +339,17 @@ def test_pqc_readiness_requires_subscriber_and_publisher_success():
     assert ">/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?" in source
 
 
-def test_pqc_uart_capture_uses_profile_hard_limit_and_final_marker_check():
+def test_pqc_uart_capture_uses_profile_hard_limit_and_current_boot_epoch():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert 'hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))' in source
+    assert 'boot_marker = str(experiment["uart"]["expected_boot_message"])' in source
+    assert 'timeout 0.2s cat {device} >/dev/null 2>&1 || true' in source
     assert 'timeout {hard_limit_seconds}s cat' in source
-    assert 'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"' in source
+    assert 'boot_marker={shlex.quote(boot_marker)}; boot_seen=0' in source
+    assert 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi' in source
+    assert 'if [ "$boot_seen" -eq 0 ]; then continue; fi' in source
+    assert '[ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"' in source
+    assert 'boot_marker_present=$boot_seen' in source
     assert 'hard_limit_seconds={hard_limit_seconds}' in source
 
 
@@ -356,10 +362,16 @@ def test_pqc_command_publisher_failures_are_retained():
     assert 'publish_rc=$?' in source
 
 
-def test_mqtt_uart_completion_is_observed_before_waiting_for_subscriber():
+def test_mqtt_uart_completion_is_observed_only_after_boot_and_publish():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
-    assert capture_block.index('grep -Fq "$completion_marker" "$uart_file"') < capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
+    boot_check = capture_block.index('grep -Fq "$boot_marker" "$uart_file"')
+    completion_check = capture_block.index('grep -Fq "$completion_marker" "$uart_file"')
+    publish = capture_block.index('attempts=$((attempts + 1))')
+    subscriber_wait = capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
+    assert boot_check < completion_check < subscriber_wait
+    assert publish < subscriber_wait
+    assert '[ "$attempts" -gt 0 ]' in capture_block[completion_check - 100:completion_check]
     assert "duration_seconds=hard_limit_seconds" in capture_block
 
 

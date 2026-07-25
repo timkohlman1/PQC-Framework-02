@@ -1,7 +1,0 @@
-# Client certificate CN values become MQTT usernames through use_identity_as_username.
-user pqc-mqtt-client
-topic readwrite pqc/#
-topic read $SYS/#
-
-user pqc-mqtt-server-healthcheck
-topic read $SYS/#

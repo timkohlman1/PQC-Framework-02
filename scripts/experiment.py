@@ -336,7 +336,7 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
             if "=" not in token:
                 continue
             key, value = token.split("=", 1)
-            if key in {"completion_marker_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
+            if key in {"boot_marker_present", "completion_marker_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
                 try:
                     values[key] = int(value)
                     continue
@@ -386,6 +386,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
     completion_grace_seconds = int(orchestration.get("completion_grace_seconds", 3))
+    boot_marker = str(experiment["uart"]["expected_boot_message"])
 
     gateway_alias = str(bundle["host"]["alias"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
@@ -422,20 +423,25 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
+        f"timeout 0.2s cat {device} >/dev/null 2>&1 || true; "
         f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -t {response_topic} -C {expected_response_count} -W {hard_limit_seconds} >"$response_file" & subscriber_pid=$!; '
         f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
         f"{restart_command} 1>&2; reset_rc=$?; attempts=0; publish_failures=0; publish_rc=0; "
+        f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
         f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
         f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
-        'if grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
-        f"sleep {publish_interval}; attempts=$((attempts + 1)); "
+        'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
+        'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
+        f"sleep {publish_interval}; "
+        'if [ "$boot_seen" -eq 0 ]; then continue; fi; '
+        'attempts=$((attempts + 1)); '
         f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
         'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         'wait "$subscriber_pid"; subscriber_rc=$?; '
         'wait "$capture_pid"; capture_rc=$?; '
-        'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
+        'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
         'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
         'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
         'cat "$uart_file"; '
@@ -446,7 +452,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         'response=$(paste -sd, "$response_file"); '
         f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
         'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
-        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
         'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
         'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
     )
