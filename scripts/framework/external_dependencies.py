@@ -134,7 +134,9 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     canonical_dir = _require_below(repo_root / "secrets" / "mqtt" / profile_id, repo_root / "secrets", "MQTT TLS profile")
     ca_path = canonical_dir / "ca.crt"
     provenance_path = canonical_dir / "certificate-provenance.json"
-    required = [ca_path, provenance_path, canonical_dir / "ca.key", canonical_dir / "server.crt", canonical_dir / "server.key"]
+    public_required = [ca_path, provenance_path]
+    classical_private_required = [canonical_dir / "ca.key", canonical_dir / "server.crt", canonical_dir / "server.key"]
+    required = public_required if profile_kind == "oqs" else public_required + classical_private_required
     existed = all(path.is_file() for path in required)
     if not existed:
         partial = [path for path in required if path.exists()]
@@ -154,9 +156,17 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     actual = _sha256(ca_path)
     if recorded != actual:
         raise ExternalDependencyError("MQTT TLS CA hash does not match certificate provenance")
-    if str(provenance.get("ca_algorithm", "")) != ca_algorithm:
+    recorded_ca_algorithm = provenance.get("ca_algorithm")
+    if (
+        recorded_ca_algorithm is not None
+        and str(recorded_ca_algorithm) != ca_algorithm
+    ):
         raise ExternalDependencyError("MQTT TLS CA algorithm does not match certificate profile provenance")
-    if str(provenance.get("leaf_algorithm", "")) != leaf_algorithm:
+    recorded_leaf_algorithm = provenance.get("leaf_algorithm")
+    if (
+        recorded_leaf_algorithm is not None
+        and str(recorded_leaf_algorithm) != leaf_algorithm
+    ):
         raise ExternalDependencyError("MQTT TLS leaf algorithm does not match certificate profile provenance")
     if str(provenance.get("profile_id", "")) != profile_id:
         raise ExternalDependencyError("MQTT TLS profile identifier does not match certificate provenance")
