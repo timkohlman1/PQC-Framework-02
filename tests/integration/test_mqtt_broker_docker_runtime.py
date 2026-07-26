@@ -96,9 +96,9 @@ def _make_mosquitto_runtime_paths_container_readable(broker_root: Path) -> None:
     """
 
     for directory in [
-        broker_root / "runtime",
-        broker_root / "runtime" / "classical",
-        broker_root / "runtime" / "classical" / "certs",
+        broker_root / "secrets",
+        broker_root / "secrets" / "mqtt",
+        broker_root / "secrets" / "mqtt" / "server-ecdsa-p256",
         broker_root / "data",
         broker_root / "data" / "classical",
         broker_root / "log",
@@ -107,7 +107,7 @@ def _make_mosquitto_runtime_paths_container_readable(broker_root: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(0o777 if directory.parts[-2:] in [("data", "classical"), ("log", "classical")] else 0o755)
 
-    cert_dir = broker_root / "runtime" / "classical" / "certs"
+    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
     for path in cert_dir.iterdir():
         if path.is_file():
             path.chmod(0o644)
@@ -128,7 +128,7 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     _copy_broker_project(BROKER_ROOT, broker_root)
 
     module = _load_ctl_module()
-    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "repo_root", lambda: broker_root)
     monkeypatch.setattr(module, "broker_root", lambda: broker_root)
 
     provision_args = module.build_parser().parse_args([
@@ -140,11 +140,17 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     ])
     provision_args.host_config = None
     module.provision_classical_certs(provision_args)
+    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
+    for filename in ("ca.crt", "server.crt", "server.key", "client.crt", "client.key"):
+        assert (cert_dir / filename).is_file(), f"missing provisioned MQTT TLS file: {filename}"
     _make_mosquitto_runtime_paths_container_readable(broker_root)
 
     project_name = f"pqc-mqtt-runtime-{uuid.uuid4().hex[:10]}"
     host_port = _free_local_port()
-    port_env = {"MQTT_CLASSICAL_TLS_PORT": str(host_port)}
+    port_env = {
+        "MQTT_CLASSICAL_TLS_PORT": str(host_port),
+        "MQTT_CERTIFICATE_PROFILE": "server-ecdsa-p256",
+    }
     env = {**os.environ, **port_env}
 
     up = _run(
@@ -215,7 +221,7 @@ def _wait_for_tls(host_port: int, cert_dir: Path, broker_root: Path, project_nam
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root / "runtime" / "classical" / "certs"
+    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
 
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
@@ -234,7 +240,7 @@ def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_supports_client_certificate_pubsub(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root / "runtime" / "classical" / "certs"
+    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
     suffix = uuid.uuid4().hex[:10]
