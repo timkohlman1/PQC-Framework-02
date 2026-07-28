@@ -12,7 +12,9 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Any, Iterable, NamedTuple
+
+from framework.tls_algorithms import resolve_tls_algorithm_set
 
 BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-and-tools-v3"
 
@@ -259,6 +261,7 @@ def calculate_build_fingerprint(
     relative_inputs: Iterable[str],
     *,
     tool_versions: dict[str, str] | None = None,
+    semantic_inputs: dict[str, Any] | None = None,
 ) -> BuildFingerprint:
     """Calculate the deterministic build input fingerprint.
 
@@ -286,6 +289,7 @@ def calculate_build_fingerprint(
         "algorithm": BUILD_FINGERPRINT_ALGORITHM,
         "files": file_entries,
         "tools": captured_tool_versions,
+        "semantic_inputs": semantic_inputs or {},
     }
 
     encoded_payload = json.dumps(
@@ -319,6 +323,7 @@ def calculate_default_build_fingerprint(
         repo_root=repo_root_path,
         relative_inputs=relative_inputs,
         tool_versions=tool_versions,
+        semantic_inputs={"tls_algorithm_set": resolve_tls_algorithm_set(bundle)},
     )
 
 

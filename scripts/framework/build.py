@@ -38,6 +38,7 @@ from framework.generated_state import (
     record_generated_state_success,
 )
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.tls_algorithms import cmake_boolean, resolve_tls_algorithm_set
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 FINGERPRINT_INPUT_ERROR_RETURN_CODE = 4
@@ -388,6 +389,22 @@ def _current_run_id(result_dir: Path) -> str | None:
     return run_id if isinstance(run_id, str) else result_dir.name
 
 
+
+
+def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> tuple[Path, dict[str, Any]]:
+    """Write the resolved profile-specific CMake algorithm selection."""
+    selected = resolve_tls_algorithm_set(bundle)
+    generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    path = generated_dir / "pqc_tls_algorithm_selection.cmake"
+    path.write_text(
+        f'set(PQC_TLS_ALGORITHM_MODE "{selected["mode"]}")\n'
+        f'set(PQC_TLS_ENABLE_RSA {cmake_boolean(selected["rsa"])})\n'
+        f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n',
+        encoding="utf-8",
+    )
+    return path, selected
 
 def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> Path:
     """Write experiment Wi-Fi configuration without exposing the PSK in command logs."""
@@ -819,6 +836,7 @@ def execute_build(
     # Generated-state preflight may remove the configured build directory.
     # Write the Wi-Fi header only after that cleanup and before CMake configure,
     # so the compiler sees the experiment values during this build.
+    _write_tls_algorithm_selection(bundle, repo_root_path, configure_preset)
     _write_wifi_config_header(bundle, repo_root_path, configure_preset)
 
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)

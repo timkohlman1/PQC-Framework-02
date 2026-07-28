@@ -46,7 +46,7 @@ This creates a local development CA, localhost server certificate, and client ce
 
 ## Provision remote OQS TLS material
 
-The OQS profile generates its CA, server, client, and healthcheck certificates on the gateway using the OQS-enabled OpenSSL provider inside `openquantumsafe/mosquitto:latest`. The default algorithm is `mldsa65` for both the CA and leaf certificates. This matches the STM32 wolfSSL profile, which enables ML-DSA-65 verification and does not enable Falcon. The hybrid TLS group is `SecP256r1MLKEM768`.
+The OQS broker profile uses the classical Step CA certificate chain for server authentication and the hybrid TLS group `SecP256r1MLKEM768` for key exchange. The STM32 profile therefore compiles ML-KEM-768 support while retaining classical RSA certificate verification.
 
 Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct script invocation below is the supported host-native administration path because it uses the host SSH configuration. The framework-level `dev.ps1 experiment mqtt-broker-experiment` command remains the normal recorded orchestration path.
 
@@ -57,7 +57,7 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Provisioning verifies the generated chain and the server certificate/private-key match before succeeding. It records the selected tuple under `secrets/mqtt/server-mldsa65/` and deploys that profile to the corresponding gateway path. The experiment runner resolves this profile before build fingerprinting and broker startup.
+Provisioning verifies the classical certificate chain and the server certificate/private-key match before succeeding. The experiment runner resolves the certificate profile before build fingerprinting and broker startup.
 
 Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
@@ -273,7 +273,7 @@ Gateway-managed OQS readiness and STM32 command/response orchestration resolve t
 
 ## OQS certificate compatibility boundary
 
-The STM32 PQC TLS profile currently supports `mldsa65` for server authentication. The experiment configuration must declare `mqtt.tls.server_signature_algorithm: mldsa65`. The build fails before compilation when the configured server signature algorithm is missing or incompatible. Changing the public CA certificate changes the firmware build fingerprint and regenerates the embedded trust anchor.
+The STM32 PQC hybrid TLS profile uses classical server authentication. The experiment configuration must declare `mqtt.tls.server_signature_algorithm: classical`. The build fails before compilation when the configured server signature algorithm is missing or incompatible. Changing the public CA certificate changes the firmware build fingerprint and regenerates the embedded trust anchor.
 
 Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS clients may support Falcon, but that does not establish compatibility with the firmware client.
 

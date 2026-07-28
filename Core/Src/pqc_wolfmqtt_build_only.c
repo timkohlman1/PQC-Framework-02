@@ -39,6 +39,10 @@ typedef struct {
     bool tls_requested;
     bool tcp_connected;
     bool tls_handshake_complete;
+    bool tls_context_created;
+    bool tls_session_created;
+    bool tls_peer_identity_configured;
+    bool ca_load_attempted;
     bool pqc_group_configured;
     bool ca_loaded;
     bool pqc_group_negotiated;
@@ -72,6 +76,39 @@ static void PQC_WolfMQTT_DiagnosticCode(const char *stage, int result, int error
     }
 }
 
+
+
+static void PQC_WolfMQTT_DiagnosticWolfSSLState(const char *stage)
+{
+    char marker[192];
+    const char *version = wolfSSL_lib_version();
+    int written = snprintf(marker, sizeof(marker),
+        "wolfMQTT TLS wolfSSL state: stage=%s version=%s errno=%d "
+        "error_queue=unavailable\r\n",
+        stage,
+        version != NULL ? version : "unavailable",
+        errno);
+
+    if ((written > 0) && ((size_t)written < sizeof(marker))) {
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+}
+
+static void PQC_WolfMQTT_DiagnosticHeapBoundary(const char *stage)
+{
+    char marker[192];
+    size_t heap_free_bytes = xPortGetFreeHeapSize();
+    size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
+    int written = snprintf(marker, sizeof(marker),
+        "wolfMQTT TLS allocation boundary: stage=%s heap_free_bytes=%lu "
+        "heap_min_ever_free_bytes=%lu\r\n",
+        stage,
+        (unsigned long)heap_free_bytes,
+        (unsigned long)heap_min_free_bytes);
+    if ((written > 0) && ((size_t)written < sizeof(marker))) {
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+}
 
 static void PQC_WolfMQTT_DiagnosticHandshakeBoundary(
     const char *stage, uint32_t started_ms)
@@ -469,7 +506,19 @@ static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *cont
 
 static void PQC_WolfMQTT_CloseTransport(PQC_WolfMQTTSocketContext *context)
 {
+    char marker[224];
+    int written;
+
     if (context == NULL) return;
+    written = snprintf(marker, sizeof(marker),
+        "wolfMQTT transport: stage=close socket_fd=%d tcp_connected=%d tls_context=%p tls_session=%p\r\n",
+        context->socket_fd,
+        context->tcp_connected ? 1 : 0,
+        (void *)context->tls_ctx,
+        (void *)context->tls);
+    if ((written > 0) && ((size_t)written < sizeof(marker))) {
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
     if (context->tls != NULL) { wolfSSL_free(context->tls); context->tls = NULL; }
     if (context->tls_ctx != NULL) { wolfSSL_CTX_free(context->tls_ctx); context->tls_ctx = NULL; }
     if (context->socket_fd >= 0) {
@@ -503,13 +552,45 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     PQC_WolfMQTT_DiagnosticCode("tcp_connect", result, 0);
     if (!socket_context->tls_requested) return MQTT_CODE_SUCCESS;
 
+    WOLFSSL_METHOD *tls_method;
+
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: context create begin\r\n");
-    socket_context->tls_ctx = wolfSSL_CTX_new(
-        wolfTLSv1_3_client_method());
-    if (socket_context->tls_ctx == NULL) {
-        PQC_WolfMQTT_DiagnosticCode("context_create", -1, 0);
-        PQC_WolfMQTT_CloseTransport(socket_context); return -1;
+    tls_method = wolfTLSv1_3_client_method();
+    {
+        char marker[192];
+        int written = snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS: stage=method_create method=%p errno=%d\r\n",
+            (void *)tls_method, errno);
+        if ((written > 0) && ((size_t)written < sizeof(marker))) {
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+        }
     }
+    if (tls_method == NULL) {
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS: stage=method_create result=null tcp_close_before_clienthello=true\r\n");
+        PQC_WolfMQTT_CloseTransport(socket_context);
+        return MQTT_CODE_ERROR_TLS_CONNECT;
+    }
+    PQC_WolfMQTT_DiagnosticHeapBoundary("before_context_create");
+    socket_context->tls_ctx = wolfSSL_CTX_new(tls_method);
+    {
+        char marker[192];
+        int written = snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS: stage=context_create context=%p method=%p errno=%d\r\n",
+            (void *)socket_context->tls_ctx, (void *)tls_method, errno);
+        if ((written > 0) && ((size_t)written < sizeof(marker))) {
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+        }
+    }
+    PQC_WolfMQTT_DiagnosticHeapBoundary("after_context_create");
+    if (socket_context->tls_ctx == NULL) {
+        PQC_WolfMQTT_DiagnosticCode("context_create", -1, errno);
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS: stage=context_create result=null tcp_close_before_clienthello=true\r\n");
+        PQC_WolfMQTT_CloseTransport(socket_context);
+        return MQTT_CODE_ERROR_TLS_CONNECT;
+    }
+    socket_context->tls_context_created = true;
     wolfSSL_SetIORecv(socket_context->tls_ctx, PQC_WolfSSL_IORecv);
     wolfSSL_SetIOSend(socket_context->tls_ctx, PQC_WolfSSL_IOSend);
 
@@ -518,21 +599,44 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_CTX_set_groups(socket_context->tls_ctx, groups, 1);
         socket_context->pqc_group_configured = (result == WOLFSSL_SUCCESS);
         PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);
-    }
-    if (result != WOLFSSL_SUCCESS) {
-        PQC_WolfMQTT_CloseTransport(socket_context);
-        return MQTT_CODE_ERROR_TLS_CONNECT;
+        if (result != WOLFSSL_SUCCESS) {
+            PQC_WolfMQTT_DiagnosticMarker(
+                "wolfMQTT TLS: stage=pqc_group_config result=failed tcp_close_before_clienthello=true\r\n");
+            PQC_WolfMQTT_CloseTransport(socket_context);
+            return MQTT_CODE_ERROR_TLS_CONNECT;
+        }
     }
 
     /* Register the configured TLS peer identity before loading the CA. Use
      * IP subjectAltName verification for an IPv4 literal and DNS subjectAltName
      * verification for a configured hostname/FQDN. */
+    PQC_WolfMQTT_DiagnosticMarker(
+        "wolfMQTT TLS: stage=session_create operation=begin\r\n");
+    PQC_WolfMQTT_DiagnosticHeapBoundary("before_session_create");
+    errno = 0;
     socket_context->tls = wolfSSL_new(socket_context->tls_ctx);
-    if (socket_context->tls == NULL) {
-        PQC_WolfMQTT_DiagnosticCode("session_create", -1, 0);
-        PQC_WolfMQTT_CloseTransport(socket_context);
-        return MQTT_CODE_ERROR_MEMORY;
+    {
+        char marker[224];
+        int written = snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS: stage=session_create operation=end session=%p context=%p method=%p errno=%d\r\n",
+            (void *)socket_context->tls,
+            (void *)socket_context->tls_ctx,
+            (void *)tls_method,
+            errno);
+        if ((written > 0) && ((size_t)written < sizeof(marker))) {
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+        }
     }
+    PQC_WolfMQTT_DiagnosticHeapBoundary("after_session_create");
+    if (socket_context->tls == NULL) {
+        PQC_WolfMQTT_DiagnosticCode("session_create", -1, errno);
+        PQC_WolfMQTT_DiagnosticWolfSSLState("session_create");
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS: stage=session_create result=null tcp_close_before_clienthello=true\r\n");
+        PQC_WolfMQTT_CloseTransport(socket_context);
+        return MQTT_CODE_ERROR_TLS_CONNECT;
+    }
+    socket_context->tls_session_created = true;
     {
         ip4_addr_t peer_ip;
         if (ip4addr_aton(PQC_MQTT_TLS_SERVER_NAME, &peer_ip) != 0) {
@@ -547,6 +651,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         PQC_WolfMQTT_CloseTransport(socket_context);
         return MQTT_CODE_ERROR_TLS_CONNECT;
     }
+    socket_context->tls_peer_identity_configured = true;
 
     {
         char marker[224];
@@ -559,6 +664,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         }
     }
 
+    socket_context->ca_load_attempted = true;
     result = wolfSSL_CTX_load_verify_buffer(socket_context->tls_ctx,
         (const unsigned char *)PQC_MQTT_TLS_CA_PEM,
         (long)strlen(PQC_MQTT_TLS_CA_PEM), WOLFSSL_FILETYPE_PEM);
@@ -683,6 +789,10 @@ static int PQC_WolfMQTT_RunExchangeCycle(PQC_WolfMQTTBuildOnlyStatus *status, un
     status->last_result = result;
     status->tcp_connected = socket_context.tcp_connected;
     status->tls_handshake_complete = socket_context.tls_handshake_complete;
+    status->tls_context_created = socket_context.tls_context_created;
+    status->tls_session_created = socket_context.tls_session_created;
+    status->tls_peer_identity_configured = socket_context.tls_peer_identity_configured;
+    status->ca_load_attempted = socket_context.ca_load_attempted;
     status->pqc_group_configured = socket_context.pqc_group_configured;
     status->ca_loaded = socket_context.ca_loaded;
     status->pqc_group_negotiated = socket_context.pqc_group_negotiated;
@@ -719,17 +829,26 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
     PQC_WolfMQTTBuildOnlyStatus first, second; int result, reconnect_result=MQTT_CODE_SUCCESS; int written; bool reconnect_attempted=false;
     if((buffer==NULL)||(size==0U)||(context==NULL)) return false;
 #if (PQC_MQTT_ENABLED != 0)
-    if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Init();
+    if (PQC_WolfMQTT_TLSRequested()) {
+        int wolfssl_init_result = wolfSSL_Init();
+        PQC_WolfMQTT_DiagnosticCode("wolfssl_init", wolfssl_init_result, 0);
+        if (wolfssl_init_result != WOLFSSL_SUCCESS) {
+            PQC_WolfMQTT_DiagnosticWolfSSLState("wolfssl_init");
+        }
+    }
     result=PQC_WolfMQTT_RunExchangeCycle(&first,0U);
     if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) { reconnect_attempted=true; reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); } else memset(&second,0,sizeof(second));
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Cleanup();
     written=snprintf(buffer,size,
-      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_handshake=%s pqc_group_config=%s ca_load=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
+      "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_context=%s tls_session=%s tls_peer_identity=%s tls_handshake=%s pqc_group_config=%s ca_load=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
       context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e"),
       PQC_WolfMQTT_BackendName(first.backend),result,first.transport_available?"available":"unavailable",first.tcp_connected?"passed":"failed",
+      PQC_WolfMQTT_TLSRequested()?(first.tls_context_created?"passed":"failed"):"not_required",
+      PQC_WolfMQTT_TLSRequested()?(first.tls_session_created?"passed":(first.tls_context_created?"failed":"not_run")):"not_required",
+      PQC_WolfMQTT_TLSRequested()?(first.tls_peer_identity_configured?"passed":(first.tls_session_created?"failed":"not_run")):"not_required",
       first.tls_handshake_complete?"passed":(PQC_WolfMQTT_TLSRequested()?"failed":"not_required"),
       PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_configured?"passed":"failed"):"not_required",
-      PQC_WolfMQTT_TLSRequested()?(first.ca_loaded?"passed":"failed"):"not_required",
+      PQC_WolfMQTT_TLSRequested()?(first.ca_load_attempted?(first.ca_loaded?"passed":"failed"):"not_run"):"not_required",
       PQC_WolfMQTT_PQCHybridRequested()?(first.pqc_group_negotiated?"passed":(first.tls_handshake_complete?"failed":"not_run")):"not_required",
       first.tls_connect_result,first.tls_error,first.tls_io_error,first.mqtt_connected?"passed":"failed",
       first.subscribed?"passed":"failed",first.message_received?"passed":"failed",first.publish_complete?"passed":"failed",

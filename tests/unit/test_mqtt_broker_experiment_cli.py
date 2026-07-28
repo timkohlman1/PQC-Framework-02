@@ -103,7 +103,7 @@ def test_mqtt_broker_experiment_orchestrates_oqs_profile_and_writes_manifest(tmp
     assert result == 0
     subcommands = [command[2] for command in commands]
     assert subcommands == [
-        "provision-oqs-certs",
+        "provision-certs",
         "deploy",
         "start",
         "status",
@@ -245,7 +245,7 @@ def test_mqtt_broker_experiment_records_running_step_before_subprocess_returns(t
         manifest_path = tmp_path / "results" / "2026-07-04_004_mqtt_oqs_broker" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-        if command[2] == "provision-oqs-certs":
+        if command[2] == "provision-certs":
             inspected_running_step = True
             assert manifest["steps"][0]["name"] == "provision_oqs_certs"
             assert manifest["steps"][0]["status"] == "running"
@@ -317,27 +317,34 @@ def test_mqtt_broker_experiment_marks_step_timeout_failed(tmp_path, monkeypatch)
     assert "partial output" in (tmp_path / "results" / "2026-07-04_005_mqtt_classical_broker" / "provision_classical_certs.log").read_text(encoding="utf-8")
 
 
-def test_pqc_experiment_resolves_oqs_container_by_compose_labels():
+def test_pqc_experiment_uses_separate_oqs_client_containers():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
 
-    assert "label=com.docker.compose.project=pqc-framework-mqtt-broker" in source
-    assert "label=com.docker.compose.service=mqtt-oqs" in source
-    assert "--filter status=running" in source
-    assert 'docker exec -i "$oqs_container_id" mosquitto_sub' in source
-    assert 'docker exec -i "$oqs_container_id" mosquitto_pub' in source
-    assert "docker compose --profile oqs exec -T mqtt-oqs" not in source
-
+    assert "openquantumsafe/mosquitto:latest" in source
+    assert "--rm --network host" in source
+    assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in source
+    assert "OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules" in source
+    assert "--entrypoint mosquitto_sub" in source
+    assert "--entrypoint mosquitto_pub" in source
+    assert 'docker exec -i "$oqs_container_id"' not in source
+    assert "label=com.docker.compose.service=mqtt-oqs" not in source
 
 def test_pqc_readiness_requires_subscriber_and_publisher_success():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+    readiness = source[source.index("def _wait_for_plaintext_mqtt_broker"):source.index("def _start_managed_mqtt_broker")]
 
-    assert 'pub_rc=$?' in source
-    assert 'sub_rc=$?' in source
-    assert '[ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ]' in source
-    assert 'oqs_container_resolution_failed count=$oqs_container_count' in source
-    assert "mosquitto_pub" in source
-    assert ">/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?" in source
+    subscriber = readiness.index("mqtt_sub =")
+    publisher = readiness.index("mqtt_pub =", subscriber)
+    subscriber_command = readiness.index("f'{mqtt_sub} -h {host}", publisher)
+    publisher_command = readiness.index("f'{mqtt_pub} -h {host}", subscriber_command)
+    wait = readiness.index('wait "$sub_pid"; sub_rc=$?;', publisher_command)
+    response = readiness.index('response=$(paste -sd, "$response_file")', wait)
+    readiness_check = readiness.index('if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ]', response)
 
+    assert subscriber < publisher < subscriber_command < publisher_command < wait < response < readiness_check
+    assert 'pub_rc=$?' in readiness
+    assert 'sub_rc=$?' in readiness
+    assert '"$publisher_file" 2>&1; pub_rc=$?' in readiness
 
 def test_pqc_uart_capture_uses_profile_hard_limit_and_current_boot_epoch():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
@@ -376,14 +383,54 @@ def test_mqtt_uart_completion_is_observed_only_after_boot_and_publish():
 
 
 def test_classical_gateway_mqtt_clients_use_resolved_certificate_profile():
+    experiment_cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "tls": {"certificate_profile": "stepca-classical"}
+            }
+        }
+    }
+
+    assert experiment_cli._mqtt_remote_ca_file(bundle) == (
+        "$HOME/pqc-framework-02/secrets/mqtt/stepca-classical/ca.crt"
+    )
+
+def test_oqs_gateway_clients_mount_profile_at_container_certificate_path():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
 
-    assert "secrets/mqtt/" in source
-    assert "{certificate_profile}/ca.crt" in source
-    assert "runtime/classical/certs/ca.crt" not in source
+    assert 'f"-v {certificate_dir}:/certs:ro "' in source
+    assert "--cafile /certs/ca.crt --tls-version tlsv1.3" in source
+    assert 'return "/mosquitto/config/certs/ca.crt"' not in source
 
 
-def test_oqs_gateway_clients_keep_container_certificate_mount_path():
-    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+def test_gateway_mqtt_client_host_uses_broker_identity_for_tls():
+    experiment_cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "broker": {"host": "pqc-gateway1.pqcnet"},
+                "orchestration": {"host": "10.1.1.18"},
+            }
+        }
+    }
 
-    assert 'return "/mosquitto/config/certs/ca.crt"' in source
+    assert experiment_cli._mqtt_gateway_client_host(
+        bundle, tls_enabled=True
+    ) == "pqc-gateway1.pqcnet"
+
+
+def test_gateway_mqtt_client_host_allows_transport_override_for_plaintext():
+    experiment_cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "broker": {"host": "pqc-gateway1.pqcnet"},
+                "orchestration": {"host": "10.1.1.18"},
+            }
+        }
+    }
+
+    assert experiment_cli._mqtt_gateway_client_host(
+        bundle, tls_enabled=False
+    ) == "10.1.1.18"

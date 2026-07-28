@@ -54,6 +54,21 @@ message("STM32 vector table offset: " ${STM32_APP_VECTOR_OFFSET})
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
+# Experiment builds generate this file before CMake configure. Direct CMake
+# invocations default to the minimal classical RSA TLS 1.3 capability set.
+set(PQC_TLS_ALGORITHM_MODE "classical" CACHE STRING "Resolved TLS algorithm mode")
+set(PQC_TLS_ENABLE_RSA 1 CACHE BOOL "Compile RSA certificate verification")
+set(PQC_TLS_ENABLE_RSA_PSS 1 CACHE BOOL "Compile and advertise RSA-PSS")
+set(PQC_TLS_ENABLE_MLKEM_768 0 CACHE BOOL "Compile ML-KEM-768 hybrid key exchange")
+set(PQC_TLS_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_tls_algorithm_selection.cmake")
+if(EXISTS "${PQC_TLS_SELECTION_FILE}")
+    include("${PQC_TLS_SELECTION_FILE}")
+endif()
+message("TLS algorithm mode: " ${PQC_TLS_ALGORITHM_MODE})
+message("TLS RSA/RSA-PSS: " ${PQC_TLS_ENABLE_RSA} "/" ${PQC_TLS_ENABLE_RSA_PSS})
+message("TLS ML-KEM-768: " ${PQC_TLS_ENABLE_MLKEM_768})
+
+
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 
@@ -91,14 +106,30 @@ set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sp_int.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mldsa.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
 )
+
+if(PQC_TLS_ENABLE_RSA)
+    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/rsa.c"
+    )
+endif()
+
+if(PQC_TLS_ENABLE_MLKEM_768)
+    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
+    )
+endif()
+
+if(PQC_TLS_ENABLE_MLKEM_768)
+    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
+    )
+endif()
+
 
 foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
     if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
@@ -122,6 +153,9 @@ target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
     WOLFSSL_USER_SETTINGS
     PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
     PQC_WOLFSSL_SOURCE_BUILD=1
+    PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
+    PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+    PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
 )
 
 
@@ -198,6 +232,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     WOLFSSL_USER_SETTINGS
     PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
     PQC_WOLFSSL_SOURCE_BUILD=1
+    PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
+    PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+    PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS

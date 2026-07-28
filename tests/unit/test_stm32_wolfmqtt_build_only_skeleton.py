@@ -134,11 +134,16 @@ def test_mlkem_portable_implementation_sources_are_wired_without_arch_assembly()
 
 
 
-def test_mldsa_portable_verifier_and_ca_status_are_wired():
+def test_mqtt_tls_build_excludes_mldsa_but_retains_pqc_group_status():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-    assert "wolfcrypt/src/wc_mldsa.c" in cmake
-    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+
+    for marker in (
+        "PQC_TLS_ENABLE_MLDSA_65",
+        "wolfcrypt/src/wc_mldsa.c",
+        "wolfcrypt/src/wc_mldsa_asm.S",
+    ):
+        assert marker not in cmake
     assert "pqc_group_config=%s ca_load=%s pqc_group=%s" in source
 
 

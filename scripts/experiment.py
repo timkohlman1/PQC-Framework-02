@@ -158,6 +158,23 @@ def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
     return str(broker["host"])
 
 
+def _mqtt_gateway_client_host(
+    bundle: dict[str, dict[str, Any]],
+    *,
+    tls_enabled: bool,
+) -> str:
+    """Return the endpoint used by gateway-side MQTT clients.
+
+    TLS clients must connect using mqtt.broker.host so certificate hostname
+    verification authenticates the configured broker identity. Plaintext
+    clients may use mqtt.orchestration.host as a transport-only override.
+    """
+    mqtt = bundle["experiment"]["mqtt"]
+    if tls_enabled:
+        return str(mqtt["broker"]["host"])
+    return _mqtt_orchestration_host(bundle)
+
+
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
@@ -211,7 +228,6 @@ def _wait_for_plaintext_mqtt_broker(
     mqtt = bundle["experiment"]["mqtt"]
     broker = mqtt["broker"]
     gateway_alias = str(bundle["host"]["alias"])
-    host = shlex.quote(_mqtt_orchestration_host(bundle))
     port = int(broker["port"])
     evidence_class = mqtt.get("evidence_class")
     tls_enabled = evidence_class in {
@@ -219,6 +235,9 @@ def _wait_for_plaintext_mqtt_broker(
         "stm32_st67_pqc_hybrid_tls_e2e",
     }
     pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    host = shlex.quote(
+        _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
+    )
 
     if pqc_hybrid:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
@@ -441,7 +460,6 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     gateway_alias = str(bundle["host"]["alias"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
     baud = int(bundle["host"]["uart"]["baud"])
-    broker_host = shlex.quote(_mqtt_orchestration_host(bundle))
     broker_port = int(broker["port"])
     evidence_class = mqtt.get("evidence_class")
     tls_enabled = evidence_class in {
@@ -449,6 +467,9 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         "stm32_st67_pqc_hybrid_tls_e2e",
     }
     pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    broker_host = shlex.quote(
+        _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
+    )
 
     oqs_subscriber_name = ""
     if pqc_hybrid:
@@ -3265,7 +3286,12 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
 
     planned_steps: list[tuple[str, str]] = []
     if not args.no_provision_certs:
-        planned_steps.append(("provision_stepca_certs", "provision-certs"))
+        provision_step_name = (
+            "provision_classical_certs"
+            if args.profile == "classical"
+            else "provision_oqs_certs"
+        )
+        planned_steps.append((provision_step_name, "provision-certs"))
     if not args.no_deploy:
         planned_steps.append(("deploy_broker", "deploy"))
     planned_steps.extend([
