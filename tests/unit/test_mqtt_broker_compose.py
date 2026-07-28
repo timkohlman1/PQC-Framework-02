@@ -48,13 +48,18 @@ def test_mqtt_broker_compose_copies_acl_files_to_container_local_paths():
     assert "command: |" not in compose
     assert "aclfile.source" in compose
     assert "cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile" in compose
+    assert "cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key" in compose
+    assert "chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key" in compose
     assert "if id mosquitto >/dev/null 2>&1; then" in compose
-    assert 'chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile' in compose
+    assert 'runtime_user="$(id -u mosquitto)"' in compose
+    assert 'chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*' in compose
     assert "elif id nobody >/dev/null 2>&1; then" in compose
-    assert 'chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile' in compose
-    assert "chown 0:0 /tmp/mosquitto-aclfile" in compose
+    assert 'runtime_user="$(id -u nobody)"' in compose
+    assert "runtime_user=0" in compose
+    assert "runtime_group=0" in compose
     assert "chmod 0640 /tmp/mosquitto-aclfile" in compose
-    assert "chmod 0644 /tmp/mosquitto-aclfile" in compose
+    assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in compose
+    assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt" in compose
     assert "exec mosquitto -c /mosquitto/config/mosquitto.conf" in compose
 
 
@@ -74,9 +79,9 @@ def test_classical_mosquitto_config_enforces_tls_and_client_certificates():
     assert "allow_anonymous true" in config
     assert "require_certificate true" in config
     assert "use_identity_as_username true" in config
-    assert "cafile /mosquitto/config/certs/ca.crt" in config
-    assert "certfile /mosquitto/config/certs/server.crt" in config
-    assert "keyfile /mosquitto/config/certs/server.key" in config
+    assert "cafile /tmp/mosquitto-certs/ca-chain.crt" in config
+    assert "certfile /tmp/mosquitto-certs/server.crt" in config
+    assert "keyfile /tmp/mosquitto-certs/server.key" in config
 
 
 def test_mqtt_runtime_paths_are_ignored_by_git():
@@ -109,6 +114,7 @@ def test_mqtt_control_script_has_expected_subcommands_and_defaults():
     assert parser.parse_args(["stop", "--dry-run"]).command == "stop"
     assert parser.parse_args(["status", "--dry-run"]).command == "status"
     assert parser.parse_args(["logs", "--profile", "oqs", "--dry-run"]).profile == "oqs"
+    assert parser.parse_args(["validate-classical-server-auth-mqtt", "--dry-run"]).command == "validate-classical-server-auth-mqtt"
 
 
 def test_mqtt_control_script_reads_gateway_alias_user_and_address_from_host_config(tmp_path):
@@ -372,9 +378,9 @@ def test_oqs_mosquitto_config_enforces_server_authenticated_tls_with_project_cer
     assert "allow_anonymous true" in config
     assert "require_certificate false" in config
     assert "use_identity_as_username false" in config
-    assert "cafile /mosquitto/config/certs/ca.crt" in config
-    assert "certfile /mosquitto/config/certs/server.crt" in config
-    assert "keyfile /mosquitto/config/certs/server.key" in config
+    assert "cafile /tmp/mosquitto-certs/ca.crt" in config
+    assert "certfile /tmp/mosquitto-certs/server.crt" in config
+    assert "keyfile /tmp/mosquitto-certs/server.key" in config
     assert "acl_file /tmp/mosquitto-aclfile" in config
     assert "user nobody" in config
 
@@ -615,9 +621,13 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
     assert "--network host" in command_text
     assert "-p 38884" in command_text
     assert "--cafile /certs/ca.crt" in command_text
-    assert "--cert /certs/client.crt" in command_text
-    assert "--key /certs/client.key" in command_text
+    assert "--cert /certs/client.crt" not in command_text
+    assert "--key /certs/client.key" not in command_text
     assert "--tls-version tlsv1.3" in command_text
+    assert "-h localhost" in command_text
+    assert "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf" in command_text
+    assert "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules" in command_text
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in command_text
     assert '-t "$topic" -C 1' in command_text
     assert '-t "$topic" -m "$message"' in command_text
     assert 'grep -Fx -- "$message"' in command_text
@@ -653,3 +663,44 @@ def test_mqtt_oqs_tls_validation_labels_host_and_broker_side_evidence(tmp_path, 
     assert "wolfSSL-on-STM32" in command_text
     assert "wolfMQTT-on-STM32" in command_text
     assert "end-to-end wireless success" in command_text
+
+
+def test_classical_server_auth_mqtt_validation_omits_client_identity(tmp_path, monkeypatch):
+    module = _load_ctl_module()
+    host_config = tmp_path / "gateway.yaml"
+    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    commands = []
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
+    args = module.build_parser().parse_args([
+        "validate-classical-server-auth-mqtt",
+        "--host-config", str(host_config),
+        "--remote-dir", "~/pqc-framework-02/experiment/mqtt-broker",
+        "--classical-port", "28883",
+        "--dry-run",
+    ])
+    module.validate_classical_server_auth_mqtt(args)
+    command_text = "\n".join(" ".join(command) for command in commands)
+    assert "Evidence profile: classical-server-auth" in command_text
+    assert "--cafile /certs/ca.crt" in command_text
+    assert "--cert /certs/client.crt" not in command_text
+    assert "--key /certs/client.key" not in command_text
+    assert "--tls-version tlsv1.3" in command_text
+
+
+def test_classical_mtls_acl_matches_stepca_client_common_name():
+    acl = _read(BROKER_ROOT / "config" / "classical" / "aclfile")
+    assert "user stm32-mqtt-client" in acl
+    assert "user pqc-mqtt-client" not in acl
+    assert "topic readwrite pqc/#" in acl
+
+
+def test_mqtt_validator_reports_subscriber_failure_without_blank_polling():
+    source = _read(BROKER_ROOT / "scripts" / "mqtt_broker_ctl.py")
+    normalized_source = source.replace('\\"', '"')
+
+    assert "subscriber failed before publish" in normalized_source
+    assert "subscriber exited before receiving expected message" in normalized_source
+    assert "expected MQTT payload was not received" in normalized_source
+    assert 'logs=$(docker logs "$subscriber" 2>&1 || true)' in normalized_source
+    assert 'grep -Fx -- "$message"' in normalized_source

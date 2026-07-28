@@ -85,32 +85,20 @@ def _copy_broker_project(source: Path, destination: Path) -> None:
 
 
 
-def _make_mosquitto_runtime_paths_container_readable(broker_root: Path) -> None:
-    """Prepare pytest-only runtime bind mounts for the Mosquitto container.
+def _require_staged_stepca_material() -> Path:
+    cert_dir = REPO_ROOT / "secrets" / "mqtt" / "stepca-classical"
+    required = ("ca.crt", "ca-chain.crt", "server.crt", "server.key", "client.crt", "client.key")
+    missing = [name for name in required if not (cert_dir / name).is_file()]
+    if missing:
+        pytest.skip("staged step-ca MQTT material is unavailable: " + ", ".join(missing))
+    return cert_dir
 
-    The eclipse-mosquitto image starts as root in this compose project but the
-    broker process may drop privileges before opening TLS keys and log files.
-    The certificates generated here are short-lived test-only material under
-    pytest's temporary directory, so relaxing permissions on these copies avoids
-    CI runner UID/GID differences without exposing repository secrets.
-    """
 
-    for directory in [
-        broker_root / "secrets",
-        broker_root / "secrets" / "mqtt",
-        broker_root / "secrets" / "mqtt" / "server-ecdsa-p256",
-        broker_root / "data",
-        broker_root / "data" / "classical",
-        broker_root / "log",
-        broker_root / "log" / "classical",
-    ]:
-        directory.mkdir(parents=True, exist_ok=True)
-        directory.chmod(0o777 if directory.parts[-2:] in [("data", "classical"), ("log", "classical")] else 0o755)
-
-    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
-    for path in cert_dir.iterdir():
+def _copy_staged_material(source: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in source.iterdir():
         if path.is_file():
-            path.chmod(0o644)
+            shutil.copy2(path, destination / path.name)
 
 
 def _free_local_port() -> int:
@@ -124,32 +112,19 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     if shutil.which("openssl") is None:
         pytest.skip("openssl command is not available")
 
-    broker_root = tmp_path / "mqtt-broker"
+    source_cert_dir = _require_staged_stepca_material()
+    workspace_root = tmp_path / "workspace"
+    broker_root = workspace_root / "experiment" / "mqtt-broker"
+    cert_dir = workspace_root / "secrets" / "mqtt" / "stepca-classical"
+    broker_root.parent.mkdir(parents=True, exist_ok=True)
     _copy_broker_project(BROKER_ROOT, broker_root)
-
-    module = _load_ctl_module()
-    monkeypatch.setattr(module, "repo_root", lambda: broker_root)
-    monkeypatch.setattr(module, "broker_root", lambda: broker_root)
-
-    provision_args = module.build_parser().parse_args([
-        "provision-certs",
-        "--server-name",
-        "localhost",
-        "--days",
-        "7",
-    ])
-    provision_args.host_config = None
-    module.provision_classical_certs(provision_args)
-    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
-    for filename in ("ca.crt", "server.crt", "server.key", "client.crt", "client.key"):
-        assert (cert_dir / filename).is_file(), f"missing provisioned MQTT TLS file: {filename}"
-    _make_mosquitto_runtime_paths_container_readable(broker_root)
+    _copy_staged_material(source_cert_dir, cert_dir)
 
     project_name = f"pqc-mqtt-runtime-{uuid.uuid4().hex[:10]}"
     host_port = _free_local_port()
     port_env = {
         "MQTT_CLASSICAL_TLS_PORT": str(host_port),
-        "MQTT_CERTIFICATE_PROFILE": "server-ecdsa-p256",
+        "MQTT_CERTIFICATE_PROFILE": "stepca-classical",
     }
     env = {**os.environ, **port_env}
 
@@ -221,7 +196,7 @@ def _wait_for_tls(host_port: int, cert_dir: Path, broker_root: Path, project_nam
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
+    cert_dir = broker_root.parents[1] / "secrets" / "mqtt" / "stepca-classical"
 
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
@@ -240,7 +215,7 @@ def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_supports_client_certificate_pubsub(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root / "secrets" / "mqtt" / "server-ecdsa-p256"
+    cert_dir = broker_root.parents[1] / "secrets" / "mqtt" / "stepca-classical"
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
     suffix = uuid.uuid4().hex[:10]

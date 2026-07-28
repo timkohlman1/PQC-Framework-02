@@ -45,6 +45,13 @@ Run unit tests or the complete capability-gated test selection:
 
 ```powershell
 .\scripts\dev.ps1 pytest tests/unit
+.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py --help
+
+For Python scripts that access the configured gateway over SSH, use the gateway-aware passthrough:
+
+```powershell
+.\scripts\dev.ps1 python-gateway <script> [arguments...]
+```
 .\scripts\dev.ps1 pytest
 ```
 

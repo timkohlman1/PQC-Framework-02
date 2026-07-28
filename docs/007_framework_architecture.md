@@ -633,3 +633,10 @@ Secure-boot signing similarly resolves the complete signing tuple below `secrets
 ## Classical PKI with TLS 1.3 PQC key exchange
 
 Encrypted MQTT experiments use TLS 1.3 only. `framework/certs` owns one classical step-ca root/intermediate hierarchy and issues classical MQTT broker and client X.509 identities. The classical and P-256+ML-KEM-768 experiment profiles consume the same root trust anchor and broker identity model; the PQC distinction is limited to the TLS 1.3 key-exchange group. Experiment prerequisite handling synchronizes authoritative material on every run, records certificate hashes, embeds the root CA public certificate into firmware, and does not reconstruct missing CA tuples.
+
+
+### MQTT authentication-mode separation
+
+The gateway broker exposes three explicit TLS 1.3 profiles. `classical-server-auth` and `oqs` authenticate only the broker using the classical step-ca hierarchy; the OQS profile differs only by requiring `SecP256r1MLKEM768` hybrid key exchange. `classical` is a separate mutual-TLS profile and validates client certificates against the staged step-ca CA chain. Host-side validation commands must match the profile: server-auth validators omit client credentials, while the classical mutual-TLS validator supplies the staged client certificate and key.
+
+Current STM32 end-to-end experiments use server authentication only. STM32 mutual TLS is deferred because the repository's current secret-handling boundary prohibits placing a TLS client private key in normal firmware build inputs or result artifacts. Implementing STM32 mTLS requires an explicit device-key provisioning and storage design before an end-to-end profile can be claimed.

@@ -283,7 +283,10 @@ def remote_cleanup_command(remote_dir: str) -> str:
     remote_path = remote_shell_path(remote_dir)
     return (
         f"docker run --rm -v {remote_path}:/work --entrypoint sh eclipse-mosquitto:2.0 "
-        "-c 'rm -rf /work/data /work/log' >/dev/null 2>&1 || true; "
+        "-c 'rm -rf "
+        "/work/data /work/log "
+        "/work/experiment/mqtt-broker/data "
+        "/work/experiment/mqtt-broker/log' >/dev/null 2>&1 || true; "
         f"rm -rf {remote_path}"
     )
 
@@ -411,6 +414,8 @@ def validate_mqtt_pubsub(
     certificate_profile: str,
     port: int,
     image: str,
+    mutual_tls: bool,
+    oqs_client: bool = False,
 ) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
@@ -419,14 +424,26 @@ def validate_mqtt_pubsub(
     message = args.message
     subscriber_name = docker_safe_name(f"{args.project_name}-{profile}-sub")[:63]
     cert_mount = remote_shell_path(cert_dir)
-    common_client_args = " ".join([
-        "-h 127.0.0.1",
+    common_client_parts = [
+        "-h localhost",
         f"-p {shlex.quote(str(port))}",
         "--cafile /certs/ca.crt",
-        "--cert /certs/client.crt",
-        "--key /certs/client.key",
         "--tls-version tlsv1.3",
-    ])
+    ]
+    if mutual_tls:
+        common_client_parts.extend([
+            "--cert /certs/client.crt",
+            "--key /certs/client.key",
+        ])
+    common_client_args = " ".join(common_client_parts)
+    oqs_config = f"{remote_repo_root(args.remote_dir)}/experiment/mqtt-broker/config/oqs/openssl.cnf"
+    client_container_options = ""
+    if oqs_client:
+        client_container_options = (
+            f"-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
+            f"-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
+            f"-v {remote_shell_path(oqs_config)}:/mosquitto/config/openssl.cnf:ro "
+        )
     validation_script = "\n".join([
         "set -eu",
         *host_broker_evidence_preamble(profile),
@@ -436,47 +453,76 @@ def validate_mqtt_pubsub(
         "docker rm -f \"$subscriber\" >/dev/null 2>&1 || true",
         (
             f"docker run -d --network host --name \"$subscriber\" "
-            f"-v {cert_mount}:/certs:ro --entrypoint mosquitto_sub {shlex.quote(image)} "
+            f"{client_container_options}-v {cert_mount}:/certs:ro "
+            f"--entrypoint mosquitto_sub {shlex.quote(image)} "
             f"{common_client_args} -t \"$topic\" -C 1 >/dev/null"
         ),
         "cleanup() { docker rm -f \"$subscriber\" >/dev/null 2>&1 || true; }",
         "trap cleanup EXIT",
         "sleep 2",
+        "subscriber_state=$(docker inspect -f '{{.State.Status}}' \"$subscriber\" 2>/dev/null || true)",
+        "if [ \"$subscriber_state\" != running ]; then",
+        "  echo 'subscriber failed before publish' >&2",
+        "  docker logs \"$subscriber\" 2>&1 || true",
+        "  exit 1",
+        "fi",
         (
-            f"docker run --rm --network host -v {cert_mount}:/certs:ro "
-            f"--entrypoint mosquitto_pub {shlex.quote(image)} "
+            f"docker run --rm --network host {client_container_options}"
+            f"-v {cert_mount}:/certs:ro --entrypoint mosquitto_pub {shlex.quote(image)} "
             f"{common_client_args} -t \"$topic\" -m \"$message\""
         ),
         "found=0",
         "for _attempt in $(seq 1 20); do",
-        "  logs=$(docker logs \"$subscriber\" 2>/dev/null || true)",
-        "  printf '%s\n' \"$logs\"",
+        "  logs=$(docker logs \"$subscriber\" 2>&1 || true)",
+        "  if [ -n \"$logs\" ]; then printf '%s\n' \"$logs\"; fi",
         "  if printf '%s\n' \"$logs\" | grep -Fx -- \"$message\" >/dev/null; then found=1; break; fi",
+        "  subscriber_state=$(docker inspect -f '{{.State.Status}}' \"$subscriber\" 2>/dev/null || true)",
+        "  if [ \"$subscriber_state\" != running ]; then",
+        "    echo 'subscriber exited before receiving expected message' >&2",
+        "    exit 1",
+        "  fi",
         "  sleep 1",
         "done",
-        "test \"$found\" = 1",
+        "if [ \"$found\" != 1 ]; then echo 'expected MQTT payload was not received' >&2; exit 1; fi",
     ])
     command = f"timeout 45 sh -lc {shlex.quote(validation_script)}"
     run_command(["ssh", target, command], dry_run=args.dry_run)
 
 
 def validate_classical_mqtt(args: argparse.Namespace) -> None:
+    """Validate the classical mutual-TLS broker profile."""
     validate_mqtt_pubsub(
         args,
         profile="classical",
         certificate_profile=args.certificate_profile or "stepca-classical",
         port=args.classical_port or 8883,
         image=args.image,
+        mutual_tls=True,
+    )
+
+
+def validate_classical_server_auth_mqtt(args: argparse.Namespace) -> None:
+    """Validate the classical server-authentication-only broker profile."""
+    validate_mqtt_pubsub(
+        args,
+        profile="classical-server-auth",
+        certificate_profile=args.certificate_profile or "stepca-classical",
+        port=args.classical_port or 8883,
+        image=args.image,
+        mutual_tls=False,
     )
 
 
 def validate_oqs_mqtt(args: argparse.Namespace) -> None:
+    """Validate hybrid key exchange with classical server authentication."""
     validate_mqtt_pubsub(
         args,
         profile="oqs",
         certificate_profile=args.certificate_profile or "stepca-classical",
         port=args.oqs_port or 8884,
         image=args.image,
+        mutual_tls=False,
+        oqs_client=True,
     )
 
 
@@ -552,6 +598,18 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs.add_argument("--image", default=OQS_IMAGE)
     validate_oqs.set_defaults(func=validate_oqs_tls)
 
+
+    validate_classical_server_auth_parser = sub.add_parser(
+        "validate-classical-server-auth-mqtt",
+        help="validate classical TLS 1.3 server-authenticated MQTT publish/subscribe without a client certificate",
+    )
+    add_common_remote_options(validate_classical_server_auth_parser)
+    add_port_options(validate_classical_server_auth_parser)
+    validate_classical_server_auth_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_classical_server_auth_parser.add_argument("--image", default=CLASSICAL_IMAGE)
+    validate_classical_server_auth_parser.add_argument("--topic", default="pqc/test/e2e")
+    validate_classical_server_auth_parser.add_argument("--message", default="pqc-classical-server-auth-mqtt-e2e")
+    validate_classical_server_auth_parser.set_defaults(func=validate_classical_server_auth_mqtt)
 
     validate_classical_mqtt_parser = sub.add_parser(
         "validate-classical-mqtt",

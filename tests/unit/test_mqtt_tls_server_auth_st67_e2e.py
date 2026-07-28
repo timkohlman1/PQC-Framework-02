@@ -150,37 +150,33 @@ def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     assert "orchestration:\n    host: 10.1.1.18" in config
 
 
-def test_classical_certificate_provisioning_defaults_to_selected_fqdn():
+def test_stepca_sync_defaults_to_selected_fqdn_and_authoritative_source():
+    module = _load_mqtt_broker_ctl_module()
     source = Path(
         "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
     ).read_text(encoding="utf-8")
 
-    assert 'DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"' in source
-    assert 'DEFAULT_SERVER_ALIAS = "pqc-gateway1"' in source
-    assert (
-        "[server_name, DEFAULT_SERVER_ALIAS, "
-        '"localhost", *extra_names]'
-        in source
-    )
+    args = module.build_parser().parse_args(["provision-certs", "--dry-run"])
+
+    assert module.DEFAULT_SERVER_NAME == "pqc-gateway1.pqcnet"
+    assert module.DEFAULT_SERVER_ALIAS == "pqc-gateway1"
+    assert args.server_name == "pqc-gateway1.pqcnet"
+    assert args.certificate_profile == "stepca-classical"
+    assert 'source_root = repo_root() / "framework" / "certs"' in source
+    assert 'broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"' in source
+    assert "write_server_openssl_config" not in source
+    assert "openssl req" not in source
 
 
-def test_server_certificate_profile_contains_selected_fqdn_san(tmp_path):
-    module = _load_mqtt_broker_ctl_module()
-    profile_path = tmp_path / "server-openssl.cnf"
+def test_stepca_sync_does_not_generate_server_certificate_sans_locally():
+    source = Path(
+        "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
+    ).read_text(encoding="utf-8")
 
-    module.write_server_openssl_config(
-        profile_path,
-        ["pqc-gateway1.pqcnet", "pqc-gateway1", "localhost"],
-        ["127.0.0.1"],
-    )
-
-    profile = profile_path.read_text(encoding="utf-8")
-    assert "CN = pqc-gateway1.pqcnet" in profile
-    assert "DNS.1 = pqc-gateway1.pqcnet" in profile
-    assert "DNS.2 = pqc-gateway1" in profile
-    assert "DNS.3 = localhost" in profile
-    assert "IP.1 = 127.0.0.1" in profile
-
+    assert 'provision-certs", help="synchronize classical MQTT TLS material from framework/certs"' in source
+    assert "server-openssl.cnf" not in source
+    assert "DNS.1" not in source
+    assert "IP.1" not in source
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")

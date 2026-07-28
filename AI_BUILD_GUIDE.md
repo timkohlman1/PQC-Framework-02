@@ -79,6 +79,7 @@ Use the repository wrappers from the repository root:
 ```powershell
 .\scripts\dev.ps1 pytest tests/unit
 .\scripts\dev.ps1 python <repository-script.py> [args...]
+.\scripts\dev.ps1 python-gateway <script> [arguments...]
 .\scripts\dev.ps1 pytest
 .\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml

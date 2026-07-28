@@ -46,7 +46,7 @@ function Invoke-DockerRun {
 }
 
 if (-not $CommandArgs -or $CommandArgs.Count -eq 0) {
-    Write-Host "Usage: scripts\dev.ps1 <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|python|cmake|shell|run> [args...]"
+    Write-Host "Usage: scripts\dev.ps1 <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|python|python-gateway|cmake|shell|run> [args...]"
     exit 2
 }
 
@@ -79,6 +79,9 @@ switch ($command) {
     }
     "python" {
         Invoke-DockerRun -InnerArgs (@("python") + $rest)
+    }
+    "python-gateway" {
+        Invoke-DockerRun -Gateway -InnerArgs (@("python") + $rest)
     }
     "cmake" {
         Invoke-DockerRun -InnerArgs (@("cmake") + $rest)

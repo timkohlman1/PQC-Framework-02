@@ -106,7 +106,13 @@ def test_python_passthrough_is_supported_and_documented() -> None:
 
     assert '"python" {' in ps1
     assert 'Invoke-DockerRun -InnerArgs (@("python") + $rest)' in ps1
+    assert '"python-gateway" {' in ps1
+    assert 'Invoke-DockerRun -Gateway -InnerArgs (@("python") + $rest)' in ps1
     assert 'python)' in sh
     assert 'run_container python "$@"' in sh
+    assert 'python-gateway)' in sh
+    assert 'run_container --gateway python "$@"' in sh
     assert '.\\scripts\\dev.ps1 python' in readme
+    assert '.\\scripts\\dev.ps1 python-gateway' in readme
     assert '.\\scripts\\dev.ps1 python' in guide
+    assert '.\\scripts\\dev.ps1 python-gateway' in guide

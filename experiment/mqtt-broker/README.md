@@ -8,8 +8,9 @@ Framework build, test, and experiment workflows use the Docker wrappers. Broker 
 
 ## Profiles
 
-- `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses generated local X.509 test material and mutual TLS client-certificate authentication.
-- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses gateway-generated OQS mutual-TLS material by default and depends on the `openquantumsafe/mosquitto` image.
+- `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the classical step-ca hierarchy and requires a client certificate (mutual TLS).
+- `classical-server-auth`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the same step-ca broker identity but does not request a client certificate.
+- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses the same classical step-ca identity hierarchy, performs hybrid `SecP256r1MLKEM768` key exchange, and does not request a client certificate.
 
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
@@ -235,6 +236,17 @@ Phase M11 keeps two distinct classical TLS profiles:
 
 - `classical-server-auth` uses TLS 1.3 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
 - `classical` retains the existing mutual-TLS listener and client-certificate requirement.
+- `oqs` uses TLS 1.3 hybrid key exchange and classical server authentication only.
+
+Host-side validation commands are mode-specific:
+
+```powershell
+.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-server-auth-mqtt
+.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-classical-mqtt
+.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
+```
+
+`validate-classical-mqtt` sends `client.crt` and `client.key`. The server-auth and OQS validators deliberately omit client identity material. These commands are host-side/broker-side evidence and do not prove STM32 mTLS. The current STM32 experiments cover classical and hybrid server authentication only; STM32 mTLS remains deferred until a private-key provisioning mechanism is defined that does not place the client private key in normal build inputs or result artifacts.
 
 The experiment prerequisite phase provisions or reuses `secrets/mqtt/server-ecdsa-p256` before fingerprinting. The build embeds only that profile’s public `ca.crt`; private keys remain generated dependency state and are not copied into firmware results or manifests.
 
@@ -277,3 +289,15 @@ python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --certi
 ```
 
 The synchronization command copies the root trust anchor, intermediate, CA chain, broker leaf certificate, and broker private key from `framework/certs/secrets/` into `secrets/mqtt/stepca-classical`. It always refreshes the staged copy and writes `certificate-provenance.json`; it never creates a fallback CA. A changed root CA therefore changes the firmware build input and build fingerprint, while a broker-leaf-only renewal requires broker redeployment but does not change the embedded root trust anchor.
+
+### Container-local TLS key staging
+
+The repository-root `secrets/mqtt/stepca-classical` directory is mounted read-only. On startup, each TLS broker copies `ca.crt`, `server.crt`, and `server.key` into `/tmp/mosquitto-certs`, assigns the broker runtime user, and applies mode `0640` to the private key. Mosquitto reads TLS material only from that container-local directory. This avoids host bind-mount permission differences on Windows and the gateway while preserving a read-only deployment source.
+
+
+### mTLS identity mapping
+
+The classical mTLS listener uses `use_identity_as_username true`. The step-ca STM32 client certificate has `CN=stm32-mqtt-client`, so the classical ACL authorises the MQTT username `stm32-mqtt-client` for `pqc/#`. A different client certificate common name requires a corresponding ACL entry.
+
+
+The `validate-oqs-mqtt` client containers load the project-managed OQS OpenSSL configuration and provider module path so MQTT publish/subscribe uses `SecP256r1MLKEM768`, matching the OQS broker profile.

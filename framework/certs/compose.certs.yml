@@ -158,7 +158,7 @@ services:
       <<: *cert_env
       CERT_MODE: server
       CERT_CN: mqtt-broker
-      CERT_SANS: mqtt-broker,localhost
+      CERT_SANS: mqtt-broker,localhost,pqc-gateway1.pqcnet
     volumes:
       - ./secrets/runtime/mqtt-broker:/certs
       - ./secrets/public/ca:/trust:ro
