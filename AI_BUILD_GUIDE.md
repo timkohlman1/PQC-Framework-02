@@ -78,6 +78,7 @@ Use the repository wrappers from the repository root:
 
 ```powershell
 .\scripts\dev.ps1 pytest tests/unit
+.\scripts\dev.ps1 python <repository-script.py> [args...]
 .\scripts\dev.ps1 pytest
 .\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
@@ -86,6 +87,7 @@ Use the repository wrappers from the repository root:
 ```
 
 The POSIX wrapper is `./scripts/dev.sh` with corresponding subcommands.
+Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `.\scripts\dev.ps1 python ...` unless both wrappers implement that subcommand.
 
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
 

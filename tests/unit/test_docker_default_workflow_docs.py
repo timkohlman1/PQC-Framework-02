@@ -39,6 +39,7 @@ def test_docker_wrappers_exist_for_default_and_gateway_paths() -> None:
         assert "experiment-gateway" in wrapper
         assert "PQC_CONTAINER_ENABLE_GATEWAY=1" in wrapper
         assert "PQC_DOCKER_IMAGE" in wrapper
+        assert "python" in wrapper
 
 
 def test_container_ci_records_relocated_build_provenance_before_signing() -> None:
@@ -95,3 +96,17 @@ def test_pytest_cleanup_is_documented_as_supplementary_hygiene() -> None:
     ):
         content = _read(path).lower()
         assert "supplementary cross-platform hygiene" in content
+
+
+def test_python_passthrough_is_supported_and_documented() -> None:
+    ps1 = _read("scripts/dev.ps1")
+    sh = _read("scripts/dev.sh")
+    readme = _read("README.md")
+    guide = _read("AI_BUILD_GUIDE.md")
+
+    assert '"python" {' in ps1
+    assert 'Invoke-DockerRun -InnerArgs (@("python") + $rest)' in ps1
+    assert 'python)' in sh
+    assert 'run_container python "$@"' in sh
+    assert '.\\scripts\\dev.ps1 python' in readme
+    assert '.\\scripts\\dev.ps1 python' in guide

@@ -25,7 +25,7 @@ def test_server_authenticated_tls_profile_is_separate_from_mutual_tls():
     mutual = Path("experiment/mqtt-broker/config/classical/mosquitto.conf").read_text(encoding="utf-8")
     assert 'profiles: ["classical-server-auth"]' in compose
     assert "require_certificate false" in server_auth
-    assert "tls_version tlsv1.2" in server_auth
+    assert "tls_version tlsv1.3" in server_auth
     assert "require_certificate true" in mutual
 
 
@@ -188,7 +188,7 @@ def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
     assert 'mqtt.orchestration.host must be a non-empty hostname or IP address' in source
 
 
-def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite():
+def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_cipher_pin():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     broker = Path(
@@ -202,11 +202,13 @@ def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite(
     ):
         assert marker in settings
 
-    suite = "ECDHE-ECDSA-AES128-GCM-SHA256"
-    assert f'"{suite}"' in source
-    assert 'wolfSSL_CTX_set_cipher_list(' in source
-    assert 'PQC_WolfMQTT_DiagnosticCode("cipher_list"' in source
-    assert f"ciphers {suite}" in broker
+    assert "wolfTLSv1_3_client_method()" in source
+    assert "wolfTLSv1_2_client_method()" not in source
+    assert "ECDHE-ECDSA-AES128-GCM-SHA256" not in source
+    assert "wolfSSL_CTX_set_cipher_list(" not in source
+    assert "tls_version tlsv1.3" in broker
+    assert "tls_version tlsv1.2" not in broker
+    assert "ciphers ECDHE-ECDSA-AES128-GCM-SHA256" not in broker
 
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():

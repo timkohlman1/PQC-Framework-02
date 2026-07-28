@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 BROKER_RELATIVE_DIR = Path("experiment/mqtt-broker")
 DEFAULT_HOST_CONFIG = Path("configs/hosts/gateway.yaml")
@@ -22,8 +22,6 @@ DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
 CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
 OQS_IMAGE = "openquantumsafe/mosquitto:latest"
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
-OQS_CA_ALGORITHM = "mldsa65"
-OQS_LEAF_ALGORITHM = "mldsa65"
 BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
     "classical-server-auth": "mqtt-classical-server-auth",
@@ -52,6 +50,13 @@ def repo_root() -> Path:
 
 def broker_root() -> Path:
     return repo_root() / BROKER_RELATIVE_DIR
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(repo_root()))
+    except ValueError:
+        return str(path)
 
 
 def certificate_profile_dir(profile_id: str) -> Path:
@@ -163,309 +168,73 @@ def remote_shell_path(path: str) -> str:
     return shlex.quote(path)
 
 
-def ensure_openssl() -> None:
-    if shutil.which("openssl") is None:
-        raise SystemExit("openssl is required to provision local MQTT TLS material")
-
-
-def display_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(repo_root()))
-    except ValueError:
-        return str(path)
-
-
-def write_server_openssl_config(path: Path, server_names: Iterable[str], ip_addresses: Iterable[str]) -> None:
-    alt_names = [name for name in dict.fromkeys(server_names) if name]
-    ips = [ip for ip in dict.fromkeys(ip_addresses) if ip]
-    dns_lines = [f"DNS.{index + 1} = {name}" for index, name in enumerate(alt_names)]
-    ip_lines = [f"IP.{index + 1} = {ip}" for index, ip in enumerate(ips)]
-    path.write_text(
-        "\n".join(
-            [
-                "[req]",
-                "default_bits = 256",
-                "prompt = no",
-                "default_md = sha256",
-                "distinguished_name = dn",
-                "req_extensions = req_ext",
-                "",
-                "[dn]",
-                f"CN = {alt_names[0] if alt_names else DEFAULT_SERVER_NAME}",
-                "",
-                "[req_ext]",
-                "subjectAltName = @alt_names",
-                "extendedKeyUsage = serverAuth",
-                "",
-                "[alt_names]",
-                *dns_lines,
-                *ip_lines,
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def write_ca_openssl_config(path: Path, *, common_name: str = "pqc-framework-mqtt-local-ca") -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "[req]",
-                "prompt = no",
-                "default_md = sha256",
-                "distinguished_name = dn",
-                "x509_extensions = v3_ca",
-                "",
-                "[dn]",
-                f"CN = {common_name}",
-                "",
-                "[v3_ca]",
-                "subjectKeyIdentifier = hash",
-                "authorityKeyIdentifier = keyid:always,issuer",
-                "basicConstraints = critical,CA:true,pathlen:0",
-                "keyUsage = critical,keyCertSign,cRLSign",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def write_client_openssl_config(path: Path, common_name: str) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "[req]",
-                "prompt = no",
-                "default_md = sha256",
-                "distinguished_name = dn",
-                "req_extensions = req_ext",
-                "",
-                "[dn]",
-                f"CN = {common_name}",
-                "",
-                "[req_ext]",
-                "extendedKeyUsage = clientAuth",
-                "keyUsage = digitalSignature",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def _host_address_from_args(args: argparse.Namespace) -> str | None:
-    if getattr(args, "host_config", None):
-        return load_host_config(repo_root() / args.host_config).address
-    return None
-
-
-def provision_classical_certs(args: argparse.Namespace) -> None:
-    ensure_openssl()
+def sync_stepca_certs(args: argparse.Namespace) -> None:
+    """Stage the authoritative classical step-ca material for broker workflows."""
+    source_root = repo_root() / "framework" / "certs"
+    public_ca = source_root / "secrets" / "public" / "ca"
+    broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
+    client_identity = source_root / "secrets" / "runtime" / "stm32"
+    required = {
+        "ca.crt": public_ca / "root-ca.crt",
+        "root-ca.crt": public_ca / "root-ca.crt",
+        "intermediate-ca.crt": public_ca / "intermediate-ca.crt",
+        "ca-chain.crt": public_ca / "ca-chain.crt",
+        "server.crt": broker_identity / "tls.crt",
+        "server.key": broker_identity / "tls.key",
+    }
+    optional = {
+        "client.crt": client_identity / "client.crt",
+        "client.key": client_identity / "client.key",
+        "healthcheck.crt": client_identity / "client.crt",
+        "healthcheck.key": client_identity / "client.key",
+    }
+    missing = [str(path) for path in required.values() if not path.is_file()]
+    if missing:
+        raise SystemExit(
+            "authoritative step-ca material is unavailable; run framework/certs first. Missing: "
+            + ", ".join(missing)
+        )
     cert_dir = certificate_profile_dir(args.certificate_profile)
+    if args.dry_run:
+        print(f"sync {display_path(source_root)} -> {display_path(cert_dir)}")
+        return
     cert_dir.mkdir(parents=True, exist_ok=True)
-
-    host_address = _host_address_from_args(args)
-    server_name = args.server_name
-    extra_names = args.extra_dns_name or []
-    extra_ips = args.extra_ip_address or []
-    ip_addresses = ["127.0.0.1", *( [host_address] if host_address else [] ), *extra_ips]
-    client_name = args.client_name
-    healthcheck_name = args.healthcheck_name
-    days = str(args.days)
-
-    ca_conf = cert_dir / "ca-openssl.cnf"
-    server_conf = cert_dir / "server-openssl.cnf"
-    client_conf = cert_dir / "client-openssl.cnf"
-    healthcheck_conf = cert_dir / "healthcheck-openssl.cnf"
-    write_ca_openssl_config(ca_conf)
-    write_server_openssl_config(
-        server_conf,
-        [server_name, DEFAULT_SERVER_ALIAS, "localhost", *extra_names],
-        ip_addresses,
+    copied = {}
+    for name, source in {**required, **optional}.items():
+        if source.is_file():
+            destination = cert_dir / name
+            shutil.copy2(source, destination)
+            copied[name] = _sha256(destination)
+            if destination.suffix == ".key":
+                destination.chmod(0o600)
+    provenance = {
+        "schema_version": 2,
+        "profile_id": args.certificate_profile,
+        "profile_kind": "stepca-classical",
+        "source": "framework/certs",
+        "ca_algorithm": "classical-x509",
+        "leaf_algorithm": "classical",
+        "ca_sha256": copied["ca.crt"],
+        "root_ca_sha256": copied["root-ca.crt"],
+        "intermediate_ca_sha256": copied["intermediate-ca.crt"],
+        "ca_chain_sha256": copied["ca-chain.crt"],
+        "server_certificate_sha256": copied["server.crt"],
+        "files": copied,
+    }
+    (cert_dir / "certificate-provenance.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    write_client_openssl_config(client_conf, client_name)
-    write_client_openssl_config(healthcheck_conf, healthcheck_name)
+    print(f"Synchronized authoritative step-ca MQTT TLS material under {display_path(cert_dir)}")
 
-    commands = [
-        ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(cert_dir / "ca.key")],
-        ["openssl", "req", "-x509", "-new", "-nodes", "-key", str(cert_dir / "ca.key"), "-sha256", "-days", days, "-config", str(ca_conf), "-out", str(cert_dir / "ca.crt")],
-        ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(cert_dir / "server.key")],
-        ["openssl", "req", "-new", "-key", str(cert_dir / "server.key"), "-out", str(cert_dir / "server.csr"), "-config", str(server_conf)],
-        ["openssl", "x509", "-req", "-in", str(cert_dir / "server.csr"), "-CA", str(cert_dir / "ca.crt"), "-CAkey", str(cert_dir / "ca.key"), "-CAcreateserial", "-out", str(cert_dir / "server.crt"), "-days", days, "-sha256", "-extensions", "req_ext", "-extfile", str(server_conf)],
-        ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(cert_dir / "client.key")],
-        ["openssl", "req", "-new", "-key", str(cert_dir / "client.key"), "-out", str(cert_dir / "client.csr"), "-config", str(client_conf)],
-        ["openssl", "x509", "-req", "-in", str(cert_dir / "client.csr"), "-CA", str(cert_dir / "ca.crt"), "-CAkey", str(cert_dir / "ca.key"), "-CAcreateserial", "-out", str(cert_dir / "client.crt"), "-days", days, "-sha256", "-extensions", "req_ext", "-extfile", str(client_conf)],
-        ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(cert_dir / "healthcheck.key")],
-        ["openssl", "req", "-new", "-key", str(cert_dir / "healthcheck.key"), "-out", str(cert_dir / "healthcheck.csr"), "-config", str(healthcheck_conf)],
-        ["openssl", "x509", "-req", "-in", str(cert_dir / "healthcheck.csr"), "-CA", str(cert_dir / "ca.crt"), "-CAkey", str(cert_dir / "ca.key"), "-CAcreateserial", "-out", str(cert_dir / "healthcheck.crt"), "-days", days, "-sha256", "-extensions", "req_ext", "-extfile", str(healthcheck_conf)],
-    ]
-
-    for command in commands:
-        run_command(command, dry_run=args.dry_run)
-
-    if not args.dry_run:
-        for path in cert_dir.glob("*.key"):
-            path.chmod(0o600)
-        provenance = {
-            "schema_version": 1,
-            "profile_id": args.certificate_profile,
-            "profile_kind": "classical",
-            "ca_algorithm": "ecdsa-p256",
-            "leaf_algorithm": "ecdsa-p256",
-            "ca_sha256": _sha256(cert_dir / "ca.crt"),
-            "server_certificate_sha256": _sha256(cert_dir / "server.crt"),
-        }
-        (cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"Provisioned local classical MQTT TLS material under {display_path(cert_dir)}")
-
-
-def oqs_ca_config_text(common_name: str) -> str:
-    return "\n".join([
-        "[req]",
-        "prompt = no",
-        "distinguished_name = dn",
-        "x509_extensions = v3_ca",
-        "",
-        "[dn]",
-        f"CN = {common_name}",
-        "",
-        "[v3_ca]",
-        "subjectKeyIdentifier = hash",
-        "authorityKeyIdentifier = keyid:always,issuer",
-        "basicConstraints = critical,CA:true,pathlen:0",
-        "keyUsage = critical,keyCertSign,cRLSign",
-        "",
-    ])
-
-
-def oqs_server_config_text(common_name: str, dns_names: Iterable[str], ip_addresses: Iterable[str]) -> str:
-    names = [name for name in dict.fromkeys([common_name, "localhost", *dns_names]) if name]
-    ips = [ip for ip in dict.fromkeys(["127.0.0.1", *ip_addresses]) if ip]
-    return "\n".join([
-        "[req]",
-        "prompt = no",
-        "distinguished_name = dn",
-        "req_extensions = req_ext",
-        "",
-        "[dn]",
-        f"CN = {common_name}",
-        "",
-        "[req_ext]",
-        "subjectAltName = @alt_names",
-        "extendedKeyUsage = serverAuth",
-        "keyUsage = digitalSignature",
-        "",
-        "[alt_names]",
-        *[f"DNS.{idx + 1} = {name}" for idx, name in enumerate(names)],
-        *[f"IP.{idx + 1} = {ip}" for idx, ip in enumerate(ips)],
-        "",
-    ])
-
-
-def oqs_client_config_text(common_name: str) -> str:
-    return "\n".join([
-        "[req]",
-        "prompt = no",
-        "distinguished_name = dn",
-        "req_extensions = req_ext",
-        "",
-        "[dn]",
-        f"CN = {common_name}",
-        "",
-        "[req_ext]",
-        "extendedKeyUsage = clientAuth",
-        "keyUsage = digitalSignature",
-        "",
-    ])
-
-
-def _remote_write_file(target: str, remote_path: str, content: str, *, dry_run: bool) -> None:
-    run_command_with_input(["ssh", target, f"cat > {remote_shell_path(remote_path)}"], content, dry_run=dry_run)
-
-
-def provision_oqs_certs(args: argparse.Namespace) -> None:
-    host = load_host_config(repo_root() / args.host_config)
-    target = ssh_target(host)
-    remote_dir = args.remote_dir
-    cert_dir = f"{remote_dir}/secrets/mqtt/{args.certificate_profile}"
-    host_address = host.address
-    extra_ips = args.extra_ip_address or []
-    extra_names = args.extra_dns_name or []
-    ip_addresses = [*( [host_address] if host_address else [] ), *extra_ips]
-    days = str(args.days)
-
-    run_command(["ssh", target, f"mkdir -p {remote_shell_path(cert_dir)}"], dry_run=args.dry_run)
-    _remote_write_file(target, f"{cert_dir}/ca-openssl.cnf", oqs_ca_config_text(args.ca_name), dry_run=args.dry_run)
-    _remote_write_file(target, f"{cert_dir}/server-openssl.cnf", oqs_server_config_text(args.server_name, extra_names, ip_addresses), dry_run=args.dry_run)
-    _remote_write_file(target, f"{cert_dir}/client-openssl.cnf", oqs_client_config_text(args.client_name), dry_run=args.dry_run)
-    _remote_write_file(target, f"{cert_dir}/healthcheck-openssl.cnf", oqs_client_config_text(args.healthcheck_name), dry_run=args.dry_run)
-
-    cert_mount = remote_shell_path(cert_dir)
-    script = " && ".join([
-        "set -eu",
-        "rm -f /certs/ca.crt /certs/ca.key /certs/ca.srl /certs/server.crt /certs/server.csr /certs/server.key /certs/client.crt /certs/client.csr /certs/client.key /certs/healthcheck.crt /certs/healthcheck.csr /certs/healthcheck.key",
-        f"openssl genpkey -algorithm {shlex.quote(args.ca_algorithm)} -out /certs/ca.key",
-        f"openssl req -x509 -new -key /certs/ca.key -days {shlex.quote(days)} -config /certs/ca-openssl.cnf -out /certs/ca.crt",
-        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/server.key",
-        "openssl req -new -key /certs/server.key -out /certs/server.csr -config /certs/server-openssl.cnf",
-        f"openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/server.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/server-openssl.cnf",
-        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/client.key",
-        "openssl req -new -key /certs/client.key -out /certs/client.csr -config /certs/client-openssl.cnf",
-        f"openssl x509 -req -in /certs/client.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/client.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/client-openssl.cnf",
-        f"openssl genpkey -algorithm {shlex.quote(args.leaf_algorithm)} -out /certs/healthcheck.key",
-        "openssl req -new -key /certs/healthcheck.key -out /certs/healthcheck.csr -config /certs/healthcheck-openssl.cnf",
-        f"openssl x509 -req -in /certs/healthcheck.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/healthcheck.crt -days {shlex.quote(days)} -extensions req_ext -extfile /certs/healthcheck-openssl.cnf",
-        "openssl verify -CAfile /certs/ca.crt /certs/server.crt /certs/client.crt /certs/healthcheck.crt",
-        "openssl pkey -in /certs/server.key -pubout -out /tmp/server-key.pub",
-        "openssl x509 -in /certs/server.crt -pubkey -noout -out /tmp/server-cert.pub",
-        "cmp /tmp/server-key.pub /tmp/server-cert.pub",
-        "{ "
-        "echo oqs_certificate_profile_version=1; "
-        f"echo ca_algorithm={shlex.quote(args.ca_algorithm)}; "
-        f"echo leaf_algorithm={shlex.quote(args.leaf_algorithm)}; "
-        "openssl x509 -in /certs/ca.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
-        "openssl x509 -in /certs/server.crt -noout -subject -issuer -serial -dates -fingerprint -sha256; "
-        "echo server_certificate_text_begin; "
-        "openssl x509 -in /certs/server.crt -noout -text; "
-        "echo server_certificate_text_end; "
-        "echo chain_verified=true; echo server_private_key_match_verified=true; "
-        "} > /certs/certificate-provenance.txt",
-        "rm -f /tmp/server-key.pub /tmp/server-cert.pub",
-        "chmod -R a+rX /certs",
-    ])
-    command = (
-        f"docker run --rm -v {cert_mount}:/certs --entrypoint sh {shlex.quote(args.image)} "
-        f"-lc {shlex.quote(script)}"
-    )
-    run_command(["ssh", target, command], dry_run=args.dry_run)
-
-    local_cert_dir = certificate_profile_dir(args.certificate_profile)
-    local_ca_path = local_cert_dir / "ca.crt"
-    if not args.dry_run:
-        local_cert_dir.mkdir(parents=True, exist_ok=True)
-    run_command(
-        ["scp", f"{target}:{cert_dir}/ca.crt", str(local_ca_path)],
-        dry_run=args.dry_run,
-    )
-    local_provenance_path = local_cert_dir / "certificate-provenance.txt"
-    run_command(
-        ["scp", f"{target}:{cert_dir}/certificate-provenance.txt", str(local_provenance_path)],
-        dry_run=args.dry_run,
-    )
-    if not args.dry_run:
-        print(f"Provisioned and verified remote OQS MQTT TLS material under {cert_dir}")
-        print(f"Copied public OQS CA certificate to {display_path(local_ca_path)}")
-        provenance = {
-            "schema_version": 1,
-            "profile_id": args.certificate_profile,
-            "profile_kind": "oqs",
-            "ca_sha256": _sha256(local_ca_path),
-            "remote_provenance_sha256": _sha256(local_provenance_path),
-        }
-        (local_cert_dir / "certificate-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"Copied public certificate provenance to {display_path(local_provenance_path)}")
+def remote_repo_root(remote_dir: str) -> str:
+    normalized = remote_dir.rstrip("/")
+    suffix = "/experiment/mqtt-broker"
+    if not normalized.endswith(suffix):
+        raise SystemExit(
+            "remote broker directory must end with /experiment/mqtt-broker "
+            "so repository-root certificate deployment can be derived"
+        )
+    return normalized[: -len(suffix)]
 
 
 def deploy(args: argparse.Namespace) -> None:
@@ -480,12 +249,12 @@ def deploy(args: argparse.Namespace) -> None:
     directory_copies = [
         (source_root / "config", f"{remote_dir}/"),
     ]
-    # Classical TLS material is generated locally and copied to the gateway.
-    # All MQTT TLS material is canonical below local secrets/mqtt and is copied
-    # to the gateway only as deployment state. The gateway copy is never authoritative.
+    # Both TLS profiles consume the same repository-root step-ca staging area.
+    # The gateway copy is deployment state only and is never authoritative.
     secrets_mqtt_dir = repo_root() / "secrets" / "mqtt"
+    remote_root = remote_repo_root(remote_dir)
     if secrets_mqtt_dir.exists():
-        directory_copies.append((secrets_mqtt_dir, f"{remote_dir}/secrets/"))
+        directory_copies.append((secrets_mqtt_dir, f"{remote_root}/secrets/"))
 
     target = ssh_target(host)
     run_command([
@@ -495,8 +264,8 @@ def deploy(args: argparse.Namespace) -> None:
             f"mkdir -p {remote_shell_path(remote_dir)} "
             f"{remote_shell_path(remote_dir + '/scripts')} "
             f"{remote_shell_path(remote_dir + '/runtime')} "
-            f"{remote_shell_path(remote_dir + '/secrets')} "
-            f"{remote_shell_path(remote_dir + '/secrets/mqtt')}"
+            f"{remote_shell_path(remote_root + '/secrets')} "
+            f"{remote_shell_path(remote_root + '/secrets/mqtt')}"
         ),
     ], dry_run=args.dry_run)
     for source_path, remote_target_dir in file_copies:
@@ -506,7 +275,7 @@ def deploy(args: argparse.Namespace) -> None:
 
     permission_targets = [f"{remote_dir}/config"]
     if secrets_mqtt_dir.exists():
-        permission_targets.append(f"{remote_dir}/secrets/mqtt")
+        permission_targets.append(f"{remote_root}/secrets/mqtt")
     run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
 
 
@@ -582,7 +351,7 @@ def logs(args: argparse.Namespace) -> None:
 def validate_oqs_tls(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{args.remote_dir}/secrets/mqtt/{args.certificate_profile}"
+    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/mqtt/{args.certificate_profile}"
     port = str(args.oqs_port or 8884)
     validation_script = "\n".join([
         "set -eu",
@@ -645,7 +414,7 @@ def validate_mqtt_pubsub(
 ) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{args.remote_dir}/secrets/mqtt/{certificate_profile}"
+    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/mqtt/{certificate_profile}"
     topic = args.topic
     message = args.message
     subscriber_name = docker_safe_name(f"{args.project_name}-{profile}-sub")[:63]
@@ -695,7 +464,7 @@ def validate_classical_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="classical",
-        certificate_profile=args.certificate_profile or "server-ecdsa-p256",
+        certificate_profile=args.certificate_profile or "stepca-classical",
         port=args.classical_port or 8883,
         image=args.image,
     )
@@ -705,7 +474,7 @@ def validate_oqs_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="oqs",
-        certificate_profile=args.certificate_profile or "server-mldsa65",
+        certificate_profile=args.certificate_profile or "stepca-classical",
         port=args.oqs_port or 8884,
         image=args.image,
     )
@@ -728,8 +497,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage the PQC Framework MQTT broker compose project")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    provision = sub.add_parser("provision-certs", help="generate local classical MQTT TLS material")
-    provision.add_argument("--certificate-profile", default="server-ecdsa-p256")
+    provision = sub.add_parser("provision-certs", help="synchronize classical MQTT TLS material from framework/certs")
+    provision.add_argument("--certificate-profile", default="stepca-classical")
     provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     provision.add_argument("--extra-dns-name", action="append")
     provision.add_argument("--extra-ip-address", action="append")
@@ -738,22 +507,15 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
     provision.add_argument("--days", type=int, default=365)
     provision.add_argument("--dry-run", action="store_true")
-    provision.set_defaults(func=provision_classical_certs)
+    provision.set_defaults(func=sync_stepca_certs)
 
-    oqs_provision = sub.add_parser("provision-oqs-certs", help="generate remote OQS server-authenticated TLS material on the gateway")
-    add_common_remote_options(oqs_provision)
-    oqs_provision.set_defaults(certificate_profile="server-mldsa65")
-    oqs_provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
-    oqs_provision.add_argument("--extra-dns-name", action="append")
-    oqs_provision.add_argument("--extra-ip-address", action="append")
-    oqs_provision.add_argument("--client-name", default=DEFAULT_CLIENT_NAME)
-    oqs_provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
-    oqs_provision.add_argument("--ca-name", default="pqc-framework-mqtt-oqs-ca")
-    oqs_provision.add_argument("--ca-algorithm", default=OQS_CA_ALGORITHM)
-    oqs_provision.add_argument("--leaf-algorithm", default=OQS_LEAF_ALGORITHM)
-    oqs_provision.add_argument("--image", default=OQS_IMAGE)
-    oqs_provision.add_argument("--days", type=int, default=365)
-    oqs_provision.set_defaults(func=provision_oqs_certs)
+    oqs_provision = sub.add_parser(
+        "provision-oqs-certs",
+        help="deprecated alias for provision-certs; synchronizes the same classical step-ca identity material",
+    )
+    oqs_provision.add_argument("--certificate-profile", default="stepca-classical")
+    oqs_provision.add_argument("--dry-run", action="store_true")
+    oqs_provision.set_defaults(func=sync_stepca_certs)
 
     deploy_parser = sub.add_parser("deploy", help="copy compose project and generated runtime material to the gateway")
     add_common_remote_options(deploy_parser)
@@ -785,7 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)
     add_port_options(validate_oqs)
-    validate_oqs.set_defaults(certificate_profile="server-mldsa65")
+    validate_oqs.set_defaults(certificate_profile="stepca-classical")
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)
     validate_oqs.add_argument("--image", default=OQS_IMAGE)
     validate_oqs.set_defaults(func=validate_oqs_tls)
@@ -797,7 +559,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_classical_mqtt_parser)
     add_port_options(validate_classical_mqtt_parser)
-    validate_classical_mqtt_parser.set_defaults(certificate_profile="server-ecdsa-p256")
+    validate_classical_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
     validate_classical_mqtt_parser.add_argument("--image", default=CLASSICAL_IMAGE)
     validate_classical_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_classical_mqtt_parser.add_argument("--message", default="pqc-classical-mqtt-e2e")
@@ -809,7 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_oqs_mqtt_parser)
     add_port_options(validate_oqs_mqtt_parser)
-    validate_oqs_mqtt_parser.set_defaults(certificate_profile="server-mldsa65")
+    validate_oqs_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
     validate_oqs_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
     validate_oqs_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_oqs_mqtt_parser.add_argument("--message", default="pqc-oqs-mqtt-e2e")

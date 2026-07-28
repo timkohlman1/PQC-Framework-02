@@ -121,56 +121,32 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     tls = mqtt.get("tls")
     if not isinstance(tls, dict) or str(tls.get("mode", "")) in {"", "disabled", "plaintext", "not_applicable", "unavailable"}:
         return None
+    if str(tls.get("tls_version", "")).strip().lower() not in {"tls1.3", "tlsv1.3"}:
+        raise ExternalDependencyError("MQTT TLS experiments must use TLS 1.3")
     profile_id = str(tls.get("certificate_profile", "")).strip()
     if not profile_id:
         raise ExternalDependencyError("TLS experiment must declare mqtt.tls.certificate_profile")
-    profile_kind = "oqs" if "pqc" in str(tls.get("mode")) or "oqs" in str(tls.get("mode")) else "classical"
     ca_algorithm = str(tls.get("certificate_authority_algorithm", "")).strip()
     leaf_algorithm = str(tls.get("server_certificate_algorithm", "")).strip()
-    if not ca_algorithm or not leaf_algorithm:
-        raise ExternalDependencyError(
-            "TLS experiment must declare mqtt.tls.certificate_authority_algorithm and mqtt.tls.server_certificate_algorithm"
-        )
+    if ca_algorithm != "classical-x509" or leaf_algorithm != "classical":
+        raise ExternalDependencyError("MQTT identities must use the classical step-ca X.509 hierarchy")
     canonical_dir = _require_below(repo_root / "secrets" / "mqtt" / profile_id, repo_root / "secrets", "MQTT TLS profile")
+    ctl = repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
+    command = [sys.executable, str(ctl), "provision-certs", "--certificate-profile", profile_id]
+    _run_logged(command, repo_root, result_dir / "certificate-prerequisite.log")
     ca_path = canonical_dir / "ca.crt"
     provenance_path = canonical_dir / "certificate-provenance.json"
-    public_required = [ca_path, provenance_path]
-    classical_private_required = [canonical_dir / "ca.key", canonical_dir / "server.crt", canonical_dir / "server.key"]
-    required = public_required if profile_kind == "oqs" else public_required + classical_private_required
-    existed = all(path.is_file() for path in required)
-    if not existed:
-        partial = [path for path in required if path.exists()]
-        if partial:
-            raise ExternalDependencyError("MQTT TLS certificate tuple is partial; refusing silent reconstruction")
-        ctl = repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
-        subcommand = "provision-oqs-certs" if profile_kind == "oqs" else "provision-certs"
-        command = [sys.executable, str(ctl), subcommand, "--certificate-profile", profile_id]
-        if profile_kind == "oqs":
-            command.extend(["--ca-algorithm", ca_algorithm, "--leaf-algorithm", leaf_algorithm])
-        _run_logged(command, repo_root, result_dir / "certificate-prerequisite.log")
+    required = [ca_path, canonical_dir / "intermediate-ca.crt", canonical_dir / "ca-chain.crt", canonical_dir / "server.crt", canonical_dir / "server.key", provenance_path]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
-        raise ExternalDependencyError("certificate preparation completed without required tuple members: " + ", ".join(missing))
+        raise ExternalDependencyError("step-ca synchronization completed without required material: " + ", ".join(missing))
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    recorded = str(provenance.get("ca_sha256", ""))
     actual = _sha256(ca_path)
-    if recorded != actual:
-        raise ExternalDependencyError("MQTT TLS CA hash does not match certificate provenance")
-    recorded_ca_algorithm = provenance.get("ca_algorithm")
-    if (
-        recorded_ca_algorithm is not None
-        and str(recorded_ca_algorithm) != ca_algorithm
-    ):
-        raise ExternalDependencyError("MQTT TLS CA algorithm does not match certificate profile provenance")
-    recorded_leaf_algorithm = provenance.get("leaf_algorithm")
-    if (
-        recorded_leaf_algorithm is not None
-        and str(recorded_leaf_algorithm) != leaf_algorithm
-    ):
-        raise ExternalDependencyError("MQTT TLS leaf algorithm does not match certificate profile provenance")
-    if str(provenance.get("profile_id", "")) != profile_id:
-        raise ExternalDependencyError("MQTT TLS profile identifier does not match certificate provenance")
-    return ResolvedMqttTlsContext(profile_id, profile_kind, ca_algorithm, leaf_algorithm, canonical_dir, ca_path, provenance_path, actual, _sha256(provenance_path), not existed)
+    if str(provenance.get("ca_sha256", "")) != actual:
+        raise ExternalDependencyError("MQTT TLS root CA hash does not match certificate provenance")
+    if str(provenance.get("source", "")) != "framework/certs":
+        raise ExternalDependencyError("MQTT TLS material was not sourced from framework/certs")
+    return ResolvedMqttTlsContext(profile_id, "stepca-classical", ca_algorithm, leaf_algorithm, canonical_dir, ca_path, provenance_path, actual, _sha256(provenance_path), True)
 
 
 def resolve_signing_material(*, profile: dict[str, Any], repo_root: Path) -> ResolvedSigningContext:

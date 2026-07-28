@@ -407,9 +407,9 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         if not server_signature_algorithm:
             raise ValueError(
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
-                "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
+                "The STM32 wolfSSL profile requires an explicit classical server-authentication algorithm."
             )
-        supported_server_signature_algorithms = {"mldsa65"}
+        supported_server_signature_algorithms = {"classical"}
         if server_signature_algorithm not in supported_server_signature_algorithms:
             raise ValueError(
                 "MQTT TLS server signature algorithm " + server_signature_algorithm

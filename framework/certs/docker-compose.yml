@@ -1,0 +1,10 @@
+include:
+  - compose.certs.yml
+  - compose.kms.yml
+
+
+networks:
+  security_services_net:
+    ipam:
+      config:
+        - subnet: 10.60.6.0/24

@@ -233,7 +233,7 @@ The real STM32 plaintext MQTT gateway experiment manages this Compose project tr
 
 Phase M11 keeps two distinct classical TLS profiles:
 
-- `classical-server-auth` uses TLS 1.2 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
+- `classical-server-auth` uses TLS 1.3 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
 - `classical` retains the existing mutual-TLS listener and client-certificate requirement.
 
 The experiment prerequisite phase provisions or reuses `secrets/mqtt/server-ecdsa-p256` before fingerprinting. The build embeds only that profile’s public `ca.crt`; private keys remain generated dependency state and are not copied into firmware results or manifests.
@@ -264,3 +264,16 @@ Gateway-managed OQS readiness and STM32 command/response orchestration resolve t
 The STM32 PQC TLS profile currently supports `mldsa65` for server authentication. The experiment configuration must declare `mqtt.tls.server_signature_algorithm: mldsa65`. The build fails before compilation when the configured server signature algorithm is missing or incompatible. Changing the public CA certificate changes the firmware build fingerprint and regenerates the embedded trust anchor.
 
 Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS clients may support Falcon, but that does not establish compatibility with the firmware client.
+
+## step-ca certificate source and TLS 1.3 policy
+
+All encrypted MQTT profiles use TLS 1.3. The classical and hybrid-key-exchange profiles share the same classical X.509 identity hierarchy produced by `framework/certs`; the hybrid profile changes only the TLS 1.3 key-exchange group.
+
+Start or refresh the certificate services first, then synchronize the current material:
+
+```powershell
+docker compose -f framework/certs/docker-compose.yml up -d --build
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --certificate-profile stepca-classical
+```
+
+The synchronization command copies the root trust anchor, intermediate, CA chain, broker leaf certificate, and broker private key from `framework/certs/secrets/` into `secrets/mqtt/stepca-classical`. It always refreshes the staged copy and writes `certificate-provenance.json`; it never creates a fallback CA. A changed root CA therefore changes the firmware build input and build fingerprint, while a broker-leaf-only renewal requires broker redeployment but does not change the embedded root trust anchor.

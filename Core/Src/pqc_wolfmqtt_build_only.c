@@ -505,7 +505,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
 
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: context create begin\r\n");
     socket_context->tls_ctx = wolfSSL_CTX_new(
-        PQC_WolfMQTT_PQCHybridRequested() ? wolfTLSv1_3_client_method() : wolfTLSv1_2_client_method());
+        wolfTLSv1_3_client_method());
     if (socket_context->tls_ctx == NULL) {
         PQC_WolfMQTT_DiagnosticCode("context_create", -1, 0);
         PQC_WolfMQTT_CloseTransport(socket_context); return -1;
@@ -518,11 +518,6 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_CTX_set_groups(socket_context->tls_ctx, groups, 1);
         socket_context->pqc_group_configured = (result == WOLFSSL_SUCCESS);
         PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);
-    } else {
-        result = wolfSSL_CTX_set_cipher_list(
-            socket_context->tls_ctx,
-            "ECDHE-ECDSA-AES128-GCM-SHA256");
-        PQC_WolfMQTT_DiagnosticCode("cipher_list", result, 0);
     }
     if (result != WOLFSSL_SUCCESS) {
         PQC_WolfMQTT_CloseTransport(socket_context);

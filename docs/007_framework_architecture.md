@@ -629,3 +629,7 @@ The PQC MQTT experiment sets a 60-second UART hard limit because ST67 initializa
 Executable experiment plans prepare declared external dependencies before build fingerprinting. `prepare_external_dependencies()` resolves MQTT TLS certificate profiles and returns a resolved context consumed by fingerprinting, generated build configuration, broker deployment, and manifest creation. TLS YAML uses `mqtt.tls.certificate_profile`; direct `certificate_refs` in source YAML are prohibited.
 
 Secure-boot signing similarly resolves the complete signing tuple below `secrets/wolfboot/tuples/` before invoking signing. Missing or partial tuples fail before signing. Tuple creation remains owned by the wolfBoot preparation workflow; application signing does not silently reconstruct key material.
+
+## Classical PKI with TLS 1.3 PQC key exchange
+
+Encrypted MQTT experiments use TLS 1.3 only. `framework/certs` owns one classical step-ca root/intermediate hierarchy and issues classical MQTT broker and client X.509 identities. The classical and P-256+ML-KEM-768 experiment profiles consume the same root trust anchor and broker identity model; the PQC distinction is limited to the TLS 1.3 key-exchange group. Experiment prerequisite handling synchronizes authoritative material on every run, records certificate hashes, embeds the root CA public certificate into firmware, and does not reconstruct missing CA tuples.

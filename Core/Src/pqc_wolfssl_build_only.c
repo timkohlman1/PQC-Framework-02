@@ -90,7 +90,7 @@ bool PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke(void)
 
   if (init_result == WOLFSSL_SUCCESS)
   {
-    context = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+    context = wolfSSL_CTX_new(wolfTLSv1_3_client_method());
     passed = (context != NULL);
     if (context != NULL) wolfSSL_CTX_free(context);
     (void)wolfSSL_Cleanup();

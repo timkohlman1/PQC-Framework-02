@@ -109,3 +109,7 @@ Detailed signing-tuple, automated-test evidence, MQTT broker lifecycle, classica
 ### Declared certificate prerequisites
 
 TLS experiment profiles declare `mqtt.tls.certificate_profile`. Running `experiment build` or `experiment-gateway run` prepares or reuses the matching tuple under `secrets/mqtt/<profile>/`, validates public provenance, and passes the resolved CA into build fingerprinting. Do not invoke certificate provisioning as a separate prerequisite and do not place authoritative certificates under `experiment/mqtt-broker/runtime/`.
+
+### Certificate services
+
+Classical X.509 certificate generation is owned by `framework/certs` (step-ca, Vault, and LocalStack KMS). All MQTT TLS profiles use TLS 1.3; the PQC MQTT profile uses hybrid key exchange with a classical broker certificate. Run the certificate services and synchronize `stepca-classical` material before encrypted MQTT builds. See `framework/certs/README.md` and `experiment/mqtt-broker/README.md`.
