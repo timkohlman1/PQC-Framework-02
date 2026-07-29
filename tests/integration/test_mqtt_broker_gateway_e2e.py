@@ -60,6 +60,16 @@ def _copy_broker_project(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=ignore)
 
 
+
+def _require_staged_stepca_material() -> Path:
+    cert_dir = REPO_ROOT / "secrets" / "mqtt" / "stepca-classical"
+    required = ("ca.crt", "ca-chain.crt", "server.crt", "server.key", "client.crt", "client.key")
+    missing = [name for name in required if not (cert_dir / name).is_file()]
+    if missing:
+        pytest.skip("staged step-ca MQTT material is unavailable: " + ", ".join(missing))
+    return cert_dir
+
+
 def _assert_success(completed: subprocess.CompletedProcess[str], label: str) -> None:
     assert completed.returncode == 0, (
         f"{label} failed with exit code {completed.returncode}\n"
@@ -68,13 +78,19 @@ def _assert_success(completed: subprocess.CompletedProcess[str], label: str) -> 
     )
 
 
-def _tls_handshake(host: str, port: int, cert_dir: Path) -> tuple[str, tuple[str, str, int]]:
+def _tls_handshake(
+    host: str,
+    port: int,
+    cert_dir: Path,
+    *,
+    server_name: str,
+) -> tuple[str, tuple[str, str, int]]:
     context = ssl.create_default_context(cafile=str(cert_dir / "ca.crt"))
     context.minimum_version = ssl.TLSVersion.TLSv1_3
     context.load_cert_chain(certfile=str(cert_dir / "client.crt"), keyfile=str(cert_dir / "client.key"))
 
     with socket.create_connection((host, port), timeout=10) as raw_sock:
-        with context.wrap_socket(raw_sock, server_hostname=host) as tls_sock:
+        with context.wrap_socket(raw_sock, server_hostname=server_name) as tls_sock:
             assert tls_sock.version() == "TLSv1.3"
             cipher = tls_sock.cipher()
             assert cipher is not None
@@ -96,26 +112,28 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
         pytest.skip(f"Docker/Compose unavailable on gateway: {docker_probe.stderr or docker_probe.stdout}")
 
     suffix = uuid.uuid4().hex[:10]
-    remote_dir = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-{suffix}"
+    remote_root = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-{suffix}"
+    remote_dir = f"{remote_root}/experiment/mqtt-broker"
     project_name = f"pqc-mqtt-pytest-{suffix}"
     port = 28000 + (int(suffix[:4], 16) % 10000)
     local_broker = tmp_path / "mqtt-broker"
     _copy_broker_project(BROKER_ROOT, local_broker)
+    classical_config = local_broker / "config" / "classical" / "mosquitto.conf"
+    classical_config.write_text(
+        "\n".join(
+            line
+            for line in classical_config.read_text(encoding="utf-8").splitlines()
+            if line.strip() != "log_dest file /mosquitto/log/mosquitto.log"
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(module, "broker_root", lambda: local_broker)
 
     cleanup_errors: list[str] = []
     try:
-        provision_args = module.build_parser().parse_args([
-            "provision-certs",
-            "--server-name",
-            host.alias,
-            "--host-config",
-            str(HOST_CONFIG),
-            "--days",
-            "7",
-        ])
-        module.provision_classical_certs(provision_args)
+        cert_dir = _require_staged_stepca_material()
 
         deploy_args = module.build_parser().parse_args([
             "deploy",
@@ -143,11 +161,10 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
         ])
         module.start(start_args)
 
-        cert_dir = local_broker / "runtime" / "classical" / "certs"
         last_error: Exception | None = None
         for _attempt in range(30):
             try:
-                tls_version, cipher = _tls_handshake(host.address, port, cert_dir)
+                tls_version, cipher = _tls_handshake(host.address, port, cert_dir, server_name="localhost")
                 assert tls_version == "TLSv1.3"
                 assert cipher[0].startswith("TLS_")
                 break
@@ -199,7 +216,7 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
         )
         if stop.returncode != 0:
             cleanup_errors.append(f"compose down failed: {stop.stderr or stop.stdout}")
-        rm = _ssh(target, module.remote_cleanup_command(remote_dir), timeout_seconds=60)
+        rm = _ssh(target, module.remote_cleanup_command(remote_root), timeout_seconds=60)
         if rm.returncode != 0:
             cleanup_errors.append(f"remote rm failed: {rm.stderr or rm.stdout}")
 
@@ -207,7 +224,7 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
 
 
 @pytest.mark.integration
-def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_path, pqc_require_capabilities, monkeypatch):
+def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(tmp_path, pqc_require_capabilities, monkeypatch):
     pqc_require_capabilities("gateway", strict_mode="gateway")
 
     module = _load_ctl_module()
@@ -218,7 +235,8 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_p
         pytest.skip(f"Docker/Compose unavailable on gateway: {docker_probe.stderr or docker_probe.stdout}")
 
     suffix = uuid.uuid4().hex[:10]
-    remote_dir = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-oqs-{suffix}"
+    remote_root = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-oqs-{suffix}"
+    remote_dir = f"{remote_root}/experiment/mqtt-broker"
     project_name = f"pqc-mqtt-oqs-pytest-{suffix}"
     port = 38000 + (int(suffix[:4], 16) % 10000)
     local_broker = tmp_path / "mqtt-broker"
@@ -239,18 +257,7 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_p
         ])
         module.deploy(deploy_args)
 
-        provision_args = module.build_parser().parse_args([
-            "provision-oqs-certs",
-            "--host-config",
-            str(HOST_CONFIG),
-            "--remote-dir",
-            remote_dir,
-            "--server-name",
-            host.alias,
-            "--days",
-            "7",
-        ])
-        module.provision_oqs_certs(provision_args)
+        _require_staged_stepca_material()
 
         start_args = module.build_parser().parse_args([
             "start",
@@ -293,7 +300,7 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_p
                 timeout_seconds=30,
             )
             raise AssertionError(
-                f"OQS mutual TLS validation on 127.0.0.1:{port} did not succeed: {last_error}\n"
+                f"OQS server-authenticated TLS validation on 127.0.0.1:{port} did not succeed: {last_error}\n"
                 f"broker logs:\n{logs.stdout}\n{logs.stderr}"
             )
 
@@ -331,7 +338,7 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_mutual_tls_stop_cleanup(tmp_p
         )
         if stop.returncode != 0:
             cleanup_errors.append(f"compose down failed: {stop.stderr or stop.stdout}")
-        rm = _ssh(target, module.remote_cleanup_command(remote_dir), timeout_seconds=60)
+        rm = _ssh(target, module.remote_cleanup_command(remote_root), timeout_seconds=60)
         if rm.returncode != 0:
             cleanup_errors.append(f"remote rm failed: {rm.stderr or rm.stdout}")
 

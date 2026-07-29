@@ -1,0 +1,11 @@
+**/.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+*.sqlite
+.env*
+step-root.crt
+test_captures/
+secrets/runtime/
+secrets/private/
+!secrets/public/.gitkeep

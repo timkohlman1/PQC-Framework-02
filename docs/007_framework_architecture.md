@@ -629,3 +629,20 @@ The PQC MQTT experiment sets a 60-second UART hard limit because ST67 initializa
 Executable experiment plans prepare declared external dependencies before build fingerprinting. `prepare_external_dependencies()` resolves MQTT TLS certificate profiles and returns a resolved context consumed by fingerprinting, generated build configuration, broker deployment, and manifest creation. TLS YAML uses `mqtt.tls.certificate_profile`; direct `certificate_refs` in source YAML are prohibited.
 
 Secure-boot signing similarly resolves the complete signing tuple below `secrets/wolfboot/tuples/` before invoking signing. Missing or partial tuples fail before signing. Tuple creation remains owned by the wolfBoot preparation workflow; application signing does not silently reconstruct key material.
+
+## Classical PKI with TLS 1.3 PQC key exchange
+
+Encrypted MQTT experiments use TLS 1.3 only. `framework/certs` owns one classical step-ca root/intermediate hierarchy and issues classical MQTT broker and client X.509 identities. The classical and P-256+ML-KEM-768 experiment profiles consume the same root trust anchor and broker identity model; the PQC distinction is limited to the TLS 1.3 key-exchange group. Experiment prerequisite handling synchronizes authoritative material on every run, records certificate hashes, embeds the root CA public certificate into firmware, and does not reconstruct missing CA tuples.
+
+
+### MQTT authentication-mode separation
+
+The gateway broker exposes three explicit TLS 1.3 profiles. `classical-server-auth` and `oqs` authenticate only the broker using the classical step-ca hierarchy; the OQS profile differs only by requiring `SecP256r1MLKEM768` hybrid key exchange. `classical` is a separate mutual-TLS profile and validates client certificates against the staged step-ca CA chain. Host-side validation commands must match the profile: server-auth validators omit client credentials, while the classical mutual-TLS validator supplies the staged client certificate and key.
+
+Current STM32 end-to-end experiments use server authentication only. STM32 mutual TLS is deferred because the repository's current secret-handling boundary prohibits placing a TLS client private key in normal firmware build inputs or result artifacts. Implementing STM32 mTLS requires an explicit device-key provisioning and storage design before an end-to-end profile can be claimed.
+
+### Profile-selected STM32 TLS algorithms
+
+STM32 MQTT/TLS builds resolve each experiment TLS profile into a deterministic algorithm set before CMake configure. The generated selection controls both wolfSSL compile definitions and conditional wolfCrypt source inclusion. Classical RSA TLS 1.3 builds enable RSA-PSS verification and advertise `rsa_pss_rsae_sha256`. PQC hybrid TLS adds only the `SecP256r1MLKEM768` key-exchange implementation while retaining classical RSA server-certificate authentication. Post-quantum signature schemes are not TLS capabilities in this framework; firmware-signing algorithms remain confined to wolfBoot secure-boot profiles.
+
+The resolved algorithm set is included as a semantic input to the normal firmware build fingerprint. A build produced for one TLS algorithm set is therefore not reusable by a profile resolving to a different set, even where other source and configuration inputs match. Compile-time capability evidence and emitted ClientHello evidence remain separate: generated CMake/compile definitions prove selected build capabilities, while the UART `wolfMQTT TLS ClientHello` marker proves the schemes emitted by the running STM32 binary.

@@ -140,3 +140,9 @@ must not copy secret material or mutate the referenced record.
 The repository-local, ignored `secrets/` hierarchy is the single source of truth for MQTT TLS and wolfBoot signing material. Experiment YAML declares profile identifiers, not certificate or private-key paths. The experiment runner resolves and prepares the declared profile before fingerprinting, build generation, broker deployment, signing, or execution.
 
 Runtime, build, broker-compose, and result directories are not authoritative key stores. They may contain bounded deployment copies where required, but no workflow may select material by discovering whichever file happens to be present there. Partial tuples and public/provenance hash mismatches fail closed. Manifests retain profile identifiers and public hashes only; private key bytes are never retained in results.
+
+## Certificate-service and wolfBoot key separation
+
+`framework/certs` is the authoritative owner of the classical X.509 root, intermediate, MQTT broker identity, and future STM32 mTLS identity. MQTT orchestration may materialise current runtime copies but must not generate a replacement CA when material is absent.
+
+wolfBoot signing keys are not X.509 identities and must not be issued by step-ca. The wolfBoot tooling remains responsible for algorithm-compatible generation and public-key export. Vault may store authoritative wolfBoot private signing material under a policy and AppRole separate from certificate materialisation. LocalStack KMS remains suitable for the experiment Vault auto-unseal role; it must not be described as a non-exportable PQC firmware signer unless the selected algorithm and signing interface are explicitly implemented and tested.

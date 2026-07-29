@@ -12,7 +12,9 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Any, Iterable, NamedTuple
+
+from framework.tls_algorithms import resolve_tls_algorithm_set
 
 BUILD_FINGERPRINT_ALGORITHM = "sha256-build-inputs-and-tools-v3"
 
@@ -238,15 +240,13 @@ def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> li
     mqtt = experiment.get("mqtt", {})
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
-    ca_certificate = (
-        certificate_refs.get("ca_certificate")
-        if isinstance(certificate_refs, dict)
-        else None
-    )
-    if ca_certificate is not None:
-        ca_certificate_path = str(ca_certificate).strip()
-        if ca_certificate_path:
-            inputs.append(ca_certificate_path)
+    if isinstance(certificate_refs, dict):
+        for reference_name in ("ca_certificate", "client_certificate", "client_private_key"):
+            reference = certificate_refs.get(reference_name)
+            if reference is not None:
+                reference_path = str(reference).strip()
+                if reference_path:
+                    inputs.append(reference_path)
 
     return [
         *inputs,
@@ -259,6 +259,7 @@ def calculate_build_fingerprint(
     relative_inputs: Iterable[str],
     *,
     tool_versions: dict[str, str] | None = None,
+    semantic_inputs: dict[str, Any] | None = None,
 ) -> BuildFingerprint:
     """Calculate the deterministic build input fingerprint.
 
@@ -286,6 +287,7 @@ def calculate_build_fingerprint(
         "algorithm": BUILD_FINGERPRINT_ALGORITHM,
         "files": file_entries,
         "tools": captured_tool_versions,
+        "semantic_inputs": semantic_inputs or {},
     }
 
     encoded_payload = json.dumps(
@@ -319,6 +321,7 @@ def calculate_default_build_fingerprint(
         repo_root=repo_root_path,
         relative_inputs=relative_inputs,
         tool_versions=tool_versions,
+        semantic_inputs={"tls_algorithm_set": resolve_tls_algorithm_set(bundle)},
     )
 
 

@@ -1578,7 +1578,7 @@ def test_pqc_hybrid_wifi_header_rejects_falcon_leaf_profile(tmp_path):
         _write_wifi_config_header(bundle, tmp_path, "Debug")
     except ValueError as error:
         assert "falcon512 is incompatible" in str(error)
-        assert "mldsa65" in str(error)
+        assert "classical" in str(error)
     else:
         raise AssertionError("incompatible Falcon server signature algorithm was accepted")
 
@@ -1596,7 +1596,7 @@ def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path
                 "enabled": True,
                 "tls": {
                     "mode": "pqc_hybrid_tls_server_auth",
-                    "server_signature_algorithm": "mldsa65",
+                    "server_signature_algorithm": "classical",
                     "certificate_refs": {"ca_certificate": "runtime/ca.crt"},
                 },
             }
@@ -1607,4 +1607,4 @@ def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path
     text = path.read_text(encoding="utf-8")
     expected_hash = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
     assert f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{expected_hash}"' in text
-    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "mldsa65"' in text
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "classical"' in text

@@ -17,54 +17,32 @@ def load_module():
     return module
 
 
-def test_oqs_certificate_defaults_match_stm32_mldsa65_profile():
+def test_oqs_provision_command_is_stepca_sync_alias():
     module = load_module()
     parser = module.build_parser()
     args = parser.parse_args(["provision-oqs-certs"])
 
-    assert module.OQS_CA_ALGORITHM == "mldsa65"
-    assert module.OQS_LEAF_ALGORITHM == "mldsa65"
-    assert args.ca_algorithm == "mldsa65"
-    assert args.leaf_algorithm == "mldsa65"
+    assert args.certificate_profile == "stepca-classical"
+    assert args.func is module.sync_stepca_certs
+    assert not hasattr(args, "ca_algorithm")
+    assert not hasattr(args, "leaf_algorithm")
 
 
-def test_oqs_provisioning_script_verifies_chain_key_match_and_writes_provenance(monkeypatch, tmp_path):
+def test_remote_repo_root_is_derived_from_broker_directory():
     module = load_module()
-    commands: list[list[str]] = []
-    input_commands: list[tuple[list[str], str]] = []
 
-    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(module, "broker_root", lambda: tmp_path / "experiment" / "mqtt-broker")
-    monkeypatch.setattr(
-        module,
-        "load_host_config",
-        lambda path: module.HostConfig(alias="gateway", user=None, address="10.1.1.18"),
-    )
-    monkeypatch.setattr(
-        module,
-        "run_command",
-        lambda args, cwd=None, dry_run=False: commands.append(args),
-    )
-    monkeypatch.setattr(
-        module,
-        "run_command_with_input",
-        lambda args, content, dry_run=False: input_commands.append((args, content)),
+    assert (
+        module.remote_repo_root("~/pqc-framework-02/experiment/mqtt-broker")
+        == "~/pqc-framework-02"
     )
 
-    args = module.build_parser().parse_args(["provision-oqs-certs", "--dry-run"])
-    module.provision_oqs_certs(args)
 
-    docker_command = next(
-        command[2] for command in commands
-        if command[:2] == ["ssh", "gateway"] and "docker run" in command[2]
-    )
-    assert "openssl genpkey -algorithm mldsa65 -out /certs/server.key" in docker_command
-    assert "openssl verify -CAfile /certs/ca.crt" in docker_command
-    assert "cmp /tmp/server-key.pub /tmp/server-cert.pub" in docker_command
-    assert "certificate-provenance.txt" in docker_command
-    assert any(command[0] == "scp" and command[1].endswith("/ca.crt") for command in commands)
-    assert any(
-        command[0] == "scp" and command[1].endswith("/certificate-provenance.txt")
-        for command in commands
-    )
-    assert len(input_commands) == 4
+def test_remote_repo_root_rejects_unrelated_directory():
+    module = load_module()
+
+    try:
+        module.remote_repo_root("~/custom-broker")
+    except SystemExit as exc:
+        assert "must end with /experiment/mqtt-broker" in str(exc)
+    else:
+        raise AssertionError("expected invalid remote directory to be rejected")

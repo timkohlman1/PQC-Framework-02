@@ -25,7 +25,7 @@ def test_server_authenticated_tls_profile_is_separate_from_mutual_tls():
     mutual = Path("experiment/mqtt-broker/config/classical/mosquitto.conf").read_text(encoding="utf-8")
     assert 'profiles: ["classical-server-auth"]' in compose
     assert "require_certificate false" in server_auth
-    assert "tls_version tlsv1.2" in server_auth
+    assert "tls_version tlsv1.3" in server_auth
     assert "require_certificate true" in mutual
 
 
@@ -41,12 +41,21 @@ def test_stm32_tls_path_uses_wolfssl_over_lwip_and_hardware_rng():
         assert marker in source
 
 
-def test_generated_header_embeds_only_public_ca_material():
+def test_generated_header_keeps_client_credentials_mutual_tls_only():
     source = Path("scripts/framework/build.py").read_text(encoding="utf-8")
+    server_auth = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
     assert "Provision the classical broker certificates before building" in source
-    assert "client_private_key" not in source
+    assert 'authentication = str(tls.get("authentication", "server"))' in source
+    assert 'mutual_tls = authentication == "mutual"' in source
+    assert "if mutual_tls:" in source
+    assert 'client_certificate_pem = ""' in source
+    assert 'client_private_key_pem = ""' in source
+    assert "authentication: mutual" not in server_auth
+    assert "client_certificate:" not in server_auth
+    assert "client_private_key:" not in server_auth
 
 
 def test_m11_config_selects_server_auth_profile_and_reconnect():
@@ -145,42 +154,38 @@ def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "def _mqtt_orchestration_host(" in source
-    assert source.count("shlex.quote(_mqtt_orchestration_host(bundle))") == 2
+    assert source.count("_mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)") == 2
     assert 'configured = str(orchestration.get("host", "")).strip()' in source
     assert "orchestration:\n    host: 10.1.1.18" in config
 
 
-def test_classical_certificate_provisioning_defaults_to_selected_fqdn():
+def test_stepca_sync_defaults_to_selected_fqdn_and_authoritative_source():
+    module = _load_mqtt_broker_ctl_module()
     source = Path(
         "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
     ).read_text(encoding="utf-8")
 
-    assert 'DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"' in source
-    assert 'DEFAULT_SERVER_ALIAS = "pqc-gateway1"' in source
-    assert (
-        "[server_name, DEFAULT_SERVER_ALIAS, "
-        '"localhost", *extra_names]'
-        in source
-    )
+    args = module.build_parser().parse_args(["provision-certs", "--dry-run"])
+
+    assert module.DEFAULT_SERVER_NAME == "pqc-gateway1.pqcnet"
+    assert module.DEFAULT_SERVER_ALIAS == "pqc-gateway1"
+    assert args.server_name == "pqc-gateway1.pqcnet"
+    assert args.certificate_profile == "stepca-classical"
+    assert 'source_root = repo_root() / "framework" / "certs"' in source
+    assert 'broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"' in source
+    assert "write_server_openssl_config" not in source
+    assert "openssl req" not in source
 
 
-def test_server_certificate_profile_contains_selected_fqdn_san(tmp_path):
-    module = _load_mqtt_broker_ctl_module()
-    profile_path = tmp_path / "server-openssl.cnf"
+def test_stepca_sync_does_not_generate_server_certificate_sans_locally():
+    source = Path(
+        "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
+    ).read_text(encoding="utf-8")
 
-    module.write_server_openssl_config(
-        profile_path,
-        ["pqc-gateway1.pqcnet", "pqc-gateway1", "localhost"],
-        ["127.0.0.1"],
-    )
-
-    profile = profile_path.read_text(encoding="utf-8")
-    assert "CN = pqc-gateway1.pqcnet" in profile
-    assert "DNS.1 = pqc-gateway1.pqcnet" in profile
-    assert "DNS.2 = pqc-gateway1" in profile
-    assert "DNS.3 = localhost" in profile
-    assert "IP.1 = 127.0.0.1" in profile
-
+    assert 'provision-certs", help="synchronize classical MQTT TLS material from framework/certs"' in source
+    assert "server-openssl.cnf" not in source
+    assert "DNS.1" not in source
+    assert "IP.1" not in source
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
@@ -188,7 +193,7 @@ def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
     assert 'mqtt.orchestration.host must be a non-empty hostname or IP address' in source
 
 
-def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite():
+def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_cipher_pin():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     broker = Path(
@@ -202,11 +207,13 @@ def test_classical_server_auth_profile_and_stm32_share_explicit_ecdsa_gcm_suite(
     ):
         assert marker in settings
 
-    suite = "ECDHE-ECDSA-AES128-GCM-SHA256"
-    assert f'"{suite}"' in source
-    assert 'wolfSSL_CTX_set_cipher_list(' in source
-    assert 'PQC_WolfMQTT_DiagnosticCode("cipher_list"' in source
-    assert f"ciphers {suite}" in broker
+    assert "wolfTLSv1_3_client_method()" in source
+    assert "wolfTLSv1_2_client_method()" not in source
+    assert "ECDHE-ECDSA-AES128-GCM-SHA256" not in source
+    assert "wolfSSL_CTX_set_cipher_list(" not in source
+    assert "tls_version tlsv1.3" in broker
+    assert "tls_version tlsv1.2" not in broker
+    assert "ciphers ECDHE-ECDSA-AES128-GCM-SHA256" not in broker
 
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
@@ -239,7 +246,7 @@ def test_firmware_reports_attempted_reconnect_failure_as_failed_not_not_run():
 def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     publish = source.index("mqtt_pub =")
-    publish_command = source.index("f'{mqtt_pub} -h {client_host}", publish)
+    publish_command = source.index("f'{mqtt_pub} -h {host}", publish)
     wait = source.index('wait "$sub_pid"; sub_rc=$?;', publish_command)
     response = source.index('response=$(paste -sd, "$response_file")', wait)
     readiness_check = source.index('if [ "$sub_rc" -eq 0 ]', response)
@@ -266,3 +273,79 @@ def test_mqtt_uart_default_output_is_concise_and_emits_terminal_marker():
     assert 'PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done' in main
     assert 'if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))' in main
     assert 'wolfMQTT plaintext exchange:' not in main + mqtt
+
+
+def test_tls_setup_diagnostics_distinguish_allocation_from_ca_loading():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
+
+    for marker in (
+        'PQC_WolfMQTT_DiagnosticHeapBoundary("before_context_create")',
+        'PQC_WolfMQTT_DiagnosticHeapBoundary("after_context_create")',
+        'PQC_WolfMQTT_DiagnosticHeapBoundary("before_session_create")',
+        'PQC_WolfMQTT_DiagnosticHeapBoundary("after_session_create")',
+        "tls_context=%s",
+        "tls_session=%s",
+        "tls_peer_identity=%s",
+        'first.ca_load_attempted?(first.ca_loaded?"passed":"failed"):"not_run"',
+    ):
+        assert marker in source
+
+    for field in (
+        "bool tls_context_created;",
+        "bool tls_session_created;",
+        "bool tls_peer_identity_configured;",
+        "bool ca_load_attempted;",
+    ):
+        assert field in header
+def test_classical_tls_profile_keeps_the_pre_diagnostic_freertos_heap_size():
+    config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
+    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)40000)" in config
+    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)64000)" not in config
+
+
+def test_wolfssl_session_failure_uses_link_safe_diagnostics_and_closes_before_client_hello():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert "wolfSSL_ERR_get_error()" not in source
+    assert "wolfSSL_ERR_error_string_n" not in source
+    assert 'PQC_WolfMQTT_DiagnosticWolfSSLState("session_create")' in source
+    assert "error_queue=unavailable" in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("wolfssl_init", wolfssl_init_result, 0)' in source
+    assert "wolfMQTT TLS: stage=session_create result=null tcp_close_before_clienthello=true" in source
+    assert "return MQTT_CODE_ERROR_TLS_CONNECT;" in source
+    assert "return MQTT_CODE_ERROR_MEMORY;" not in source
+
+
+def test_wolfssl_session_creation_logs_method_context_and_session_pointers_directly():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert "WOLFSSL_METHOD *tls_method;" in source
+    assert "tls_method = wolfTLSv1_3_client_method();" in source
+    assert '"wolfMQTT TLS: stage=method_create method=%p errno=%d' in source
+    assert '"wolfMQTT TLS: stage=session_create operation=begin' in source
+    assert '"wolfMQTT TLS: stage=session_create operation=end session=%p context=%p method=%p errno=%d' in source
+    assert '"wolfMQTT TLS: stage=session_create result=null tcp_close_before_clienthello=true' in source
+    assert "socket_context->tls = wolfSSL_new(socket_context->tls_ctx);" in source
+
+
+def test_classical_tls_does_not_reuse_tcp_result_for_pqc_group_validation():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert 'if (PQC_WolfMQTT_PQCHybridRequested()) {' in source
+    hybrid_start = source.index('if (PQC_WolfMQTT_PQCHybridRequested()) {')
+    session_start = source.index('stage=session_create operation=begin', hybrid_start)
+    hybrid_block = source[hybrid_start:session_start]
+
+    assert 'PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);' in hybrid_block
+    assert 'if (result != WOLFSSL_SUCCESS)' in hybrid_block
+    assert 'PQC_WolfMQTT_CloseTransport(socket_context);' in hybrid_block
+    assert 'return MQTT_CODE_ERROR_TLS_CONNECT;' in hybrid_block
+
+
+def test_tls_context_and_transport_close_are_reported_directly():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert '"wolfMQTT TLS: stage=context_create context=%p method=%p errno=%d' in source
+    assert '"wolfMQTT TLS: stage=context_create result=null tcp_close_before_clienthello=true' in source
+    assert '"wolfMQTT transport: stage=close socket_fd=%d tcp_connected=%d tls_context=%p tls_session=%p' in source

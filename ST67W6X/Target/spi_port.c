@@ -35,6 +35,8 @@
 #include "spi_port.h"
 #include "logging.h"
 #include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 /* USER CODE BEGIN Includes */
 
@@ -65,6 +67,41 @@
 static spi_transaction_complete_t spi_port_transaction_complete_cb = NULL;
 
 static const char spi_port_error_str[] = "SPI not initialized\n";
+static volatile spi_port_diagnostics_t spi_port_diag = {0};
+
+enum
+{
+  SPI_PORT_CB_NONE = 0,
+  SPI_PORT_CB_TX = 1,
+  SPI_PORT_CB_RX = 2,
+  SPI_PORT_CB_TXRX = 3,
+  SPI_PORT_CB_ERROR = 4
+};
+
+static void spi_port_diag_begin(uint16_t len, uint8_t dma, uint8_t tx_present)
+{
+  spi_port_diag.sequence++;
+  spi_port_diag.started_tick = (uint32_t)xTaskGetTickCount();
+  spi_port_diag.completed_tick = 0U;
+  spi_port_diag.length = len;
+  spi_port_diag.dma = dma;
+  spi_port_diag.tx_present = tx_present;
+  spi_port_diag.active = 1U;
+  spi_port_diag.last_callback = SPI_PORT_CB_NONE;
+  spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
+  spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
+}
+
+static void spi_port_diag_complete(uint8_t callback)
+{
+  spi_port_diag.completed_tick = (uint32_t)xTaskGetTickCountFromISR();
+  spi_port_diag.callback_count++;
+  spi_port_diag.last_callback = callback;
+  spi_port_diag.active = 0U;
+  spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
+  spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
+}
+
 
 /* USER CODE BEGIN PV */
 
@@ -172,6 +209,8 @@ int32_t spi_port_transfer(void *tx_buf, void *rx_buf, uint16_t len, uint32_t tim
   /* USER CODE END spi_port_transfer_1 */
   HAL_StatusTypeDef status;
 
+  spi_port_diag_begin(len, 0U, (tx_buf != NULL) ? 1U : 0U);
+
   if (NCP_SPI_HANDLE.State == HAL_SPI_STATE_RESET)
   {
     LogError(spi_port_error_str);
@@ -221,6 +260,8 @@ int32_t spi_port_transfer_dma(void *tx_buf, void *rx_buf, uint16_t len)
 
   /* USER CODE END spi_port_transfer_dma_1 */
   HAL_StatusTypeDef status;
+
+  spi_port_diag_begin(len, 1U, (tx_buf != NULL) ? 1U : 0U);
 
   if (NCP_SPI_HANDLE.State == HAL_SPI_STATE_RESET)
   {
@@ -317,7 +358,8 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
   /* USER CODE END HAL_SPI_TxCpltCallback_1 */
   if (hspi == &NCP_SPI_HANDLE)
   {
-    spi_port_transaction_complete_cb();
+    spi_port_diag_complete(SPI_PORT_CB_TX);
+    if (spi_port_transaction_complete_cb != NULL) { spi_port_transaction_complete_cb(); }
   }
   /* USER CODE BEGIN HAL_SPI_TxCpltCallback_End */
 
@@ -331,7 +373,8 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
   /* USER CODE END HAL_SPI_RxCpltCallback_1 */
   if (hspi == &NCP_SPI_HANDLE)
   {
-    spi_port_transaction_complete_cb();
+    spi_port_diag_complete(SPI_PORT_CB_RX);
+    if (spi_port_transaction_complete_cb != NULL) { spi_port_transaction_complete_cb(); }
   }
   /* USER CODE BEGIN HAL_SPI_RxCpltCallback_End */
 
@@ -345,7 +388,8 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
   /* USER CODE END HAL_SPI_TxRxCpltCallback_1 */
   if (hspi == &NCP_SPI_HANDLE)
   {
-    spi_port_transaction_complete_cb();
+    spi_port_diag_complete(SPI_PORT_CB_TXRX);
+    if (spi_port_transaction_complete_cb != NULL) { spi_port_transaction_complete_cb(); }
   }
   /* USER CODE BEGIN HAL_SPI_TxRxCpltCallback_End */
 
@@ -359,7 +403,9 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
   /* USER CODE END HAL_SPI_ErrorCallback_1 */
   if (hspi == &NCP_SPI_HANDLE)
   {
-    Error_Handler();
+    spi_port_diag.error_callback_count++;
+    spi_port_diag_complete(SPI_PORT_CB_ERROR);
+    if (spi_port_transaction_complete_cb != NULL) { spi_port_transaction_complete_cb(); }
   }
   /* USER CODE BEGIN HAL_SPI_ErrorCallback_End */
 
@@ -369,3 +415,24 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 /* USER CODE BEGIN WFR */
 
 /* USER CODE END WFR */
+
+int32_t spi_port_get_diagnostics(spi_port_diagnostics_t *diagnostics)
+{
+  if (diagnostics == NULL)
+  {
+    return -1;
+  }
+  taskENTER_CRITICAL();
+  *diagnostics = spi_port_diag;
+  taskEXIT_CRITICAL();
+  return 0;
+}
+
+int32_t spi_port_abort_transfer(void)
+{
+  HAL_StatusTypeDef status = HAL_SPI_Abort(&NCP_SPI_HANDLE);
+  spi_port_diag.active = 0U;
+  spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
+  spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
+  return (status == HAL_OK) ? 0 : -1;
+}

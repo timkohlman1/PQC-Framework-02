@@ -27,6 +27,10 @@ typedef struct
     bool message_received;
     bool publish_complete;
     bool tls_handshake_complete;
+    bool tls_context_created;
+    bool tls_session_created;
+    bool tls_peer_identity_configured;
+    bool ca_load_attempted;
     bool pqc_group_configured;
     bool ca_loaded;
     bool pqc_group_negotiated;

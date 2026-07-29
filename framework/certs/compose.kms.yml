@@ -1,0 +1,96 @@
+services:
+  localstack:
+    image: gresau/localstack-persist:latest
+    networks:
+      - security_services_net
+    cap_add:
+      - NET_ADMIN
+    user: "0:0"
+    environment:
+      - DEBUG=1
+      - LS_LOG=debug
+      - SERVICES=kms
+      - AWS_DEFAULT_REGION=us-east-1
+      - LS_LOG_FORMAT=json
+    restart: unless-stopped
+    volumes:
+      - localstack-data:/persisted-data:rw
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - ./services/kms/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh
+      - localstack-share:/out
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal kms describe-key --key-id alias/vault-unlock-key-alias --query 'KeyMetadata.KeyId' --output text >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  vault:
+    image: hashicorp/vault:latest
+    cap_add:
+      - IPC_LOCK
+      - NET_ADMIN
+    user: "0:0"
+    networks:
+      - security_services_net
+    ports:
+      - "127.0.0.1:8200:8200"
+    environment:
+      VAULT_ADDR: 'http://vault:8200'
+      VAULT_API_ADDR: 'http://vault:8200'
+      VAULT_ADDRESS: 'http://vault:8200'
+      AWS_ACCESS_KEY_ID: 'test'
+      AWS_SECRET_ACCESS_KEY: 'test'
+      AWS_DEFAULT_REGION: 'us-east-1'
+    volumes:
+      - ./services/kms/vault.hcl:/vault/config/vault.hcl:ro
+      - ./services/kms/entrypoint.sh:/usr/local/bin/vault-entrypoint.sh:ro
+      - vaultdata:/vault/data
+      - vault-logs:/vault/logs
+      - localstack-share:/kms-share:ro
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          code=$$(wget -qO- --server-response \
+            "http://localhost:8200/v1/sys/health" 2>&1 \
+            | awk '/^  HTTP\/[0-9.]+/ {print $$2; exit}')
+          [ "$$code" = "200" ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    entrypoint: ["/usr/local/bin/vault-entrypoint.sh"]
+
+  vault-init:
+    build:
+      context: ./services/kms/vault-init
+    user: "0:0"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_AUDIT_FILE: /vault/logs/audit.ndjson
+      STATE_DIR: /state
+      PYTHONPATH: /app/shared
+    depends_on:
+      vault:
+        condition: service_started
+    volumes:
+      - ./services/kms/vault-init:/app/vault-init:ro
+      - ./shared:/app/shared:ro
+      - vault-state:/state
+      - vault-logs:/vault/logs
+    command: ["python", "/app/vault-init/vault-init.py"]
+    networks:
+      - security_services_net
+
+volumes:
+  vaultdata:
+  vault-state:
+  vault-logs:
+  localstack-data:
+  localstack-share:

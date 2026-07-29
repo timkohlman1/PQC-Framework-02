@@ -105,7 +105,7 @@ def test_stm32_wolfssl_boundary_runs_sha256_and_tls_context_lifecycle_only():
     assert '#include "wolfssl/options.h"' not in source
     assert '#include "wolfssl/ssl.h"' in source
     assert "wolfSSL_Init()" in source
-    assert "wolfTLSv1_2_client_method()" in source
+    assert "wolfTLSv1_3_client_method()" in source
     assert "wolfSSL_CTX_new(" in source
     assert "wolfSSL_CTX_free(" in source
     assert "wolfSSL_Cleanup()" in source

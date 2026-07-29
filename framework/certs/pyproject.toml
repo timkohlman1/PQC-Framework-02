@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pqc-certs"
+version = "0.1.0"
+description = "Vault-backed certificate and signing material support for PQC experiments"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["shared"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["shared"]
+markers = ["integration: requires the local Docker Compose security services"]

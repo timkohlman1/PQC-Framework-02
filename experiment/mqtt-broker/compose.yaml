@@ -9,16 +9,25 @@ services:
       - -ec
       - |
         cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        rm -rf /tmp/mosquitto-certs
+        mkdir -p /tmp/mosquitto-certs
+        cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
+        cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt
+        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         if id mosquitto >/dev/null 2>&1; then
-          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
-          chmod 0640 /tmp/mosquitto-aclfile
+          runtime_user="$(id -u mosquitto)"
+          runtime_group="$(id -g mosquitto)"
         elif id nobody >/dev/null 2>&1; then
-          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
-          chmod 0640 /tmp/mosquitto-aclfile
+          runtime_user="$(id -u nobody)"
+          runtime_group="$(id -g nobody)"
         else
-          chown 0:0 /tmp/mosquitto-aclfile
-          chmod 0644 /tmp/mosquitto-aclfile
+          runtime_user=0
+          runtime_group=0
         fi
+        chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
+        chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt
         exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
@@ -26,7 +35,7 @@ services:
     volumes:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
-      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
       - ./data/classical:/mosquitto/data
       - ./log/classical:/mosquitto/log
     healthcheck:
@@ -45,15 +54,38 @@ services:
     restart: unless-stopped
     profiles: ["classical-server-auth"]
     user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        rm -rf /tmp/mosquitto-certs
+        mkdir -p /tmp/mosquitto-certs
+        cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
+        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
+        if id mosquitto >/dev/null 2>&1; then
+          runtime_user="$(id -u mosquitto)"
+          runtime_group="$(id -g mosquitto)"
+        elif id nobody >/dev/null 2>&1; then
+          runtime_user="$(id -u nobody)"
+          runtime_group="$(id -g nobody)"
+        else
+          runtime_user=0
+          runtime_group=0
+        fi
+        chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
+        chmod 0640 /tmp/mosquitto-certs/server.key
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
     volumes:
       - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-ecdsa-p256}:/mosquitto/config/certs:ro
+      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
       - ./data/classical-server-auth:/mosquitto/data
       - ./log/classical-server-auth:/mosquitto/log
     healthcheck:
-      test: ["CMD-SHELL", "test -r /mosquitto/config/certs/ca.crt && test -r /mosquitto/config/certs/server.crt && test -r /mosquitto/config/certs/server.key"]
+      test: ["CMD-SHELL", "test -r /tmp/mosquitto-certs/ca.crt && test -r /tmp/mosquitto-certs/server.crt && test -r /tmp/mosquitto-certs/server.key"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -69,16 +101,24 @@ services:
       - -ec
       - |
         cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        rm -rf /tmp/mosquitto-certs
+        mkdir -p /tmp/mosquitto-certs
+        cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
+        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         if id mosquitto >/dev/null 2>&1; then
-          chown "$(id -u mosquitto):$(id -g mosquitto)" /tmp/mosquitto-aclfile
-          chmod 0640 /tmp/mosquitto-aclfile
+          runtime_user="$(id -u mosquitto)"
+          runtime_group="$(id -g mosquitto)"
         elif id nobody >/dev/null 2>&1; then
-          chown "$(id -u nobody):$(id -g nobody)" /tmp/mosquitto-aclfile
-          chmod 0640 /tmp/mosquitto-aclfile
+          runtime_user="$(id -u nobody)"
+          runtime_group="$(id -g nobody)"
         else
-          chown 0:0 /tmp/mosquitto-aclfile
-          chmod 0644 /tmp/mosquitto-aclfile
+          runtime_user=0
+          runtime_group=0
         fi
+        chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
+        chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
         exec mosquitto -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
@@ -89,12 +129,62 @@ services:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
-      - ./secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-server-mldsa65}:/mosquitto/config/certs:ro
+      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /mosquitto/config/certs/ca.crt -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
+          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /tmp/mosquitto-certs/ca.crt -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
+        ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 10s
+
+  mqtt-oqs-mtls:
+    image: openquantumsafe/mosquitto:latest
+    restart: unless-stopped
+    profiles: ["oqs-mtls"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile
+        rm -rf /tmp/mosquitto-certs
+        mkdir -p /tmp/mosquitto-certs
+        cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
+        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
+        if id mosquitto >/dev/null 2>&1; then
+          runtime_user="$(id -u mosquitto)"
+          runtime_group="$(id -g mosquitto)"
+        elif id nobody >/dev/null 2>&1; then
+          runtime_user="$(id -u nobody)"
+          runtime_group="$(id -g nobody)"
+        else
+          runtime_user=0
+          runtime_group=0
+        fi
+        chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
+        chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "${MQTT_OQS_MTLS_PORT:-8885}:8883"
+    environment:
+      OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
+      OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
+    volumes:
+      - ./config/oqs-mtls/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/oqs-mtls/openssl.cnf:/mosquitto/config/openssl.cnf:ro
+      - ./config/oqs-mtls/aclfile:/mosquitto/config/aclfile.source:ro
+      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /tmp/mosquitto-certs/ca.crt -cert /mosquitto/config/certs/client.crt -key /mosquitto/config/certs/client.key -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
         ]
       interval: 30s
       timeout: 12s

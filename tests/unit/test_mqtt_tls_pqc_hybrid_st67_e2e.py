@@ -66,13 +66,20 @@ def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     assert api.index("#ifdef WOLFSSL_PQC_HYBRIDS") < api.index(hybrid_case)
 
 
-def test_mldsa_65_ca_verification_support_is_wired():
+def test_tls_build_excludes_mldsa_verification_support():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-    for marker in ("WOLFSSL_HAVE_MLDSA", "WOLFSSL_MLDSA_VERIFY_ONLY", "WOLFSSL_NO_ML_DSA_44", "WOLFSSL_NO_ML_DSA_87"):
-        assert marker in settings
-    assert "wolfcrypt/src/wc_mldsa.c" in cmake
-    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+
+    for marker in (
+        "PQC_TLS_ENABLE_MLDSA_65",
+        "WOLFSSL_HAVE_MLDSA",
+        "WOLFSSL_MLDSA_VERIFY_ONLY",
+        "WOLFSSL_NO_ML_DSA_44",
+        "WOLFSSL_NO_ML_DSA_87",
+        "wolfcrypt/src/wc_mldsa.c",
+        "wolfcrypt/src/wc_mldsa_asm.S",
+    ):
+        assert marker not in settings + cmake
 
 
 def test_tls_handshake_boundary_instrumentation_is_wired():

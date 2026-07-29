@@ -38,6 +38,7 @@ from framework.generated_state import (
     record_generated_state_success,
 )
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.tls_algorithms import cmake_boolean, resolve_tls_algorithm_set
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 FINGERPRINT_INPUT_ERROR_RETURN_CODE = 4
@@ -389,6 +390,22 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 
 
+
+def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> tuple[Path, dict[str, Any]]:
+    """Write the resolved profile-specific CMake algorithm selection."""
+    selected = resolve_tls_algorithm_set(bundle)
+    generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    path = generated_dir / "pqc_tls_algorithm_selection.cmake"
+    path.write_text(
+        f'set(PQC_TLS_ALGORITHM_MODE "{selected["mode"]}")\n'
+        f'set(PQC_TLS_ENABLE_RSA {cmake_boolean(selected["rsa"])})\n'
+        f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n',
+        encoding="utf-8",
+    )
+    return path, selected
+
 def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> Path:
     """Write experiment Wi-Fi configuration without exposing the PSK in command logs."""
     experiment = bundle.get("experiment", {})
@@ -402,14 +419,20 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
     ca_pem = ""
     ca_sha256 = ""
+    client_certificate_pem = ""
+    client_private_key_pem = ""
+    client_certificate_sha256 = ""
+    client_private_key_sha256 = ""
+    authentication = str(tls.get("authentication", "server")).strip().lower()
+    mutual_tls = authentication == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
     server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
-    if tls.get("mode") == "pqc_hybrid_tls_server_auth":
+    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual"}:
         if not server_signature_algorithm:
             raise ValueError(
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
-                "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
+                "The STM32 wolfSSL profile requires an explicit classical server-authentication algorithm."
             )
-        supported_server_signature_algorithms = {"mldsa65"}
+        supported_server_signature_algorithms = {"classical"}
         if server_signature_algorithm not in supported_server_signature_algorithms:
             raise ValueError(
                 "MQTT TLS server signature algorithm " + server_signature_algorithm
@@ -428,6 +451,25 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         ca_sha256 = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
         if "BEGIN CERTIFICATE" not in ca_pem:
             raise ValueError(f"MQTT TLS CA certificate is not PEM encoded: {ca_path}")
+    if mutual_tls:
+        for ref_name, label in (("client_certificate", "client certificate"), ("client_private_key", "client private key")):
+            ref = certificate_refs.get(ref_name) if isinstance(certificate_refs, dict) else None
+            if not ref:
+                raise ValueError(f"MQTT mutual TLS requires a resolved {label}")
+            path_ref = repo_root / str(ref)
+            if not path_ref.is_file():
+                raise ValueError(f"MQTT mutual TLS {label} is unavailable: {path_ref}")
+            pem = path_ref.read_text(encoding="utf-8")
+            if ref_name == "client_certificate":
+                if "BEGIN CERTIFICATE" not in pem:
+                    raise ValueError(f"MQTT client certificate is not PEM encoded: {path_ref}")
+                client_certificate_pem = pem
+                client_certificate_sha256 = hashlib.sha256(pem.encode("utf-8")).hexdigest()
+            else:
+                if "PRIVATE KEY" not in pem:
+                    raise ValueError(f"MQTT client private key is not PEM encoded: {path_ref}")
+                client_private_key_pem = pem
+                client_private_key_sha256 = hashlib.sha256(pem.encode("utf-8")).hexdigest()
     def esc(value: str) -> str:
         return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "\\n")
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
@@ -450,6 +492,11 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{ca_sha256}"\n'
+        f'#define PQC_MQTT_TLS_AUTHENTICATION "{esc(authentication)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM "{esc(client_certificate_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM_SHA256 "{client_certificate_sha256}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_KEY_PEM "{esc(client_private_key_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_KEY_PEM_SHA256 "{client_private_key_sha256}"\n'
         f'#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "{esc(server_signature_algorithm)}"\n'
         f'#define PQC_MQTT_RECONNECT_ATTEMPTS {int(mqtt.get("reconnect_attempts", 0))}\n'
         "#endif\n", encoding="utf-8")
@@ -819,6 +866,7 @@ def execute_build(
     # Generated-state preflight may remove the configured build directory.
     # Write the Wi-Fi header only after that cleanup and before CMake configure,
     # so the compiler sees the experiment values during this build.
+    _write_tls_algorithm_selection(bundle, repo_root_path, configure_preset)
     _write_wifi_config_header(bundle, repo_root_path, configure_preset)
 
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)

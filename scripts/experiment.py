@@ -116,24 +116,70 @@ MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
 
 
-def _mqtt_remote_ca_file(bundle: dict[str, dict[str, Any]], *, inside_oqs_container: bool) -> str:
-    """Return the CA path for gateway-side MQTT clients.
+def _mqtt_certificate_profile(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the configured deployed MQTT certificate profile identifier."""
 
-    OQS clients execute inside the broker container, where the selected profile
-    is mounted at /mosquitto/config/certs. Classical clients execute directly
-    on the gateway and must use the deployed canonical profile copy.
-    """
-    if inside_oqs_container:
-        return "/mosquitto/config/certs/ca.crt"
     tls = bundle["experiment"]["mqtt"].get("tls", {})
     certificate_profile = str(tls.get("certificate_profile", "")).strip()
     if not certificate_profile:
         raise ConfigError("TLS experiments must declare mqtt.tls.certificate_profile")
+    return certificate_profile
+
+
+def _mqtt_remote_certificate_dir(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the repository-level certificate profile path on the gateway."""
+
     return (
-        "$HOME/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt/"
-        f"{certificate_profile}/ca.crt"
+        "$HOME/pqc-framework-02/secrets/mqtt/"
+        f"{_mqtt_certificate_profile(bundle)}"
     )
 
+
+def _mqtt_remote_ca_file(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the deployed CA path used by gateway-side MQTT clients."""
+
+    return f"{_mqtt_remote_certificate_dir(bundle)}/ca.crt"
+
+
+def _mqtt_mutual_tls_enabled(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether host-side MQTT clients must present a client identity."""
+
+    tls = bundle["experiment"]["mqtt"].get("tls", {})
+    return str(tls.get("authentication", "server")).strip().lower() == "mutual"
+
+
+def _mqtt_remote_client_certificate_file(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the deployed client certificate used by mTLS orchestration."""
+
+    return f"{_mqtt_remote_certificate_dir(bundle)}/client.crt"
+
+
+def _mqtt_remote_client_private_key_file(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the deployed client private key used by mTLS orchestration."""
+
+    return f"{_mqtt_remote_certificate_dir(bundle)}/client.key"
+
+
+def _mqtt_gateway_tls_args(
+    bundle: dict[str, dict[str, Any]],
+    *,
+    container_paths: bool,
+) -> str:
+    """Return TLS arguments for gateway-side MQTT clients."""
+
+    if container_paths:
+        args = "--cafile /certs/ca.crt --tls-version tlsv1.3"
+        if _mqtt_mutual_tls_enabled(bundle):
+            args += " --cert /certs/client.crt --key /certs/client.key"
+        return args
+
+    args = f"--cafile {_mqtt_remote_ca_file(bundle)} --tls-version tlsv1.3"
+    if _mqtt_mutual_tls_enabled(bundle):
+        args += (
+            f" --cert {_mqtt_remote_client_certificate_file(bundle)}"
+            f" --key {_mqtt_remote_client_private_key_file(bundle)}"
+        )
+    return args
 
 def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
     """Return the host used by gateway-side broker control clients.
@@ -151,6 +197,23 @@ def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
         if configured:
             return configured
     return str(broker["host"])
+
+
+def _mqtt_gateway_client_host(
+    bundle: dict[str, dict[str, Any]],
+    *,
+    tls_enabled: bool,
+) -> str:
+    """Return the endpoint used by gateway-side MQTT clients.
+
+    TLS clients must connect using mqtt.broker.host so certificate hostname
+    verification authenticates the configured broker identity. Plaintext
+    clients may use mqtt.orchestration.host as a transport-only override.
+    """
+    mqtt = bundle["experiment"]["mqtt"]
+    if tls_enabled:
+        return str(mqtt["broker"]["host"])
+    return _mqtt_orchestration_host(bundle)
 
 
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
@@ -194,56 +257,131 @@ def _run_mqtt_broker_step(*, repo_root: Path, result_dir: Path, step_name: str, 
     return execution
 
 
-def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result_dir: Path, retries: int = 15, delay_seconds: int = 1) -> CommandExecution:
+def _wait_for_plaintext_mqtt_broker(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    result_dir: Path,
+    retries: int = 15,
+    delay_seconds: int = 1,
+) -> CommandExecution:
+    """Wait for the managed MQTT broker using the profile-appropriate client."""
+
     mqtt = bundle["experiment"]["mqtt"]
     broker = mqtt["broker"]
     gateway_alias = str(bundle["host"]["alias"])
-    host = shlex.quote(_mqtt_orchestration_host(bundle))
     port = int(broker["port"])
-    tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
-    pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
-    tls_args = f"--cafile {_mqtt_remote_ca_file(bundle, inside_oqs_container=pqc_hybrid)}" if tls_enabled else ""
-    mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
-    mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
-    client_host = "127.0.0.1" if pqc_hybrid else host
-    client_port = 8883 if pqc_hybrid else port
+    evidence_class = mqtt.get("evidence_class")
+    tls_enabled = evidence_class in {
+        "stm32_st67_classical_tls_e2e",
+        "stm32_st67_pqc_hybrid_tls_e2e",
+    }
+    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    host = shlex.quote(
+        _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
+    )
+
     topic = "pqc/framework/readiness"
     message = "ready"
-    oqs_container_lookup = (
-        'oqs_container_ids=$(docker ps '
-        '--filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
-        '--filter label=com.docker.compose.service=mqtt-oqs '
-        '--filter status=running --format "{{.ID}}"); '
-        'oqs_container_count=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | wc -l); '
-        'oqs_container_id=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | head -n 1); '
-    ) if pqc_hybrid else ""
-    oqs_failure_diagnostics = (
-        'echo "oqs_container_resolution_failed count=$oqs_container_count"; '
-        'docker compose version 2>&1 || true; docker compose ls 2>&1 || true; '
-        'docker ps -a --filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
-        '--filter label=com.docker.compose.service=mqtt-oqs --no-trunc 2>&1 || true; '
-    ) if pqc_hybrid else ""
-    script = (
-        f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
-        'attempt=$((attempt + 1)); response_file=/tmp/pqc-mqtt-ready.$$; rm -f "$response_file"; '
-        f'{oqs_container_lookup}'
-        + ('if [ "$oqs_container_count" -ne 1 ]; then sleep ' + str(delay_seconds) + '; continue; fi; ' if pqc_hybrid else '')
-        + f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -t {topic} -C 1 -W 2 >"$response_file" 2>&1 & sub_pid=$!; '
-        + 'sleep 0.2; '
-        + f'{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
-        + 'wait "$sub_pid"; sub_rc=$?; '
-        + 'response=$(paste -sd, "$response_file"); '
-        + f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] && [ "$response" = {message} ]; then echo "broker_ready attempt=$attempt"; exit 0; fi; '
-        + f'sleep {delay_seconds}; done; '
-        + f'{oqs_failure_diagnostics}'
-        + 'echo "subscriber_output:"; cat /tmp/pqc-mqtt-ready.$$ 2>/dev/null || true; '
-        + 'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
-        + 'echo "broker_not_ready attempts=$attempt"; exit 1'
-    )
+
+    if pqc_hybrid:
+        certificate_dir = _mqtt_remote_certificate_dir(bundle)
+        oqs_config = (
+            "$HOME/pqc-framework-02/experiment/mqtt-broker/"
+            "config/oqs/openssl.cnf"
+        )
+        container_options = (
+            "--network host "
+            "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
+            "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
+            f"-v {oqs_config}:/mosquitto/config/openssl.cnf:ro "
+            f"-v {certificate_dir}:/certs:ro "
+        )
+        tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
+        subscriber_name = "pqc-mqtt-readiness-sub"
+        script = (
+            f'attempt=0; subscriber={subscriber_name}; '
+            'cleanup() { docker rm -f "$subscriber" >/dev/null 2>&1 || true; }; '
+            'trap cleanup EXIT; '
+            f'while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); cleanup; '
+            f'docker run -d {container_options}'
+            '--name "$subscriber" --entrypoint mosquitto_sub '
+            'openquantumsafe/mosquitto:latest '
+            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 >/dev/null; sub_start_rc=$?; '
+            'if [ "$sub_start_rc" -ne 0 ]; then '
+            'echo "subscriber_start_failed attempt=$attempt rc=$sub_start_rc"; '
+            f'sleep {delay_seconds}; continue; fi; '
+            'sleep 2; '
+            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
+            'if [ "$subscriber_state" != running ]; then '
+            'echo "subscriber_not_running attempt=$attempt state=$subscriber_state"; '
+            'docker logs "$subscriber" 2>&1 || true; '
+            f'sleep {delay_seconds}; continue; fi; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest '
+            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
+            'found=0; poll=0; while [ "$poll" -lt 10 ]; do '
+            'poll=$((poll + 1)); response=$(docker logs "$subscriber" 2>&1 || true); '
+            f'if printf "%s\n" "$response" | grep -Fx -- {message} >/dev/null; then found=1; break; fi; '
+            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
+            'if [ "$subscriber_state" != running ]; then break; fi; sleep 1; done; '
+            'if [ "$found" -eq 1 ] && [ "$pub_rc" -eq 0 ]; then '
+            'echo "broker_ready attempt=$attempt"; exit 0; fi; '
+            'echo "subscriber_output:"; printf "%s\n" "$response"; '
+            'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            f'sleep {delay_seconds}; done; '
+            'echo "broker_not_ready attempts=$attempt"; exit 1'
+        )
+    else:
+        mqtt_sub = "mosquitto_sub"
+        mqtt_pub = "mosquitto_pub"
+        tls_args = (
+            _mqtt_gateway_tls_args(bundle, container_paths=False)
+            if tls_enabled
+            else ""
+        )
+        script = (
+            f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); '
+            'response_file=/tmp/pqc-mqtt-ready.$$; '
+            'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; ' + 'rm -f "$response_file" "$publisher_file"; '
+            f'{mqtt_sub} -h {host} -p {port} {tls_args} '
+            f'-t {topic} -C 1 -W 4 >"$response_file" 2>&1 & sub_pid=$!; '
+            'sleep 0.1; '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} '
+            f'-t {topic} -m {message} -r >"$publisher_file" 2>&1; pub_rc=$?; '
+            'wait "$sub_pid"; sub_rc=$?; '
+            'response=$(paste -sd, "$response_file"); '
+            f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] '
+            f'&& [ "$response" = {message} ]; then '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; ' + 'rm -f "$response_file" "$publisher_file"; '
+            'echo "broker_ready attempt=$attempt"; exit 0; fi; '
+            f'sleep {delay_seconds}; done; '
+            'echo "subscriber_output:"; '
+            'cat /tmp/pqc-mqtt-ready.$$ 2>/dev/null || true; '
+            'echo "publisher_output:"; '
+            'cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            'echo "broker_not_ready attempts=$attempt"; exit 1'
+        )
     command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
     start = time.perf_counter()
-    completed = subprocess.run(command, cwd=result_dir.parent.parent, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
-    execution = CommandExecution(command=command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
+    completed = subprocess.run(
+        command,
+        cwd=result_dir.parent.parent,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    execution = CommandExecution(
+        command=command,
+        return_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        duration_seconds=time.perf_counter() - start,
+    )
     (result_dir / "mqtt-broker-readiness.log").write_text(
         "Command: " + shlex.join(command) + "\n"
         + f"Return code: {execution.return_code}\n"
@@ -254,7 +392,6 @@ def _wait_for_plaintext_mqtt_broker(*, bundle: dict[str, dict[str, Any]], result
         encoding="utf-8",
     )
     return execution
-
 
 def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> tuple[bool, str]:
     steps: dict[str, Any] = {}
@@ -391,35 +528,60 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     gateway_alias = str(bundle["host"]["alias"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
     baud = int(bundle["host"]["uart"]["baud"])
-    broker_host = shlex.quote(_mqtt_orchestration_host(bundle))
     broker_port = int(broker["port"])
-    tls_enabled = mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
-    pqc_hybrid = mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e"
-    tls_args = f"--cafile {_mqtt_remote_ca_file(bundle, inside_oqs_container=pqc_hybrid)}" if tls_enabled else ""
-    mqtt_sub = 'docker exec -i "$oqs_container_id" mosquitto_sub' if pqc_hybrid else "mosquitto_sub"
-    mqtt_pub = 'docker exec -i "$oqs_container_id" mosquitto_pub' if pqc_hybrid else "mosquitto_pub"
-    client_host = "127.0.0.1" if pqc_hybrid else broker_host
-    client_port = 8883 if pqc_hybrid else broker_port
+    evidence_class = mqtt.get("evidence_class")
+    tls_enabled = evidence_class in {
+        "stm32_st67_classical_tls_e2e",
+        "stm32_st67_pqc_hybrid_tls_e2e",
+    }
+    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    broker_host = shlex.quote(
+        _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
+    )
+
+    oqs_subscriber_name = ""
+    if pqc_hybrid:
+        certificate_dir = _mqtt_remote_certificate_dir(bundle)
+        oqs_config = (
+            "$HOME/pqc-framework-02/experiment/mqtt-broker/"
+            "config/oqs/openssl.cnf"
+        )
+        oqs_subscriber_name = "pqc-mqtt-e2e-sub-$$"
+        common_container_options = (
+            "--network host "
+            "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
+            "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
+            f"-v {oqs_config}:/mosquitto/config/openssl.cnf:ro "
+            f"-v {certificate_dir}:/certs:ro "
+        )
+        mqtt_sub = (
+            f'docker run --rm --name "{oqs_subscriber_name}" '
+            f"{common_container_options}"
+            "--entrypoint mosquitto_sub openquantumsafe/mosquitto:latest"
+        )
+        mqtt_pub = (
+            f"docker run --rm {common_container_options}"
+            "--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest"
+        )
+        tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
+    else:
+        mqtt_sub = "mosquitto_sub"
+        mqtt_pub = "mosquitto_pub"
+        tls_args = (
+            _mqtt_gateway_tls_args(bundle, container_paths=False)
+            if tls_enabled
+            else ""
+        )
+
+    client_host = broker_host
+    client_port = broker_port
     command_topic = shlex.quote(str(topics["command"]))
     response_topic = shlex.quote(str(topics["response"]))
     command_value = shlex.quote(command_payload)
     response_file = "/tmp/pqc-mqtt-e2e-response.$$"
     uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
-    oqs_container_setup = (
-        'oqs_container_ids=$(docker ps '
-        '--filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
-        '--filter label=com.docker.compose.service=mqtt-oqs '
-        '--filter status=running --format "{{.ID}}"); '
-        'oqs_container_count=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | wc -l); '
-        'oqs_container_id=$(printf "%s\n" "$oqs_container_ids" | sed "/^$/d" | head -n 1); '
-        'if [ "$oqs_container_count" -ne 1 ]; then '
-        'echo "oqs_container_resolution_failed count=$oqs_container_count"; '
-        'docker ps -a --filter label=com.docker.compose.project=pqc-framework-mqtt-broker '
-        '--filter label=com.docker.compose.service=mqtt-oqs --no-trunc; exit 1; fi; '
-    ) if pqc_hybrid else ""
 
     script = (
-        f'{oqs_container_setup}'
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
@@ -439,7 +601,12 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
-        'wait "$subscriber_pid"; subscriber_rc=$?; '
+        + (
+            f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
+            if pqc_hybrid
+            else ''
+        )
+        + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         'wait "$capture_pid"; capture_rc=$?; '
         'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
         'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
@@ -666,6 +833,7 @@ MQTT_TLS_MODES = {
     "classical_tls_server_auth",
     "classical_tls_mutual",
     "pqc_hybrid_tls_server_auth",
+    "pqc_hybrid_tls_mutual",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -744,6 +912,12 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         raise ConfigError(
             "mqtt.tls.certificate_refs is resolved by the experiment prerequisite phase and must not be declared in YAML"
         )
+    authentication = str(tls_config.get("authentication", "server")).strip().lower()
+    if authentication not in {"server", "mutual"}:
+        raise ConfigError("mqtt.tls.authentication must be server or mutual")
+    mode_mutual = tls_mode.endswith("_mutual")
+    if mode_mutual != (authentication == "mutual"):
+        raise ConfigError("mqtt.tls.mode and mqtt.tls.authentication must describe the same authentication mode")
     if tls_mode not in {"disabled", "plaintext", "not_applicable", "unavailable"}:
         certificate_profile = tls_config.get("certificate_profile")
         if not isinstance(certificate_profile, str) or not certificate_profile.strip():
@@ -2980,7 +3154,6 @@ def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list
     _append_option(command, "--host-config", args.host_config)
 
     remote_subcommands = {
-        "provision-oqs-certs",
         "deploy",
         "start",
         "stop",
@@ -3188,10 +3361,12 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
 
     planned_steps: list[tuple[str, str]] = []
     if not args.no_provision_certs:
-        if args.profile == "classical":
-            planned_steps.append(("provision_classical_certs", "provision-certs"))
-        else:
-            planned_steps.append(("provision_oqs_certs", "provision-oqs-certs"))
+        provision_step_name = (
+            "provision_classical_certs"
+            if args.profile == "classical"
+            else "provision_oqs_certs"
+        )
+        planned_steps.append((provision_step_name, "provision-certs"))
     if not args.no_deploy:
         planned_steps.append(("deploy_broker", "deploy"))
     planned_steps.extend([

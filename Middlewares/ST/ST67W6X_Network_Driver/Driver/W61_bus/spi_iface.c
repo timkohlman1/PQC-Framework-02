@@ -126,8 +126,10 @@ struct spi_xfer_engine
   int32_t stop;
   /** Initialization flag */
   int32_t initialized;
-  /** Event flags for synchronization */
+  /** Event flags for transaction/header synchronization */
   EventGroupHandle_t event;
+  /** Dedicated DMA completion semaphore signalled directly from the SPI ISR. */
+  SemaphoreHandle_t hw_xfer_done;
   /** Current transfer state */
   int32_t state;
   /** Slave RX is stalled */
@@ -150,6 +152,86 @@ struct spi_xfer_engine
 
 /** SPI transfer engine instance */
 static struct spi_xfer_engine xfer_engine = {0};
+
+static uint32_t spi_diag_xfer_sequence = 0U;
+
+static void spi_log_port_diagnostics(const char *reason, struct spi_xfer_engine *engine)
+{
+  spi_port_diagnostics_t diag = {0};
+  (void)spi_port_get_diagnostics(&diag);
+  spi_err("SPI_DIAG reason=%s engine_seq=%" PRIu32
+          " port_seq=%" PRIu32 " state=%" PRIi32
+          " active=%u dma=%u tx_present=%u len=%" PRIu16
+          " started_tick=%" PRIu32 " completed_tick=%" PRIu32
+          " callback_count=%" PRIu32 " error_callback_count=%" PRIu32
+          " last_callback=%u hal_state=%" PRIu32 " hal_error=0x%08" PRIx32
+          " ready_gpio=%" PRIi32 " event_bits=0x%" PRIx32
+          " txq_waiting=%" PRIu32 "\n",
+          reason, spi_diag_xfer_sequence, diag.sequence, engine->state,
+          diag.active, diag.dma, diag.tx_present, diag.length,
+          diag.started_tick, diag.completed_tick, diag.callback_count,
+          diag.error_callback_count, diag.last_callback, diag.hal_state,
+          diag.hal_error, spi_port_is_ready(),
+          (uint32_t)xEventGroupGetBits(engine->event),
+          (uint32_t)uxQueueMessagesWaiting(engine->txq));
+}
+
+
+
+#define SPI_RECOVERY_READY_LOW_TIMEOUT_MS  100U
+#define SPI_RECOVERY_POLL_DELAY_MS         1U
+
+static void spi_discard_ambiguous_txbuf(struct spi_xfer_engine *engine)
+{
+  if ((engine != NULL) && (engine->txbuf != NULL))
+  {
+    struct spi_buffer *discarded = engine->txbuf;
+    engine->txbuf = NULL;
+    SPI_STAT_INC(&engine->stat, io_err, 1U);
+    spi_buffer_free(discarded);
+  }
+}
+
+static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t event);
+static void spi_drain_hw_xfer_done(struct spi_xfer_engine *engine);
+
+static int32_t spi_recover_protocol_boundary(struct spi_xfer_engine *engine, const char *reason)
+{
+  spi_port_diagnostics_t diag = {0};
+  TickType_t deadline;
+
+  if (engine == NULL)
+  {
+    return -1;
+  }
+
+  spi_log_port_diagnostics(reason, engine);
+  (void)spi_port_set_cs(0);
+  (void)spi_port_get_diagnostics(&diag);
+  if (diag.active != 0U)
+  {
+    (void)spi_port_abort_transfer();
+  }
+
+  spi_drain_hw_xfer_done(engine);
+  (void)spi_clear_event(engine, SPI_EVT_TXN_RDY | SPI_EVT_HDR_ACKED | SPI_EVT_HW_XFER_DONE);
+
+  deadline = xTaskGetTickCount() + pdMS_TO_TICKS(SPI_RECOVERY_READY_LOW_TIMEOUT_MS);
+  while (spi_port_is_ready() != 0)
+  {
+    if ((int32_t)(xTaskGetTickCount() - deadline) >= 0)
+    {
+      spi_log_port_diagnostics("protocol_recovery_ready_stuck", engine);
+      return -1;
+    }
+    vTaskDelay(pdMS_TO_TICKS(SPI_RECOVERY_POLL_DELAY_MS));
+  }
+
+  engine->rx_stall = 0;
+  engine->state = SPI_XFER_STATE_IDLE;
+  spi_log_port_diagnostics("protocol_recovery_complete", engine);
+  return 0;
+}
 
 /** SPI buffer alignment mask */
 #define SPI_BUF_ALIGN_MASK              (0x0003U)
@@ -265,8 +347,6 @@ static int32_t spi_wait_event(void *evnt_ctx, uint32_t event, int32_t timeout_ms
   * @param  event: Event to clear
   * @return 0 on success, negative error code on failure
   */
-static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t event);
-
 /**
   * @brief  Wait for the transaction-ready condition without losing an
   *         already-asserted level or an edge arriving around the wait.
@@ -556,6 +636,25 @@ static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)
   return 0;
 }
 
+static void spi_drain_hw_xfer_done(struct spi_xfer_engine *engine)
+{
+  if ((engine != NULL) && (engine->hw_xfer_done != NULL))
+  {
+    while (xSemaphoreTake(engine->hw_xfer_done, 0U) == pdTRUE)
+    {
+    }
+  }
+}
+
+static int32_t spi_wait_hw_xfer_done(struct spi_xfer_engine *engine, uint32_t timeout_ms)
+{
+  if ((engine == NULL) || (engine->hw_xfer_done == NULL))
+  {
+    return 0;
+  }
+  return (xSemaphoreTake(engine->hw_xfer_done, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) ? 1 : 0;
+}
+
 static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_buf, uint16_t len)
 {
   int32_t status;
@@ -583,6 +682,7 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
   }
   else
   {
+    spi_drain_hw_xfer_done(engine);
     status = spi_port_transfer_dma(tx_buf, rx_buf, len);
     if (status < 0)
     {
@@ -591,7 +691,7 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
       return -2;
     }
     /* Wait for spi transaction completion. */
-    if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
+    if (spi_wait_hw_xfer_done(engine, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
     {
       spi_err("spi txrx transaction timeouted: mode=dma len=%" PRIu16
               " state=%" PRIi32 " ready_gpio=%" PRIi32
@@ -601,6 +701,18 @@ static int32_t spi_txrx(struct spi_xfer_engine *engine, void *tx_buf, void *rx_b
               spi_port_is_ready(),
               (uint32_t)xEventGroupGetBits(engine->event));
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
+      spi_port_diagnostics_t diag = {0};
+      spi_log_port_diagnostics("txrx_timeout", engine);
+      (void)spi_port_get_diagnostics(&diag);
+      if (diag.active != 0U)
+      {
+        (void)spi_port_abort_transfer();
+        spi_log_port_diagnostics("txrx_timeout_after_abort", engine);
+      }
+      else
+      {
+        spi_log_port_diagnostics("txrx_completion_signal_missing", engine);
+      }
       return -3;
     }
   }
@@ -653,6 +765,7 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
   }
   else
   {
+    spi_drain_hw_xfer_done(engine);
     status = spi_port_transfer_dma(NULL, rx_buf, len);
     if (status < 0)
     {
@@ -661,7 +774,7 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
       return -2;
     }
     /* Wait for spi transaction completion. */
-    if (spi_wait_event(engine, SPI_EVT_HW_XFER_DONE, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
+    if (spi_wait_hw_xfer_done(engine, SPI_WAIT_MSG_XFER_TIMEOUT_MS) == 0)
     {
       spi_err("spi rx transaction timeouted: mode=dma len=%" PRIu16
               " state=%" PRIi32 " ready_gpio=%" PRIi32
@@ -671,6 +784,18 @@ static int32_t spi_rx(struct spi_xfer_engine *engine, void *rx_buf, uint16_t len
               spi_port_is_ready(),
               (uint32_t)xEventGroupGetBits(engine->event));
       SPI_STAT_INC(&engine->stat, wait_msg_xfer_timeouts, 1U);
+      spi_port_diagnostics_t diag = {0};
+      spi_log_port_diagnostics("rx_timeout", engine);
+      (void)spi_port_get_diagnostics(&diag);
+      if (diag.active != 0U)
+      {
+        (void)spi_port_abort_transfer();
+        spi_log_port_diagnostics("rx_timeout_after_abort", engine);
+      }
+      else
+      {
+        spi_log_port_diagnostics("rx_completion_signal_missing", engine);
+      }
       return -3;
     }
   }
@@ -691,6 +816,7 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
   struct spi_buffer *rxbuf = NULL;
   int32_t rx_restore = 0;
 
+  spi_diag_xfer_sequence++;
   spi_trace(SPI_TP_NONE, "wait_txn_rdy %" PRIi32 "\n", wait_txn_rdy);
   engine->state = SPI_XFER_STATE_FIRST_PART;
   if ((wait_txn_rdy != 0) &&
@@ -713,6 +839,8 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
             (uint32_t)xPortGetFreeHeapSize(),
             (uint32_t)xPortGetMinimumEverFreeHeapSize(),
             (uint32_t)uxTaskGetStackHighWaterMark(NULL));
+    spi_discard_ambiguous_txbuf(engine);
+    (void)spi_recover_protocol_boundary(engine, "txn_ready_timeout_recovery");
     return -1;
   }
 
@@ -791,6 +919,12 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
               (uint32_t)xEventGroupGetBits(engine->event));
     }
     SPI_STAT_INC(&engine->stat, hdr_err, 1U);
+    /* The peer may have accepted the transmitted bytes even though the
+     * returned header is corrupt. Never replay this frame. Restore a clean
+     * CS/READY protocol boundary before allowing later traffic to continue. */
+    spi_log_port_diagnostics("invalid_header", engine);
+    spi_discard_ambiguous_txbuf(engine);
+    (void)spi_recover_protocol_boundary(engine, "invalid_header_recovery");
     goto out;
   }
 
@@ -964,12 +1098,20 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
         wait_txn_rdy = 1;
       }
 
-      (void)spi_xfer_one(engine, txbuf, wait_txn_rdy);
+      {
+        int32_t xfer_result = spi_xfer_one(engine, txbuf, wait_txn_rdy);
 
-      /* De-assert chip select */
-      spi_trace(SPI_TP_DEASSERT_CS, "Deassert CS\n");
-      (void)spi_port_set_cs(0);
-      engine->state = SPI_XFER_STATE_TXN_DONE;
+        /* De-assert chip select */
+        spi_trace(SPI_TP_DEASSERT_CS, "Deassert CS\n");
+        (void)spi_port_set_cs(0);
+        engine->state = SPI_XFER_STATE_TXN_DONE;
+
+        if (xfer_result != 0)
+        {
+          spi_log_port_diagnostics("xfer_failed_break_loop", engine);
+          break;
+        }
+      }
     }
     else
     {
@@ -1026,6 +1168,14 @@ int32_t spi_transaction_init(void)
     goto error;
   }
 
+  xfer_engine.hw_xfer_done = xSemaphoreCreateBinary();
+  if (xfer_engine.hw_xfer_done == NULL)
+  {
+    spi_err("Failed to create SPI DMA completion semaphore\n");
+    ret = -1;
+    goto error;
+  }
+
   /* Create TX queue */
   xfer_engine.txq = xQueueCreate(SPI_TXQ_LEN, sizeof(void *));
   if (xfer_engine.txq == NULL)
@@ -1072,6 +1222,12 @@ error:
     xfer_engine.txq = NULL;
   }
 
+  if (xfer_engine.hw_xfer_done != NULL)
+  {
+    vSemaphoreDelete(xfer_engine.hw_xfer_done);
+    xfer_engine.hw_xfer_done = NULL;
+  }
+
   if (xfer_engine.event != NULL)
   {
     vEventGroupDelete(xfer_engine.event);
@@ -1093,6 +1249,11 @@ int32_t spi_transaction_deinit(void)
   if (xfer_engine.txq != NULL)
   {
     vQueueDelete(xfer_engine.txq);
+  }
+
+  if (xfer_engine.hw_xfer_done != NULL)
+  {
+    vSemaphoreDelete(xfer_engine.hw_xfer_done);
   }
 
   if (xfer_engine.event != NULL)
@@ -1487,7 +1648,7 @@ int32_t spi_on_header_ack(void)
 
 static void spi_on_transaction_complete(void)
 {
-  if (xfer_engine.event != NULL)
+  if (xfer_engine.hw_xfer_done != NULL)
   {
     spi_trace(SPI_TP_NONE, "hw txn done\n");
 #if ((tskKERNEL_VERSION_MAJOR > 10) || ((tskKERNEL_VERSION_MAJOR == 10) && (tskKERNEL_VERSION_MINOR >= 6)))
@@ -1497,12 +1658,12 @@ static void spi_on_transaction_complete(void)
 #endif /* tskKERNEL_VERSION_MAJOR */
     {
       BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-      (void)xEventGroupSetBitsFromISR(xfer_engine.event, SPI_EVT_HW_XFER_DONE, &xHigherPriorityTaskWoken);
+      (void)xSemaphoreGiveFromISR(xfer_engine.hw_xfer_done, &xHigherPriorityTaskWoken);
       portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
     else
     {
-      (void)xEventGroupSetBits(xfer_engine.event, SPI_EVT_HW_XFER_DONE);
+      (void)xSemaphoreGive(xfer_engine.hw_xfer_done);
     }
   }
 }

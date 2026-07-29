@@ -35,12 +35,13 @@ mqtt:
     completion_grace_seconds: 3
     hard_limit_seconds: 180
   tls:
+    tls_version: tls1.3
     mode: pqc_hybrid_tls_server_auth
     key_exchange_group: SecP256r1MLKEM768
-    server_signature_algorithm: mldsa65
-    certificate_profile: server-mldsa65
-    certificate_authority_algorithm: mldsa65
-    server_certificate_algorithm: mldsa65
+    server_signature_algorithm: classical
+    certificate_profile: stepca-classical
+    certificate_authority_algorithm: classical-x509
+    server_certificate_algorithm: classical
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
