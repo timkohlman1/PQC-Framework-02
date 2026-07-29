@@ -22,7 +22,7 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
     }
     if mode in {"plaintext", "", "none"}:
         return selected
-    if mode == "classical_tls_server_auth":
+    if mode in {"classical_tls_server_auth", "classical_tls_mutual"}:
         selected.update(
             rsa=True,
             rsa_pss=True,
@@ -30,7 +30,7 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
             key_exchange_groups=["secp256r1"],
         )
         return selected
-    if mode == "pqc_hybrid_tls_server_auth":
+    if mode in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual"}:
         if server_signature not in {"", "classical", "rsa", "rsa_pss_rsae_sha256"}:
             raise ValueError(
                 "Unsupported TLS server signature algorithm: "

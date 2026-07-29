@@ -41,12 +41,21 @@ def test_stm32_tls_path_uses_wolfssl_over_lwip_and_hardware_rng():
         assert marker in source
 
 
-def test_generated_header_embeds_only_public_ca_material():
+def test_generated_header_keeps_client_credentials_mutual_tls_only():
     source = Path("scripts/framework/build.py").read_text(encoding="utf-8")
+    server_auth = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
     assert "Provision the classical broker certificates before building" in source
-    assert "client_private_key" not in source
+    assert 'authentication = str(tls.get("authentication", "server"))' in source
+    assert 'mutual_tls = authentication == "mutual"' in source
+    assert "if mutual_tls:" in source
+    assert 'client_certificate_pem = ""' in source
+    assert 'client_private_key_pem = ""' in source
+    assert "authentication: mutual" not in server_auth
+    assert "client_certificate:" not in server_auth
+    assert "client_private_key:" not in server_auth
 
 
 def test_m11_config_selects_server_auth_profile_and_reconnect():

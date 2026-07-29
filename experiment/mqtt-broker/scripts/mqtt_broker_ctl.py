@@ -26,6 +26,7 @@ BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
     "classical-server-auth": "mqtt-classical-server-auth",
     "oqs": "mqtt-oqs",
+    "oqs-mtls": "mqtt-oqs-mtls",
 }
 BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
 HOST_BROKER_EVIDENCE_CLASS = "host_side"
@@ -298,6 +299,7 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
         env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
     if getattr(args, "oqs_port", None):
         env.append(f"MQTT_OQS_TLS_PORT={args.oqs_port}")
+        env.append(f"MQTT_OQS_MTLS_PORT={args.oqs_port}")
     if getattr(args, "certificate_profile", None):
         env.append(f"MQTT_CERTIFICATE_PROFILE={args.certificate_profile}")
     return env
@@ -330,6 +332,8 @@ def stop(args: argparse.Namespace) -> None:
             "classical-server-auth",
             "--profile",
             "oqs",
+            "--profile",
+            "oqs-mtls",
             "down",
             "--remove-orphans",
         ],
@@ -337,7 +341,7 @@ def stop(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     cleanup_command = (
         "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
-        "pqc-mqtt-oqs >/dev/null 2>&1 || true"
+        "pqc-mqtt-oqs pqc-mqtt-oqs-mtls >/dev/null 2>&1 || true"
     )
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 
@@ -525,6 +529,18 @@ def validate_oqs_mqtt(args: argparse.Namespace) -> None:
         oqs_client=True,
     )
 
+def validate_oqs_mtls_mqtt(args: argparse.Namespace) -> None:
+    """Validate hybrid key exchange with classical mutual authentication."""
+    validate_mqtt_pubsub(
+        args,
+        profile="oqs-mtls",
+        certificate_profile=args.certificate_profile or "stepca-classical",
+        port=args.oqs_port or 8885,
+        image=args.image,
+        mutual_tls=True,
+        oqs_client=True,
+    )
+
 
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/mqtt")
@@ -634,6 +650,18 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_oqs_mqtt_parser.add_argument("--message", default="pqc-oqs-mqtt-e2e")
     validate_oqs_mqtt_parser.set_defaults(func=validate_oqs_mqtt)
+
+    validate_oqs_mtls_mqtt_parser = sub.add_parser(
+        "validate-oqs-mtls-mqtt",
+        help="validate OQS hybrid MQTT mutual TLS using classical client credentials",
+    )
+    add_common_remote_options(validate_oqs_mtls_mqtt_parser)
+    add_port_options(validate_oqs_mtls_mqtt_parser)
+    validate_oqs_mtls_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_oqs_mtls_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
+    validate_oqs_mtls_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
+    validate_oqs_mtls_mqtt_parser.add_argument("--message", default="pqc-oqs-mtls-mqtt-e2e")
+    validate_oqs_mtls_mqtt_parser.set_defaults(func=validate_oqs_mtls_mqtt)
 
     return parser
 

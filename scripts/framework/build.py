@@ -419,8 +419,14 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
     ca_pem = ""
     ca_sha256 = ""
+    client_certificate_pem = ""
+    client_private_key_pem = ""
+    client_certificate_sha256 = ""
+    client_private_key_sha256 = ""
+    authentication = str(tls.get("authentication", "server")).strip().lower()
+    mutual_tls = authentication == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
     server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
-    if tls.get("mode") == "pqc_hybrid_tls_server_auth":
+    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual"}:
         if not server_signature_algorithm:
             raise ValueError(
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
@@ -445,6 +451,25 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         ca_sha256 = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
         if "BEGIN CERTIFICATE" not in ca_pem:
             raise ValueError(f"MQTT TLS CA certificate is not PEM encoded: {ca_path}")
+    if mutual_tls:
+        for ref_name, label in (("client_certificate", "client certificate"), ("client_private_key", "client private key")):
+            ref = certificate_refs.get(ref_name) if isinstance(certificate_refs, dict) else None
+            if not ref:
+                raise ValueError(f"MQTT mutual TLS requires a resolved {label}")
+            path_ref = repo_root / str(ref)
+            if not path_ref.is_file():
+                raise ValueError(f"MQTT mutual TLS {label} is unavailable: {path_ref}")
+            pem = path_ref.read_text(encoding="utf-8")
+            if ref_name == "client_certificate":
+                if "BEGIN CERTIFICATE" not in pem:
+                    raise ValueError(f"MQTT client certificate is not PEM encoded: {path_ref}")
+                client_certificate_pem = pem
+                client_certificate_sha256 = hashlib.sha256(pem.encode("utf-8")).hexdigest()
+            else:
+                if "PRIVATE KEY" not in pem:
+                    raise ValueError(f"MQTT client private key is not PEM encoded: {path_ref}")
+                client_private_key_pem = pem
+                client_private_key_sha256 = hashlib.sha256(pem.encode("utf-8")).hexdigest()
     def esc(value: str) -> str:
         return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "\\n")
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
@@ -467,6 +492,11 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{ca_sha256}"\n'
+        f'#define PQC_MQTT_TLS_AUTHENTICATION "{esc(authentication)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM "{esc(client_certificate_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM_SHA256 "{client_certificate_sha256}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_KEY_PEM "{esc(client_private_key_pem)}"\n'
+        f'#define PQC_MQTT_TLS_CLIENT_KEY_PEM_SHA256 "{client_private_key_sha256}"\n'
         f'#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "{esc(server_signature_algorithm)}"\n'
         f'#define PQC_MQTT_RECONNECT_ATTEMPTS {int(mqtt.get("reconnect_attempts", 0))}\n'
         "#endif\n", encoding="utf-8")

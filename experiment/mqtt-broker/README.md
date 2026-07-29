@@ -237,6 +237,7 @@ Phase M11 keeps two distinct classical TLS profiles:
 - `classical-server-auth` uses TLS 1.3 and requires the STM32 to verify the broker certificate. It does not request a client certificate.
 - `classical` retains the existing mutual-TLS listener and client-certificate requirement.
 - `oqs` uses TLS 1.3 hybrid key exchange and classical server authentication only.
+- `oqs-mtls` uses the same hybrid key exchange and classical certificate hierarchy, and additionally requires a classical client certificate.
 
 Host-side validation commands are mode-specific:
 
@@ -246,7 +247,7 @@ Host-side validation commands are mode-specific:
 .\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-mqtt
 ```
 
-`validate-classical-mqtt` sends `client.crt` and `client.key`. The server-auth and OQS validators deliberately omit client identity material. These commands are host-side/broker-side evidence and do not prove STM32 mTLS. The current STM32 experiments cover classical and hybrid server authentication only; STM32 mTLS remains deferred until a private-key provisioning mechanism is defined that does not place the client private key in normal build inputs or result artifacts.
+`validate-classical-mqtt` sends `client.crt` and `client.key`. The server-auth and OQS validators deliberately omit client identity material. These commands are host-side/broker-side evidence and do not prove STM32 mTLS. The STM32 experiment set covers classical and hybrid server authentication plus equivalent classical and hybrid mutual-TLS profiles. Mutual-TLS builds embed the experiment-only client certificate and private key and include both files in the immutable build fingerprint.
 
 The experiment prerequisite phase provisions or reuses `secrets/mqtt/server-ecdsa-p256` before fingerprinting. The build embeds only that profile’s public `ca.crt`; private keys remain generated dependency state and are not copied into firmware results or manifests.
 
@@ -301,3 +302,18 @@ The classical mTLS listener uses `use_identity_as_username true`. The step-ca ST
 
 
 The `validate-oqs-mqtt` client containers load the project-managed OQS OpenSSL configuration and provider module path so MQTT publish/subscribe uses `SecP256r1MLKEM768`, matching the OQS broker profile.
+
+
+## STM32 mutual-TLS profiles
+
+The framework provides two mutual-TLS profiles alongside the existing server-authentication profiles:
+
+- `configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml`
+- `configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml`
+
+The classical mutual-TLS profile uses the same classical TLS algorithm set as
+the classical server-authentication profile. The hybrid mutual-TLS profile uses
+the same `SecP256r1MLKEM768` key-exchange group as the hybrid
+server-authentication profile. Both use classical server and STM32 client
+certificates issued by the existing Step CA hierarchy. ML-DSA is not used by
+the TLS component.

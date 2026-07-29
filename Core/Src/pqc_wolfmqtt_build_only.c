@@ -24,6 +24,16 @@
 #include "wolfssl/ssl.h"
 #include "wolfssl/wolfcrypt/random.h"
 
+#ifndef PQC_MQTT_TLS_AUTHENTICATION
+#define PQC_MQTT_TLS_AUTHENTICATION "server"
+#endif
+#ifndef PQC_MQTT_TLS_CLIENT_CERT_PEM
+#define PQC_MQTT_TLS_CLIENT_CERT_PEM ""
+#endif
+#ifndef PQC_MQTT_TLS_CLIENT_KEY_PEM
+#define PQC_MQTT_TLS_CLIENT_KEY_PEM ""
+#endif
+
 #define PQC_WOLFMQTT_BUFFER_SIZE 512
 #define PQC_WOLFMQTT_COMMAND_TIMEOUT_MS 5000
 #define PQC_WOLFMQTT_KEEPALIVE_SECONDS 30
@@ -263,12 +273,21 @@ int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size)
 static bool PQC_WolfMQTT_TLSRequested(void)
 {
     return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0) ||
-           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0);
+           (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
 }
 
 static bool PQC_WolfMQTT_PQCHybridRequested(void)
 {
-    return strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0;
+    return (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
+}
+
+static bool PQC_WolfMQTT_MutualTLSRequested(void)
+{
+    return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
 }
 
 #ifndef PQC_WOLFMQTT_TLS_IO_TRACE
@@ -593,6 +612,27 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     socket_context->tls_context_created = true;
     wolfSSL_SetIORecv(socket_context->tls_ctx, PQC_WolfSSL_IORecv);
     wolfSSL_SetIOSend(socket_context->tls_ctx, PQC_WolfSSL_IOSend);
+
+    if (PQC_WolfMQTT_MutualTLSRequested()) {
+        result = wolfSSL_CTX_use_certificate_buffer(socket_context->tls_ctx,
+            (const unsigned char *)PQC_MQTT_TLS_CLIENT_CERT_PEM,
+            (long)strlen(PQC_MQTT_TLS_CLIENT_CERT_PEM), WOLFSSL_FILETYPE_PEM);
+        PQC_WolfMQTT_DiagnosticCode("client_certificate_load", result, 0);
+        if (result != WOLFSSL_SUCCESS) {
+            PQC_WolfMQTT_CloseTransport(socket_context);
+            return MQTT_CODE_ERROR_TLS_CONNECT;
+        }
+        result = wolfSSL_CTX_use_PrivateKey_buffer(socket_context->tls_ctx,
+            (const unsigned char *)PQC_MQTT_TLS_CLIENT_KEY_PEM,
+            (long)strlen(PQC_MQTT_TLS_CLIENT_KEY_PEM), WOLFSSL_FILETYPE_PEM);
+        PQC_WolfMQTT_DiagnosticCode("client_private_key_load", result, 0);
+        if (result != WOLFSSL_SUCCESS) {
+            PQC_WolfMQTT_CloseTransport(socket_context);
+            return MQTT_CODE_ERROR_TLS_CONNECT;
+        }
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS: mutual_authentication=enabled client_credentials=loaded\r\n");
+    }
 
     if (PQC_WolfMQTT_PQCHybridRequested()) {
         int groups[] = { WOLFSSL_SECP256R1MLKEM768 };

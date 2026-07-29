@@ -265,7 +265,7 @@ def test_mqtt_stop_removes_profiled_and_orphaned_broker_containers(tmp_path, mon
     command_text = "\n".join(" ".join(command) for command in commands)
     assert (
         "docker compose --project-name pqc-framework-mqtt-broker "
-        "--profile classical --profile classical-server-auth --profile oqs "
+        "--profile classical --profile classical-server-auth --profile oqs --profile oqs-mtls "
         "down --remove-orphans"
     ) in command_text
     assert (

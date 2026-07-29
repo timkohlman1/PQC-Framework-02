@@ -240,15 +240,13 @@ def default_build_fingerprint_inputs(bundle: dict[str, dict[str, object]]) -> li
     mqtt = experiment.get("mqtt", {})
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
-    ca_certificate = (
-        certificate_refs.get("ca_certificate")
-        if isinstance(certificate_refs, dict)
-        else None
-    )
-    if ca_certificate is not None:
-        ca_certificate_path = str(ca_certificate).strip()
-        if ca_certificate_path:
-            inputs.append(ca_certificate_path)
+    if isinstance(certificate_refs, dict):
+        for reference_name in ("ca_certificate", "client_certificate", "client_private_key"):
+            reference = certificate_refs.get(reference_name)
+            if reference is not None:
+                reference_path = str(reference).strip()
+                if reference_path:
+                    inputs.append(reference_path)
 
     return [
         *inputs,

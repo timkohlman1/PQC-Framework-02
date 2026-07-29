@@ -140,6 +140,47 @@ def _mqtt_remote_ca_file(bundle: dict[str, dict[str, Any]]) -> str:
 
     return f"{_mqtt_remote_certificate_dir(bundle)}/ca.crt"
 
+
+def _mqtt_mutual_tls_enabled(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether host-side MQTT clients must present a client identity."""
+
+    tls = bundle["experiment"]["mqtt"].get("tls", {})
+    return str(tls.get("authentication", "server")).strip().lower() == "mutual"
+
+
+def _mqtt_remote_client_certificate_file(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the deployed client certificate used by mTLS orchestration."""
+
+    return f"{_mqtt_remote_certificate_dir(bundle)}/client.crt"
+
+
+def _mqtt_remote_client_private_key_file(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the deployed client private key used by mTLS orchestration."""
+
+    return f"{_mqtt_remote_certificate_dir(bundle)}/client.key"
+
+
+def _mqtt_gateway_tls_args(
+    bundle: dict[str, dict[str, Any]],
+    *,
+    container_paths: bool,
+) -> str:
+    """Return TLS arguments for gateway-side MQTT clients."""
+
+    if container_paths:
+        args = "--cafile /certs/ca.crt --tls-version tlsv1.3"
+        if _mqtt_mutual_tls_enabled(bundle):
+            args += " --cert /certs/client.crt --key /certs/client.key"
+        return args
+
+    args = f"--cafile {_mqtt_remote_ca_file(bundle)} --tls-version tlsv1.3"
+    if _mqtt_mutual_tls_enabled(bundle):
+        args += (
+            f" --cert {_mqtt_remote_client_certificate_file(bundle)}"
+            f" --key {_mqtt_remote_client_private_key_file(bundle)}"
+        )
+    return args
+
 def _mqtt_orchestration_host(bundle: dict[str, dict[str, Any]]) -> str:
     """Return the host used by gateway-side broker control clients.
 
@@ -260,12 +301,12 @@ def _wait_for_plaintext_mqtt_broker(
             f"docker run {container_options}"
             "--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest"
         )
-        tls_args = "--cafile /certs/ca.crt --tls-version tlsv1.3"
+        tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
     else:
         mqtt_sub = "mosquitto_sub"
         mqtt_pub = "mosquitto_pub"
         tls_args = (
-            f"--cafile {_mqtt_remote_ca_file(bundle)} --tls-version tlsv1.3"
+            _mqtt_gateway_tls_args(bundle, container_paths=False)
             if tls_enabled
             else ""
         )
@@ -495,12 +536,12 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             f"docker run --rm {common_container_options}"
             "--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest"
         )
-        tls_args = "--cafile /certs/ca.crt --tls-version tlsv1.3"
+        tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
     else:
         mqtt_sub = "mosquitto_sub"
         mqtt_pub = "mosquitto_pub"
         tls_args = (
-            f"--cafile {_mqtt_remote_ca_file(bundle)} --tls-version tlsv1.3"
+            _mqtt_gateway_tls_args(bundle, container_paths=False)
             if tls_enabled
             else ""
         )
@@ -765,6 +806,7 @@ MQTT_TLS_MODES = {
     "classical_tls_server_auth",
     "classical_tls_mutual",
     "pqc_hybrid_tls_server_auth",
+    "pqc_hybrid_tls_mutual",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -843,6 +885,12 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         raise ConfigError(
             "mqtt.tls.certificate_refs is resolved by the experiment prerequisite phase and must not be declared in YAML"
         )
+    authentication = str(tls_config.get("authentication", "server")).strip().lower()
+    if authentication not in {"server", "mutual"}:
+        raise ConfigError("mqtt.tls.authentication must be server or mutual")
+    mode_mutual = tls_mode.endswith("_mutual")
+    if mode_mutual != (authentication == "mutual"):
+        raise ConfigError("mqtt.tls.mode and mqtt.tls.authentication must describe the same authentication mode")
     if tls_mode not in {"disabled", "plaintext", "not_applicable", "unavailable"}:
         certificate_profile = tls_config.get("certificate_profile")
         if not isinstance(certificate_profile, str) or not certificate_profile.strip():

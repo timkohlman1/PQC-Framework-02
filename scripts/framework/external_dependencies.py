@@ -27,7 +27,11 @@ class ResolvedMqttTlsContext:
     canonical_directory: Path
     ca_certificate: Path
     provenance_file: Path
+    client_certificate: Path | None
+    client_private_key: Path | None
     ca_sha256: str
+    client_certificate_sha256: str | None
+    client_private_key_sha256: str | None
     provenance_sha256: str
     provisioned: bool
 
@@ -40,6 +44,10 @@ class ResolvedMqttTlsContext:
             "canonical_directory": self.canonical_directory.relative_to(repo_root).as_posix(),
             "ca_certificate": self.ca_certificate.relative_to(repo_root).as_posix(),
             "ca_sha256": self.ca_sha256,
+            "client_certificate": None if self.client_certificate is None else self.client_certificate.relative_to(repo_root).as_posix(),
+            "client_certificate_sha256": self.client_certificate_sha256,
+            "client_private_key_present": self.client_private_key is not None,
+            "client_private_key_sha256": self.client_private_key_sha256,
             "provenance_file": self.provenance_file.relative_to(repo_root).as_posix(),
             "provenance_sha256": self.provenance_sha256,
             "provisioned": self.provisioned,
@@ -136,8 +144,13 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     _run_logged(command, repo_root, result_dir / "certificate-prerequisite.log")
     ca_path = canonical_dir / "ca.crt"
     provenance_path = canonical_dir / "certificate-provenance.json"
+    mutual_tls = str(tls.get("authentication", "")).strip().lower() == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
+    client_certificate = canonical_dir / "client.crt" if mutual_tls else None
+    client_private_key = canonical_dir / "client.key" if mutual_tls else None
     required = [ca_path, canonical_dir / "intermediate-ca.crt", canonical_dir / "ca-chain.crt", canonical_dir / "server.crt", canonical_dir / "server.key", provenance_path]
-    missing = [str(path) for path in required if not path.is_file()]
+    if mutual_tls:
+        required.extend([client_certificate, client_private_key])
+    missing = [str(path) for path in required if path is not None and not path.is_file()]
     if missing:
         raise ExternalDependencyError("step-ca synchronization completed without required material: " + ", ".join(missing))
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
@@ -146,7 +159,15 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         raise ExternalDependencyError("MQTT TLS root CA hash does not match certificate provenance")
     if str(provenance.get("source", "")) != "framework/certs":
         raise ExternalDependencyError("MQTT TLS material was not sourced from framework/certs")
-    return ResolvedMqttTlsContext(profile_id, "stepca-classical", ca_algorithm, leaf_algorithm, canonical_dir, ca_path, provenance_path, actual, _sha256(provenance_path), True)
+    return ResolvedMqttTlsContext(
+        profile_id, "stepca-classical", ca_algorithm, leaf_algorithm,
+        canonical_dir, ca_path, provenance_path,
+        client_certificate, client_private_key,
+        actual,
+        _sha256(client_certificate) if client_certificate is not None else None,
+        _sha256(client_private_key) if client_private_key is not None else None,
+        _sha256(provenance_path), True
+    )
 
 
 def resolve_signing_material(*, profile: dict[str, Any], repo_root: Path) -> ResolvedSigningContext:
@@ -175,5 +196,10 @@ def prepare_external_dependencies(*, bundle: dict[str, dict[str, Any]], repo_roo
     if mqtt is not None:
         tls = bundle["experiment"]["mqtt"]["tls"]
         tls["certificate_refs"] = {"ca_certificate": mqtt.ca_certificate.relative_to(repo_root).as_posix()}
+        if mqtt.client_certificate is not None and mqtt.client_private_key is not None:
+            tls["certificate_refs"].update({
+                "client_certificate": mqtt.client_certificate.relative_to(repo_root).as_posix(),
+                "client_private_key": mqtt.client_private_key.relative_to(repo_root).as_posix(),
+            })
         tls["resolved_certificate_context"] = mqtt.public_manifest(repo_root)
     return ExternalDependencyContext(mqtt_tls=mqtt)
