@@ -16,8 +16,6 @@ For example,  if it builds the application, it should say it's building the appl
 
 -----------
 
-Move the secrets used by the MQTT broker experiments into secrets folder for consistency (rather than them being stored in the experiments folder). Additionally, ensure MQTT broker experiments can create and use multiple key sets when different TLS handshake settings are used - keys shouldn't be recreated as a general rule, they should be stored in the secrets folder and only re-generated if it's explicit or if the keys are deleted. If the repository rules disallow this approach then identify what changes are required to repository rules to allow this to happen.
-
 -----------
 
 useful commands-

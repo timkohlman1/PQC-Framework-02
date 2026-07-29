@@ -28,7 +28,6 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/ST67W6X_Network_Driver/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/netif/
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/netif/ppp/
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/lwip/
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/lwip/priv/
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/include/lwip/prot/
@@ -125,6 +124,9 @@ set(FreeRTOS_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
 )
+# The STM32 firmware uses Ethernet-style IPv4 over the ST67 netif. IPv6,
+# bridge, PPP/PPPoE/PPPoS/L2TP, and SLIP translation units are excluded from
+# the target rather than relying only on disabled lwIP feature macros.
 set(LwIP_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/api/api_lib.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/api/api_msg.c
@@ -144,15 +146,6 @@ set(LwIP_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv4/ip4.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv4/ip4_addr.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv4/ip4_frag.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/dhcp6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/ethip6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/icmp6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/inet6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/ip6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/ip6_addr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/ip6_frag.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/mld6.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/ipv6/nd6.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/altcp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/altcp_tcp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/def.c
@@ -172,35 +165,7 @@ set(LwIP_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/tcp_out.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/timeouts.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/core/udp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/bridgeif.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/bridgeif_fdb.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ethernet.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/auth.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/ccp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/chap-md5.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/chap-new.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/chap_ms.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/demand.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/eap.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/ecp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/eui64.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/fsm.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/ipcp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/ipv6cp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/lcp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/magic.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/mppe.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/multilink.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/ppp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/pppapi.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/pppcrypt.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/pppoe.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/pppol2tp.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/pppos.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/upap.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/ppp/vj.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/src/netif/slipif.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/SICS_Network_LwIP/LwIP/system/OS/sys_arch.c
 )
 

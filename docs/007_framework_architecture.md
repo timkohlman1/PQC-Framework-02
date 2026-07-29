@@ -267,6 +267,8 @@ Phase M3 adds `scripts/framework/mqtt_fake_transport.py` and the `mqtt-fake-tran
 
 Phase M5 adds STM32-local lwIP/ST67W6X compile-only preparation to the firmware target. `Core/Inc/pqc_lwip_build_only.h` still defines the project-owned build-only status boundary and `Core/Src/pqc_lwip_build_only.c` keeps runtime networking explicitly unavailable. CubeMX-generated lwIP application files, SICS Network LwIP sources, SPI HAL support, and ST67W6X network-driver sources are now allowed to compile and link in both direct and relocated application builds so the future network-interface layer can be inspected against the real generated interfaces. This remains compile/link evidence only, with one additional non-network lwIP runtime smoke marker emitted over UART. The smoke marker exercises deterministic lwIP version, IPv4 formatting, and checksum helpers only; it does not initialize a netif, use ST67W6X hardware, acquire an IP address, open TCP, run TLS, or perform MQTT. The generated ST67W6X hardware-facing code is present so interfaces can be inspected and future stubs can be scoped, but the firmware does not claim module detection, Wi-Fi association, IP address acquisition, TCP readiness, TLS handshake, MQTT connect, publish, reconnect, network runtime success, or end-to-end wireless success.
 
+STM32 networking is intentionally limited to Ethernet-style IPv4 over the ST67 netif for all experiment profiles. `LWIP/Target/lwipopts.h` fixes `LWIP_IPV6` and the DHCPv6, MLD6, neighbour-discovery, IPv6-forwarding, and IPv6 route-table options to `0`; it also fixes PPP, PPPoE, PPPoS, and PPP over L2TP support to `0`. The generated CMake source list excludes the complete lwIP `src/core/ipv6` set together with bridge, PPP-family, and SLIP translation units, while retaining `src/netif/ethernet.c`. These excluded families are not experiment-profile options and must not be re-enabled without an explicit architecture change.
+
 The UART marker begins with `lwIP runtime smoke:` and includes `network=unavailable`; it is intended to prove that a constrained set of lwIP helper functions executes during the existing 10-second UART capture window without crossing the network-interface boundary. The optional gateway integration test `tests/integration/test_lwip_runtime_smoke_uart.py` exercises the baseline build/flash/UART flow and asserts that the marker appears in `uart.log`; this remains helper-call UART evidence only, not ST67W61M1, Wi-Fi, IP, TCP, TLS, MQTT, or end-to-end network evidence.
 
 Phase M10.1 begins hardware-backed ST67W61M1 validation without importing the CubeMX HTTP-server demo application. The default FreeRTOS task registers the minimal ST67 application callbacks, initializes the module through `W6X_Init()`, initializes the Wi-Fi subsystem through `W6X_WiFi_Init()`, and starts a bounded active scan through `W6X_WiFi_Scan()`. UART evidence uses `evidence=stm32-st67-wifi-rf-scan-only`, reports the callback status and access-point count, and deliberately omits SSID and BSSID values. The scan has an 8000 ms timeout and does not attempt association, register a real lwIP netif, start DHCP, open TCP, load certificates, perform a TLS handshake, or invoke MQTT. The ST67 SPI transfer-engine task stack is currently 2048 bytes after the prior 768-byte allocation faulted in the FreeRTOS queue receive path; the final minimum safe size remains unconfirmed because the current UART memory checkpoint measures only `defaultTask`.
@@ -646,3 +648,20 @@ Current STM32 end-to-end experiments use server authentication only. STM32 mutua
 STM32 MQTT/TLS builds resolve each experiment TLS profile into a deterministic algorithm set before CMake configure. The generated selection controls both wolfSSL compile definitions and conditional wolfCrypt source inclusion. Classical RSA TLS 1.3 builds enable RSA-PSS verification and advertise `rsa_pss_rsae_sha256`. PQC hybrid TLS adds only the `SecP256r1MLKEM768` key-exchange implementation while retaining classical RSA server-certificate authentication. Post-quantum signature schemes are not TLS capabilities in this framework; firmware-signing algorithms remain confined to wolfBoot secure-boot profiles.
 
 The resolved algorithm set is included as a semantic input to the normal firmware build fingerprint. A build produced for one TLS algorithm set is therefore not reusable by a profile resolving to a different set, even where other source and configuration inputs match. Compile-time capability evidence and emitted ClientHello evidence remain separate: generated CMake/compile definitions prove selected build capabilities, while the UART `wolfMQTT TLS ClientHello` marker proves the schemes emitted by the running STM32 binary.
+
+## Human-facing experiment progress reporting
+
+The experiment CLI has a shared timestamped progress reporter for major workflow
+boundaries. Orchestration code emits progress at stage transitions rather than
+echoing complete subprocess logs. Relevant events include profile and crypto
+resolution, prerequisite preparation, build/reuse decisions, compiler warning
+counts when captured output is available, gateway-facing flash and UART work,
+secure-boot stages, and managed MQTT broker lifecycle work.
+
+Console progress is not a separate evidence model. It may explain that a stage
+is starting or report a completed return code, but the result manifest remains
+the source of truth and retained logs remain the supporting evidence. Crypto
+text describes resolved configuration and compiled capabilities; it must not be
+interpreted as proof that a runtime handshake, signature verification, publish,
+or subscription succeeded unless the corresponding recorded evidence supports
+that claim.

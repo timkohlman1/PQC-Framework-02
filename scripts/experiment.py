@@ -88,6 +88,8 @@ from framework.mqtt_fake_transport import (
     run_fake_mqtt_transport_scenario,
 )
 from framework.wolfboot_build import execute_wolfboot_build
+from framework.progress import emit_progress
+from framework.tls_algorithms import resolve_tls_algorithm_set
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
@@ -114,6 +116,52 @@ MQTT_UART_CAPTURE_MARKER_PREFIX = "PQC_UART_CAPTURE"
 MQTT_COMPLETION_MARKER = "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done"
 MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
+MQTT_STEP_PROGRESS_MESSAGES = {'provision_classical_certs': 'Provisioning classical broker certificates', 'provision_oqs_certs': 'Provisioning OQS broker certificates', 'deploy_broker': 'Deploying broker framework', 'start_broker': 'Starting broker', 'status_after_start': 'Checking broker readiness and status', 'validate_classical_mqtt': 'Publishing and subscribing with classical MQTT/TLS validation', 'validate_oqs_tls': 'Validating OQS TLS connectivity', 'validate_oqs_mqtt': 'Publishing and subscribing with OQS MQTT/TLS validation', 'collect_broker_logs': 'Collecting broker logs', 'stop_broker': 'Stopping broker'}
+
+
+def _warning_count_from_build_result(build_result: Any) -> int | None:
+    """Return the compiler warning count when captured build output is available."""
+    build_execution = getattr(build_result, "build", None)
+    if build_execution is None:
+        return 0 if getattr(build_result, "build_skipped", False) else None
+    text = "\n".join((str(getattr(build_execution, "stdout", "")), str(getattr(build_execution, "stderr", ""))))
+    return sum(1 for line in text.splitlines() if "warning:" in line.lower())
+
+
+def _build_decision_detail(build_result: Any) -> str:
+    if getattr(build_result, "build_skipped", False):
+        reason = getattr(build_result, "build_skip_reason", None) or "matching reusable build is valid"
+        return f"Build skipped: {reason}."
+    reason = getattr(build_result, "build_skip_reason", None)
+    return f"Build executed: {reason}." if reason else "Build executed because no reusable result was selected."
+
+
+def _crypto_progress_lines(bundle: dict[str, dict[str, Any]]) -> list[str]:
+    """Describe configured crypto choices without inferring runtime success."""
+    lines: list[str] = []
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    if isinstance(mqtt, dict):
+        tls = mqtt.get("tls", {})
+        mode = str(tls.get("mode", "plaintext")) if isinstance(tls, dict) else "plaintext"
+        try:
+            selected = resolve_tls_algorithm_set(bundle)
+            groups = ", ".join(selected.get("key_exchange_groups", [])) or "none"
+            signatures = ", ".join(selected.get("signature_schemes", [])) or "none"
+            lines.append(f"MQTT TLS mode={mode}; key exchange={groups}; signatures={signatures}")
+        except ValueError as exc:
+            lines.append(f"MQTT TLS mode={mode}; algorithm resolution failed: {exc}")
+    boot_crypto = experiment.get("boot_crypto") if isinstance(experiment, dict) else None
+    if boot_crypto:
+        lines.append(f"Secure boot signature={boot_crypto}")
+    return lines
+
+
+def _report_experiment_start(bundle: dict[str, dict[str, Any]], run_id: str) -> None:
+    experiment = bundle["experiment"]
+    emit_progress("experiment", f"Starting {experiment['id']}", detail=f"Run ID: {run_id}")
+    for line in _crypto_progress_lines(bundle):
+        emit_progress("crypto", line)
 
 
 def _mqtt_certificate_profile(bundle: dict[str, dict[str, Any]]) -> str:
@@ -1599,7 +1647,9 @@ def run_build_command(args: argparse.Namespace) -> int:
             },
         }
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    _report_experiment_start(bundle, manifest["run_id"])
     repo_root = repo_root_from_experiment_path(args.experiment)
+    emit_progress("prereq", "Preparing experiment prerequisites")
     try:
         bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     except ExternalDependencyError as exc:
@@ -1607,6 +1657,7 @@ def run_build_command(args: argparse.Namespace) -> int:
         return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
 
+    emit_progress("build", "Evaluating application build and reuse state")
     build_result = execute_build(
         bundle=bundle,
         repo_root=repo_root,
@@ -1616,6 +1667,9 @@ def run_build_command(args: argparse.Namespace) -> int:
         force=getattr(args, "force", False),
     )
 
+    warning_count = _warning_count_from_build_result(build_result)
+    warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
+    emit_progress("build", "Application build decision complete", detail=f"{_build_decision_detail(build_result)} {warning_text}.")
     if getattr(build_result, "build_skipped", False):
         print("Firmware build skipped")
     else:
@@ -2246,7 +2300,9 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
 
     bundle = load_experiment_bundle(args.experiment)
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    _report_experiment_start(bundle, manifest["run_id"])
     repo_root = repo_root_from_experiment_path(args.experiment)
+    emit_progress("prereq", "Preparing experiment prerequisites")
     try:
         bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     except ExternalDependencyError as exc:
@@ -2265,6 +2321,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             start=start,
         )
 
+    emit_progress("build", "Evaluating application build and reuse state")
     build_result = execute_build(
         bundle=bundle,
         repo_root=repo_root,
@@ -2273,6 +2330,10 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         build_preset=args.build_preset,
         force=getattr(args, "force", False),
     )
+
+    warning_count = _warning_count_from_build_result(build_result)
+    warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
+    emit_progress("build", "Application build decision complete", detail=f"{_build_decision_detail(build_result)} {warning_text}.")
 
     if build_result.return_code != 0:
         _record_run_summary(
@@ -2339,6 +2400,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Return code: {artifact_copy_return_code}")
         return artifact_copy_return_code
 
+    emit_progress("gateway", "Using configured gateway for flash and UART stages", detail=f"Host alias: {bundle["host"]["alias"]}")
+    emit_progress("flash", "Flashing application firmware")
     flash_result = execute_flash(
         bundle=bundle,
         repo_root=repo_root,
@@ -2384,6 +2447,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Return code: {flash_result.return_code}")
         return flash_result.return_code
 
+    emit_progress("uart", "Starting bounded UART capture and marker evaluation")
     if _is_st67_mqtt_e2e(bundle):
         uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
             bundle=bundle,
@@ -3237,8 +3301,9 @@ def _run_logged_mqtt_step(
         encoding="utf-8",
     )
 
+    emit_progress("broker", MQTT_STEP_PROGRESS_MESSAGES.get(step_name, step_name.replace("_", " ").capitalize()))
     for attempt_index in range(1, attempts + 1):
-        print(f"MQTT broker step {step_name}: attempt {attempt_index} of {attempts}", flush=True)
+        emit_progress("broker", f"{step_name}: attempt {attempt_index} of {attempts}")
         if attempts > 1:
             outputs.append(f"# attempt {attempt_index} of {attempts}\n")
         try:
@@ -3278,6 +3343,8 @@ def _run_logged_mqtt_step(
     if timed_out:
         step_record["timed_out"] = True
     _write_mqtt_manifest(result_dir, manifest)
+    outcome = "completed" if final_return_code == 0 else f"failed with return code {final_return_code}"
+    emit_progress("broker", f"{step_name} {outcome}", detail=f"Log: {log_path}")
     return final_return_code
 
 
@@ -3312,6 +3379,8 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
     run_id = f"{_filesystem_safe_timestamp(timestamp)}_mqtt_{args.profile}_broker"
     result_dir = args.results_dir / run_id
     result_dir.mkdir(parents=True, exist_ok=False)
+    emit_progress("experiment", f"Starting MQTT broker experiment ({args.profile})", detail=f"Run ID: {run_id}")
+    emit_progress("crypto", "Classical TLS profile" if args.profile == "classical" else "OQS/PQC TLS profile")
     manifest: dict[str, Any] = {
         "run_id": run_id,
         "command": "mqtt-broker-experiment",

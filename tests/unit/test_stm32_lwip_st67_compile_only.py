@@ -80,6 +80,25 @@ def test_lwip_options_use_cmsis_rtos_v2_os_port_without_runtime_startup() -> Non
 
     assert "#define LWIP_NETIF_API                1" in lwipopts
     assert "#define LWIP_DHCP                     1" in lwipopts
+    assert "#define LWIP_IPV6                     0" in lwipopts
+    assert "#define LWIP_IPV6_DHCP6               0" in lwipopts
+    assert "#define LWIP_IPV6_MLD                 0" in lwipopts
+    assert "#define LWIP_IPV6_ND                  0" in lwipopts
+    assert "#define LWIP_IPV6_FORWARD             0" in lwipopts
+    assert "#define LWIP_IPV6_ROUTE_TABLE_SUPPORT 0" in lwipopts
+    assert "MEMP_NUM_MLD6_GROUP" not in lwipopts
+    assert "IPV6_FRAG_COPYHEADER" not in lwipopts
+    assert "/src/core/ipv6/" not in cmake
+    assert "#define PPP_SUPPORT                   0" in lwipopts
+    assert "#define PPPOE_SUPPORT                 0" in lwipopts
+    assert "#define PPPOS_SUPPORT                 0" in lwipopts
+    assert "#define PPPOL2TP_SUPPORT              0" in lwipopts
+    assert "/src/netif/ppp/" not in cmake
+    assert "/src/include/netif/ppp/" not in cmake
+    assert "/src/netif/bridgeif.c" not in cmake
+    assert "/src/netif/bridgeif_fdb.c" not in cmake
+    assert "/src/netif/slipif.c" not in cmake
+    assert "/src/netif/ethernet.c" in cmake
     assert "#define NO_SYS                       1" not in lwipopts
     assert "#define LWIP_NETCONN                 0" not in lwipopts
     assert "#define LWIP_SOCKET                  0" not in lwipopts

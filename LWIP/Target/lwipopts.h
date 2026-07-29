@@ -106,23 +106,22 @@ extern "C" {
 #endif /* MEM_SIZE */
 #endif /* LWIP_HEAP_SIZE */
 
-#define LWIP_IPV6                     1
-#if (LWIP_IPV6 == 1)
+/*
+ * This framework is intentionally IPv4-only. Keep IPv6 and every dependent
+ * lwIP feature disabled so STM32 builds do not compile or retain IPv6 state.
+ */
+#define LWIP_IPV6                     0
 #define LWIP_IPV6_DHCP6               0
-#define LWIP_IPV6_MLD                 1
-#define LWIP_IPV6_ND                  1
-#define MEMP_NUM_MLD6_GROUP           ((1 + 1) + 4)
-#define LWIP_IPV6_FORWARD             1
-#define LWIP_IPV6_ROUTE_TABLE_SUPPORT 1
+#define LWIP_IPV6_MLD                 0
+#define LWIP_IPV6_ND                  0
+#define LWIP_IPV6_FORWARD             0
+#define LWIP_IPV6_ROUTE_TABLE_SUPPORT 0
 
-#ifndef IPV6_FRAG_COPYHEADER
-#if defined(__x86_64__)
-#define IPV6_FRAG_COPYHEADER          1
-#else
-#define IPV6_FRAG_COPYHEADER          0
-#endif /* __x86_64__ */
-#endif /* IPV6_FRAG_COPYHEADER */
-#endif /* LWIP_IPV6 */
+/* Unsupported link-layer/provisioning families are deliberately disabled. */
+#define PPP_SUPPORT                   0
+#define PPPOE_SUPPORT                 0
+#define PPPOS_SUPPORT                 0
+#define PPPOL2TP_SUPPORT              0
 
 /**
   * Debug printing
