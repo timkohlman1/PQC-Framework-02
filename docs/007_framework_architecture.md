@@ -665,3 +665,11 @@ text describes resolved configuration and compiled capabilities; it must not be
 interpreted as proof that a runtime handshake, signature verification, publish,
 or subscription succeeded unless the corresponding recorded evidence supports
 that claim.
+
+### Human-facing experiment progress output
+
+The experiment CLI emits concise timestamped operational progress for profile resolution, cryptographic selection, prerequisites, build-reuse evaluation, configuration, compilation, gateway use, flashing, UART capture, managed broker lifecycle, MQTT command/response validation, cleanup, and final result recording. The progress timezone defaults to `Australia/Melbourne` and may be overridden with the `PQC_PROGRESS_TIMEZONE` environment variable using an IANA timezone identifier. The timestamp includes its timezone abbreviation.
+
+Build reuse evaluation and compilation are separate stages. A reuse decision reports the verified-record reason and performs no compilation. A rebuild reports why reuse was rejected, then reports CMake configuration and compilation independently before reporting the final return code and warning count.
+
+Console progress is not an additional evidence class and must not be interpreted as proof of success. The result manifest and retained stage logs remain authoritative. Progress messages must not disclose private keys, passwords, wireless PSKs, or sensitive command arguments.

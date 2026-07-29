@@ -82,6 +82,7 @@ class BuildResult:
 
 
 Runner = Callable[[list[str], Path], CommandExecution]
+BuildProgress = Callable[[str, str, str | None], None]
 
 
 def construct_configure_command(preset: str = "Debug") -> list[str]:
@@ -511,6 +512,7 @@ def execute_build(
     force: bool = False,
     runner: Runner = default_runner,
     git_runner: GitRunner | None = None,
+    progress: BuildProgress | None = None,
 ) -> BuildResult:
     """Run or safely skip the local CMake build process and update the manifest.
 
@@ -659,6 +661,20 @@ def execute_build(
         search_detail=build_record_search_detail,
         force=force,
     )
+
+    if progress is not None:
+        if build_skipped:
+            progress(
+                "build",
+                "Reusable application build selected",
+                f"Reason: {skip_reason or BUILD_SKIP_REASON_CACHED}. Build number: {matching_record.get('build_number') if matching_record else 'unknown'}.",
+            )
+        else:
+            progress(
+                "build",
+                "Application build required",
+                f"Reason: {skip_reason or 'no reusable build was selected'}.",
+            )
 
     if build_skipped:
         assert matching_record is not None
@@ -869,12 +885,16 @@ def execute_build(
     _write_tls_algorithm_selection(bundle, repo_root_path, configure_preset)
     _write_wifi_config_header(bundle, repo_root_path, configure_preset)
 
+    if progress is not None:
+        progress("build", "Configuring application", f"CMake preset: {configure_preset}.")
     configure_execution = runner(construct_configure_command(configure_preset), repo_root_path)
 
     build_execution: CommandExecution | None = None
     return_code = configure_execution.return_code
 
     if configure_execution.return_code == 0:
+        if progress is not None:
+            progress("build", "Compiling application", f"CMake build preset: {build_preset}.")
         build_execution = runner(construct_build_command(build_preset), repo_root_path)
         return_code = build_execution.return_code
 

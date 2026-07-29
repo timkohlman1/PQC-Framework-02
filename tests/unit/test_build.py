@@ -171,12 +171,14 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
             return build.GitCommandExecution(command, 0, "", "", 0.01)
         raise AssertionError(f"unexpected git command: {command}")
 
+    progress_events: list[tuple[str, str, str | None]] = []
     result = build.execute_build(
         bundle=sample_bundle(),
         repo_root=repo_root,
         result_dir=result_dir,
         runner=fake_runner,
         git_runner=fake_git_runner,
+        progress=lambda stage, message, detail: progress_events.append((stage, message, detail)),
     )
 
     expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
@@ -191,6 +193,11 @@ def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path)
     assert calls == [
         ["cmake", "--preset", "Debug"],
         ["cmake", "--build", "--preset", "Debug"],
+    ]
+    assert [event[1] for event in progress_events] == [
+        "Application build required",
+        "Configuring application",
+        "Compiling application",
     ]
 
     build_log = (result_dir / "build.log").read_text(encoding="utf-8")
@@ -1608,3 +1615,4 @@ def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path
     expected_hash = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()
     assert f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{expected_hash}"' in text
     assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "classical"' in text
+

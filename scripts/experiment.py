@@ -164,6 +164,25 @@ def _report_experiment_start(bundle: dict[str, dict[str, Any]], run_id: str) -> 
         emit_progress("crypto", line)
 
 
+
+
+def _build_progress(stage: str, message: str, detail: str | None) -> None:
+    emit_progress(stage, message, detail=detail)
+
+
+def _report_run_result(*, passed_label: str, final_return_code: int, failure_stage: str, run_id: str, result_dir: Path, build_log: Path | None = None, copied_artifact: Path | None = None, flash_log: Path | None = None, uart_log: Path | None = None) -> None:
+    message = passed_label if final_return_code == 0 else f"Run failed during {failure_stage}"
+    emit_progress("result", message, detail=f"Return code: {final_return_code}.")
+    emit_progress("result", "Result evidence recorded", detail=f"Run ID: {run_id}; directory: {result_dir}")
+    if build_log is not None:
+        emit_progress("result", "Build evidence", detail=f"Log: {build_log}")
+    if copied_artifact is not None:
+        emit_progress("result", "Firmware artifact copied", detail=str(copied_artifact))
+    if flash_log is not None:
+        emit_progress("result", "Flash evidence", detail=f"Log: {flash_log}")
+    if uart_log is not None:
+        emit_progress("result", "UART evidence", detail=f"Log: {uart_log}")
+
 def _mqtt_certificate_profile(bundle: dict[str, dict[str, Any]]) -> str:
     """Return the configured deployed MQTT certificate profile identifier."""
 
@@ -450,18 +469,30 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     if certificate_profile:
         common.extend(["--certificate-profile", certificate_profile])
+    broker_messages = {
+        "stop-existing": "Stopping any existing managed broker",
+        "deploy": "Deploying MQTT broker framework",
+        "start": "Starting MQTT broker",
+        "status": "Checking MQTT broker status",
+    }
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
         ("start", "start", [*common, "--profile", profile]),
         ("status", "status", common),
     ):
+        emit_progress("broker", broker_messages[step_name], detail=f"Profile: {profile}.")
         result = _run_mqtt_broker_step(repo_root=repo_root, result_dir=result_dir, step_name=step_name, subcommand=subcommand, extra_args=extra)
         steps[step_name] = {"return_code": result.return_code, "log": f"mqtt-broker-{step_name}.log"}
+        if result.return_code == 0:
+            emit_progress("broker", f"{broker_messages[step_name]} complete", detail=f"Return code: 0; log: mqtt-broker-{step_name}.log")
         if result.return_code != 0:
+            emit_progress("broker", f"{broker_messages[step_name]} failed", detail=f"Return code: {result.return_code}; log: mqtt-broker-{step_name}.log")
             update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": f"broker_{step_name}"}})
             return False, f"broker_{step_name}"
+    emit_progress("broker", "Waiting for MQTT broker readiness", detail="Gateway-side publish/subscribe readiness probe.")
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
+    emit_progress("broker", "MQTT broker readiness probe complete" if readiness.return_code == 0 else "MQTT broker readiness probe failed", detail=f"Return code: {readiness.return_code}; log: mqtt-broker-readiness.log")
     steps["readiness"] = {"return_code": readiness.return_code, "log": "mqtt-broker-readiness.log"}
     update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": readiness.return_code == 0, "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness"}})
     return readiness.return_code == 0, ("none" if readiness.return_code == 0 else "broker_readiness")
@@ -476,13 +507,17 @@ def _collect_and_stop_managed_mqtt_broker(
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     common = ["--host-config", "configs/hosts/gateway.yaml"]
+    emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
         extra_args=[*common, "--profile", profile, "--tail", "100000"],
     )
+    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}.")
     stop_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
     )
+    emit_progress("broker", "MQTT broker log collection complete" if logs_result.return_code == 0 else "MQTT broker log collection failed", detail=f"Return code: {logs_result.return_code}; log: mqtt-broker-log.log")
+    emit_progress("broker", "MQTT broker stopped" if stop_result.return_code == 0 else "MQTT broker stop failed", detail=f"Return code: {stop_result.return_code}; log: mqtt-broker-stop.log")
     update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"log": "mqtt-broker-log.log", "log_return_code": logs_result.return_code, "stop_log": "mqtt-broker-stop.log", "stop_return_code": stop_result.return_code, "cleanup_completed": stop_result.return_code == 0}})
     return logs_result.return_code, stop_result.return_code
 
@@ -692,6 +727,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     broker_log_rc = 1
     broker_stop_rc = 1
     try:
+        emit_progress("mqtt", "Starting MQTT command/response validation", detail=f"Subscriber topic: {topics['response']}; publisher topic: {topics['command']}; expected responses: {expected_response_count}.")
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=hard_limit_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
         capture_marker = _parse_mqtt_uart_capture_marker(uart_result.capture.stderr)
@@ -703,6 +739,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             and marker.get("expected_response_count") == expected_response_count
         )
         passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
+        emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
         failure_stage = "none"
         if uart_result.return_code != 0:
             failure_stage = "uart"
@@ -1665,11 +1702,16 @@ def run_build_command(args: argparse.Namespace) -> int:
         configure_preset=configure_preset,
         build_preset=args.build_preset,
         force=getattr(args, "force", False),
+        progress=_build_progress,
     )
 
     warning_count = _warning_count_from_build_result(build_result)
     warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
-    emit_progress("build", "Application build decision complete", detail=f"{_build_decision_detail(build_result)} {warning_text}.")
+    if getattr(build_result, "build_skipped", False):
+        emit_progress("build", "Application build reuse complete", detail=f"{warning_text}; no compilation performed.")
+    else:
+        outcome = "completed" if build_result.return_code == 0 else "failed"
+        emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")
     if getattr(build_result, "build_skipped", False):
         print("Firmware build skipped")
     else:
@@ -1809,6 +1851,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         configure_preset=configure_preset,
         build_preset=args.build_preset,
         force=getattr(args, "force", False),
+        progress=_build_progress,
     )
 
     if build_result.return_code != 0:
@@ -2281,15 +2324,17 @@ def _run_full_baseline_with_existing_build(
         referenced_build_manifest=verification.manifest_path,
     )
 
-    print(("MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
-    print("-------------------" if final_return_code == 0 else "-------------------------------")
-    print(f"Run ID: {manifest['run_id']}")
-    print(f"Result directory: {result_dir}")
-    print(f"Build number: {build_number}")
-    print(f"Copied artifact: {copied_artifact_path}")
-    print(f"Flash log: {flash_result.log_path}")
-    print(f"UART log: {None if uart_result is None else uart_result.log_path}")
-    print(f"Return code: {final_return_code}")
+    _report_run_result(
+        passed_label="MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed",
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        run_id=manifest["run_id"],
+        result_dir=result_dir,
+        copied_artifact=copied_artifact_path,
+        flash_log=flash_result.log_path,
+        uart_log=None if uart_result is None else uart_result.log_path,
+    )
+    emit_progress("result", "Referenced reusable build", detail=f"Build number: {build_number}.")
     return final_return_code
 
 
@@ -2329,11 +2374,16 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         configure_preset=configure_preset,
         build_preset=args.build_preset,
         force=getattr(args, "force", False),
+        progress=_build_progress,
     )
 
     warning_count = _warning_count_from_build_result(build_result)
     warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
-    emit_progress("build", "Application build decision complete", detail=f"{_build_decision_detail(build_result)} {warning_text}.")
+    if getattr(build_result, "build_skipped", False):
+        emit_progress("build", "Application build reuse complete", detail=f"{warning_text}; no compilation performed.")
+    else:
+        outcome = "completed" if build_result.return_code == 0 else "failed"
+        emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")
 
     if build_result.return_code != 0:
         _record_run_summary(
@@ -2481,15 +2531,17 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
     )
 
-    print(("MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed") if final_return_code == 0 else f"Run failed during {failure_stage}")
-    print("-------------------" if final_return_code == 0 else "-------------------------------")
-    print(f"Run ID: {manifest['run_id']}")
-    print(f"Result directory: {result_dir}")
-    print(f"Build log: {build_result.log_path}")
-    print(f"Copied artifact: {copied_artifact_path}")
-    print(f"Flash log: {flash_result.log_path}")
-    print(f"UART log: {None if uart_result is None else uart_result.log_path}")
-    print(f"Return code: {final_return_code}")
+    _report_run_result(
+        passed_label="MQTT end-to-end run passed" if _is_st67_mqtt_e2e(bundle) else "Baseline run passed",
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        run_id=manifest["run_id"],
+        result_dir=result_dir,
+        build_log=build_result.log_path,
+        copied_artifact=copied_artifact_path,
+        flash_log=flash_result.log_path,
+        uart_log=None if uart_result is None else uart_result.log_path,
+    )
     return final_return_code
 
 def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | None) -> str:
