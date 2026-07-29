@@ -280,6 +280,9 @@ def _wait_for_plaintext_mqtt_broker(
         _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
     )
 
+    topic = "pqc/framework/readiness"
+    message = "ready"
+
     if pqc_hybrid:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
         oqs_config = (
@@ -287,21 +290,48 @@ def _wait_for_plaintext_mqtt_broker(
             "config/oqs/openssl.cnf"
         )
         container_options = (
-            "--rm --network host "
+            "--network host "
             "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
             "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
             f"-v {oqs_config}:/mosquitto/config/openssl.cnf:ro "
             f"-v {certificate_dir}:/certs:ro "
         )
-        mqtt_sub = (
-            f"docker run {container_options}"
-            "--entrypoint mosquitto_sub openquantumsafe/mosquitto:latest"
-        )
-        mqtt_pub = (
-            f"docker run {container_options}"
-            "--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest"
-        )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
+        subscriber_name = "pqc-mqtt-readiness-sub"
+        script = (
+            f'attempt=0; subscriber={subscriber_name}; '
+            'cleanup() { docker rm -f "$subscriber" >/dev/null 2>&1 || true; }; '
+            'trap cleanup EXIT; '
+            f'while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); cleanup; '
+            f'docker run -d {container_options}'
+            '--name "$subscriber" --entrypoint mosquitto_sub '
+            'openquantumsafe/mosquitto:latest '
+            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 >/dev/null; sub_start_rc=$?; '
+            'if [ "$sub_start_rc" -ne 0 ]; then '
+            'echo "subscriber_start_failed attempt=$attempt rc=$sub_start_rc"; '
+            f'sleep {delay_seconds}; continue; fi; '
+            'sleep 2; '
+            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
+            'if [ "$subscriber_state" != running ]; then '
+            'echo "subscriber_not_running attempt=$attempt state=$subscriber_state"; '
+            'docker logs "$subscriber" 2>&1 || true; '
+            f'sleep {delay_seconds}; continue; fi; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest '
+            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
+            'found=0; poll=0; while [ "$poll" -lt 10 ]; do '
+            'poll=$((poll + 1)); response=$(docker logs "$subscriber" 2>&1 || true); '
+            f'if printf "%s\n" "$response" | grep -Fx -- {message} >/dev/null; then found=1; break; fi; '
+            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
+            'if [ "$subscriber_state" != running ]; then break; fi; sleep 1; done; '
+            'if [ "$found" -eq 1 ] && [ "$pub_rc" -eq 0 ]; then '
+            'echo "broker_ready attempt=$attempt"; exit 0; fi; '
+            'echo "subscriber_output:"; printf "%s\n" "$response"; '
+            'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            f'sleep {delay_seconds}; done; '
+            'echo "broker_not_ready attempts=$attempt"; exit 1'
+        )
     else:
         mqtt_sub = "mosquitto_sub"
         mqtt_pub = "mosquitto_pub"
@@ -310,33 +340,30 @@ def _wait_for_plaintext_mqtt_broker(
             if tls_enabled
             else ""
         )
-
-    topic = "pqc/framework/readiness"
-    message = "ready"
-    script = (
-        f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
-        'attempt=$((attempt + 1)); '
-        'response_file=/tmp/pqc-mqtt-ready.$$; '
-        'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
-        'rm -f "$response_file" "$publisher_file"; '
-        f'{mqtt_sub} -h {host} -p {port} {tls_args} '
-        f'-t {topic} -C 1 -W 2 >"$response_file" 2>&1 & sub_pid=$!; '
-        'sleep 0.2; '
-        f'{mqtt_pub} -h {host} -p {port} {tls_args} '
-        f'-t {topic} -m {message} >"$publisher_file" 2>&1; pub_rc=$?; '
-        'wait "$sub_pid"; sub_rc=$?; '
-        'response=$(paste -sd, "$response_file"); '
-        f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] '
-        f'&& [ "$response" = {message} ]; then '
-        'rm -f "$response_file" "$publisher_file"; '
-        'echo "broker_ready attempt=$attempt"; exit 0; fi; '
-        f'sleep {delay_seconds}; done; '
-        'echo "subscriber_output:"; '
-        'cat /tmp/pqc-mqtt-ready.$$ 2>/dev/null || true; '
-        'echo "publisher_output:"; '
-        'cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
-        'echo "broker_not_ready attempts=$attempt"; exit 1'
-    )
+        script = (
+            f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); '
+            'response_file=/tmp/pqc-mqtt-ready.$$; '
+            'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; ' + 'rm -f "$response_file" "$publisher_file"; '
+            f'{mqtt_sub} -h {host} -p {port} {tls_args} '
+            f'-t {topic} -C 1 -W 4 >"$response_file" 2>&1 & sub_pid=$!; '
+            'sleep 0.1; '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} '
+            f'-t {topic} -m {message} -r >"$publisher_file" 2>&1; pub_rc=$?; '
+            'wait "$sub_pid"; sub_rc=$?; '
+            'response=$(paste -sd, "$response_file"); '
+            f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] '
+            f'&& [ "$response" = {message} ]; then '
+            f'{mqtt_pub} -h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; ' + 'rm -f "$response_file" "$publisher_file"; '
+            'echo "broker_ready attempt=$attempt"; exit 0; fi; '
+            f'sleep {delay_seconds}; done; '
+            'echo "subscriber_output:"; '
+            'cat /tmp/pqc-mqtt-ready.$$ 2>/dev/null || true; '
+            'echo "publisher_output:"; '
+            'cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            'echo "broker_not_ready attempts=$attempt"; exit 1'
+        )
     command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
     start = time.perf_counter()
     completed = subprocess.run(

@@ -150,6 +150,27 @@ int32_t spi_port_set_cs(int32_t state);
   */
 void *spi_port_memcpy(void *dest, const void *src, unsigned int len);
 
+
+typedef struct
+{
+  uint32_t sequence;
+  uint32_t started_tick;
+  uint32_t completed_tick;
+  uint32_t callback_count;
+  uint32_t error_callback_count;
+  uint16_t length;
+  uint8_t dma;
+  uint8_t tx_present;
+  uint8_t active;
+  uint8_t last_callback;
+  uint32_t hal_state;
+  uint32_t hal_error;
+} spi_port_diagnostics_t;
+
+int32_t spi_port_get_diagnostics(spi_port_diagnostics_t *diagnostics);
+int32_t spi_port_abort_transfer(void);
+
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

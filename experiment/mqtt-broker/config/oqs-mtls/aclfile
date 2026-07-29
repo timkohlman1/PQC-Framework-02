@@ -1,2 +1,3 @@
+user stm32-mqtt-client
 topic readwrite pqc/#
 topic read $SYS/#

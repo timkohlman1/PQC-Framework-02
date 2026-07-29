@@ -321,7 +321,10 @@ def test_pqc_experiment_uses_separate_oqs_client_containers():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
 
     assert "openquantumsafe/mosquitto:latest" in source
-    assert "--rm --network host" in source
+    assert "docker run -d " in source
+    assert '--name "$subscriber" --entrypoint mosquitto_sub' in source
+    assert 'docker rm -f "$subscriber"' in source
+    assert "docker run --rm " in source
     assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in source
     assert "OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules" in source
     assert "--entrypoint mosquitto_sub" in source
