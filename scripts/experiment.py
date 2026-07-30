@@ -1259,122 +1259,64 @@ def validate_host_config(config: dict[str, Any]) -> None:
 
 
 
-CLASSICAL_BENCHMARK_REQUIRED_ALGORITHMS = {"ED25519", "ECC256", "RSA2048"}
+SECURE_BOOT_BENCHMARK_MINIMUM_ALGORITHMS = {"ed25519", "ecdsa_p256", "rsa2048"}
+SECURE_BOOT_BENCHMARK_EXPANDED_ALGORITHMS = {"ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}
+SECURE_BOOT_BENCHMARK_POST_QUANTUM_ALGORITHMS = {"mldsa44", "mldsa65"}
+SECURE_BOOT_BENCHMARK_SUPPORTED_ALGORITHMS = (
+    SECURE_BOOT_BENCHMARK_MINIMUM_ALGORITHMS
+    | SECURE_BOOT_BENCHMARK_EXPANDED_ALGORITHMS
+    | SECURE_BOOT_BENCHMARK_POST_QUANTUM_ALGORITHMS
+)
+
+
+def _validate_algorithm_id_mapping(config: dict[str, Any], field: str, expected: set[str]) -> None:
+    value = require_field(config, field, "secure-boot benchmark suite")
+    if not isinstance(value, dict):
+        raise ConfigError(f"secure-boot benchmark suite {field} must be a mapping of algorithm identifiers to true")
+    if any(enabled is not True for enabled in value.values()):
+        raise ConfigError(f"secure-boot benchmark suite {field} values must all be true")
+    if set(value) != expected:
+        expected_text = ", ".join(sorted(expected))
+        raise ConfigError(f"secure-boot benchmark suite {field} must contain exactly: {expected_text}")
 
 
 def validate_classical_benchmark_profile_model_config(config: dict[str, Any]) -> None:
-    """Validate the Phase 11.5a classical signing benchmark profile model."""
+    """Validate the consolidated secure-boot signing benchmark suite."""
 
-    required_fields = [
-        "id",
-        "description",
-        "schema_version",
-        "model_phase",
-        "benchmark_scope",
-        "minimum_comparison_scope",
-        "profiles.ecc256_reference.algorithm",
-        "profiles.ecc256_reference.signature_algorithm",
-        "profiles.ecc256_reference.signature_size_bytes",
-        "profiles.ecc256_reference.signing_profile",
-        "profiles.ecc256_reference.wolfboot_build_profile",
-        "profiles.ecc256_reference.experiment_profile",
-    ]
+    for field in (
+        "id", "description", "schema_version", "benchmark_scope", "reference_algorithm",
+        "minimum_algorithms", "expanded_algorithms", "post_quantum_algorithms",
+        "common_evidence.board", "common_evidence.application_payload",
+        "common_evidence.measurement_method", "common_evidence.repeated_run_model",
+        "common_evidence.static_metrics_model", "common_evidence.runtime_memory_model",
+    ):
+        require_field(config, field, "secure-boot benchmark suite")
 
-    for field in required_fields:
-        require_field(config, field, "classical benchmark profile model")
+    if config.get("schema_version") != 2:
+        raise ConfigError("secure-boot benchmark suite schema_version must be 2")
+    if config.get("benchmark_scope") != "secure_boot_signing_algorithm":
+        raise ConfigError("secure-boot benchmark suite benchmark_scope must be secure_boot_signing_algorithm")
 
-    model_phase = require_field(config, "model_phase", "classical benchmark profile model")
-    allowed_model_phases = {
-        "phase_11_5a_classical_profile_model",
-        "phase_11_5b_ed25519_profile",
-        "phase_11_5c_rsa2048_profile",
-        "phase_11_5d_expanded_classical_profiles",
-    }
-    if model_phase not in allowed_model_phases:
-        raise ConfigError(
-            "classical benchmark profile model must use a supported Phase 11.5 model_phase"
-        )
+    _validate_algorithm_id_mapping(config, "minimum_algorithms", SECURE_BOOT_BENCHMARK_MINIMUM_ALGORITHMS)
+    _validate_algorithm_id_mapping(config, "expanded_algorithms", SECURE_BOOT_BENCHMARK_EXPANDED_ALGORITHMS)
+    _validate_algorithm_id_mapping(config, "post_quantum_algorithms", SECURE_BOOT_BENCHMARK_POST_QUANTUM_ALGORITHMS)
 
-    scope = config.get("minimum_comparison_scope")
-    if not isinstance(scope, dict):
-        raise ConfigError("classical benchmark profile model minimum_comparison_scope field must be a mapping")
+    reference_algorithm = str(config.get("reference_algorithm"))
+    if reference_algorithm not in SECURE_BOOT_BENCHMARK_SUPPORTED_ALGORITHMS:
+        raise ConfigError("secure-boot benchmark suite reference_algorithm must name a supported algorithm")
+    if reference_algorithm != "ecdsa_p256":
+        raise ConfigError("secure-boot benchmark suite reference_algorithm must remain ecdsa_p256")
 
-    algorithms = {str(value.get("algorithm")) for value in scope.values() if isinstance(value, dict)}
-    if algorithms != CLASSICAL_BENCHMARK_REQUIRED_ALGORITHMS:
-        raise ConfigError(
-            "classical benchmark profile model minimum comparison scope must contain exactly ED25519, ECC256, and RSA2048"
-        )
-
-    profiles = config.get("profiles")
-    if not isinstance(profiles, dict):
-        raise ConfigError("classical benchmark profile model profiles field must be a mapping")
-
-    ecc256 = profiles.get("ecc256_reference")
-    if not isinstance(ecc256, dict):
-        raise ConfigError("classical benchmark profile model missing profiles.ecc256_reference")
-    if ecc256.get("algorithm") != "ECC256":
-        raise ConfigError("profiles.ecc256_reference.algorithm must be ECC256")
-    if ecc256.get("runnable") is not True:
-        raise ConfigError("profiles.ecc256_reference.runnable must remain true for the known-good reference path")
-
-    if model_phase == "phase_11_5a_classical_profile_model":
-        ed25519 = profiles.get("ed25519_reserved")
-        if not isinstance(ed25519, dict):
-            raise ConfigError("classical benchmark profile model missing profiles.ed25519_reserved")
-        if ed25519.get("algorithm") != "ED25519":
-            raise ConfigError("profiles.ed25519_reserved.algorithm must be ED25519")
-        if ed25519.get("runnable") is not False:
-            raise ConfigError("profiles.ed25519_reserved.runnable must remain false until its implementation sub-phase")
-        require_field(ed25519, "unsupported_reason", "profiles.ed25519_reserved")
-    else:
-        ed25519 = profiles.get("ed25519_benchmark")
-        if not isinstance(ed25519, dict):
-            raise ConfigError("classical benchmark profile model missing profiles.ed25519_benchmark")
-        if ed25519.get("algorithm") != "ED25519":
-            raise ConfigError("profiles.ed25519_benchmark.algorithm must be ED25519")
-        if ed25519.get("runnable") is not True:
-            raise ConfigError("profiles.ed25519_benchmark.runnable must be true for Phase 11.5b or later")
-        for field in ("signature_algorithm", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
-            require_field(ed25519, field, "profiles.ed25519_benchmark")
-
-    if model_phase in {"phase_11_5c_rsa2048_profile", "phase_11_5d_expanded_classical_profiles"}:
-        rsa2048 = profiles.get("rsa2048_benchmark")
-        if not isinstance(rsa2048, dict):
-            raise ConfigError("classical benchmark profile model missing profiles.rsa2048_benchmark")
-        if rsa2048.get("algorithm") != "RSA2048":
-            raise ConfigError("profiles.rsa2048_benchmark.algorithm must be RSA2048")
-        if rsa2048.get("runnable") is not True:
-            raise ConfigError("profiles.rsa2048_benchmark.runnable must be true for Phase 11.5c")
-        for field in ("signature_algorithm", "key_size_bits", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
-            require_field(rsa2048, field, "profiles.rsa2048_benchmark")
-    else:
-        rsa2048 = profiles.get("rsa2048_reserved")
-        if not isinstance(rsa2048, dict):
-            raise ConfigError("classical benchmark profile model missing profiles.rsa2048_reserved")
-        if rsa2048.get("algorithm") != "RSA2048":
-            raise ConfigError("profiles.rsa2048_reserved.algorithm must be RSA2048")
-        if rsa2048.get("runnable") is not False:
-            raise ConfigError("profiles.rsa2048_reserved.runnable must remain false until Phase 11.5c")
-        require_field(rsa2048, "unsupported_reason", "profiles.rsa2048_reserved")
-
-    if model_phase == "phase_11_5d_expanded_classical_profiles":
-        expanded_required = {
-            "ecc384_benchmark": "ECC384",
-            "ecc521_benchmark": "ECC521",
-            "ed448_benchmark": "ED448",
-            "rsa3072_benchmark": "RSA3072",
-            "rsa4096_benchmark": "RSA4096",
-        }
-        for profile_name, algorithm_name in expanded_required.items():
-            expanded_profile = profiles.get(profile_name)
-            if not isinstance(expanded_profile, dict):
-                raise ConfigError(f"classical benchmark profile model missing profiles.{profile_name}")
-            if expanded_profile.get("algorithm") != algorithm_name:
-                raise ConfigError(f"profiles.{profile_name}.algorithm must be {algorithm_name}")
-            if expanded_profile.get("runnable") is not True:
-                raise ConfigError(f"profiles.{profile_name}.runnable must be true for Phase 11.5d")
-            for field in ("signature_algorithm", "key_size_bits", "signature_size_bytes", "signing_profile", "wolfboot_build_profile", "experiment_profile", "boot_profile"):
-                require_field(expanded_profile, field, f"profiles.{profile_name}")
+    unavailable = config.get("unavailable_algorithms", {})
+    if not isinstance(unavailable, dict):
+        raise ConfigError("secure-boot benchmark suite unavailable_algorithms must be a mapping")
+    if set(unavailable) & SECURE_BOOT_BENCHMARK_SUPPORTED_ALGORITHMS:
+        raise ConfigError("secure-boot benchmark suite unavailable algorithms must not also be runnable")
+    for algorithm_id, metadata in unavailable.items():
+        if not isinstance(algorithm_id, str) or not algorithm_id:
+            raise ConfigError("secure-boot benchmark suite unavailable algorithm identifiers must be non-empty strings")
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("reason"), str) or not metadata["reason"].strip():
+            raise ConfigError(f"unavailable_algorithms.{algorithm_id}.reason must be a non-empty string")
 
 
 def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:

@@ -99,9 +99,14 @@ requirements-dev.txt                        Python development dependencies for 
 
 ### Composed secure-boot profiles
 
+The benchmark model is also consolidated. `configs/benchmarks/classical_signing_profiles.yaml` is a benchmark-suite declaration containing algorithm IDs and shared evidence rules only. Algorithm properties, wolfBoot values, signing paths, and workflow profile paths are resolved from `configs/algorithms/` and the retained thin entry-point profiles; they are not repeated in the benchmark suite.
+
+
 Secure-boot configuration uses two canonical sources. `configs/targets/stm32l4r5_wolfboot.yaml` owns values common to the STM32L4R5 wolfBoot target, including layout, common build inputs, signing defaults, and shared experiment behaviour. `configs/algorithms/<algorithm>.yaml` owns each algorithm's wolfBoot identifier, key and signature properties, config template, signing arguments, tuple paths, and algorithm-specific evidence metadata.
 
 The existing files under `configs/boot/`, `configs/builds/`, `configs/signing/`, and secure-boot files under `configs/experiments/` remain stable command-line entry points. They are intentionally thin references resolved by `scripts/experiment.py`. Callers receive the same effective mappings as before the consolidation, while repeated values have one configuration owner. Direct-flash and MQTT experiment profiles remain standalone because they do not use the wolfBoot algorithm composition model.
+
+```
 
 ## Python implementation map
 

@@ -435,65 +435,56 @@ def test_validate_application_signing_profile_requires_binary_conversion_command
         experiment_cli.validate_application_signing_profile_config(config)
 
 
-def _valid_classical_profile_model():
+def _valid_classical_profile_model() -> dict[str, object]:
     return {
-        "id": "classical_signing_profiles",
-        "description": "Phase 11.5a model.",
-        "schema_version": 1,
-        "model_phase": "phase_11_5a_classical_profile_model",
-        "benchmark_scope": "secure_boot_classical_signing_algorithm",
-        "minimum_comparison_scope": {
-            "ed25519": {"algorithm": "ED25519", "runnable": False},
-            "ecc256": {"algorithm": "ECC256", "runnable": True},
-            "rsa2048": {"algorithm": "RSA2048", "runnable": False},
-        },
-        "profiles": {
-            "ecc256_reference": {
-                "algorithm": "ECC256",
-                "signature_algorithm": "ecdsa_p256",
-                "signature_size_bytes": 64,
-                "signing_profile": "configs/signing/wolfboot_ecdsa_p256_app.yaml",
-                "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
-                "experiment_profile": "configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
-                "runnable": True,
-            },
-            "ed25519_reserved": {
-                "algorithm": "ED25519",
-                "runnable": False,
-                "unsupported_reason": "Not implemented in Phase 11.5a.",
-            },
-            "rsa2048_reserved": {
-                "algorithm": "RSA2048",
-                "runnable": False,
-                "unsupported_reason": "Not implemented in Phase 11.5a.",
-            },
+        "id": "secure_boot_signing", "description": "Secure-boot signing benchmark suite.",
+        "schema_version": 2, "benchmark_scope": "secure_boot_signing_algorithm",
+        "reference_algorithm": "ecdsa_p256",
+        "minimum_algorithms": {"ed25519": True, "ecdsa_p256": True, "rsa2048": True},
+        "expanded_algorithms": {"ecc384": True, "ecc521": True, "ed448": True, "rsa3072": True, "rsa4096": True},
+        "post_quantum_algorithms": {"mldsa44": True, "mldsa65": True},
+        "unavailable_algorithms": {"mldsa87": {"reason": "Requires a larger image header."}},
+        "common_evidence": {
+            "board": "board_a", "application_payload": "same_relocated_hal_application_payload",
+            "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
+            "repeated_run_model": "phase_11_2_repeat_count_samples",
+            "static_metrics_model": "phase_11_3_elf_and_artifact_metrics",
+            "runtime_memory_model": "phase_11_4_firmware_side_stack_high_water_marker",
         },
     }
 
 
-def test_validate_classical_profile_model_accepts_minimum_scope():
+def test_validate_classical_profile_model_accepts_consolidated_suite():
     experiment_cli = load_experiment_module()
-
     experiment_cli.validate_classical_benchmark_profile_model_config(_valid_classical_profile_model())
 
 
-def test_validate_classical_profile_model_rejects_missing_rsa2048_scope():
-    experiment_cli = load_experiment_module()
-    config = _valid_classical_profile_model()
-    del config["minimum_comparison_scope"]["rsa2048"]
-
-    with pytest.raises(experiment_cli.ConfigError, match="exactly ED25519, ECC256, and RSA2048"):
+def test_validate_classical_profile_model_rejects_missing_minimum_algorithm():
+    experiment_cli = load_experiment_module(); config = _valid_classical_profile_model()
+    config["minimum_algorithms"] = {"ed25519": True, "ecdsa_p256": True}
+    with pytest.raises(experiment_cli.ConfigError, match="minimum_algorithms must contain exactly"):
         experiment_cli.validate_classical_benchmark_profile_model_config(config)
 
 
-def test_validate_classical_profile_model_rejects_runnable_reserved_profile():
-    experiment_cli = load_experiment_module()
-    config = _valid_classical_profile_model()
-    config["profiles"]["ed25519_reserved"]["runnable"] = True
-
-    with pytest.raises(experiment_cli.ConfigError, match="ed25519_reserved.*runnable must remain false"):
+def test_validate_classical_profile_model_rejects_disabled_algorithm():
+    experiment_cli = load_experiment_module(); config = _valid_classical_profile_model()
+    config["expanded_algorithms"]["ecc384"] = False
+    with pytest.raises(experiment_cli.ConfigError, match="values must all be true"):
         experiment_cli.validate_classical_benchmark_profile_model_config(config)
 
+
+def test_validate_classical_profile_model_rejects_changed_reference_algorithm():
+    experiment_cli = load_experiment_module(); config = _valid_classical_profile_model()
+    config["reference_algorithm"] = "ed25519"
+    with pytest.raises(experiment_cli.ConfigError, match="must remain ecdsa_p256"):
+        experiment_cli.validate_classical_benchmark_profile_model_config(config)
+
+
+def test_validate_classical_profile_model_rejects_runnable_unavailable_overlap():
+    experiment_cli = load_experiment_module(); config = _valid_classical_profile_model()
+    config["unavailable_algorithms"] = {"mldsa65": {"reason": "Invalid overlap."}}
+    with pytest.raises(experiment_cli.ConfigError, match="must not also be runnable"):
+        experiment_cli.validate_classical_benchmark_profile_model_config(config)
 
 
 def test_validate_application_signing_profile_rejects_unsupported_algorithm():
@@ -537,82 +528,6 @@ def test_validate_wolfboot_build_profile_accepts_ed25519_algorithm():
     }
 
     experiment_cli.validate_wolfboot_build_profile_config(config)
-
-
-def test_validate_classical_profile_model_accepts_phase_11_5b_ed25519_profile():
-    experiment_cli = load_experiment_module()
-    config = _valid_classical_profile_model()
-    config["model_phase"] = "phase_11_5b_ed25519_profile"
-    config["minimum_comparison_scope"]["ed25519"]["runnable"] = True
-    config["minimum_comparison_scope"]["ed25519"]["signature_algorithm"] = "ed25519"
-    del config["profiles"]["ed25519_reserved"]
-    config["profiles"]["ed25519_benchmark"] = {
-        "algorithm": "ED25519",
-        "signature_algorithm": "ed25519",
-        "signature_size_bytes": 64,
-        "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
-        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
-        "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
-        "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
-        "runnable": True,
-    }
-
-    experiment_cli.validate_classical_benchmark_profile_model_config(config)
-
-
-
-def test_validate_classical_profile_model_accepts_phase_11_5d_expanded_profiles():
-    experiment_cli = load_experiment_module()
-    config = _valid_classical_profile_model()
-    config["model_phase"] = "phase_11_5d_expanded_classical_profiles"
-    config["minimum_comparison_scope"]["ed25519"]["runnable"] = True
-    config["minimum_comparison_scope"]["ed25519"]["signature_algorithm"] = "ed25519"
-    config["minimum_comparison_scope"]["rsa2048"]["runnable"] = True
-    config["minimum_comparison_scope"]["rsa2048"]["signature_algorithm"] = "rsa2048"
-    del config["profiles"]["ed25519_reserved"]
-    del config["profiles"]["rsa2048_reserved"]
-    config["profiles"]["ed25519_benchmark"] = {
-        "algorithm": "ED25519",
-        "signature_algorithm": "ed25519",
-        "signature_size_bytes": 64,
-        "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
-        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
-        "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
-        "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
-        "runnable": True,
-    }
-    config["profiles"]["rsa2048_benchmark"] = {
-        "algorithm": "RSA2048",
-        "signature_algorithm": "rsa2048",
-        "key_size_bits": 2048,
-        "signature_size_bytes": 256,
-        "signing_profile": "configs/signing/wolfboot_rsa2048_app.yaml",
-        "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa2048.yaml",
-        "experiment_profile": "configs/experiments/wolfboot_rsa2048_uart.yaml",
-        "boot_profile": "configs/boot/wolfboot_rsa2048.yaml",
-        "runnable": True,
-    }
-    for name, algorithm, sig_alg, key_bits, sig_size in (
-        ("ecc384_benchmark", "ECC384", "ecc384", 384, 96),
-        ("ecc521_benchmark", "ECC521", "ecc521", 521, 132),
-        ("ed448_benchmark", "ED448", "ed448", 448, 114),
-        ("rsa3072_benchmark", "RSA3072", "rsa3072", 3072, 384),
-        ("rsa4096_benchmark", "RSA4096", "rsa4096", 4096, 512),
-    ):
-        suffix = sig_alg
-        config["profiles"][name] = {
-            "algorithm": algorithm,
-            "signature_algorithm": sig_alg,
-            "key_size_bits": key_bits,
-            "signature_size_bytes": sig_size,
-            "signing_profile": f"configs/signing/wolfboot_{suffix}_app.yaml",
-            "wolfboot_build_profile": f"configs/builds/wolfboot_stm32l4_{suffix}.yaml",
-            "experiment_profile": f"configs/experiments/wolfboot_{suffix}_uart.yaml",
-            "boot_profile": f"configs/boot/wolfboot_{suffix}.yaml",
-            "runnable": True,
-        }
-
-    experiment_cli.validate_classical_benchmark_profile_model_config(config)
 
 
 def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm():
