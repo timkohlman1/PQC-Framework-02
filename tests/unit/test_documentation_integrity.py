@@ -455,10 +455,13 @@ def test_operational_secure_boot_profiles_match_tracked_config_inventory() -> No
 
     for stem in expected_stems:
         assert stem in workflow
-        assert (REPO_ROOT / f"configs/builds/wolfboot_stm32l4_{stem}.yaml").is_file()
-        assert (REPO_ROOT / f"configs/signing/wolfboot_{stem}_app.yaml").is_file()
-        assert (REPO_ROOT / f"configs/experiments/wolfboot_{stem}_uart.yaml").is_file()
+        assert (REPO_ROOT / f"configs/algorithms/{stem}.yaml").is_file()
         assert (REPO_ROOT / f"configs/wolfboot/stm32l4r5_{stem}.config").is_file()
+
+    assert (REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml").is_file()
+    assert (REPO_ROOT / "configs/experiments/secure_boot_uart.yaml").is_file()
+    assert not (REPO_ROOT / "configs/builds").exists()
+    assert not (REPO_ROOT / "configs/signing").exists()
 
     assert "ML-DSA-87 is not a supported profile" in workflow
 

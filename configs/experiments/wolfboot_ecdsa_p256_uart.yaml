@@ -1,4 +1,0 @@
-id: wolfboot_ecdsa_p256_uart
-profile_kind: secure_boot_experiment
-target_profile: configs/targets/stm32l4r5_wolfboot.yaml
-algorithm_profile: configs/algorithms/ecdsa_p256.yaml

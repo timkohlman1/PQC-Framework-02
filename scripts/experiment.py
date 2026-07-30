@@ -10,14 +10,14 @@ The initial supported commands are:
     python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
-    python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ed25519_app.yaml
-    python scripts/experiment.py sign-application --profile configs/signing/wolfboot_rsa2048_app.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ed25519_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa2048_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --repeat-count 5
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+    python scripts/experiment.py sign-application --algorithm ecdsa_p256
+    python scripts/experiment.py sign-application --profile configs/algorithms/ed25519.yaml
+    python scripts/experiment.py sign-application --profile configs/algorithms/rsa2048.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --repeat-count 5
+    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --negative-corrupt-application
     python scripts/experiment.py mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
     python scripts/experiment.py aggregate-benchmarks
 
@@ -941,6 +941,31 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
     return _merge_config(resolved, local_overrides)
 
 
+
+
+def load_secure_boot_profile_section(
+    *, target_profile: Path | str, algorithm: str, section: str
+) -> tuple[dict[str, Any], Path]:
+    """Resolve one secure-boot section from the canonical target and algorithm profiles."""
+
+    target_path = Path(target_profile)
+    target = _load_config_mapping(target_path)
+    repo_root = _repository_path_from_config(target_path, ".").resolve()
+    algorithm_path = repo_root / "configs" / "algorithms" / f"{algorithm}.yaml"
+    algorithm_config = _load_config_mapping(algorithm_path)
+    if algorithm_config.get("target") != target.get("id"):
+        raise ConfigError(
+            f"{algorithm_path}: target must be {target.get('id')} for {target_path}"
+        )
+    target_profiles = target.get("profiles")
+    algorithm_profiles = algorithm_config.get("profiles")
+    if not isinstance(target_profiles, dict) or not isinstance(target_profiles.get(section), dict):
+        raise ConfigError(f"{target_path} missing profiles.{section} mapping")
+    if not isinstance(algorithm_profiles, dict) or not isinstance(algorithm_profiles.get(section), dict):
+        raise ConfigError(f"{algorithm_path} missing profiles.{section} mapping")
+    return _merge_config(target_profiles[section], algorithm_profiles[section]), repo_root
+
+
 def load_config(path: Path | str) -> dict[str, Any]:
     """Load a simple YAML mapping and resolve thin composed profiles."""
 
@@ -1399,31 +1424,6 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
         require_field(config, "binary_conversion.command", "application signing profile")
 
 
-def repo_root_from_signing_profile_path(profile_path: Path | str) -> Path:
-    """Resolve the repository root from configs/signing/<name>.yaml."""
-
-    resolved_path = Path(profile_path).resolve()
-    if resolved_path.parent.name != "signing":
-        raise ConfigError(
-            "application signing profile must live under configs/signing/ for automatic repository resolution"
-        )
-
-    configs_root = resolved_path.parent.parent
-    return configs_root.parent
-
-
-def repo_root_from_build_profile_path(profile_path: Path | str) -> Path:
-    """Resolve the repository root from configs/builds/<name>.yaml."""
-
-    resolved_path = Path(profile_path).resolve()
-    if resolved_path.parent.name != "builds":
-        raise ConfigError(
-            "wolfBoot build profile must live under configs/builds/ for automatic repository resolution"
-        )
-
-    configs_root = resolved_path.parent.parent
-    return configs_root.parent
-
 def validate_boot_config_for_inspection(config: dict[str, Any]) -> None:
     """Validate fields required to inspect any boot config.
 
@@ -1554,7 +1554,9 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     }
 
 
-def load_secure_boot_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, Any]]:
+def load_secure_boot_experiment_bundle(
+    experiment_path: Path | str, *, algorithm: str, target_profile: Path | str = Path("configs/targets/stm32l4r5_wolfboot.yaml")
+) -> dict[str, dict[str, Any]]:
     """Load a wolfBoot secure-boot flash experiment without enabling generic execution.
 
     Phase 10h uses the planned wolfBoot boot config explicitly for the
@@ -1564,15 +1566,21 @@ def load_secure_boot_experiment_bundle(experiment_path: Path | str) -> dict[str,
     """
 
     experiment_config_path = Path(experiment_path)
-
-    experiment_config = load_config(experiment_config_path)
+    local_experiment = _load_config_mapping(experiment_config_path)
+    experiment_defaults, _ = load_secure_boot_profile_section(
+        target_profile=target_profile, algorithm=algorithm, section="experiment"
+    )
+    boot_config, _ = load_secure_boot_profile_section(
+        target_profile=target_profile, algorithm=algorithm, section="boot"
+    )
+    experiment_config = _merge_config(experiment_defaults, local_experiment)
     validate_experiment_config(experiment_config)
 
-    board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
-
+    configs_root = _configs_root_from_experiment_path(experiment_config_path)
+    board_path = configs_root / "boards" / f"{require_field(experiment_config, 'board', 'experiment config')}.yaml"
+    host_path = configs_root / "hosts" / f"{require_field(experiment_config, 'host', 'experiment config')}.yaml"
     board_config = load_config(board_path)
     host_config = load_config(host_path)
-    boot_config = load_config(boot_path)
 
     validate_board_config(board_config)
     validate_host_config(host_config)
@@ -1592,14 +1600,6 @@ def load_secure_boot_experiment_bundle(experiment_path: Path | str) -> dict[str,
         raise ConfigError(
             f"host config id mismatch: experiment references '{expected_host_id}' "
             f"but {host_path} contains '{actual_host_id}'"
-        )
-
-    expected_boot_id = require_field(experiment_config, "boot", "experiment config")
-    actual_boot_id = require_field(boot_config, "id", "boot config")
-    if actual_boot_id != expected_boot_id:
-        raise ConfigError(
-            f"boot config id mismatch: experiment references '{expected_boot_id}' "
-            f"but {boot_path} contains '{actual_boot_id}'"
         )
 
     boot_mode = require_field(boot_config, "mode", "boot config")
@@ -2623,9 +2623,10 @@ def run_monitor_command(args: argparse.Namespace) -> int:
 def run_wolfboot_build_command(args: argparse.Namespace) -> int:
     """Run a configured wolfBoot build profile without flashing or UART access."""
 
-    profile = load_config(args.profile)
+    profile, repo_root = load_secure_boot_profile_section(
+        target_profile=args.target_profile, algorithm=args.algorithm, section="build"
+    )
     validate_wolfboot_build_profile_config(profile)
-    repo_root = repo_root_from_build_profile_path(args.profile)
 
     result = execute_wolfboot_build(
         profile=profile,
@@ -2655,9 +2656,10 @@ def run_wolfboot_build_command(args: argparse.Namespace) -> int:
 def run_sign_application_command(args: argparse.Namespace) -> int:
     """Run a configured local application-signing profile without flashing or UART access."""
 
-    profile = load_config(args.profile)
+    profile, repo_root = load_secure_boot_profile_section(
+        target_profile=args.target_profile, algorithm=args.algorithm, section="signing"
+    )
     validate_application_signing_profile_config(profile)
-    repo_root = repo_root_from_signing_profile_path(args.profile)
     try:
         signing_context = resolve_signing_material(profile=profile, repo_root=repo_root)
     except ExternalDependencyError as exc:
@@ -2796,7 +2798,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         )
         return 45
 
-    bundle = load_secure_boot_experiment_bundle(args.experiment)
+    bundle = load_secure_boot_experiment_bundle(args.experiment, algorithm=args.algorithm, target_profile=args.target_profile)
     if args.negative_corrupt_application:
         bundle["experiment"].setdefault("secure_boot_flash", {})[
             "negative_test_corrupt_application"
@@ -3929,11 +3931,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "build-wolfboot",
         help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
     )
+    wolfboot_build_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
     wolfboot_build_parser.add_argument(
-        "--profile",
-        required=True,
-        type=Path,
-        help="Path to a wolfBoot build-profile YAML config under configs/builds/.",
+        "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
+        help="Canonical secure-boot target profile.",
     )
     wolfboot_build_parser.add_argument(
         "--results-dir",
@@ -3947,11 +3948,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "sign-application",
         help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
     )
+    sign_application_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
     sign_application_parser.add_argument(
-        "--profile",
-        required=True,
-        type=Path,
-        help="Path to an application-signing YAML config under configs/signing/.",
+        "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
+        help="Canonical secure-boot target profile.",
     )
     sign_application_parser.add_argument(
         "--results-dir",
@@ -3970,6 +3970,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         type=Path,
         help="Path to a wolfBoot secure-boot experiment YAML config.",
+    )
+    secure_boot_flash_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
+    secure_boot_flash_parser.add_argument(
+        "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
+        help="Canonical secure-boot target profile.",
     )
     secure_boot_flash_parser.add_argument(
         "--results-dir",

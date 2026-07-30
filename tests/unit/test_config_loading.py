@@ -380,15 +380,19 @@ def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
     experiment_cli = load_experiment_module()
     repo_root = Path(__file__).resolve().parents[2]
 
-    build_profile = experiment_cli.load_config(
-        repo_root / "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
+    target = repo_root / "configs/targets/stm32l4r5_wolfboot.yaml"
+    build_profile, _ = experiment_cli.load_secure_boot_profile_section(
+        target_profile=target, algorithm="ecdsa_p256", section="build"
     )
-    signing_profile = experiment_cli.load_config(
-        repo_root / "configs/signing/wolfboot_ecdsa_p256_app.yaml"
+    signing_profile, _ = experiment_cli.load_secure_boot_profile_section(
+        target_profile=target, algorithm="ecdsa_p256", section="signing"
     )
-    experiment_profile = experiment_cli.load_config(
-        repo_root / "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+    bundle = experiment_cli.load_secure_boot_experiment_bundle(
+        repo_root / "configs/experiments/secure_boot_uart.yaml",
+        algorithm="ecdsa_p256",
+        target_profile=target,
     )
+    experiment_profile = bundle["experiment"]
 
     assert build_profile["signature_algorithm"] == "ecdsa_p256"
     assert build_profile["build"]["config_template"] == (

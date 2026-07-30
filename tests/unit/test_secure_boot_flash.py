@@ -94,10 +94,10 @@ def sample_bundle():
                 "image_version": 1,
                 "runnable": True,
                 "status": "reference_existing_phase_10_11_profile",
-                "signing_profile": "configs/signing/wolfboot_ecdsa_p256_app.yaml",
-                "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
-                "experiment_profile": "configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
-                "boot_profile": "configs/boot/wolfboot_ecdsa_p256.yaml",
+                "signing_profile": "configs/algorithms/ecdsa_p256.yaml",
+                "wolfboot_build_profile": "configs/algorithms/ecdsa_p256.yaml",
+                "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
+                "boot_profile": "configs/algorithms/ecdsa_p256.yaml",
                 "minimum_scope_status": "defined_phase_11_5a_minimum_classical_scope",
                 "ed25519_status": "planned_phase_11_5b_not_implemented",
                 "rsa2048_status": "planned_phase_11_5c_not_implemented",
@@ -282,8 +282,8 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert "scripts/framework/secure_boot_flash.py" in freshness["requested_fingerprint_inputs"]
     assert "scripts/framework/wolfboot_build.py" in freshness["requested_fingerprint_inputs"]
     assert "scripts/framework/signing.py" in freshness["requested_fingerprint_inputs"]
-    assert "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
-    assert "configs/signing/wolfboot_ecdsa_p256_app.yaml" in freshness["requested_fingerprint_inputs"]
+    assert "configs/targets/stm32l4r5_wolfboot.yaml" in freshness["requested_fingerprint_inputs"]
+    assert "configs/algorithms/ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in freshness["requested_fingerprint_inputs"]
     assert list(freshness["fingerprint_file_hashes"]) == freshness["fingerprint_inputs"]
     evidence = manifest["secure_boot_evidence"]
@@ -561,10 +561,10 @@ def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
             "wolfboot_sign": "ED25519",
             "signature_algorithm": "ed25519",
             "status": "configured_phase_11_5b_ed25519_profile",
-            "signing_profile": "configs/signing/wolfboot_ed25519_app.yaml",
-            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_ed25519.yaml",
-            "experiment_profile": "configs/experiments/wolfboot_ed25519_uart.yaml",
-            "boot_profile": "configs/boot/wolfboot_ed25519.yaml",
+            "signing_profile": "configs/algorithms/ed25519.yaml",
+            "wolfboot_build_profile": "configs/algorithms/ed25519.yaml",
+            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
+            "boot_profile": "configs/algorithms/ed25519.yaml",
             "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
         }
     )
@@ -596,10 +596,10 @@ def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
             "key_size_bits": 2048,
             "signature_size_bytes": 256,
             "status": "configured_phase_11_5c_rsa2048_profile",
-            "signing_profile": "configs/signing/wolfboot_rsa2048_app.yaml",
-            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa2048.yaml",
-            "experiment_profile": "configs/experiments/wolfboot_rsa2048_uart.yaml",
-            "boot_profile": "configs/boot/wolfboot_rsa2048.yaml",
+            "signing_profile": "configs/algorithms/rsa2048.yaml",
+            "wolfboot_build_profile": "configs/algorithms/rsa2048.yaml",
+            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
+            "boot_profile": "configs/algorithms/rsa2048.yaml",
             "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
             "rsa2048_status": "configured_phase_11_5c_rsa2048_profile_not_hardware_validated",
         }
@@ -636,10 +636,10 @@ def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable(
             "key_size_bits": 4096,
             "signature_size_bytes": 512,
             "status": "configured_phase_11_5d_expanded_classical_profile",
-            "signing_profile": "configs/signing/wolfboot_rsa4096_app.yaml",
-            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_rsa4096.yaml",
-            "experiment_profile": "configs/experiments/wolfboot_rsa4096_uart.yaml",
-            "boot_profile": "configs/boot/wolfboot_rsa4096.yaml",
+            "signing_profile": "configs/algorithms/rsa4096.yaml",
+            "wolfboot_build_profile": "configs/algorithms/rsa4096.yaml",
+            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
+            "boot_profile": "configs/algorithms/rsa4096.yaml",
             "expanded_scope_status": "phase_11_5d_expanded_classical_profile_added",
         }
     )
@@ -675,10 +675,10 @@ def test_classical_profile_metadata_marks_mldsa65_runnable_and_mldsa87_unavailab
             "security_category": 3,
             "signature_size_bytes": 3309,
             "status": "configured_post_phase_11_mldsa_profile_not_hardware_validated",
-            "signing_profile": "configs/signing/wolfboot_mldsa65_app.yaml",
-            "wolfboot_build_profile": "configs/builds/wolfboot_stm32l4_mldsa65.yaml",
-            "experiment_profile": "configs/experiments/wolfboot_mldsa65_uart.yaml",
-            "boot_profile": "configs/boot/wolfboot_mldsa65.yaml",
+            "signing_profile": "configs/algorithms/mldsa65.yaml",
+            "wolfboot_build_profile": "configs/algorithms/mldsa65.yaml",
+            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
+            "boot_profile": "configs/algorithms/mldsa65.yaml",
         }
     )
 

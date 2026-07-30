@@ -92,10 +92,10 @@ python -m pytest tests/integration/test_local_build.py -m integration --pqc-requ
 The normal secure-boot path records relocated-build provenance before signing:
 
 ```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml
+.\scripts\dev.ps1 experiment build-wolfboot --algorithm ecdsa_p256
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_ecdsa_p256_app.yaml
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml
+.\scripts\dev.ps1 experiment sign-application --algorithm ecdsa_p256
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm ecdsa_p256
 ```
 
 Generated-state preflight is the primary compatibility and provenance mechanism. Pytest cleanup is supplementary cross-platform hygiene only. Do not run wolfBoot `keysclean`, delete reusable signing-tuple members, silently reconstruct partial signing state, or silently replace a canonical private key. Full profile coverage and diagnostic fallback commands are owned by `docs/005_remote_flash_workflow.md`.

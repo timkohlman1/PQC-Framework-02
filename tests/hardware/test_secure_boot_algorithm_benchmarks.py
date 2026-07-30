@@ -46,9 +46,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="ecdsa_p256",
         boot_mode="wolfboot_ecdsa_p256",
         boot_crypto="ecdsa_p256",
-        build_profile="configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
-        signing_profile="configs/signing/wolfboot_ecdsa_p256_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_ecdsa_p256_uart.yaml",
+        build_profile="configs/algorithms/ecdsa_p256.yaml",
+        signing_profile="configs/algorithms/ecdsa_p256.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -58,9 +58,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="ed25519",
         boot_mode="wolfboot_ed25519",
         boot_crypto="ed25519",
-        build_profile="configs/builds/wolfboot_stm32l4_ed25519.yaml",
-        signing_profile="configs/signing/wolfboot_ed25519_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_ed25519_uart.yaml",
+        build_profile="configs/algorithms/ed25519.yaml",
+        signing_profile="configs/algorithms/ed25519.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -70,9 +70,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="rsa2048",
         boot_mode="wolfboot_rsa2048",
         boot_crypto="rsa2048",
-        build_profile="configs/builds/wolfboot_stm32l4_rsa2048.yaml",
-        signing_profile="configs/signing/wolfboot_rsa2048_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_rsa2048_uart.yaml",
+        build_profile="configs/algorithms/rsa2048.yaml",
+        signing_profile="configs/algorithms/rsa2048.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -82,9 +82,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="ecc384",
         boot_mode="wolfboot_ecc384",
         boot_crypto="ecc384",
-        build_profile="configs/builds/wolfboot_stm32l4_ecc384.yaml",
-        signing_profile="configs/signing/wolfboot_ecc384_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_ecc384_uart.yaml",
+        build_profile="configs/algorithms/ecc384.yaml",
+        signing_profile="configs/algorithms/ecc384.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -94,9 +94,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="ecc521",
         boot_mode="wolfboot_ecc521",
         boot_crypto="ecc521",
-        build_profile="configs/builds/wolfboot_stm32l4_ecc521.yaml",
-        signing_profile="configs/signing/wolfboot_ecc521_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_ecc521_uart.yaml",
+        build_profile="configs/algorithms/ecc521.yaml",
+        signing_profile="configs/algorithms/ecc521.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc521_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -106,9 +106,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="ed448",
         boot_mode="wolfboot_ed448",
         boot_crypto="ed448",
-        build_profile="configs/builds/wolfboot_stm32l4_ed448.yaml",
-        signing_profile="configs/signing/wolfboot_ed448_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_ed448_uart.yaml",
+        build_profile="configs/algorithms/ed448.yaml",
+        signing_profile="configs/algorithms/ed448.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -118,9 +118,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="rsa3072",
         boot_mode="wolfboot_rsa3072",
         boot_crypto="rsa3072",
-        build_profile="configs/builds/wolfboot_stm32l4_rsa3072.yaml",
-        signing_profile="configs/signing/wolfboot_rsa3072_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_rsa3072_uart.yaml",
+        build_profile="configs/algorithms/rsa3072.yaml",
+        signing_profile="configs/algorithms/rsa3072.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -130,9 +130,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="rsa4096",
         boot_mode="wolfboot_rsa4096",
         boot_crypto="rsa4096",
-        build_profile="configs/builds/wolfboot_stm32l4_rsa4096.yaml",
-        signing_profile="configs/signing/wolfboot_rsa4096_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_rsa4096_uart.yaml",
+        build_profile="configs/algorithms/rsa4096.yaml",
+        signing_profile="configs/algorithms/rsa4096.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -142,9 +142,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="mldsa44",
         boot_mode="wolfboot_mldsa44",
         boot_crypto="mldsa44",
-        build_profile="configs/builds/wolfboot_stm32l4_mldsa44.yaml",
-        signing_profile="configs/signing/wolfboot_mldsa44_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_mldsa44_uart.yaml",
+        build_profile="configs/algorithms/mldsa44.yaml",
+        signing_profile="configs/algorithms/mldsa44.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
@@ -154,9 +154,9 @@ BENCHMARK_PROFILES = (
         signature_algorithm="mldsa65",
         boot_mode="wolfboot_mldsa65",
         boot_crypto="mldsa65",
-        build_profile="configs/builds/wolfboot_stm32l4_mldsa65.yaml",
-        signing_profile="configs/signing/wolfboot_mldsa65_app.yaml",
-        experiment_profile="configs/experiments/wolfboot_mldsa65_uart.yaml",
+        build_profile="configs/algorithms/mldsa65.yaml",
+        signing_profile="configs/algorithms/mldsa65.yaml",
+        experiment_profile="configs/experiments/secure_boot_uart.yaml",
         signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
     ),
 )
@@ -294,7 +294,7 @@ def _prepare_profile_artifacts(repo_root: Path, profile: SecureBootBenchmarkProf
 
     wolfboot_completed = _run_cli(
         repo_root,
-        ["build-wolfboot", "--profile", profile.build_profile],
+        ["build-wolfboot", "--algorithm", profile.signature_algorithm],
     )
     assert wolfboot_completed.returncode == 0, (
         f"{profile.name} build-wolfboot stdout:\n{wolfboot_completed.stdout}\n"
@@ -316,7 +316,7 @@ def _prepare_profile_artifacts(repo_root: Path, profile: SecureBootBenchmarkProf
 
     signing_completed = _run_cli(
         repo_root,
-        ["sign-application", "--profile", profile.signing_profile],
+        ["sign-application", "--algorithm", profile.signature_algorithm],
     )
     assert signing_completed.returncode == 0, (
         f"{profile.name} sign-application stdout:\n{signing_completed.stdout}\n"
@@ -332,6 +332,8 @@ def _run_profile_benchmark(repo_root: Path, profile: SecureBootBenchmarkProfile)
             "flash-secure-boot",
             "--experiment",
             profile.experiment_profile,
+            "--algorithm",
+            profile.signature_algorithm,
             "--repeat-count",
             str(REPEAT_COUNT),
         ],

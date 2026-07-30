@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-SECURE_BOOT_EXPERIMENT_CONFIG = "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+SECURE_BOOT_EXPERIMENT_CONFIG = "configs/experiments/secure_boot_uart.yaml"
 BUILD_PROVENANCE_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
-SIGNING_PROFILE = "configs/signing/wolfboot_ecdsa_p256_app.yaml"
-WOLFBOOT_BUILD_PROFILE = "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
+SIGNING_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
+WOLFBOOT_BUILD_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
 RELOCATED_APPLICATION_ELF = "build/RelocatedDebug/stm32_basic_hal1.elf"
 SIGNED_APPLICATION_ARTIFACT = "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
@@ -136,8 +136,8 @@ def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path) -> None:
         repo_root,
         [
             "build-wolfboot",
-            "--profile",
-            WOLFBOOT_BUILD_PROFILE,
+            "--algorithm",
+            EXPECTED_BOOT_CRYPTO,
             "--results-dir",
             str(results_dir),
         ],
@@ -181,8 +181,8 @@ def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) 
         repo_root,
         [
             "sign-application",
-            "--profile",
-            SIGNING_PROFILE,
+            "--algorithm",
+            EXPECTED_BOOT_CRYPTO,
             "--results-dir",
             str(results_dir),
         ],
@@ -289,6 +289,8 @@ def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path) -
             "flash-secure-boot",
             "--experiment",
             SECURE_BOOT_EXPERIMENT_CONFIG,
+            "--algorithm",
+            EXPECTED_BOOT_CRYPTO,
             "--results-dir",
             str(results_dir),
             "--uart-duration-seconds",
@@ -344,6 +346,8 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
             "flash-secure-boot",
             "--experiment",
             SECURE_BOOT_EXPERIMENT_CONFIG,
+            "--algorithm",
+            EXPECTED_BOOT_CRYPTO,
             "--results-dir",
             str(results_dir),
             "--uart-duration-seconds",

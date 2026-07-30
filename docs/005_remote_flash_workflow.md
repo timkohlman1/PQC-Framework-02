@@ -43,23 +43,23 @@ The `flash` path refuses SCP/SSH unless the artifact matches recorded build prov
 
 ## Secure-boot workflow
 
-Secure boot consumes the configured wolfBoot artifact and signed relocated application. The normal profile pattern is:
+Secure boot consumes the configured wolfBoot artifact and signed relocated application. The secure-boot workflow selects one canonical target and algorithm. The normal command pattern is:
 
 ```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
+.\scripts\dev.ps1 experiment build-wolfboot --algorithm <algorithm>
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 5
+.\scripts\dev.ps1 experiment sign-application --algorithm <algorithm>
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm <algorithm> --repeat-count 5
 ```
 
-The supported profile stems represented by matching build, signing, experiment, and wolfBoot config files are:
+Supported algorithm IDs are:
 
 ```text
 Classical: ecdsa_p256, ecc384, ecc521, ed25519, ed448, rsa2048, rsa3072, rsa4096
 ML-DSA:   mldsa44, mldsa65
 ```
 
-ECC256 uses the historical `ecdsa_p256` file stem. ML-DSA-87 is not a supported profile under the current 8192-byte image-header reserve. The canonical capability interpretation is in `docs/007_framework_architecture.md`; the tracked files under `configs/builds/`, `configs/signing/`, `configs/experiments/`, and `configs/wolfboot/` are the executable profile inventory.
+ML-DSA-87 is not a supported profile under the current 8192-byte image-header reserve. `configs/targets/stm32l4r5_wolfboot.yaml` owns shared target configuration, `configs/algorithms/*.yaml` owns algorithm differences, `configs/experiments/secure_boot_uart.yaml` is the single secure-boot experiment entry point, and `configs/wolfboot/*.config` contains native wolfBoot build templates.
 
 The relocated application build must run through the framework so generated-state provenance and the artifact hash are recorded before signing. `build-wolfboot`, `sign-application`, and `flash-secure-boot` use generated-state preflight as the primary compatibility, stale-output, and provenance mechanism.
 
@@ -75,7 +75,7 @@ Do not run wolfBoot `keysclean` or manually delete tuple members. Pytest startup
 Negative corrupted-application test:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_ecdsa_p256_uart.yaml --negative-corrupt-application
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --negative-corrupt-application
 ```
 
 The workflow corrupts a result-local copy. It must not modify the canonical signed image or private key.

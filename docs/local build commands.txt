@@ -10,10 +10,10 @@ Normal secure-boot workflow
 ---------------------------
 
 ```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --profile configs/builds/wolfboot_stm32l4_<profile>.yaml
+.\scripts\dev.ps1 experiment build-wolfboot --algorithm <algorithm>
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --profile configs/signing/wolfboot_<profile>_app.yaml
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/wolfboot_<profile>_uart.yaml --repeat-count 2
+.\scripts\dev.ps1 experiment sign-application --algorithm <algorithm>
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm <algorithm> --repeat-count 2
 ```
 
 Signing-state safety
@@ -63,10 +63,6 @@ $algorithms = @(
 $resultsRoot = "results/secure-boot-matrix"
 
 foreach ($algorithm in $algorithms) {
-    $buildProfile = "configs/builds/wolfboot_stm32l4_$algorithm.yaml"
-    $signingProfile = "configs/signing/wolfboot_${algorithm}_app.yaml"
-    $experimentProfile = "configs/experiments/wolfboot_${algorithm}_uart.yaml"
-
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "Secure-boot end-to-end test: $algorithm"
@@ -74,7 +70,7 @@ foreach ($algorithm in $algorithms) {
 
     Write-Host "[1/3] Building wolfBoot"
     .\scripts\dev.ps1 experiment build-wolfboot `
-        --profile $buildProfile `
+        --algorithm $algorithm `
         --results-dir $resultsRoot
 
     if ($LASTEXITCODE -ne 0) {
@@ -83,7 +79,7 @@ foreach ($algorithm in $algorithms) {
 
     Write-Host "[2/3] Signing relocated application"
     .\scripts\dev.ps1 experiment sign-application `
-        --profile $signingProfile `
+        --algorithm $algorithm `
         --results-dir $resultsRoot
 
     if ($LASTEXITCODE -ne 0) {
@@ -92,7 +88,8 @@ foreach ($algorithm in $algorithms) {
 
     Write-Host "[3/3] Flashing and checking UART"
     .\scripts\dev.ps1 experiment-gateway flash-secure-boot `
-        --experiment $experimentProfile `
+        --experiment configs/experiments/secure_boot_uart.yaml `
+        --algorithm $algorithm `
         --results-dir $resultsRoot `
         --uart-duration-seconds 15
 

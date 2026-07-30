@@ -204,14 +204,11 @@ def _fingerprint_evidence(
     signed_application: SecureBootFlashArtifactResult,
 ) -> dict[str, Any]:
     experiment = bundle.get("experiment", {})
-    boot = bundle.get("boot", {})
     experiment_id = str(experiment.get("id", "unknown"))
-    boot_id = None
-    if isinstance(boot, dict) and boot.get("id") not in (None, ""):
-        boot_id = str(boot.get("id"))
+    algorithm_id = str(experiment.get("boot_crypto", "ecdsa_p256"))
     requested_inputs = default_secure_boot_flash_fingerprint_inputs(
         experiment_id=experiment_id,
-        boot_id=boot_id,
+        algorithm_id=algorithm_id,
     )
     missing_inputs = [
         relative_input

@@ -88,7 +88,7 @@ All selected addresses and sizes are aligned to the working 4 KB wolfBoot STM32L
 
 ## Consequences
 
-- `configs/boot/wolfboot_ecdsa_p256.yaml` can now describe an explicit planned flash layout.
+- At the time of this decision, the algorithm-specific wolfBoot boot profile described the planned flash layout. That wrapper was later removed; the shared layout is now owned by `configs/targets/stm32l4r5_wolfboot.yaml` and combined with `configs/algorithms/ecdsa_p256.yaml`.
 - The direct-flash baseline remains the only runnable boot mode.
 - The planned wolfBoot profile remains `runnable: false`.
 - Phase 10e should relocate the HAL application linker script and vector-table configuration to `0x08020100` when adding a relocated application build profile.

@@ -69,7 +69,7 @@ The project will not claim that the upstream STM32L4 target is directly runnable
 ## Consequences
 
 - The direct-flash baseline remains the only runnable boot mode.
-- `configs/boot/wolfboot_ecdsa_p256.yaml` remains non-runnable.
+- At the time of this decision, the algorithm-specific wolfBoot boot profile remained non-runnable. That wrapper was later removed; current configuration is composed from `configs/targets/stm32l4r5_wolfboot.yaml`, `configs/algorithms/ecdsa_p256.yaml`, and `configs/experiments/secure_boot_uart.yaml`.
 - Phase 10d should define the STM32L4R5 flash layout explicitly before linker relocation.
 - Phase 10e should relocate the HAL application to the selected signed-image entry address.
 - Phase 10f should add an explicit wolfBoot build profile using the selected project-local target values.

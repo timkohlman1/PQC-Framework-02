@@ -1,0 +1,2 @@
+id: secure_boot_uart
+description: Generic wolfBoot secure-boot UART experiment; select the signing algorithm with --algorithm.

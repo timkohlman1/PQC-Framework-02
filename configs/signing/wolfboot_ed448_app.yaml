@@ -1,4 +1,0 @@
-id: wolfboot_ed448_app
-profile_kind: application_signing
-target_profile: configs/targets/stm32l4r5_wolfboot.yaml
-algorithm_profile: configs/algorithms/ed448.yaml

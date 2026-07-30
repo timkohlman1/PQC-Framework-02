@@ -764,8 +764,10 @@ def default_wolfboot_fingerprint_inputs(
 ) -> list[str]:
     """Return secure-boot wolfBoot build fingerprint input candidates."""
 
+    algorithm = profile_id.removeprefix("wolfboot_stm32l4_")
     inputs = [
-        f"configs/builds/{profile_id}.yaml",
+        "configs/targets/stm32l4r5_wolfboot.yaml",
+        f"configs/algorithms/{algorithm}.yaml",
         "scripts/framework/wolfboot_build.py",
     ]
     if config_template:
@@ -778,82 +780,44 @@ def default_wolfboot_fingerprint_inputs(
 def default_signing_fingerprint_inputs(*, profile_id: str) -> list[str]:
     """Return secure-boot application signing fingerprint input candidates."""
 
+    algorithm = profile_id.removeprefix("wolfboot_").removesuffix("_app")
     return [
-        f"configs/signing/{profile_id}.yaml",
+        "configs/targets/stm32l4r5_wolfboot.yaml",
+        f"configs/algorithms/{algorithm}.yaml",
         "scripts/framework/signing.py",
         *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
     ]
 
 
-def default_secure_boot_flash_fingerprint_inputs(*, experiment_id: str, boot_id: str | None = None) -> list[str]:
+def default_secure_boot_flash_fingerprint_inputs(
+    *,
+    experiment_id: str,
+    algorithm_id: str | None = None,
+    boot_id: str | None = None,
+) -> list[str]:
     """Return secure-boot flash workflow fingerprint input candidates.
 
-    This evidence fingerprint intentionally covers more than the flash helper
-    itself. The configured secure-boot artifacts are produced by the wolfBoot
-    build helper, relocated application build, and signing helper before
-    ``flash-secure-boot`` consumes them. Including those source/config inputs
-    makes the recorded fingerprint useful for spotting stale artifacts when a
-    source/config change occurred but the generated ELF/BIN files were not
-    rebuilt.
+    The generic secure-boot experiment is composed with one canonical target
+    profile and one selected algorithm profile. Record those canonical inputs
+    directly so provenance does not depend on removed compatibility wrappers.
     """
 
-    profile_by_experiment = {
-        "wolfboot_ecdsa_p256_uart": (
-            "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml",
-            "configs/signing/wolfboot_ecdsa_p256_app.yaml",
-            "configs/wolfboot/stm32l4r5_ecdsa_p256.config",
-        ),
-        "wolfboot_ed25519_uart": (
-            "configs/builds/wolfboot_stm32l4_ed25519.yaml",
-            "configs/signing/wolfboot_ed25519_app.yaml",
-            "configs/wolfboot/stm32l4r5_ed25519.config",
-        ),
-        "wolfboot_rsa2048_uart": (
-            "configs/builds/wolfboot_stm32l4_rsa2048.yaml",
-            "configs/signing/wolfboot_rsa2048_app.yaml",
-            "configs/wolfboot/stm32l4r5_rsa2048.config",
-        ),
-        "wolfboot_ecc384_uart": (
-            "configs/builds/wolfboot_stm32l4_ecc384.yaml",
-            "configs/signing/wolfboot_ecc384_app.yaml",
-            "configs/wolfboot/stm32l4r5_ecc384.config",
-        ),
-        "wolfboot_ecc521_uart": (
-            "configs/builds/wolfboot_stm32l4_ecc521.yaml",
-            "configs/signing/wolfboot_ecc521_app.yaml",
-            "configs/wolfboot/stm32l4r5_ecc521.config",
-        ),
-        "wolfboot_ed448_uart": (
-            "configs/builds/wolfboot_stm32l4_ed448.yaml",
-            "configs/signing/wolfboot_ed448_app.yaml",
-            "configs/wolfboot/stm32l4r5_ed448.config",
-        ),
-        "wolfboot_rsa3072_uart": (
-            "configs/builds/wolfboot_stm32l4_rsa3072.yaml",
-            "configs/signing/wolfboot_rsa3072_app.yaml",
-            "configs/wolfboot/stm32l4r5_rsa3072.config",
-        ),
-        "wolfboot_rsa4096_uart": (
-            "configs/builds/wolfboot_stm32l4_rsa4096.yaml",
-            "configs/signing/wolfboot_rsa4096_app.yaml",
-            "configs/wolfboot/stm32l4r5_rsa4096.config",
-        ),
-    }
-    wolfboot_build_profile, signing_profile, wolfboot_config_template = profile_by_experiment.get(
-        experiment_id,
-        profile_by_experiment["wolfboot_ecdsa_p256_uart"],
-    )
+    normalized_algorithm = str(algorithm_id or "").strip().lower()
+    if not normalized_algorithm and boot_id:
+        normalized_algorithm = str(boot_id).removeprefix("wolfboot_").strip().lower()
+    if not normalized_algorithm:
+        normalized_algorithm = "ecdsa_p256"
 
-    inputs = [
+    return [
         f"configs/experiments/{experiment_id}.yaml",
+        "configs/targets/stm32l4r5_wolfboot.yaml",
+        f"configs/algorithms/{normalized_algorithm}.yaml",
+        f"configs/wolfboot/stm32l4r5_{normalized_algorithm}.config",
         "scripts/framework/secure_boot_flash.py",
         "scripts/framework/uart.py",
         "scripts/framework/manifest.py",
         "scripts/framework/wolfboot_build.py",
         "scripts/framework/signing.py",
-        wolfboot_build_profile,
-        signing_profile,
-        wolfboot_config_template,
         *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
         "tools/wolfboot/Makefile",
         "tools/wolfboot/src/image.c",
@@ -861,6 +825,3 @@ def default_secure_boot_flash_fingerprint_inputs(*, experiment_id: str, boot_id:
         "tools/wolfboot/hal/stm32l4xx_hal_conf.h",
         "tools/wolfboot/tools/keytools/Makefile",
     ]
-    if boot_id:
-        inputs.append(f"configs/boot/{boot_id}.yaml")
-    return inputs
