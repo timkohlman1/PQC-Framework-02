@@ -53,11 +53,12 @@ def test_build_purpose_defaults_to_normal_and_accepts_pytest_scope(monkeypatch):
     assert provenance.current_build_purpose() == "automated_test"
 
 
-def test_build_source_enforces_test_pool_boundary():
+def test_build_source_keeps_automated_test_build_identity_separate():
     repo_root = Path(__file__).resolve().parents[2]
     source = (repo_root / "scripts" / "framework" / "build.py").read_text(encoding="utf-8")
-    assert "Automated-test builds never search or reuse the normal build pool." in source
-    assert "reusable_by_normal_workflows\": False" in source
-    assert "reserve_next_build_number" in source
-    assert "if build_purpose != TEST_BUILD_PURPOSE" in source
-    assert '"purpose": build_purpose, "identity": None' in source
+    assert "build_purpose == TEST_BUILD_PURPOSE" in source
+    assert "reserve_test_build_identity(test_result_dir)" in source
+    assert "reserve_next_build_number(repo_root_path)" in source
+    assert '"record_type": "automated_test_build"' in source
+    assert '"reusable_by_normal_workflows": False' in source
+    assert '"reuse_enabled": False' in source

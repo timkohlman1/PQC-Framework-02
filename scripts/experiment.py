@@ -52,6 +52,7 @@ import shlex
 import subprocess
 import sys
 import time
+
 from pathlib import Path
 from typing import Any
 
@@ -1694,7 +1695,7 @@ def run_build_command(args: argparse.Namespace) -> int:
         return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
 
-    emit_progress("build", "Evaluating application build and reuse state")
+    emit_progress("build", "Preparing application build")
     build_result = execute_build(
         bundle=bundle,
         repo_root=repo_root,
@@ -1708,7 +1709,7 @@ def run_build_command(args: argparse.Namespace) -> int:
     warning_count = _warning_count_from_build_result(build_result)
     warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
     if getattr(build_result, "build_skipped", False):
-        emit_progress("build", "Application build reuse complete", detail=f"{warning_text}; no compilation performed.")
+        emit_progress("build", "Application build completed", detail=f"{warning_text}; no compilation performed.")
     else:
         outcome = "completed" if build_result.return_code == 0 else "failed"
         emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")
@@ -2366,7 +2367,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             start=start,
         )
 
-    emit_progress("build", "Evaluating application build and reuse state")
+    emit_progress("build", "Preparing application build")
     build_result = execute_build(
         bundle=bundle,
         repo_root=repo_root,
@@ -2380,7 +2381,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     warning_count = _warning_count_from_build_result(build_result)
     warning_text = "warning count unavailable" if warning_count is None else f"{warning_count} compiler warnings"
     if getattr(build_result, "build_skipped", False):
-        emit_progress("build", "Application build reuse complete", detail=f"{warning_text}; no compilation performed.")
+        emit_progress("build", "Application build completed", detail=f"{warning_text}; no compilation performed.")
     else:
         outcome = "completed" if build_result.return_code == 0 else "failed"
         emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")

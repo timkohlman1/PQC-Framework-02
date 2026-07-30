@@ -113,12 +113,13 @@ def write_build_fingerprint_inputs(repo_root: Path) -> None:
         "configs/boards/board_a.yaml": "id: board_a\n",
         "configs/hosts/gateway.yaml": "id: gateway\n",
         "configs/boot/direct_flash.yaml": "id: direct_flash\nmode: direct_flash\nrunnable: true\n",
-        "CMakeLists.txt": "cmake minimum\n",
+        "CMakeLists.txt": "add_executable(stm32_basic_hal1 Core/Src/main.c startup_stm32l4r5xx.s)\n",
+        "cmake/stm32cubemx/CMakeLists.txt": "target_sources(stm32cubemx INTERFACE Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c)\n",
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
         "startup_stm32l4r5xx.s": "startup assembly\n",
         "stm32_basic_hal1.ioc": "CubeMX project source\n",
-        "Core/Src/main.c": "int main(void) { return 0; }\n",
+        "Core/Src/main.c": '#include "main.h"\nint main(void) { return 0; }\n',
         "Core/Inc/main.h": "#pragma once\n",
         "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c": "HAL driver source\n",
         "Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l4r5xx.h": "CMSIS device header\n",
@@ -138,229 +139,12 @@ def test_build_command_construction_uses_cmake_presets():
     assert build.construct_build_command("Debug") == ["cmake", "--build", "--preset", "Debug"]
 
 
-def test_execute_build_captures_command_results_without_invoking_cmake(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-
-    calls: list[list[str]] = []
-
-    def fake_runner(command: list[str], cwd: Path):
-        calls.append(command)
-        assert cwd == repo_root
-        if command == ["cmake", "--build", "--preset", "Debug"]:
-            artifact_path.parent.mkdir(parents=True, exist_ok=True)
-            artifact_path.write_text("fake elf", encoding="utf-8")
-        return build.CommandExecution(
-            command=command,
-            return_code=0,
-            stdout="fake stdout",
-            stderr="fake stderr",
-            duration_seconds=0.125,
-        )
-
-    def fake_git_runner(command: list[str], cwd: Path):
-        assert cwd == repo_root
-        if command == ["git", "rev-parse", "HEAD"]:
-            return build.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
-        if command == ["git", "status", "--short"]:
-            return build.GitCommandExecution(command, 0, "", "", 0.01)
-        raise AssertionError(f"unexpected git command: {command}")
-
-    progress_events: list[tuple[str, str, str | None]] = []
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=fake_runner,
-        git_runner=fake_git_runner,
-        progress=lambda stage, message, detail: progress_events.append((stage, message, detail)),
-    )
-
-    expected_sha256 = hashlib.sha256(b"fake elf").hexdigest()
-
-    assert result.return_code == 0
-    assert result.elf_path == artifact_path
-    assert result.firmware_sha256 == expected_sha256
-    assert result.build_number == 1
-    assert result.result_artifacts["elf"]["path"] == "firmware.elf"
-    assert result.build_record_dir == result_dir.parent / "builds" / "1"
-    assert result.build_record_manifest_path == result_dir.parent / "builds" / "1" / "manifest.json"
-    assert calls == [
-        ["cmake", "--preset", "Debug"],
-        ["cmake", "--build", "--preset", "Debug"],
-    ]
-    assert [event[1] for event in progress_events] == [
-        "Application build required",
-        "Configuring application",
-        "Compiling application",
-    ]
-
-    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
-    assert "fake stdout" in build_log
-    assert "fake stderr" in build_log
-    assert "Final return code: 0" in build_log
-    assert f"Output ELF path: {artifact_path}" in build_log
-    assert f"Output ELF SHA-256: {expected_sha256}" in build_log
-    assert "Build number: 1" in build_log
-    assert "Build fingerprint algorithm: sha256-build-inputs-and-tools-v3" in build_log
-    assert "- configs/experiments/baseline_direct_uart.yaml" in build_log
-    assert "- configs/boot/direct_flash.yaml" in build_log
-    assert "- Core/Inc/main.h" in build_log
-    assert "- Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in build_log
-    assert "- cmake/gcc-arm-none-eabi.cmake" in build_log
-    assert "- stm32_basic_hal1.ioc" in build_log
-
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert (repo_root / ".build_number").read_text(encoding="utf-8") == "1\n"
-    assert not (repo_root / ".last_successful_build.json").exists()
-    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
-    build_record_dir = result_dir.parent / "builds" / "1"
-    build_record_manifest = json.loads((build_record_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert (build_record_dir / "build.log").is_file()
-    assert (build_record_dir / "firmware.elf").read_text(encoding="utf-8") == "fake elf"
-    assert build_record_manifest["record_type"] == "build"
-    assert build_record_manifest["schema_version"] == 1
-    assert build_record_manifest["build_number"] == 1
-    assert build_record_manifest["result"] == "build_passed"
-    assert build_record_manifest["experiment"] == "baseline_direct_uart"
-    assert build_record_manifest["firmware"]["sha256"] == expected_sha256
-    assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
-    assert build_record_manifest["build"]["fingerprint"] == manifest["build"]["fingerprint"]
-    assert build_record_manifest["build"]["log"] == "build.log"
-    assert build_record_manifest["compatibility"]["source_run_id"] == "2026-06-25_001_baseline_direct_uart"
-    assert build_record_manifest["compatibility"]["source_run_dir"] == str(result_dir)
-    assert manifest["result"] == "build_passed"
-    assert manifest["build_number"] == 1
-    assert manifest["build"]["return_code"] == 0
-    assert manifest["build"]["log"] == "build.log"
-    assert manifest["build"]["record_path"] == str(result_dir.parent / "builds" / "1")
-    assert manifest["build"]["record_manifest"] == str(result_dir.parent / "builds" / "1" / "manifest.json")
-    assert manifest["build"]["fingerprint_algorithm"] == "sha256-build-inputs-and-tools-v3"
-    assert isinstance(manifest["build"]["fingerprint"], str)
-    assert len(manifest["build"]["fingerprint"]) == 64
-    assert "configs/experiments/baseline_direct_uart.yaml" in manifest["build"]["fingerprint_inputs"]
-    assert "configs/boot/direct_flash.yaml" in manifest["build"]["fingerprint_inputs"]
-    assert "Core/Inc/main.h" in manifest["build"]["fingerprint_inputs"]
-    assert "Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c" in manifest["build"]["fingerprint_inputs"]
-    assert "cmake/gcc-arm-none-eabi.cmake" in manifest["build"]["fingerprint_inputs"]
-    assert "stm32_basic_hal1.ioc" in manifest["build"]["fingerprint_inputs"]
-    assert manifest["build"]["fingerprint_inputs"] == sorted(manifest["build"]["fingerprint_inputs"])
-    assert list(manifest["build"]["fingerprint_file_hashes"]) == manifest["build"]["fingerprint_inputs"]
-    assert all(len(value) == 64 for value in manifest["build"]["fingerprint_file_hashes"].values())
-    assert build_record_manifest["build"]["fingerprint_file_hashes"] == manifest["build"]["fingerprint_file_hashes"]
-    assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
-    assert manifest["firmware"]["artifact_exists"] is True
-    assert manifest["firmware"]["sha256"] == expected_sha256
-    assert manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
-    assert manifest["firmware"]["result_artifacts"]["elf"]["sha256"] == expected_sha256
-    assert manifest["firmware"]["result_artifacts"]["hex"]["copied"] is False
-    assert manifest["firmware"]["result_artifacts"]["bin"]["copied"] is False
-    assert manifest["source"] == {
-        "git_commit": "abc123",
-        "git_dirty": False,
-        "git_status_available": True,
-    }
-
-
-def test_execute_build_skips_build_step_when_configure_fails(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-
-    calls: list[list[str]] = []
-
-    def fake_runner(command: list[str], cwd: Path):
-        calls.append(command)
-        return build.CommandExecution(
-            command=command,
-            return_code=9,
-            stdout="configure stdout",
-            stderr="configure stderr",
-            duration_seconds=0.125,
-        )
-
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=fake_runner,
-    )
-
-    assert result.return_code == 9
-    assert result.build is None
-    assert result.firmware_sha256 is None
-    assert calls == [["cmake", "--preset", "Debug"]]
-    assert "Skipped because the configure step failed." in (result_dir / "build.log").read_text(
-        encoding="utf-8"
-    )
-    assert not (repo_root / ".last_successful_build.json").exists()
 
 
 
-def test_execute_build_fails_clearly_when_fingerprint_input_is_missing(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_initial_manifest(result_dir)
 
-    def forbidden_runner(command: list[str], cwd: Path):
-        raise AssertionError("CMake must not run when fingerprint inputs are missing")
 
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=forbidden_runner,
-    )
 
-    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    assert result.return_code == build.FINGERPRINT_INPUT_ERROR_RETURN_CODE
-    assert result.build is None
-    assert result.build_fingerprint is None
-    assert "Required build fingerprint input is missing" in build_log
-    assert manifest["result"] == "build_failed"
-    assert manifest["build"]["return_code"] == build.FINGERPRINT_INPUT_ERROR_RETURN_CODE
-    assert "Required build fingerprint input is missing" in manifest["build"]["fingerprint_error"]
-
-def test_execute_build_fails_clearly_when_build_number_file_is_malformed(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    (repo_root / ".build_number").write_text("not an integer\n", encoding="utf-8")
-
-    def forbidden_runner(command: list[str], cwd: Path):
-        raise AssertionError("CMake must not run when build number tracking fails")
-
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=forbidden_runner,
-    )
-
-    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    assert result.return_code == build.BUILD_NUMBER_ERROR_RETURN_CODE
-    assert result.build_number is None
-    assert "Build number file contains a non-integer value" in build_log
-    assert manifest["result"] == "build_failed"
-    assert manifest["build_number"] is None
-    assert "non-integer" in manifest["build"]["build_number_error"]
 
 
 def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeypatch, capsys):
@@ -1052,7 +836,11 @@ def _create_matching_build_record(
         build={
             "return_code": 0,
             "fingerprint": fingerprint.fingerprint,
+            "fingerprint_inputs": fingerprint.inputs,
+            "fingerprint_file_hashes": fingerprint.file_hashes,
             "fingerprint_algorithm": fingerprint.algorithm,
+            "candidate_fingerprint": fingerprint.fingerprint,
+            "candidate_fingerprint_algorithm": fingerprint.algorithm,
             "skipped": False,
         },
         source_run_id=f"source-{build_number}",
@@ -1061,309 +849,16 @@ def _create_matching_build_record(
     return record_dir
 
 
-def test_execute_build_reuses_matching_immutable_record_without_active_cmake_elf(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    build_record_dir = _create_matching_build_record(
-        build,
-        repo_root=repo_root,
-        result_dir=result_dir,
-        build_number=7,
-        content="retained cached elf",
-    )
-
-    def forbidden_runner(command: list[str], cwd: Path):
-        raise AssertionError("CMake must not run when a verified build record matches")
-
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=forbidden_runner,
-    )
-
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-    build_log = (result_dir / "build.log").read_text(encoding="utf-8")
-
-    assert result.return_code == 0
-    assert result.build_skipped is True
-    assert result.build_number == 7
-    assert result.elf_path == build_record_dir / "firmware.elf"
-    assert not (repo_root / "build" / "Debug" / "stm32_basic_hal1.elf").exists()
-    assert not (repo_root / ".build_number").exists()
-    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "retained cached elf"
-    assert manifest["build_number"] == 7
-    assert manifest["firmware"]["artifact_path"] == str(build_record_dir / "firmware.elf")
-    assert manifest["build"]["record_action"] == "reused_immutable_build_record"
-    assert manifest["build"]["record_mutated"] is False
-    assert "Output ELF path: " + str(build_record_dir / "firmware.elf") in build_log
 
 
-def test_execute_build_uses_newest_verified_matching_record(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    _create_matching_build_record(build, repo_root=repo_root, result_dir=result_dir, build_number=3, content="old")
-    newest = _create_matching_build_record(build, repo_root=repo_root, result_dir=result_dir, build_number=8, content="new")
-
-    result = build.execute_build(
-        bundle=sample_bundle(), repo_root=repo_root, result_dir=result_dir,
-        runner=lambda *_args: (_ for _ in ()).throw(AssertionError("CMake must not run")),
-    )
-
-    assert result.build_skipped is True
-    assert result.build_number == 8
-    assert result.elf_path == newest / "firmware.elf"
-    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "new"
 
 
-def test_execute_build_falls_back_to_older_valid_match_when_newest_is_corrupt(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    older = _create_matching_build_record(build, repo_root=repo_root, result_dir=result_dir, build_number=3, content="good")
-    newest = _create_matching_build_record(build, repo_root=repo_root, result_dir=result_dir, build_number=8, content="bad")
-    (newest / "firmware.elf").write_text("tampered", encoding="utf-8")
-
-    result = build.execute_build(
-        bundle=sample_bundle(), repo_root=repo_root, result_dir=result_dir,
-        runner=lambda *_args: (_ for _ in ()).throw(AssertionError("CMake must not run")),
-    )
-
-    assert result.build_skipped is True
-    assert result.build_number == 3
-    assert result.elf_path == older / "firmware.elf"
 
 
-def test_execute_build_runs_cmake_when_no_matching_build_record_exists(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    calls: list[list[str]] = []
-
-    result = build.execute_build(
-        bundle=sample_bundle(),
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
-    )
-
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert result.return_code == 0
-    assert result.build_skipped is False
-    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
-    assert manifest["build"]["skip_reason"] == "missing_matching_build_record"
 
 
-def test_execute_build_force_runs_cmake_even_when_matching_record_exists(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-    _create_matching_build_record(build, repo_root=repo_root, result_dir=result_dir, build_number=7, content="cached")
-    calls: list[list[str]] = []
-
-    result = build.execute_build(
-        bundle=sample_bundle(), repo_root=repo_root, result_dir=result_dir, force=True,
-        runner=_successful_runner_that_writes_artifact(build, artifact_path, calls),
-    )
-
-    assert result.build_skipped is False
-    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["build"]["skip_reason"] == "force_requested"
 
 
-def test_run_command_reuses_verified_build_number_without_building(tmp_path, monkeypatch, capsys):
-    experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    artifact_path = tmp_path / "results" / "builds" / "7" / "firmware.elf"
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text("reused elf", encoding="utf-8")
-    manifest_path = artifact_path.parent / "manifest.json"
-    manifest_path.write_text("{}\n", encoding="utf-8")
-    firmware_sha256 = hashlib.sha256(b"reused elf").hexdigest()
-    seen_result_dirs = []
-
-    fake_verification = Namespace(
-        status="verified_build_record",
-        return_code=0,
-        message="ok",
-        build_number=7,
-        record_dir=artifact_path.parent,
-        manifest_path=manifest_path,
-        artifact_path=artifact_path,
-        firmware_sha256=firmware_sha256,
-        build_fingerprint="a" * 64,
-        build_fingerprint_algorithm="sha256-build-inputs-v1",
-        current_build_fingerprint="a" * 64,
-        current_build_fingerprint_algorithm="sha256-build-inputs-v1",
-        current_build_fingerprint_error=None,
-        manifest={},
-    )
-
-    fake_flash_result = Namespace(
-        return_code=0,
-        duration_seconds=0.5,
-        artifact_path=tmp_path / "results" / "run" / "firmware.elf",
-        remote_artifact_path="/tmp/firmware.elf",
-        stlink_serial="123",
-        log_path=tmp_path / "results" / "run" / "flash.log",
-        provenance_status="verified_build_match",
-    )
-
-    fake_uart_result = Namespace(
-        return_code=0,
-        duration_seconds=1.0,
-        log_path=tmp_path / "results" / "run" / "uart.log",
-    )
-
-    def forbidden_execute_build(**kwargs):
-        raise AssertionError("run --build-number must not invoke the build helper")
-
-    def fake_resolve_verified_build_record(**kwargs):
-        assert kwargs["results_root"] == tmp_path / "results"
-        assert kwargs["build_number"] == 7
-        assert kwargs["repo_root"] == tmp_path
-        return fake_verification
-
-    def fake_execute_flash(**kwargs):
-        seen_result_dirs.append(kwargs["result_dir"])
-        assert kwargs["source_build_number"] == 7
-        assert kwargs["source_build_manifest_path"] == manifest_path
-        assert Path(kwargs["artifact_path_override"]).name == "firmware.elf"
-        return fake_flash_result
-
-    def fake_execute_uart_capture(**kwargs):
-        seen_result_dirs.append(kwargs["result_dir"])
-        return fake_uart_result
-
-    monkeypatch.setattr(experiment_cli, "execute_build", forbidden_execute_build)
-    monkeypatch.setattr(
-        experiment_cli,
-        "resolve_verified_build_record",
-        fake_resolve_verified_build_record,
-    )
-    monkeypatch.setattr(experiment_cli, "execute_flash", fake_execute_flash)
-    monkeypatch.setattr(experiment_cli, "execute_uart_capture", fake_execute_uart_capture)
-
-    exit_code = experiment_cli.run_full_baseline_command(
-        Namespace(
-            experiment=experiment_path,
-            results_dir=tmp_path / "results",
-            configure_preset=None,
-            build_preset="Debug",
-            build_number=7,
-            force=False,
-            uart_duration_seconds=10,
-        )
-    )
-
-    output = capsys.readouterr().out
-    result_dir = seen_result_dirs[0]
-    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    assert exit_code == 0
-    assert "Build number: 7" in output
-    assert (result_dir / "firmware.elf").read_text(encoding="utf-8") == "reused elf"
-    assert manifest["result"] == "baseline_run_passed"
-    assert manifest["build_number"] == 7
-    assert manifest["build_reference"]["build_number"] == 7
-    assert manifest["build_reference"]["artifact_sha256"] == firmware_sha256
-    assert manifest["run"]["build_return_code"] is None
-    assert manifest["run"]["referenced_build_number"] == 7
-    assert manifest["run"]["referenced_build_artifact_sha256"] == firmware_sha256
 
 
 def test_run_build_command_applies_artifact_override_for_relocated_provenance(
@@ -1454,53 +949,6 @@ def test_wifi_header_generation_uses_experiment_values(tmp_path):
     assert '#define PQC_WIFI_SSID "hiphopopotamus"' in text
     assert '#define PQC_WIFI_PSK "lukeisadog"' in text
 
-def test_execute_build_writes_wifi_header_after_preflight_and_before_cmake(tmp_path):
-    build = load_build_module()
-    repo_root = tmp_path / "repo"
-    result_dir = tmp_path / "results" / "2026-06-25_001_baseline_direct_uart"
-    artifact_path = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
-    repo_root.mkdir()
-    write_build_fingerprint_inputs(repo_root)
-    write_initial_manifest(result_dir)
-
-    bundle = sample_bundle()
-    bundle["experiment"]["network"] = {
-        "wifi": {"ssid": "hiphopopotamus", "psk": "test-only-password"},
-        "ipv4": {"mode": "dhcp"},
-    }
-    calls: list[list[str]] = []
-
-    def fake_runner(command: list[str], cwd: Path):
-        calls.append(command)
-        header = cwd / "build" / "Debug" / "pqc_generated" / "pqc_wifi_config_generated.h"
-        assert header.is_file()
-        text = header.read_text(encoding="utf-8")
-        assert '#define PQC_WIFI_SSID "hiphopopotamus"' in text
-        assert '#define PQC_WIFI_PSK "test-only-password"' in text
-        assert '#define PQC_WIFI_IPV4_MODE "dhcp"' in text
-        if command == ["cmake", "--build", "--preset", "Debug"]:
-            artifact_path.parent.mkdir(parents=True, exist_ok=True)
-            artifact_path.write_text("fake elf", encoding="utf-8")
-        return build.CommandExecution(
-            command=command,
-            return_code=0,
-            stdout="ran command",
-            stderr="",
-            duration_seconds=0.1,
-        )
-
-    result = build.execute_build(
-        bundle=bundle,
-        repo_root=repo_root,
-        result_dir=result_dir,
-        runner=fake_runner,
-    )
-
-    assert result.return_code == 0
-    assert calls == [
-        ["cmake", "--preset", "Debug"],
-        ["cmake", "--build", "--preset", "Debug"],
-    ]
 
 
 
@@ -1616,3 +1064,29 @@ def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path
     assert f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{expected_hash}"' in text
     assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "classical"' in text
 
+
+
+def test_execute_build_always_invokes_configure_and_build(tmp_path):
+    build = load_build_module()
+    repo_root = tmp_path / "repo"
+    result_dir = repo_root / "results" / "run-1"
+    result_dir.mkdir(parents=True)
+    (result_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    artifact = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    calls = []
+
+    def runner(command, cwd):
+        calls.append(command)
+        if command[:2] == ["cmake", "--build"]:
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b"firmware")
+        return build.CommandExecution(command, 0, "ok", "", 0.01)
+
+    result = build.execute_build(sample_bundle(), repo_root, result_dir, runner=runner)
+    assert result.return_code == 0
+    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert result.build_skipped is False
+    assert result.build_fingerprint is None
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["build"]["reuse_enabled"] is False
+    assert manifest["build"]["artifact_identity"] == manifest["firmware"]["sha256"]

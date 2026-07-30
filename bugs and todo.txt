@@ -8,13 +8,37 @@ unless the request will examine prior AI prompts / interactions
 
 -----------
 
+
+-----------
+
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-The build fingerprinting fingerprints many files which are not included or relevant to the build and profile being used. I would like you to review the fingerprinting and the process that determines what artifacts get included, the fingerprinting must only fingerprint artificats that are relevant to the build, for example, files that get compiled and linked into the firmware image, framework scripts that orchestrate experiments, the relevant experiment profile, crypto keys, and versions of tools used to create the build; it should not include files that go into other builds but not this build, or tools that aren't used to create the build. 
+I'm confused about the different folders in the configs directory, the number of fields in each json file. I suspect there is some duplication and sprawl that's occurred as the framework has been built up incrementally, and I'd like to simplify it. 
 
 -----------
 
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+All builds should include a bootloader partition and bootloader code,  the default should be classic bootloader validation, with the PQC firmware signing options available for evaluating this aspect of PQC adoption.  There is no need to maintain both a Debug and RelocatedDebug profile any more since every build will have the bootloader / secure boot image.
+
 -----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+Step me through generating the 4 differnet TLS profile builds using Debug and Release presets and compare the differences between these presets. Ensure relevant config json's can specify one or the other and that both presets have test coverage.
+
+-----------
+
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+All image and crypto material that go into creating a build should be copied into the build result folder. Modify the secret handling rules accordingly to allow this to happen.  This should include both the signed and unsigned version of the application image if applicable, both public and private signing keys and certificates used in producing the build or that will be used in orchestrating an experiment (e.g. the MQTT broker material). The same approach should be done for bootloader builds as well.   I should have the material I would need to manually flash the esp32 and keys to install on the MQTT broker and any other experiment infrastructure.
+
+
+
+
+
+
 
 useful commands-
 -----------------

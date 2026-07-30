@@ -105,7 +105,7 @@ scripts/framework/build.py                  Local CMake build workflow
 scripts/framework/build_number.py           Build number state handling
 scripts/framework/build_records.py          First-class build record validation/use
 scripts/framework/build_state.py            Last-successful-build state
-scripts/framework/fingerprint.py            Build and secure-boot input fingerprints
+scripts/framework/fingerprint.py            Secure-boot and signing evidence fingerprints
 scripts/framework/flash.py                  Direct-flash SCP/SSH workflow
 scripts/framework/manifest.py               Manifest construction and benchmark schema helpers
 scripts/framework/secure_boot_flash.py      wolfBoot two-artifact flash and UART benchmark workflow
@@ -327,9 +327,9 @@ Gateway and hardware tests remain outside the default CI workflow because they r
 
 Build records identify produced firmware binaries. Experiment run records identify one execution and its hardware-facing evidence. Secure-boot build/sign/flash evidence remains explicit and profile-specific. Aggregated benchmark summaries are derived outputs from existing manifests.
 
-A directory under `results/builds/<build_number>/` is an immutable compilation record. It is created or updated only by the workflow that actually executes the compiler and produces that numbered build. Reusing a compatible build does not reserve a new build number and must not rewrite the retained build manifest, `build.log`, or firmware artifact. The new experiment result records the reuse decision, referenced build number, record path, fingerprint, artifact hash, and `record_mutated: false`; its own `build.log` describes the reuse operation.
+A directory under `results/builds/<build_number>/` is an immutable compilation record. Each successful normal application build reserves a new build number and writes the produced ELF, build log, configuration/tool evidence, and final ELF SHA-256. Application build records are not searched for automatic reuse and are not mutated by later runs.
 
-Firmware fingerprints cover the resolved experiment, board, host, and boot configuration; recursively discovered firmware, middleware, build-system, framework-build, container, and CI inputs that exist in the checkout; and captured versions of CMake, Arm GCC, Ninja, and Python. Adding a source file beneath a covered source tree or changing a captured tool version therefore invalidates reuse. Secure-boot wolfBoot, relocated-application, signing, and flash evidence uses the same file-and-tool fingerprint model while retaining separate profile-specific records and artifact hashes for each producer stage. In addition to the aggregate fingerprint, manifests record `fingerprint_file_hashes` as a path-sorted mapping from each exact repository-relative file in `fingerprint_inputs` to its SHA-256 content digest. Comparing mappings across compiled build records identifies added, removed, modified, and unchanged inputs; captured tool versions remain separate because they are not files. The aggregate fingerprint remains the authoritative compatibility and reuse key.
+Normal application firmware no longer has a framework-level source/dependency fingerprint. Every request invokes CMake configure and build, while Ninja may incrementally reuse unchanged object files in the retained build directory. The final ELF SHA-256 is the authoritative artifact identity. Secure-boot wolfBoot, relocated-application, signing, and secure-boot flash stages retain their separate evidence fingerprints where required by those workflows.
 
 
 ## ML-DSA secure-boot profiles
@@ -577,7 +577,7 @@ artifacts, referenced canonical result records, and test-triggered build
 records. A failed or interrupted run remains inspectable even if finalisation is
 incomplete.
 
-Build reuse is purpose constrained. Automated-test builds are retained under
+Application build reuse is disabled. Automated-test builds are retained under
 `results/automated-tests/<test-run-id>/builds/<sequence>/`; they do not reserve
 or increment `.build_number` and do not enter `results/builds/`. Fingerprint
 equality cannot override this boundary. Normal experiment, benchmark,
@@ -595,7 +595,7 @@ fingerprints may be retained.
 
 The first M11 profile is `server-ecdsa-p256`: ST67W61M1 supplies the network interface, while lwIP sockets, wolfSSL TLS 1.2, certificate verification, wolfMQTT CONNECT/publish, and one bounded reconnect run on the STM32. The firmware build embeds only the generated public broker CA certificate. The existing `classical` mutual-TLS broker profile remains separate and is not claimed as STM32-validated until client-certificate provisioning is implemented and evidenced.
 
-The configured public CA certificate is a build-defining input. Its repository-relative path and content SHA-256 are included in the normal firmware build fingerprint and durable per-file fingerprint evidence. Regenerating or replacing the CA certificate therefore invalidates prior reusable builds and requires a new compilation and build record. Private CA keys and other private certificate material remain excluded from firmware fingerprints, manifests, and result artifacts.
+The configured public CA certificate is embedded into generated firmware configuration and therefore affects the resulting ELF SHA-256. Private CA keys and other private certificate material remain excluded from manifests and result artifacts.
 
 M11 success requires explicit UART markers for DHCP, TCP, TLS handshake, MQTT connect/publish, reconnect TLS handshake, and post-reconnect publish, together with retained broker evidence. Missing resource metrics remain unavailable rather than inferred. DTR-007 is in progress until a capability-gated hardware run supplies that evidence.
 
@@ -628,7 +628,7 @@ The PQC MQTT experiment sets a 60-second UART hard limit because ST67 initializa
 
 ## External cryptographic prerequisite phase
 
-Executable experiment plans prepare declared external dependencies before build fingerprinting. `prepare_external_dependencies()` resolves MQTT TLS certificate profiles and returns a resolved context consumed by fingerprinting, generated build configuration, broker deployment, and manifest creation. TLS YAML uses `mqtt.tls.certificate_profile`; direct `certificate_refs` in source YAML are prohibited.
+Executable experiment plans prepare declared external dependencies before build configuration. `prepare_external_dependencies()` resolves MQTT TLS certificate profiles and returns a resolved context consumed by generated build configuration, broker deployment, and manifest creation. TLS YAML uses `mqtt.tls.certificate_profile`; direct `certificate_refs` in source YAML are prohibited.
 
 Secure-boot signing similarly resolves the complete signing tuple below `secrets/wolfboot/tuples/` before invoking signing. Missing or partial tuples fail before signing. Tuple creation remains owned by the wolfBoot preparation workflow; application signing does not silently reconstruct key material.
 
@@ -647,14 +647,14 @@ Current STM32 end-to-end experiments use server authentication only. STM32 mutua
 
 STM32 MQTT/TLS builds resolve each experiment TLS profile into a deterministic algorithm set before CMake configure. The generated selection controls both wolfSSL compile definitions and conditional wolfCrypt source inclusion. Classical RSA TLS 1.3 builds enable RSA-PSS verification and advertise `rsa_pss_rsae_sha256`. PQC hybrid TLS adds only the `SecP256r1MLKEM768` key-exchange implementation while retaining classical RSA server-certificate authentication. Post-quantum signature schemes are not TLS capabilities in this framework; firmware-signing algorithms remain confined to wolfBoot secure-boot profiles.
 
-The resolved algorithm set is included as a semantic input to the normal firmware build fingerprint. A build produced for one TLS algorithm set is therefore not reusable by a profile resolving to a different set, even where other source and configuration inputs match. Compile-time capability evidence and emitted ClientHello evidence remain separate: generated CMake/compile definitions prove selected build capabilities, while the UART `wolfMQTT TLS ClientHello` marker proves the schemes emitted by the running STM32 binary.
+The resolved algorithm set drives generated CMake and compile definitions. Because every application build request invokes CMake/Ninja, profile changes are handled by the build system and reflected in the final ELF SHA-256. Compile-time capability evidence and emitted ClientHello evidence remain separate: generated CMake/compile definitions prove selected build capabilities, while the UART `wolfMQTT TLS ClientHello` marker proves the schemes emitted by the running STM32 binary.
 
 ## Human-facing experiment progress reporting
 
 The experiment CLI has a shared timestamped progress reporter for major workflow
 boundaries. Orchestration code emits progress at stage transitions rather than
 echoing complete subprocess logs. Relevant events include profile and crypto
-resolution, prerequisite preparation, build/reuse decisions, compiler warning
+resolution, prerequisite preparation, build execution, compiler warning
 counts when captured output is available, gateway-facing flash and UART work,
 secure-boot stages, and managed MQTT broker lifecycle work.
 
@@ -668,8 +668,13 @@ that claim.
 
 ### Human-facing experiment progress output
 
-The experiment CLI emits concise timestamped operational progress for profile resolution, cryptographic selection, prerequisites, build-reuse evaluation, configuration, compilation, gateway use, flashing, UART capture, managed broker lifecycle, MQTT command/response validation, cleanup, and final result recording. The progress timezone defaults to `Australia/Melbourne` and may be overridden with the `PQC_PROGRESS_TIMEZONE` environment variable using an IANA timezone identifier. The timestamp includes its timezone abbreviation.
+The experiment CLI emits concise timestamped operational progress for profile resolution, cryptographic selection, prerequisites, configuration, build execution, gateway use, flashing, UART capture, managed broker lifecycle, MQTT command/response validation, cleanup, and final result recording. The progress timezone defaults to `Australia/Melbourne` and may be overridden with the `PQC_PROGRESS_TIMEZONE` environment variable using an IANA timezone identifier. The timestamp includes its timezone abbreviation.
 
-Build reuse evaluation and compilation are separate stages. A reuse decision reports the verified-record reason and performs no compilation. A rebuild reports why reuse was rejected, then reports CMake configuration and compilation independently before reporting the final return code and warning count.
+CMake configuration and build execution are separate progress stages. The framework always invokes both commands; Ninja decides whether individual object files require recompilation.
 
 Console progress is not an additional evidence class and must not be interpreted as proof of success. The result manifest and retained stage logs remain authoritative. Progress messages must not disclose private keys, passwords, wireless PSKs, or sensitive command arguments.
+
+
+### Application build execution and artifact identity
+
+Framework-level application build reuse and source/dependency fingerprinting are disabled. Each application build invokes CMake configuration and `cmake --build`; the retained Ninja build tree provides native incremental recompilation. Successful builds receive a new normal build number and an identity derived from the final ELF SHA-256. Run manifests and immutable build records store `reuse_enabled: false`, `incremental_build_system: cmake-ninja`, `artifact_identity_algorithm: sha256-elf`, and the ELF digest. Flash verification compares the selected ELF against the referenced immutable record digest and does not re-evaluate repository source state.

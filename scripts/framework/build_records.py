@@ -15,10 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_to_result
-from framework.fingerprint import (
-    FingerprintInputError,
-    calculate_default_build_fingerprint,
-)
 
 BUILD_RESULTS_DIRNAME = "builds"
 BUILD_RECORD_SCHEMA_VERSION = 1
@@ -107,17 +103,6 @@ def _required_string(mapping: dict[str, Any], dotted_path: str) -> tuple[str | N
     return value, None
 
 
-def _calculate_current_build_fingerprint(
-    bundle: dict[str, dict[str, Any]],
-    repo_root: Path,
-) -> tuple[str | None, str | None, str | None]:
-    try:
-        fingerprint = calculate_default_build_fingerprint(bundle, repo_root)
-    except FingerprintInputError as exc:
-        return None, None, str(exc)
-
-    return fingerprint.fingerprint, fingerprint.algorithm, None
-
 
 def _manifest_path_for_build_number(results_root: Path, build_number: int) -> tuple[Path | None, str | None]:
     try:
@@ -149,344 +134,40 @@ def resolve_verified_build_record(
     bundle: dict[str, dict[str, Any]],
     repo_root: Path | str,
 ) -> VerifiedBuildRecord:
-    """Verify a first-class build record is safe for experiment reuse.
+    """Validate an immutable build record by metadata and ELF SHA-256.
 
-    The check is intentionally strict: the build-record manifest must exist,
-    identify the requested build number, contain the expected metadata, retain a
-    firmware artifact, match the artifact SHA-256, and match the current
-    source/build fingerprint for the resolved experiment bundle.
+    Source/build fingerprints are deliberately not recalculated. A referenced
+    record is accepted only when its metadata matches the requested experiment
+    context and its retained ELF hashes to the recorded artifact identity.
     """
-
+    del repo_root
     results_root_path = Path(results_root)
-    repo_root_path = Path(repo_root)
-    manifest_path, path_error = _manifest_path_for_build_number(results_root_path, build_number)
-    current_fingerprint, current_algorithm, fingerprint_error = _calculate_current_build_fingerprint(
-        bundle,
-        repo_root_path,
-    )
-
-    if path_error is not None or manifest_path is None:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message=path_error if path_error is not None else "Invalid build number.",
-            build_number=build_number,
-            record_dir=None,
-            manifest_path=None,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=fingerprint_error,
-            manifest=None,
-        )
-
-    record_dir = manifest_path.parent
-
-    if fingerprint_error is not None:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISMATCH,
-            return_code=BUILD_RECORD_FINGERPRINT_ERROR_RETURN_CODE,
-            message=f"Current build fingerprint could not be calculated: {fingerprint_error}",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=fingerprint_error,
-            manifest=None,
-        )
-
-    if not manifest_path.is_file():
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISSING,
-            return_code=BUILD_RECORD_MISSING_RETURN_CODE,
-            message=f"Build record manifest not found: {manifest_path}",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=None,
-        )
-
+    manifest_path, error = _manifest_path_for_build_number(results_root_path, build_number)
+    record_dir = build_record_dir(results_root_path, build_number)
+    if error is not None or manifest_path is None:
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISSING, BUILD_RECORD_MISSING_RETURN_CODE, error or "Build record is unavailable.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, None)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message=f"Build record manifest is not valid JSON: {manifest_path}",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=None,
-        )
-
+    except (OSError, json.JSONDecodeError) as exc:
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_INVALID, BUILD_RECORD_INVALID_RETURN_CODE, f"Build record manifest could not be read: {exc}", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, None)
     if not isinstance(manifest, dict):
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message="Build record manifest root must be an object.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=None,
-        )
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_INVALID, BUILD_RECORD_INVALID_RETURN_CODE, "Build record manifest must be a JSON object.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, None)
 
-    if manifest.get("schema_version") != BUILD_RECORD_SCHEMA_VERSION:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message="Build record manifest has an unsupported or missing schema_version.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if manifest.get("record_type") != BUILD_RECORD_TYPE:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message="Build record manifest is not a build record.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if manifest.get("build_number") != build_number:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message=(
-                "Build record number mismatch: "
-                f"expected {build_number}, found {manifest.get('build_number')}"
-            ),
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if manifest.get("result") not in {"build_passed", "build_skipped"}:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message=f"Build record result is not reusable: {manifest.get('result')}",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if manifest.get("experiment") != bundle["experiment"].get("id"):
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISMATCH,
-            return_code=BUILD_RECORD_MISMATCH_RETURN_CODE,
-            message="Build record experiment ID does not match the requested experiment.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if manifest.get("board") != bundle["board"].get("id"):
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISMATCH,
-            return_code=BUILD_RECORD_MISMATCH_RETURN_CODE,
-            message="Build record board ID does not match the requested experiment board.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=None,
-            build_fingerprint=None,
-            build_fingerprint_algorithm=None,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
+    expected_experiment = str(bundle["experiment"]["id"])
+    expected_board = str(bundle["board"]["id"])
+    if manifest.get("experiment") != expected_experiment or manifest.get("board") != expected_board:
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISMATCH, BUILD_RECORD_MISMATCH_RETURN_CODE, "Referenced build record does not match the requested experiment and board.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, manifest)
 
     recorded_sha256, sha_error = _required_string(manifest, "firmware.sha256")
-    recorded_fingerprint, fingerprint_field_error = _required_string(manifest, "build.fingerprint")
-    recorded_algorithm, algorithm_error = _required_string(manifest, "build.fingerprint_algorithm")
-    required_errors = [
-        error
-        for error in [sha_error, fingerprint_field_error, algorithm_error]
-        if error is not None
-    ]
-    if required_errors:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message="; ".join(required_errors),
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=recorded_sha256,
-            build_fingerprint=recorded_fingerprint,
-            build_fingerprint_algorithm=recorded_algorithm,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
+    if sha_error is not None or recorded_sha256 is None:
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_INVALID, BUILD_RECORD_INVALID_RETURN_CODE, sha_error or "Build record firmware SHA-256 is unavailable.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, manifest)
     artifact_path, artifact_error = _artifact_path_from_manifest(record_dir, manifest)
-    if artifact_error is not None or artifact_path is None:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_INVALID,
-            return_code=BUILD_RECORD_INVALID_RETURN_CODE,
-            message=artifact_error if artifact_error is not None else "Build record artifact is unavailable.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=None,
-            firmware_sha256=recorded_sha256,
-            build_fingerprint=recorded_fingerprint,
-            build_fingerprint_algorithm=recorded_algorithm,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if not artifact_path.is_file():
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISSING,
-            return_code=BUILD_RECORD_MISSING_RETURN_CODE,
-            message=f"Build record firmware artifact not found: {artifact_path}",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=artifact_path,
-            firmware_sha256=recorded_sha256,
-            build_fingerprint=recorded_fingerprint,
-            build_fingerprint_algorithm=recorded_algorithm,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
+    if artifact_error is not None or artifact_path is None or not artifact_path.is_file():
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISSING, BUILD_RECORD_MISSING_RETURN_CODE, artifact_error or f"Build record firmware artifact not found: {artifact_path}", build_number, record_dir, manifest_path, artifact_path, recorded_sha256, None, None, None, None, None, manifest)
     actual_sha256 = calculate_file_sha256(artifact_path)
     if actual_sha256 != recorded_sha256:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISMATCH,
-            return_code=BUILD_RECORD_MISMATCH_RETURN_CODE,
-            message="Build record firmware artifact SHA-256 does not match the manifest.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=artifact_path,
-            firmware_sha256=recorded_sha256,
-            build_fingerprint=recorded_fingerprint,
-            build_fingerprint_algorithm=recorded_algorithm,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    if recorded_algorithm != current_algorithm or recorded_fingerprint != current_fingerprint:
-        return VerifiedBuildRecord(
-            status=BUILD_RECORD_STATUS_MISMATCH,
-            return_code=BUILD_RECORD_MISMATCH_RETURN_CODE,
-            message="Current source/build fingerprint does not match the referenced build record.",
-            build_number=build_number,
-            record_dir=record_dir,
-            manifest_path=manifest_path,
-            artifact_path=artifact_path,
-            firmware_sha256=recorded_sha256,
-            build_fingerprint=recorded_fingerprint,
-            build_fingerprint_algorithm=recorded_algorithm,
-            current_build_fingerprint=current_fingerprint,
-            current_build_fingerprint_algorithm=current_algorithm,
-            current_build_fingerprint_error=None,
-            manifest=manifest,
-        )
-
-    return VerifiedBuildRecord(
-        status=BUILD_RECORD_STATUS_VERIFIED,
-        return_code=BUILD_RECORD_OK,
-        message="Referenced build record is valid and matches the current source/build fingerprint.",
-        build_number=build_number,
-        record_dir=record_dir,
-        manifest_path=manifest_path,
-        artifact_path=artifact_path,
-        firmware_sha256=recorded_sha256,
-        build_fingerprint=recorded_fingerprint,
-        build_fingerprint_algorithm=recorded_algorithm,
-        current_build_fingerprint=current_fingerprint,
-        current_build_fingerprint_algorithm=current_algorithm,
-        current_build_fingerprint_error=None,
-        manifest=manifest,
-    )
-
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISMATCH, BUILD_RECORD_MISMATCH_RETURN_CODE, "Build record firmware artifact SHA-256 does not match the manifest.", build_number, record_dir, manifest_path, artifact_path, recorded_sha256, None, None, None, None, None, manifest)
+    return VerifiedBuildRecord(BUILD_RECORD_STATUS_VERIFIED, BUILD_RECORD_OK, "Referenced build record and retained ELF SHA-256 are valid.", build_number, record_dir, manifest_path, artifact_path, recorded_sha256, None, None, None, None, None, manifest)
 
 def build_record_manifest(
     *,

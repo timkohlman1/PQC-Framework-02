@@ -116,7 +116,7 @@ Detailed signing-tuple, automated-test evidence, MQTT broker lifecycle, classica
 
 ### Declared certificate prerequisites
 
-TLS experiment profiles declare `mqtt.tls.certificate_profile`. Running `experiment build` or `experiment-gateway run` prepares or reuses the matching tuple under `secrets/mqtt/<profile>/`, validates public provenance, and passes the resolved CA into build fingerprinting. Do not invoke certificate provisioning as a separate prerequisite and do not place authoritative certificates under `experiment/mqtt-broker/runtime/`.
+TLS experiment profiles declare `mqtt.tls.certificate_profile`. Running `experiment build` or `experiment-gateway run` prepares or reuses the matching tuple under `secrets/mqtt/<profile>/`, validates public provenance, and embeds the resolved public material into generated build configuration. Do not invoke certificate provisioning as a separate prerequisite and do not place authoritative certificates under `experiment/mqtt-broker/runtime/`.
 
 ### Certificate services
 
@@ -124,6 +124,13 @@ Classical X.509 certificate generation is owned by `framework/certs` (step-ca, V
 
 ## Experiment console progress
 
-Experiment commands emit timestamped stage messages for resolved cryptography, prerequisites, build-reuse evaluation, CMake configuration and compilation, gateway operations, broker/MQTT lifecycle work, cleanup, and final result recording. Timestamps default to `Australia/Melbourne`, include `AEST` or `AEDT`, and may be overridden with `PQC_PROGRESS_TIMEZONE` using an IANA timezone name.
+Experiment commands emit timestamped stage messages for resolved cryptography, prerequisites, CMake configuration and build execution, gateway operations, broker/MQTT lifecycle work, cleanup, and final result recording. Timestamps default to `Australia/Melbourne`, include `AEST` or `AEDT`, and may be overridden with `PQC_PROGRESS_TIMEZONE` using an IANA timezone name.
 
 Progress output is operational context only. The result manifest and retained logs remain authoritative evidence.
+
+
+### Application build identity and incremental compilation
+
+Application builds no longer use framework-level source, header, tool, or dependency fingerprints and are never selected from a reusable build pool. Every build request invokes `cmake --preset <preset>` followed by `cmake --build --preset <preset>`. The retained CMake/Ninja build directory provides native incremental optimisation, so unchanged object files may be reused by Ninja without the framework claiming cross-run artifact compatibility.
+
+After a successful build, the framework calculates the final ELF SHA-256. This digest is the artifact identity recorded in the run manifest and immutable build record. Normal build identities use `build-<number>-<elf-sha256-prefix>`. Flash provenance verifies that the selected ELF matches the SHA-256 in the referenced immutable record; it does not recalculate source-state fingerprints.

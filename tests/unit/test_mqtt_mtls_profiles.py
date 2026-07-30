@@ -37,12 +37,13 @@ def test_firmware_loads_client_identity_only_for_mutual_tls():
     assert 'PQC_WolfMQTT_DiagnosticCode("client_private_key_load"' in source
 
 
-def test_external_dependency_resolution_adds_mtls_inputs():
+def test_external_dependency_resolution_adds_mtls_inputs_without_build_fingerprinting():
     source = Path("scripts/framework/external_dependencies.py").read_text()
-    assert '"client_certificate"' in source
-    assert '"client_private_key"' in source
-    fingerprint = Path("scripts/framework/fingerprint.py").read_text()
-    assert '("ca_certificate", "client_certificate", "client_private_key")' in fingerprint
+    assert 'client_certificate = canonical_dir / "client.crt" if mutual_tls else None' in source
+    assert 'client_private_key = canonical_dir / "client.key" if mutual_tls else None' in source
+    assert 'required.extend([client_certificate, client_private_key])' in source
+    assert '"client_certificate": mqtt.client_certificate.relative_to(repo_root).as_posix()' in source
+    assert '"client_private_key": mqtt.client_private_key.relative_to(repo_root).as_posix()' in source
 
 
 def test_hybrid_mtls_broker_requires_client_certificate():
