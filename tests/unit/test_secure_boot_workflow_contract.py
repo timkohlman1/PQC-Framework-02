@@ -24,14 +24,19 @@ def _load_hardware_test_module():
 
 
 def test_secure_boot_profile_and_hardware_test_use_derived_timing_contract():
-    profile = (
-        REPO_ROOT
-        / "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
-    ).read_text(encoding="utf-8")
+    experiment_spec = importlib.util.spec_from_file_location(
+        "experiment_cli_for_workflow_contract", REPO_ROOT / "scripts/experiment.py"
+    )
+    assert experiment_spec is not None and experiment_spec.loader is not None
+    experiment_cli = importlib.util.module_from_spec(experiment_spec)
+    experiment_spec.loader.exec_module(experiment_cli)
+    profile = experiment_cli.load_config(
+        REPO_ROOT / "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+    )
     hardware = HARDWARE_TEST_PATH.read_text(encoding="utf-8")
     expected = "framework_derived_from_uart_cycles_and_reported_hclk"
 
-    assert f"boot_timing_source: {expected}" in profile
+    assert profile["secure_boot_flash"]["boot_timing_source"] == expected
     assert expected in hardware
     assert "uart_explicit_verification_time_marker" not in hardware
 

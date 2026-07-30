@@ -81,9 +81,11 @@ Middlewares/Third_Party/FreeRTOS/           CubeMX-generated FreeRTOS middleware
 configs/boards/board_a.yaml                 Board metadata
 configs/hosts/gateway.yaml                  Gateway, flash helper, UART path
 configs/boot/direct_flash.yaml              Direct-flash boot profile
-configs/boot/wolfboot_*.yaml                Secure-boot profile metadata
-configs/builds/wolfboot_stm32l4_*.yaml      wolfBoot build profiles
-configs/signing/wolfboot_*_app.yaml         Application-signing profiles
+configs/targets/stm32l4r5_wolfboot.yaml   Shared wolfBoot target, layout, build, signing, and experiment defaults
+configs/algorithms/*.yaml                    Canonical per-algorithm wolfBoot and signing differences
+configs/boot/wolfboot_*.yaml                Thin compatibility entry points for secure-boot modes
+configs/builds/wolfboot_stm32l4_*.yaml      Thin compatibility entry points for wolfBoot builds
+configs/signing/wolfboot_*_app.yaml         Thin compatibility entry points for application signing
 configs/experiments/baseline_direct_uart.yaml
 configs/experiments/wolfboot_*_uart.yaml    Experiment profiles
 configs/benchmarks/classical_signing_profiles.yaml
@@ -94,6 +96,12 @@ docker/python/Dockerfile                    Non-hardware Python, STM32, wolfBoot
 .github/workflows/ci.yml                    CI workflow with runner-compatible, MQTT broker Docker runtime, and containerised non-hardware jobs
 requirements-dev.txt                        Python development dependencies for unit-test validation
 ```
+
+### Composed secure-boot profiles
+
+Secure-boot configuration uses two canonical sources. `configs/targets/stm32l4r5_wolfboot.yaml` owns values common to the STM32L4R5 wolfBoot target, including layout, common build inputs, signing defaults, and shared experiment behaviour. `configs/algorithms/<algorithm>.yaml` owns each algorithm's wolfBoot identifier, key and signature properties, config template, signing arguments, tuple paths, and algorithm-specific evidence metadata.
+
+The existing files under `configs/boot/`, `configs/builds/`, `configs/signing/`, and secure-boot files under `configs/experiments/` remain stable command-line entry points. They are intentionally thin references resolved by `scripts/experiment.py`. Callers receive the same effective mappings as before the consolidation, while repeated values have one configuration owner. Direct-flash and MQTT experiment profiles remain standalone because they do not use the wolfBoot algorithm composition model.
 
 ## Python implementation map
 

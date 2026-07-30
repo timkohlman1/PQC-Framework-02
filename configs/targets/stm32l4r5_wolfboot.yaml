@@ -1,0 +1,99 @@
+id: stm32l4r5_wolfboot
+description: Shared STM32L4R5 wolfBoot target, layout, build, signing, and secure-boot experiment defaults.
+profiles:
+  build:
+    artifact: tools/wolfboot/wolfboot.elf
+    build:
+      args: WOLFBOOT_ROOT=. wolfboot.elf
+      boot_timing_instrumentation_patch: true
+      command: make
+      generated_config: tools/wolfboot/.config
+      generated_keystore: tools/wolfboot/src/keystore.c
+      mingw_keytools_ansi_stdio_patch: true
+      runtime_stack_high_water_instrumentation: true
+      signing_tuple:
+        keystore: keystore.c
+        manifest: tuple.json
+        private_key: private_key.der
+      stm32l4_hal_conf_pwr_patch: true
+      wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
+    dependency_strategy: git_submodule
+    layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
+    output_dir: tools/wolfboot
+    source_dir: tools/wolfboot
+    target: stm32l4r5_project_local
+    target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
+  signing:
+    binary_conversion:
+      args: -O binary {input_elf} {input_image}
+      command: arm-none-eabi-objcopy
+      enabled: true
+    image_header_size_bytes: 8192
+    image_version: 1
+    input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+    key_policy: local_private_key_never_commit
+    keygen:
+      command: tools/keytools/keygen
+      enabled: false
+      stdin: Yes\n
+      working_dir: tools/wolfboot
+    relocated_build_preset: RelocatedDebug
+    retained_signed_image: application_signed.bin
+    sign:
+      command: tools/keytools/sign
+      environment:
+        IMAGE_HEADER_SIZE: "8192"
+      working_dir: tools/wolfboot
+    signing_tuple:
+      manifest: tuple.json
+  experiment:
+    board: board_a
+    firmware:
+    host: gateway
+    secure_boot_benchmark_profile:
+      application_payload: same_relocated_hal_application_payload
+      board: board_a
+      image_header_size_bytes: 8192
+      image_version: 1
+      measurement_method: uart_explicit_wolfboot_mailbox_markers
+      profile_model: configs/benchmarks/classical_signing_profiles.yaml
+      repeated_run_model: phase_11_2_repeat_count_samples
+      runnable: true
+      runtime_memory_model: phase_11_4_firmware_side_stack_high_water_marker
+      schema_version: 1
+      static_metrics_model: phase_11_3_elf_and_artifact_metrics
+    secure_boot_flash:
+      boot_timing_expected_uart_pattern: "wolfBoot verification cycles: <cycles> cycles"
+      boot_timing_unavailable_behavior: record_null_verification_time_ms
+      corrupted_application_artifact: corrupted_application_signed.bin
+      corruption_method: flip_first_byte
+      image_header_size_bytes: 8192
+      image_version: 1
+      negative_test_corrupt_application: false
+      signed_application_pass_offset_to_helper: true
+      wolfboot_artifact: tools/wolfboot/wolfboot.elf
+      wolfboot_pass_offset_to_helper: false
+      wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
+    uart:
+      expected_boot_message: stm32-basic_hal1 boot v0.1.0
+      expected_secure_boot_message: stm32-basic_hal1 secure-boot app v0.1.0
+      expected_tick_message: tick
+  boot:
+    application_signing_profile:
+      input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+      output_evidence: results/signing
+      runtime_boot_validated: false
+    application_slot_concept: planned_signed_application_primary_slot
+    runnable: false
+    secure_boot_flash_profile:
+      expected_secure_boot_uart_marker: stm32-basic_hal1 secure-boot app v0.1.0
+      output_evidence: results
+      runtime_boot_path_validated: requires_user_hardware_log_evidence
+      wolfboot_artifact: tools/wolfboot/wolfboot.elf
+    secure_boot_layout:
+      decision_record: docs/decisions/0003_secure_boot_flash_layout.md
+    wolfboot_build_profile:
+      dependency_strategy: git_submodule
+      generated_config: tools/wolfboot/.config
+      output_evidence: results/wolfboot-builds
+      runtime_boot_validated: false

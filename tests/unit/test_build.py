@@ -1090,3 +1090,13 @@ def test_execute_build_always_invokes_configure_and_build(tmp_path):
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["build"]["reuse_enabled"] is False
     assert manifest["build"]["artifact_identity"] == manifest["firmware"]["sha256"]
+    generated_state = json.loads(
+        (repo_root / ".pqc-generated-state" / "scopes" / "cmake-Debug.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert generated_state["status"] == "success"
+    assert generated_state["scope"] == "cmake-Debug"
+    assert generated_state["artifacts"][0]["path"] == "build/Debug/stm32_basic_hal1.elf"
+    assert generated_state["artifacts"][0]["sha256"] == manifest["firmware"]["sha256"]
+    assert generated_state["identity"]["input_fingerprint"]["status"] == "disabled"

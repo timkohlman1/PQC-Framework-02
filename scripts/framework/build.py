@@ -20,6 +20,11 @@ from framework.artifacts import calculate_file_sha256, copy_firmware_artifacts_t
 from framework.build_number import BuildNumberError, reserve_next_build_number
 from framework.build_records import build_record_dir_for_result_dir, write_build_record
 from framework.manifest import read_manifest, update_manifest
+from framework.generated_state import (
+    build_identity as generated_build_identity,
+    detect_execution_identity,
+    record_generated_state_success,
+)
 from framework.test_provenance import (
     TEST_BUILD_PURPOSE,
     current_build_purpose,
@@ -544,6 +549,42 @@ def execute_build(
                 build_log_path=log_path,
             )
             build_record_manifest_path = build_record_path / "manifest.json"
+
+        if build_purpose != TEST_BUILD_PURPOSE:
+            generated_identity = generated_build_identity(
+                workflow="stm32_cmake",
+                profile=build_preset,
+                input_fingerprint={
+                    "status": "disabled",
+                    "reason": "framework build-input fingerprinting removed",
+                },
+                toolchain={
+                    "configure_command": construct_configure_command(configure_preset),
+                    "build_command": construct_build_command(build_preset),
+                },
+                execution=detect_execution_identity(),
+                extra={
+                    "configure_preset": configure_preset,
+                    "build_preset": build_preset,
+                    "build_identity": build_identity_value,
+                    "firmware_sha256": firmware_sha256,
+                },
+            )
+            record_generated_state_success(
+                repo_root=repo_root_path,
+                scope=f"cmake-{build_preset}",
+                identity=generated_identity,
+                artifacts=[elf_path],
+                record_refs={
+                    "build_number": build_number,
+                    "build_identity": build_identity_value,
+                    "build_record_manifest": (
+                        None
+                        if build_record_manifest_path is None
+                        else str(build_record_manifest_path)
+                    ),
+                },
+            )
 
     update_manifest(result_dir_path / "manifest.json", {
         "result": "build_passed" if return_code == 0 else "build_failed",

@@ -132,19 +132,11 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert build_record_manifest["build"]["identity"] == manifest["build"]["identity"]
     assert build_record_manifest["build"]["return_code"] == 0
     assert build_record_manifest["build"]["log"] == "build.log"
+    assert build_record_manifest["build"]["artifact_identity_algorithm"] == "sha256-elf"
     assert (
-        build_record_manifest["build"]["fingerprint"]
-        == manifest["build"]["fingerprint"]
+        build_record_manifest["build"]["artifact_identity"]
+        == manifest["firmware"]["sha256"]
     )
-    assert (
-        build_record_manifest["build"]["fingerprint_algorithm"]
-        == manifest["build"]["fingerprint_algorithm"]
-    )
-    assert (
-        build_record_manifest["build"]["fingerprint_file_hashes"]
-        == manifest["build"]["fingerprint_file_hashes"]
-    )
-    assert list(manifest["build"]["fingerprint_file_hashes"]) == manifest["build"]["fingerprint_inputs"]
     assert build_record_manifest["firmware"]["sha256"] == manifest["firmware"]["sha256"]
     assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
     assert (

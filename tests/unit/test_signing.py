@@ -352,29 +352,31 @@ def test_execute_application_signing_requires_private_key_when_keygen_disabled(t
 def test_default_application_signing_profile_is_safe_and_phase_10g_scoped():
     repo_root = Path(__file__).resolve().parents[2]
     profile_path = repo_root / "configs" / "signing" / "wolfboot_ecdsa_p256_app.yaml"
-    profile_text = profile_path.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "experiment_cli_for_signing_profile", repo_root / "scripts/experiment.py"
+    )
+    assert spec is not None and spec.loader is not None
+    experiment_cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(experiment_cli)
+    profile = experiment_cli.load_config(profile_path)
 
-    assert "signature_algorithm: ecdsa_p256" in profile_text
-    assert (
-        "private_key: "
+    assert profile["signature_algorithm"] == "ecdsa_p256"
+    assert profile["private_key"] == (
         "secrets/wolfboot/tuples/ecdsa_p256-development/private_key.der"
-    ) in profile_text
-    assert "keygen:" in profile_text
-    assert "enabled: false" in profile_text
-    assert "signing_tuple:" in profile_text
-    assert "tuple_id: ecdsa_p256-development" in profile_text
-    assert (
-        "directory: secrets/wolfboot/tuples/ecdsa_p256-development"
-    ) in profile_text
-    assert "manifest: tuple.json" in profile_text
-    assert "input_elf: build/RelocatedDebug/stm32_basic_hal1.elf" in profile_text
-    assert "input_image: build/RelocatedDebug/stm32_basic_hal1.bin" in profile_text
-    assert "binary_conversion:" in profile_text
-    assert "working_dir: tools/wolfboot" in profile_text
-    assert "command: tools/keytools/keygen" in profile_text
-    assert "command: tools/keytools/sign" in profile_text
-    assert "signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin" in profile_text
-    assert "No private" not in profile_text
+    )
+    assert profile["keygen"]["enabled"] is False
+    assert profile["signing_tuple"]["tuple_id"] == "ecdsa_p256-development"
+    assert profile["signing_tuple"]["directory"] == (
+        "secrets/wolfboot/tuples/ecdsa_p256-development"
+    )
+    assert profile["signing_tuple"]["manifest"] == "tuple.json"
+    assert profile["input_elf"] == "build/RelocatedDebug/stm32_basic_hal1.elf"
+    assert profile["input_image"] == "build/RelocatedDebug/stm32_basic_hal1.bin"
+    assert profile["binary_conversion"]["command"] == "arm-none-eabi-objcopy"
+    assert profile["keygen"]["working_dir"] == "tools/wolfboot"
+    assert profile["keygen"]["command"] == "tools/keytools/keygen"
+    assert profile["sign"]["command"] == "tools/keytools/sign"
+    assert profile["signed_image"] == "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
 
 
 

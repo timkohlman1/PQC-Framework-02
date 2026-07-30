@@ -397,3 +397,51 @@ def test_baseline_experiment_loads_wifi_dhcp_configuration():
     )
     assert config["network"]["wifi"]["ssid"] == "pqc"
     assert config["network"]["ipv4"]["mode"] == "dhcp"
+
+
+def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
+    experiment_cli = load_experiment_module()
+    repo_root = Path(__file__).resolve().parents[2]
+
+    build_profile = experiment_cli.load_config(
+        repo_root / "configs/builds/wolfboot_stm32l4_ecdsa_p256.yaml"
+    )
+    signing_profile = experiment_cli.load_config(
+        repo_root / "configs/signing/wolfboot_ecdsa_p256_app.yaml"
+    )
+    experiment_profile = experiment_cli.load_config(
+        repo_root / "configs/experiments/wolfboot_ecdsa_p256_uart.yaml"
+    )
+
+    assert build_profile["signature_algorithm"] == "ecdsa_p256"
+    assert build_profile["build"]["config_template"] == (
+        "configs/wolfboot/stm32l4r5_ecdsa_p256.config"
+    )
+    assert signing_profile["sign"]["args"].startswith("--ecc256 ")
+    assert signing_profile["image_header_size_bytes"] == 8192
+    assert experiment_profile["boot"] == "wolfboot_ecdsa_p256"
+    assert experiment_profile["secure_boot_flash"]["signed_application_offset"] == "0x08020000"
+
+
+def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
+    experiment_cli = load_experiment_module()
+    profile = tmp_path / "profile.yaml"
+    profile.write_text(
+        "\n".join(
+            [
+                "id: invalid",
+                "profile_kind: unsupported",
+                "target_profile: configs/targets/example.yaml",
+                "algorithm_profile: configs/algorithms/example.yaml",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        experiment_cli.load_config(profile)
+    except experiment_cli.ConfigError as exc:
+        assert "unsupported profile_kind" in str(exc)
+    else:
+        raise AssertionError("unsupported profile_kind was accepted")

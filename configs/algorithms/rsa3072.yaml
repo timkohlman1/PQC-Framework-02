@@ -1,0 +1,155 @@
+id: rsa3072
+target: stm32l4r5_wolfboot
+profiles:
+  build:
+    id: wolfboot_stm32l4_rsa3072
+    description: Build profile for wolfBoot targeting the planned STM32L4R5 RSA3072 secure-boot benchmark configuration.
+    status: configured_phase_11_5d_expanded_classical_profile_build_only_not_boot_validated
+    signature_algorithm: rsa3072
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: rsa3072_benchmark
+      algorithm: RSA3072
+      wolfboot_sign: RSA3072
+      key_size_bits: 3072
+      signature_size_bytes: 384
+      reference_path: false
+      minimum_scope_member: false
+      signature_algorithm: rsa3072
+      expanded_scope_member: true
+    boot_profile: wolfboot_rsa3072
+    build:
+      config_template: configs/wolfboot/stm32l4r5_rsa3072.config
+      signing_key: secrets/wolfboot/tuples/rsa3072-development/private_key.der
+      signing_tuple:
+        tuple_id: rsa3072-development
+        directory: secrets/wolfboot/tuples/rsa3072-development
+    notes: This profile is build-only for the Phase 11.5d RSA3072 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 8192-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+  signing:
+    id: wolfboot_rsa3072_app
+    description: Sign the relocated STM32 HAL application image for the wolfBoot RSA3072 benchmark profile.
+    status: configured_phase_11_5d_signing_only_not_flashing_or_boot_validated
+    boot_profile: wolfboot_rsa3072
+    input_image: build/RelocatedDebug/stm32_basic_hal1_rsa3072.bin
+    signed_image: build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin
+    signature_algorithm: rsa3072
+    signature_size_bytes: 384
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: rsa3072_benchmark
+      algorithm: RSA3072
+      wolfboot_sign: RSA3072
+      key_size_bits: 3072
+      signature_size_bytes: 384
+      reference_path: false
+      minimum_scope_member: false
+      signature_algorithm: rsa3072
+      expanded_scope_member: true
+    private_key: secrets/wolfboot/tuples/rsa3072-development/private_key.der
+    keygen:
+      args: --rsa3072 -g {private_key}
+    sign:
+      args: --rsa3072 {input_image} {private_key} {image_version}
+    signing_tuple:
+      tuple_id: rsa3072-development
+      directory: secrets/wolfboot/tuples/rsa3072-development
+    notes: This profile is signing-only for the Phase 11.5d RSA3072 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+  experiment:
+    id: wolfboot_rsa3072_uart
+    description: Flash wolfBoot and the signed RSA3072 application image, then capture UART benchmark evidence.
+    boot: wolfboot_rsa3072
+    boot_crypto: rsa3072
+    firmware:
+      mode: wolfboot_rsa3072
+      artifact: build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin
+    secure_boot_benchmark_profile:
+      profile_id: rsa3072_benchmark
+      algorithm: RSA3072
+      wolfboot_sign: RSA3072
+      signature_algorithm: rsa3072
+      key_size_bits: 3072
+      signature_size_bytes: 384
+      status: configured_phase_11_5d_expanded_classical_profile
+      signing_profile: configs/signing/wolfboot_rsa3072_app.yaml
+      wolfboot_build_profile: configs/builds/wolfboot_stm32l4_rsa3072.yaml
+      experiment_profile: configs/experiments/wolfboot_rsa3072_uart.yaml
+      boot_profile: configs/boot/wolfboot_rsa3072.yaml
+      minimum_scope_status: phase_11_5d_expanded_classical_set_added_minimum_scope_retained
+      ed25519_status: configured_phase_11_5b_runnable_profile_not_hardware_validated
+      rsa2048_status: configured_phase_11_5c_rsa2048_profile_not_hardware_validated
+      scope_limitations: Phase 11.5d adds ECC384, ECC521, ED448, RSA3072, and RSA4096 as optional expanded classical profiles. Cross-profile aggregation remains Phase 11.6 scope.
+      expanded_scope_status: phase_11_5d_expanded_classical_profile_added
+    secure_boot_flash:
+      evidence_phase: phase_11_5d_expanded_classical_profile
+      signature_algorithm: rsa3072
+      signature_size_bytes: 384
+      wolfboot_offset: 134217728
+      unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_rsa3072.bin
+      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin
+      signed_application_offset: 134348800
+      signing_private_key: secrets/wolfboot/rsa3072_private_key.der
+      boot_timing_source: uart_explicit_verification_time_marker
+      notes: Phase 11.5d uses the same relocated application payload and shared 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256, ED25519, and RSA2048 profiles. The secure-boot flash workflow refuses to flash when available RSA3072 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
+  boot:
+    id: wolfboot_rsa3072
+    mode: wolfboot_rsa3072
+    description: Planned wolfBoot RSA3072 secure-boot benchmark profile. Generic direct-flash execution remains blocked; Phase 10h secure-boot flashing uses explicit two-artifact profiles.
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    implementation_state: rsa3072_build_sign_flash_profiles_defined_runtime_validation_requires_user_logs
+    intended_signature_algorithm: rsa3072
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: rsa3072_benchmark
+      algorithm: RSA3072
+      minimum_scope_member: false
+      reference_path: false
+      expanded_scope_member: true
+    flash_layout_status: defined_phase_10d_reused_by_phase_11_5d_expanded_classical_flash_workflow
+    secure_boot_layout:
+      status: planned_layout_used_by_secure_boot_flash_workflow
+      internal_flash_base: 134217728
+      internal_flash_size: 2097152
+      internal_flash_end: 136314879
+      wolfboot_base: 134217728
+      wolfboot_size: 131072
+      primary_slot_base: 134348800
+      primary_slot_size: 917504
+      primary_slot_entry: 134356992
+      image_header_size: 8192
+      update_slot_base: 135266304
+      update_slot_size: 917504
+      swap_metadata_base: 136183808
+      swap_metadata_size: 131072
+      wolfboot_sector_size: 16384
+      physical_flash_page_assumption: 4096
+      runtime_boot_validated: false
+    relocated_application:
+      build_preset: RelocatedDebug
+      linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
+      vector_offset: 139264
+      application_start: 134356992
+      runtime_boot_validated: false
+    wolfboot_build_profile:
+      status: defined_phase_11_5d_build_only_not_boot_validated
+      profile: configs/builds/wolfboot_stm32l4_rsa3072.yaml
+      config_template: configs/wolfboot/stm32l4r5_rsa3072.config
+      command: python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_rsa3072.yaml
+    application_signing_profile:
+      status: defined_phase_11_5d_signing_only_not_flashing_or_boot_validated
+      profile: configs/signing/wolfboot_rsa3072_app.yaml
+      input_image: build/RelocatedDebug/stm32_basic_hal1_rsa3072.bin
+      signed_image: build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin
+      private_key: secrets/wolfboot/rsa3072_private_key.der
+      command: python scripts/experiment.py sign-application --profile configs/signing/wolfboot_rsa3072_app.yaml
+    secure_boot_flash_profile:
+      status: defined_phase_11_5d_flash_profile_not_hardware_validated
+      experiment: configs/experiments/wolfboot_rsa3072_uart.yaml
+      command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_rsa3072_uart.yaml
+      wolfboot_offset: 134217728
+      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin
+      signed_application_offset: 134348800
+      positive_boot_evidence_status: uses_existing_phase_10i_marker_model
+      negative_corrupted_application_test_status: uses_existing_phase_10j_negative_test_model
+      boot_timing_status: uses_existing_phase_10k_timing_model
+      manifest_consolidation_status: uses_existing_phase_10l_and_phase_11_benchmark_schema
+    notes: This RSA3072 profile reuses the Phase 11 shared 8 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines RSA3072 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.

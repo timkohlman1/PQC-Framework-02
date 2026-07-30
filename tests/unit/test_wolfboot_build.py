@@ -419,16 +419,21 @@ def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
     wolfboot_build = load_wolfboot_build_module()
     repo_root = Path(__file__).resolve().parents[2]
     profile_path = repo_root / "configs" / "builds" / "wolfboot_stm32l4_ecdsa_p256.yaml"
-    profile_text = profile_path.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "experiment_cli_for_wolfboot_profile", repo_root / "scripts/experiment.py"
+    )
+    assert spec is not None and spec.loader is not None
+    experiment_cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(experiment_cli)
+    profile = experiment_cli.load_config(profile_path)
 
-    assert 'args: "WOLFBOOT_ROOT=. wolfboot.elf"' in profile_text
-    assert "signing_tuple:" in profile_text
-    assert "tuple_id: ecdsa_p256-development" in profile_text
-    assert (
-        "directory: secrets/wolfboot/tuples/ecdsa_p256-development"
-    ) in profile_text
-    assert "stm32l4_hal_conf_pwr_patch: true" in profile_text
-    assert "boot_timing_instrumentation_patch: true" in profile_text
+    assert profile["build"]["args"] == "WOLFBOOT_ROOT=. wolfboot.elf"
+    assert profile["build"]["signing_tuple"]["tuple_id"] == "ecdsa_p256-development"
+    assert profile["build"]["signing_tuple"]["directory"] == (
+        "secrets/wolfboot/tuples/ecdsa_p256-development"
+    )
+    assert profile["build"]["stm32l4_hal_conf_pwr_patch"] is True
+    assert profile["build"]["boot_timing_instrumentation_patch"] is True
     assert wolfboot_build.construct_wolfboot_build_command({
         "id": "wolfboot_stm32l4_ecdsa_p256",
         "description": "Test wolfBoot profile.",

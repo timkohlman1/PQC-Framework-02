@@ -1,0 +1,158 @@
+id: ed448
+target: stm32l4r5_wolfboot
+profiles:
+  build:
+    id: wolfboot_stm32l4_ed448
+    description: Build profile for wolfBoot targeting the planned STM32L4R5 ED448 secure-boot benchmark configuration.
+    status: configured_phase_11_5d_expanded_classical_profile_build_only_not_boot_validated
+    signature_algorithm: ed448
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: ed448_benchmark
+      algorithm: ED448
+      wolfboot_sign: ED448
+      key_size_bits: 448
+      signature_size_bytes: 114
+      reference_path: false
+      minimum_scope_member: false
+      signature_algorithm: ed448
+      expanded_scope_member: true
+      curve: Ed448
+    boot_profile: wolfboot_ed448
+    build:
+      config_template: configs/wolfboot/stm32l4r5_ed448.config
+      signing_key: secrets/wolfboot/tuples/ed448-development/private_key.der
+      signing_tuple:
+        tuple_id: ed448-development
+        directory: secrets/wolfboot/tuples/ed448-development
+    notes: This profile is build-only for the Phase 11.5d ED448 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 8192-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+  signing:
+    id: wolfboot_ed448_app
+    description: Sign the relocated STM32 HAL application image for the wolfBoot ED448 benchmark profile.
+    status: configured_phase_11_5d_signing_only_not_flashing_or_boot_validated
+    boot_profile: wolfboot_ed448
+    input_image: build/RelocatedDebug/stm32_basic_hal1_ed448.bin
+    signed_image: build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin
+    signature_algorithm: ed448
+    signature_size_bytes: 114
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: ed448_benchmark
+      algorithm: ED448
+      wolfboot_sign: ED448
+      key_size_bits: 448
+      signature_size_bytes: 114
+      reference_path: false
+      minimum_scope_member: false
+      signature_algorithm: ed448
+      expanded_scope_member: true
+      curve: Ed448
+    private_key: secrets/wolfboot/tuples/ed448-development/private_key.der
+    keygen:
+      args: --ed448 -g {private_key}
+    sign:
+      args: --ed448 {input_image} {private_key} {image_version}
+    signing_tuple:
+      tuple_id: ed448-development
+      directory: secrets/wolfboot/tuples/ed448-development
+    notes: This profile is signing-only for the Phase 11.5d ED448 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+  experiment:
+    id: wolfboot_ed448_uart
+    description: Flash wolfBoot and the signed ED448 application image, then capture UART benchmark evidence.
+    boot: wolfboot_ed448
+    boot_crypto: ed448
+    firmware:
+      mode: wolfboot_ed448
+      artifact: build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin
+    secure_boot_benchmark_profile:
+      profile_id: ed448_benchmark
+      algorithm: ED448
+      wolfboot_sign: ED448
+      signature_algorithm: ed448
+      key_size_bits: 448
+      signature_size_bytes: 114
+      status: configured_phase_11_5d_expanded_classical_profile
+      signing_profile: configs/signing/wolfboot_ed448_app.yaml
+      wolfboot_build_profile: configs/builds/wolfboot_stm32l4_ed448.yaml
+      experiment_profile: configs/experiments/wolfboot_ed448_uart.yaml
+      boot_profile: configs/boot/wolfboot_ed448.yaml
+      minimum_scope_status: phase_11_5d_expanded_classical_set_added_minimum_scope_retained
+      ed25519_status: configured_phase_11_5b_runnable_profile_not_hardware_validated
+      rsa2048_status: configured_phase_11_5c_rsa2048_profile_not_hardware_validated
+      scope_limitations: Phase 11.5d adds ECC384, ECC521, ED448, RSA3072, and RSA4096 as optional expanded classical profiles. Cross-profile aggregation remains Phase 11.6 scope.
+      expanded_scope_status: phase_11_5d_expanded_classical_profile_added
+      curve: Ed448
+    secure_boot_flash:
+      evidence_phase: phase_11_5d_expanded_classical_profile
+      signature_algorithm: ed448
+      signature_size_bytes: 114
+      wolfboot_offset: 134217728
+      unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ed448.bin
+      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin
+      signed_application_offset: 134348800
+      signing_private_key: secrets/wolfboot/ed448_private_key.der
+      boot_timing_source: uart_explicit_verification_time_marker
+      notes: Phase 11.5d uses the same relocated application payload and shared 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256, ED25519, and RSA2048 profiles. The secure-boot flash workflow refuses to flash when available ED448 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
+  boot:
+    id: wolfboot_ed448
+    mode: wolfboot_ed448
+    description: Planned wolfBoot ED448 secure-boot benchmark profile. Generic direct-flash execution remains blocked; Phase 10h secure-boot flashing uses explicit two-artifact profiles.
+    status: configured_phase_11_5d_expanded_classical_profile_not_hardware_validated
+    implementation_state: ed448_build_sign_flash_profiles_defined_runtime_validation_requires_user_logs
+    intended_signature_algorithm: ed448
+    classical_benchmark_profile:
+      model: configs/benchmarks/classical_signing_profiles.yaml
+      profile_id: ed448_benchmark
+      algorithm: ED448
+      minimum_scope_member: false
+      reference_path: false
+      expanded_scope_member: true
+    flash_layout_status: defined_phase_10d_reused_by_phase_11_5d_expanded_classical_flash_workflow
+    secure_boot_layout:
+      status: planned_layout_used_by_secure_boot_flash_workflow
+      internal_flash_base: 134217728
+      internal_flash_size: 2097152
+      internal_flash_end: 136314879
+      wolfboot_base: 134217728
+      wolfboot_size: 131072
+      primary_slot_base: 134348800
+      primary_slot_size: 917504
+      primary_slot_entry: 134356992
+      image_header_size: 8192
+      update_slot_base: 135266304
+      update_slot_size: 917504
+      swap_metadata_base: 136183808
+      swap_metadata_size: 131072
+      wolfboot_sector_size: 16384
+      physical_flash_page_assumption: 4096
+      runtime_boot_validated: false
+    relocated_application:
+      build_preset: RelocatedDebug
+      linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
+      vector_offset: 139264
+      application_start: 134356992
+      runtime_boot_validated: false
+    wolfboot_build_profile:
+      status: defined_phase_11_5d_build_only_not_boot_validated
+      profile: configs/builds/wolfboot_stm32l4_ed448.yaml
+      config_template: configs/wolfboot/stm32l4r5_ed448.config
+      command: python scripts/experiment.py build-wolfboot --profile configs/builds/wolfboot_stm32l4_ed448.yaml
+    application_signing_profile:
+      status: defined_phase_11_5d_signing_only_not_flashing_or_boot_validated
+      profile: configs/signing/wolfboot_ed448_app.yaml
+      input_image: build/RelocatedDebug/stm32_basic_hal1_ed448.bin
+      signed_image: build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin
+      private_key: secrets/wolfboot/ed448_private_key.der
+      command: python scripts/experiment.py sign-application --profile configs/signing/wolfboot_ed448_app.yaml
+    secure_boot_flash_profile:
+      status: defined_phase_11_5d_flash_profile_not_hardware_validated
+      experiment: configs/experiments/wolfboot_ed448_uart.yaml
+      command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/wolfboot_ed448_uart.yaml
+      wolfboot_offset: 134217728
+      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin
+      signed_application_offset: 134348800
+      positive_boot_evidence_status: uses_existing_phase_10i_marker_model
+      negative_corrupted_application_test_status: uses_existing_phase_10j_negative_test_model
+      boot_timing_status: uses_existing_phase_10k_timing_model
+      manifest_consolidation_status: uses_existing_phase_10l_and_phase_11_benchmark_schema
+    notes: This ED448 profile reuses the Phase 11 shared 8 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines ED448 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.

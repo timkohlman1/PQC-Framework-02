@@ -1,43 +1,4 @@
 id: wolfboot_stm32l4_mldsa44
-description: Build profile for wolfBoot targeting the STM32L4R5 ML-DSA-44 secure-boot benchmark configuration.
-status: configured_post_phase_11_mldsa_build_only_not_boot_validated
-dependency_strategy: git_submodule
-source_dir: tools/wolfboot
-output_dir: tools/wolfboot
-artifact: tools/wolfboot/wolfboot.elf
-target: stm32l4r5_project_local
-signature_algorithm: mldsa44
-mldsa_benchmark_profile:
-  model: configs/benchmarks/classical_signing_profiles.yaml
-  profile_id: mldsa44_benchmark
-  algorithm: ML-DSA-44
-  wolfboot_sign: ML_DSA
-  mldsa_level: 2
-  security_category: 2
-  public_key_size_bytes: 1312
-  private_key_size_bytes: 2560
-  signature_size_bytes: 2420
-  reference_path: false
-  current_header_fit: true
-boot_profile: wolfboot_mldsa44
-layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
-target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
-build:
-  command: make
-  args: "WOLFBOOT_ROOT=. wolfboot.elf"
-  config_template: configs/wolfboot/stm32l4r5_mldsa44.config
-  generated_config: tools/wolfboot/.config
-  mingw_keytools_ansi_stdio_patch: true
-  stm32l4_hal_conf_pwr_patch: true
-  boot_timing_instrumentation_patch: true
-  runtime_stack_high_water_instrumentation: true
-  signing_key: secrets/wolfboot/tuples/mldsa44-development/private_key.der
-  wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
-  generated_keystore: tools/wolfboot/src/keystore.c
-  signing_tuple:
-    tuple_id: mldsa44-development
-    directory: secrets/wolfboot/tuples/mldsa44-development
-    private_key: private_key.der
-    keystore: keystore.c
-    manifest: tuple.json
-notes: This profile is build-only for the post-Phase 11 ML-DSA-44 benchmark profile. It uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=2, IMAGE_SIGNATURE_SIZE=2420, and the existing 8192-byte image-header reserve. The framework coordinates the canonical local ML-DSA-44 signing key with the wolfBoot working-tree private key and records SHA-256 key fingerprints as non-secret consistency evidence. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+profile_kind: wolfboot_build
+target_profile: configs/targets/stm32l4r5_wolfboot.yaml
+algorithm_profile: configs/algorithms/mldsa44.yaml

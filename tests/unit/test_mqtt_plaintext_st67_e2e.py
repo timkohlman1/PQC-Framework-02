@@ -110,3 +110,16 @@ def test_mqtt_e2e_run_manages_broker_lifecycle_and_retains_logs():
         "broker_stop",
     ):
         assert marker in source
+
+
+def test_mqtt_reconnect_locals_are_scoped_to_enabled_builds():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    function = source.split("bool PQC_WolfMQTT_RuntimeStatusLine", 1)[1]
+    disabled_guard = function.index("#if (PQC_MQTT_ENABLED != 0)")
+
+    for declaration in (
+        "PQC_WolfMQTTBuildOnlyStatus second;",
+        "int reconnect_result=MQTT_CODE_SUCCESS;",
+        "bool reconnect_attempted=false;",
+    ):
+        assert function.index(declaration) > disabled_guard

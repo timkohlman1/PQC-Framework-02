@@ -1,43 +1,4 @@
 id: wolfboot_stm32l4_ed448
-description: Build profile for wolfBoot targeting the planned STM32L4R5 ED448 secure-boot benchmark configuration.
-status: configured_phase_11_5d_expanded_classical_profile_build_only_not_boot_validated
-dependency_strategy: git_submodule
-source_dir: tools/wolfboot
-output_dir: tools/wolfboot
-artifact: tools/wolfboot/wolfboot.elf
-target: stm32l4r5_project_local
-signature_algorithm: ed448
-classical_benchmark_profile:
-  model: configs/benchmarks/classical_signing_profiles.yaml
-  profile_id: ed448_benchmark
-  algorithm: ED448
-  wolfboot_sign: ED448
-  key_size_bits: 448
-  signature_size_bytes: 114
-  reference_path: false
-  minimum_scope_member: false
-  signature_algorithm: ed448
-  expanded_scope_member: true
-  curve: Ed448
-boot_profile: wolfboot_ed448
-layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
-target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
-build:
-  command: make
-  args: WOLFBOOT_ROOT=. wolfboot.elf
-  config_template: configs/wolfboot/stm32l4r5_ed448.config
-  generated_config: tools/wolfboot/.config
-  mingw_keytools_ansi_stdio_patch: true
-  stm32l4_hal_conf_pwr_patch: true
-  boot_timing_instrumentation_patch: true
-  runtime_stack_high_water_instrumentation: true
-  signing_key: secrets/wolfboot/tuples/ed448-development/private_key.der
-  wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
-  generated_keystore: tools/wolfboot/src/keystore.c
-  signing_tuple:
-    tuple_id: ed448-development
-    directory: secrets/wolfboot/tuples/ed448-development
-    private_key: private_key.der
-    keystore: keystore.c
-    manifest: tuple.json
-notes: This profile is build-only for the Phase 11.5d ED448 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 8192-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+profile_kind: wolfboot_build
+target_profile: configs/targets/stm32l4r5_wolfboot.yaml
+algorithm_profile: configs/algorithms/ed448.yaml

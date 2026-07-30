@@ -1,39 +1,4 @@
 id: wolfboot_stm32l4_ed25519
-description: Build profile for wolfBoot targeting the planned STM32L4R5 ED25519 secure-boot benchmark configuration.
-status: configured_phase_11_5b_ed25519_build_only_not_boot_validated
-dependency_strategy: git_submodule
-source_dir: tools/wolfboot
-output_dir: tools/wolfboot
-artifact: tools/wolfboot/wolfboot.elf
-target: stm32l4r5_project_local
-signature_algorithm: ed25519
-classical_benchmark_profile:
-  model: configs/benchmarks/classical_signing_profiles.yaml
-  profile_id: ed25519_benchmark
-  algorithm: ED25519
-  wolfboot_sign: ED25519
-  signature_size_bytes: 64
-  reference_path: false
-  minimum_scope_member: true
-boot_profile: wolfboot_ed25519
-layout_decision: docs/decisions/0003_secure_boot_flash_layout.md
-target_support_decision: docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md
-build:
-  command: make
-  args: "WOLFBOOT_ROOT=. wolfboot.elf"
-  config_template: configs/wolfboot/stm32l4r5_ed25519.config
-  generated_config: tools/wolfboot/.config
-  mingw_keytools_ansi_stdio_patch: true
-  stm32l4_hal_conf_pwr_patch: true
-  boot_timing_instrumentation_patch: true
-  runtime_stack_high_water_instrumentation: true
-  signing_key: secrets/wolfboot/tuples/ed25519-development/private_key.der
-  wolfboot_private_key: tools/wolfboot/wolfboot_signing_private_key.der
-  generated_keystore: tools/wolfboot/src/keystore.c
-  signing_tuple:
-    tuple_id: ed25519-development
-    directory: secrets/wolfboot/tuples/ed25519-development
-    private_key: private_key.der
-    keystore: keystore.c
-    manifest: tuple.json
-notes: This profile is build-only for the Phase 11.5b ED25519 benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256 reference path. The framework coordinates the canonical local ED25519 signing key with the wolfBoot working-tree private key and records SHA-256 key fingerprints as non-secret consistency evidence. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+profile_kind: wolfboot_build
+target_profile: configs/targets/stm32l4r5_wolfboot.yaml
+algorithm_profile: configs/algorithms/ed25519.yaml

@@ -866,9 +866,12 @@ int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status) { ret
 
 bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context,bool scheduler_running)
 {
-    PQC_WolfMQTTBuildOnlyStatus first, second; int result, reconnect_result=MQTT_CODE_SUCCESS; int written; bool reconnect_attempted=false;
+    PQC_WolfMQTTBuildOnlyStatus first; int result; int written;
     if((buffer==NULL)||(size==0U)||(context==NULL)) return false;
 #if (PQC_MQTT_ENABLED != 0)
+    PQC_WolfMQTTBuildOnlyStatus second;
+    int reconnect_result=MQTT_CODE_SUCCESS;
+    bool reconnect_attempted=false;
     if (PQC_WolfMQTT_TLSRequested()) {
         int wolfssl_init_result = wolfSSL_Init();
         PQC_WolfMQTT_DiagnosticCode("wolfssl_init", wolfssl_init_result, 0);

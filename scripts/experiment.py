@@ -811,10 +811,8 @@ def _parse_scalar(value: str) -> Any:
         return value
 
 
-def load_config(path: Path | str) -> dict[str, Any]:
-    """Load a simple YAML mapping from a config file."""
-
-    config_path = Path(path)
+def _load_config_mapping(config_path: Path) -> dict[str, Any]:
+    """Load one simple YAML mapping without resolving profile references."""
 
     if not config_path.exists():
         raise ConfigError(f"Config file not found: {config_path}")
@@ -862,6 +860,94 @@ def load_config(path: Path | str) -> dict[str, Any]:
             parent[key] = _parse_scalar(value)
 
     return root
+
+
+def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge mappings without mutating either input."""
+
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _merge_config(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _repository_path_from_config(config_path: Path, configured_path: str) -> Path:
+    """Resolve a repository-relative profile reference from any config location."""
+
+    reference = Path(configured_path)
+    if reference.is_absolute():
+        return reference
+
+    for parent in (config_path.parent, *config_path.parents):
+        if parent.name == "configs":
+            return parent.parent / reference
+
+    return reference
+
+
+def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Compose a thin compatibility profile from target and algorithm sources."""
+
+    profile_kind = config.get("profile_kind")
+    if profile_kind is None:
+        return config
+
+    profile_sections = {
+        "wolfboot_build": "build",
+        "application_signing": "signing",
+        "secure_boot_experiment": "experiment",
+        "boot": "boot",
+    }
+    section = profile_sections.get(str(profile_kind))
+    if section is None:
+        raise ConfigError(
+            f"{config_path}: unsupported profile_kind '{profile_kind}'"
+        )
+
+    target_ref = require_field(config, "target_profile", str(config_path))
+    algorithm_ref = require_field(config, "algorithm_profile", str(config_path))
+    target_path = _repository_path_from_config(config_path, str(target_ref))
+    algorithm_path = _repository_path_from_config(config_path, str(algorithm_ref))
+    target = _load_config_mapping(target_path)
+    algorithm = _load_config_mapping(algorithm_path)
+
+    target_profiles = target.get("profiles")
+    algorithm_profiles = algorithm.get("profiles")
+    if not isinstance(target_profiles, dict) or not isinstance(
+        target_profiles.get(section), dict
+    ):
+        raise ConfigError(
+            f"{target_path} missing profiles.{section} mapping"
+        )
+    if not isinstance(algorithm_profiles, dict) or not isinstance(
+        algorithm_profiles.get(section), dict
+    ):
+        raise ConfigError(
+            f"{algorithm_path} missing profiles.{section} mapping"
+        )
+
+    resolved = _merge_config(
+        target_profiles[section], algorithm_profiles[section]
+    )
+    local_overrides = {
+        key: value
+        for key, value in config.items()
+        if key not in {"profile_kind", "target_profile", "algorithm_profile"}
+    }
+    return _merge_config(resolved, local_overrides)
+
+
+def load_config(path: Path | str) -> dict[str, Any]:
+    """Load a simple YAML mapping and resolve thin composed profiles."""
+
+    config_path = Path(path)
+    return _resolve_composed_profile(
+        config_path, _load_config_mapping(config_path)
+    )
 
 
 def require_field(config: dict[str, Any], dotted_path: str, config_name: str) -> Any:
