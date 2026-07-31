@@ -13,6 +13,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts import copy_material_directory_to_result, write_material_inventory
+
 
 class ExternalDependencyError(RuntimeError):
     """Raised when a declared external dependency cannot be prepared safely."""
@@ -159,6 +161,13 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         raise ExternalDependencyError("MQTT TLS root CA hash does not match certificate provenance")
     if str(provenance.get("source", "")) != "framework/certs":
         raise ExternalDependencyError("MQTT TLS material was not sourced from framework/certs")
+    materials = copy_material_directory_to_result(
+        canonical_dir, result_dir, f"cryptographic-material/mqtt/{profile_id}",
+        role_prefix="mqtt_tls_material",
+        private_names={"server.key", "client.key", "ca.key", "intermediate-ca.key"},
+        required_for=["broker_installation", "client_installation", "manual_experiment_orchestration"],
+    )
+    write_material_inventory(result_dir, materials)
     return ResolvedMqttTlsContext(
         profile_id, "stepca-classical", ca_algorithm, leaf_algorithm,
         canonical_dir, ca_path, provenance_path,

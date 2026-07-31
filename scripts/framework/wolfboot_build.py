@@ -20,7 +20,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
-from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.artifacts import (
+    calculate_file_sha256,
+    copy_artifact_to_result,
+    copy_material_directory_to_result,
+    copy_material_to_result,
+    write_material_inventory,
+)
 from framework.generated_state import (
     build_identity,
     detect_execution_identity,
@@ -1802,6 +1808,42 @@ def execute_wolfboot_build(
             record_refs={"wolfboot_build_manifest": str(result_dir / "manifest.json")},
         )
 
+    result_materials: list[dict[str, Any]] = []
+    material_inventory_path: Path | None = None
+    if return_code == 0:
+        result_materials.append(copy_material_to_result(
+            artifact_path, result_dir, "artifacts/bootloader/wolfboot.elf",
+            role="bootloader_elf", required_for=["manual_flash", "debugging"],
+        ))
+        for suffix in (".bin", ".hex"):
+            sibling = artifact_path.with_suffix(suffix)
+            if sibling.is_file():
+                result_materials.append(copy_material_to_result(
+                    sibling, result_dir, f"artifacts/bootloader/wolfboot{suffix}",
+                    role=f"bootloader_{suffix.lstrip('.')}", required_for=["manual_flash"],
+                ))
+        if persistent_tuple_paths is not None:
+            result_materials.extend(copy_material_directory_to_result(
+                persistent_tuple_paths["directory"], result_dir,
+                "cryptographic-material/bootloader-signing/tuple",
+                role_prefix="bootloader_signing_tuple",
+                private_names={persistent_tuple_paths["private_key"].name, "private_key.der", "private_key.pem"},
+                required_for=["repeat_bootloader_build", "repeat_signing", "signature_verification"],
+            ))
+        else:
+            for source, destination, role, private in (
+                (signing_key_path, "cryptographic-material/bootloader-signing/private/canonical_private_key.der", "bootloader_signing_private_key", True),
+                (wolfboot_private_key_path, "cryptographic-material/bootloader-signing/private/wolfboot_private_key.der", "bootloader_working_private_key", True),
+                (source_dir / "wolfboot_signing_public_key.der", "cryptographic-material/bootloader-signing/public/wolfboot_public_key.der", "bootloader_signing_public_key", False),
+                (source_dir / "src" / "keystore.c", "cryptographic-material/bootloader-signing/verification/keystore.c", "bootloader_verification_keystore", False),
+            ):
+                if source is not None and source.is_file():
+                    result_materials.append(copy_material_to_result(
+                        source, result_dir, destination, role=role, private=private,
+                        required_for=["repeat_bootloader_build", "signature_verification"],
+                    ))
+        material_inventory_path = write_material_inventory(result_dir, result_materials)
+
     duration_seconds = perf_counter() - start
     artifact_exists = artifact_path.is_file()
     _write_log(
@@ -1876,7 +1918,9 @@ def execute_wolfboot_build(
                 "removed_count": len(generated_signing_artifact_cleanup_paths),
                 "removed_paths": [str(path) for path in generated_signing_artifact_cleanup_paths],
             },
-            "key_material_copied_to_results": False,
+            "key_material_copied_to_results": bool(result_materials),
+            "material_inventory": None if material_inventory_path is None else material_inventory_path.name,
+            "result_materials": result_materials,
             "fingerprint": fingerprint_evidence.get("fingerprint"),
             "fingerprint_algorithm": fingerprint_evidence.get("fingerprint_algorithm"),
             "fingerprint_inputs": fingerprint_evidence.get("fingerprint_inputs", []),

@@ -21,7 +21,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
-from framework.artifacts import calculate_file_sha256, copy_artifact_to_result
+from framework.artifacts import (
+    calculate_file_sha256,
+    copy_artifact_to_result,
+    copy_material_directory_to_result,
+    copy_material_to_result,
+    write_material_inventory,
+)
 from framework.generated_state import (
     build_identity,
     detect_execution_identity,
@@ -982,6 +988,40 @@ def execute_application_signing(
         else None
     )
 
+    result_materials: list[dict[str, Any]] = []
+    material_inventory_path: Path | None = None
+    if return_code == 0:
+        result_materials.append(copy_material_to_result(
+            input_image_path, result_dir, "artifacts/application/unsigned/application.bin",
+            role="application_unsigned_image", required_for=["manual_flash", "repeat_signing", "signature_verification"],
+        ))
+        if input_elf_path is not None and input_elf_path.is_file():
+            result_materials.append(copy_material_to_result(
+                input_elf_path, result_dir, "artifacts/application/unsigned/application.elf",
+                role="application_unsigned_elf", required_for=["debugging", "binary_conversion"],
+            ))
+        if retained_signed_image_path is not None:
+            result_materials.append(copy_material_to_result(
+                retained_signed_image_path, result_dir, "artifacts/application/signed/application.bin",
+                role="application_signed_image", required_for=["manual_flash", "signature_verification"],
+            ))
+        result_materials.append(copy_material_to_result(
+            private_key_path, result_dir, f"cryptographic-material/firmware-signing/private/{private_key_path.name}",
+            role="firmware_signing_private_key", private=True,
+            required_for=["repeat_signing", "signature_verification"],
+        ))
+        tuple_directory = configured_tuple_directory(
+            profile=profile, repo_root=repo_root_path, config_path="signing_tuple.directory"
+        )
+        if tuple_directory is not None and tuple_directory.is_dir():
+            result_materials.extend(copy_material_directory_to_result(
+                tuple_directory, result_dir, "cryptographic-material/firmware-signing/tuple",
+                role_prefix="firmware_signing_tuple",
+                private_names={private_key_path.name, "private_key.der", "private_key.pem"},
+                required_for=["repeat_signing", "signature_verification", "bootloader_build"],
+            ))
+        material_inventory_path = write_material_inventory(result_dir, result_materials)
+
     if return_code == 0:
         tuple_directory = configured_tuple_directory(
             profile=profile,
@@ -1099,7 +1139,9 @@ def execute_application_signing(
                 "sign_working_dir": str(sign_working_dir),
                 "sign_environment": sign_environment,
                 "sign_return_code": None if sign_execution is None else sign_execution.return_code,
-                "key_material_copied_to_results": False,
+                "key_material_copied_to_results": bool(result_materials),
+                "material_inventory": None if material_inventory_path is None else material_inventory_path.name,
+                "result_materials": result_materials,
             },
         },
     )

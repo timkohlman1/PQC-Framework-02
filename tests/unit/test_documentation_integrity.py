@@ -479,7 +479,11 @@ def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
 
     assert "partially missing tuple" in workflow
     assert "mismatched tuple" in workflow
-    assert "must never copy private key material" in security
+    assert "disposable experiment cryptographic material" in security
+    assert "may, however, be copied into the result directory" in security
+    assert "ssh private keys" in security
+    assert "production or externally managed certificates and keys" in security
+    assert "must fail closed rather than be archived" in security
 
 
 MASTER_PLAN = "docs/pqc_iot_experiment_framework_plan.md"

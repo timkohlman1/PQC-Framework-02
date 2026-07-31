@@ -97,3 +97,83 @@ def copy_firmware_artifacts_to_result(elf_path: Path | str, result_dir: Path | s
             copied_artifacts[artifact_type] = _artifact_manifest_entry(source, None, False)
 
     return copied_artifacts
+
+
+MATERIAL_INVENTORY_NAME = "material-inventory.json"
+
+
+def copy_material_to_result(
+    source_path: Path | str,
+    result_dir: Path | str,
+    destination_relative_path: Path | str,
+    *,
+    role: str,
+    classification: str = "disposable_experiment_material",
+    private: bool = False,
+    required_for: list[str] | None = None,
+) -> dict[str, Any]:
+    """Copy one explicitly selected build/experiment input and describe it.
+
+    This helper intentionally accepts only an individual file selected by the
+    owning workflow. It never scans credential roots or copies host access
+    material implicitly.
+    """
+
+    source = Path(source_path)
+    if not source.is_file():
+        raise FileNotFoundError(f"Result material not found: {source}")
+    relative = Path(destination_relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"Result material destination must be result-relative: {relative}")
+    destination = Path(result_dir) / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return {
+        "path": relative.as_posix(),
+        "source_path": str(source),
+        "sha256": calculate_file_sha256(destination),
+        "size_bytes": destination.stat().st_size,
+        "role": role,
+        "classification": classification,
+        "private": private,
+        "required_for": list(required_for or []),
+    }
+
+
+def copy_material_directory_to_result(
+    source_dir: Path | str,
+    result_dir: Path | str,
+    destination_relative_dir: Path | str,
+    *,
+    role_prefix: str,
+    private_names: set[str] | None = None,
+    required_for: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Copy all files from one explicitly selected experiment-material directory."""
+
+    source_root = Path(source_dir)
+    if not source_root.is_dir():
+        raise FileNotFoundError(f"Result material directory not found: {source_root}")
+    private_names = private_names or set()
+    entries: list[dict[str, Any]] = []
+    for source in sorted(path for path in source_root.rglob("*") if path.is_file()):
+        relative_source = source.relative_to(source_root)
+        entries.append(copy_material_to_result(
+            source, result_dir, Path(destination_relative_dir) / relative_source,
+            role=f"{role_prefix}:{relative_source.as_posix()}",
+            private=source.name in private_names or source.suffix.lower() in {".key", ".p12", ".pfx"},
+            required_for=required_for,
+        ))
+    return entries
+
+
+def write_material_inventory(result_dir: Path | str, entries: list[dict[str, Any]]) -> Path:
+    """Write a deterministic inventory for copied build and crypto material."""
+
+    import json
+    destination = Path(result_dir) / MATERIAL_INVENTORY_NAME
+    destination.write_text(
+        json.dumps({"schema_version": 1, "materials": sorted(entries, key=lambda item: item["path"])}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return destination

@@ -107,6 +107,12 @@ def test_stepca_material_is_synchronized_and_resolved(
         "--certificate-profile",
         "stepca-classical",
     ]
+    retained = result_dir / "cryptographic-material/mqtt/stepca-classical"
+    assert (retained / "server.key").read_bytes() == b"test server private key\n"
+    inventory = json.loads((result_dir / "material-inventory.json").read_text(encoding="utf-8"))
+    server_key = next(item for item in inventory["materials"] if item["path"].endswith("server.key"))
+    assert server_key["private"] is True
+    assert "broker_installation" in server_key["required_for"]
 
 
 def test_stepca_sync_missing_required_outputs_is_rejected(

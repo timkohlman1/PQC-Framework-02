@@ -318,8 +318,10 @@ def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp
     assert manifest["wolfboot_build"]["signing_key_sha256"] == expected_key_sha
     assert manifest["wolfboot_build"]["wolfboot_private_key_sha256"] == expected_key_sha
     assert manifest["wolfboot_build"]["key_consistency_status"] == "matched"
-    assert manifest["wolfboot_build"]["key_material_copied_to_results"] is False
-    assert not (result.result_dir / "ecdsa_p256_private_key.der").exists()
+    assert manifest["wolfboot_build"]["key_material_copied_to_results"] is True
+    assert (result.result_dir / "cryptographic-material/bootloader-signing/private/canonical_private_key.der").read_bytes() == b"wolfboot generated private key"
+    assert (result.result_dir / "artifacts/bootloader/wolfboot.elf").is_file()
+    assert (result.result_dir / "material-inventory.json").is_file()
 
 
 def test_execute_wolfboot_build_rejects_generated_config_outside_source_dir(tmp_path):

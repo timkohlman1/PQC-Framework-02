@@ -4,24 +4,32 @@
 
 This document owns repository secret-handling and generated-private-state policy. Operational SSH setup is in `docs/002_host_gateway_setup.md`, flash/signing commands are in `docs/005_remote_flash_workflow.md`, and broker certificate operation is in `experiment/mqtt-broker/README.md`.
 
-## Never commit or package
+## Commit, image, and result boundaries
 
-Do not commit, add to container images/build contexts, copy into result artifacts or replacement ZIPs, or include in documentation:
+Disposable experiment cryptographic material must remain ignored by Git and must not be baked into container images or static build contexts. It may, however, be copied into the result directory of the build or experiment that used it so the recorded result is self-contained and can be reproduced manually.
 
-- SSH or VPN private keys and profiles
-- TLS, client, CA, or firmware-signing private keys
-- MQTT passwords, password files, tokens, or production credentials
-- real `.env` files
-- private certificates or key bundles
-- generated local signing keys under `secrets/wolfboot/`
-- wolfBoot working-tree signing keys such as `tools/wolfboot/wolfboot_signing_private_key.der`
-- broker runtime material under `experiment/mqtt-broker/runtime/`
+The following result retention is required when the material exists and is selected by the owning workflow:
 
-Non-secret documentation, credential-free example configs, public test certificates, public CA certificates, dummy example values, and project-owned wolfBoot config templates may be committed when their purpose is clear.
+- unsigned and signed application images;
+- application and bootloader ELF, BIN, and HEX outputs;
+- firmware-signing and wolfBoot private/public keys, generated keystores, tuple manifests, and verification material;
+- MQTT root/intermediate CA certificates, chains, broker certificates and private keys, and mutual-TLS client certificates and private keys;
+- ESP32 or other experiment-infrastructure firmware and configuration artifacts explicitly used by the workflow.
+
+Every retained file must be copied explicitly by its owning workflow and recorded in `material-inventory.json` with its result-relative path, SHA-256 digest, size, role, private/public classification, and intended use. Workflows must not recursively sweep broad host directories or discover credentials from result folders. Canonical source state remains authoritative.
+
+The following remain prohibited from result artifacts, replacement ZIPs, images, and build contexts because they are host/control-plane or production credentials rather than disposable experiment inputs:
+
+- SSH private keys, SSH agent state, known-hosts databases, and VPN private keys or profiles;
+- API tokens, GitHub credentials, bearer tokens, and unrelated machine credentials;
+- production or externally managed certificates and keys;
+- real `.env` files and unrelated password stores.
+
+Production, externally managed, or non-exportable material must fail closed rather than be archived. Result folders containing disposable private keys are sensitive experiment records and must stay ignored by Git.
 
 ## wolfBoot signing state
 
-Build/signing manifests may record non-secret aggregate and per-file SHA-256 fingerprints, but must never copy private key material into results. Per-file fingerprint records contain repository-relative paths and content digests only, not file contents or absolute host paths.
+Build/signing manifests retain aggregate and per-file SHA-256 fingerprints and must also reference the copied experiment material inventory. Private tuple members are copied byte-for-byte into the owning result directory after tuple validation; they are never reconstructed from public metadata.
 
 The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
 
@@ -139,7 +147,7 @@ must not copy secret material or mutate the referenced record.
 
 The repository-local, ignored `secrets/` hierarchy is the single source of truth for MQTT TLS and wolfBoot signing material. Experiment YAML declares profile identifiers, not certificate or private-key paths. The experiment runner resolves and prepares the declared profile before fingerprinting, build generation, broker deployment, signing, or execution.
 
-Runtime, build, broker-compose, and result directories are not authoritative key stores. They may contain bounded deployment copies where required, but no workflow may select material by discovering whichever file happens to be present there. Partial tuples and public/provenance hash mismatches fail closed. Manifests retain profile identifiers and public hashes only; private key bytes are never retained in results.
+Runtime, build, broker-compose, and result directories are not authoritative key stores. Result directories contain bounded reproduction copies, but no workflow may select future inputs by discovering whichever file happens to be present there. Partial tuples and public/provenance hash mismatches fail closed. Manifests identify the canonical profile and the result-relative material inventory.
 
 ## Certificate-service and wolfBoot key separation
 

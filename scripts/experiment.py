@@ -2068,7 +2068,14 @@ def _record_run_summary(
     firmware["result_artifact_path"] = (
         str(copied_artifact_path) if copied_artifact_path is not None else None
     )
-    if referenced_build_artifact_sha256 is not None:
+    existing_firmware_sha256 = firmware.get("sha256")
+    if (
+        referenced_build_artifact_sha256 is not None
+        and (
+            not isinstance(existing_firmware_sha256, str)
+            or not existing_firmware_sha256.strip()
+        )
+    ):
         firmware["sha256"] = referenced_build_artifact_sha256
 
     build_reference = None
@@ -2416,8 +2423,14 @@ def _wolfboot_application_build_bundle(
 ) -> dict[str, dict[str, Any]]:
     """Return a build-stage bundle that validates the relocated ELF, not the future signed BIN."""
 
-    input_image = Path(str(require_field(signing_profile, "input_image", "application signing profile")))
-    relocated_elf = input_image.with_suffix(".elf").as_posix()
+    input_elf = signing_profile.get("input_elf")
+    if input_elf is not None and str(input_elf).strip():
+        relocated_elf = Path(str(input_elf)).as_posix()
+    else:
+        input_image = Path(
+            str(require_field(signing_profile, "input_image", "application signing profile"))
+        )
+        relocated_elf = input_image.with_suffix(".elf").as_posix()
     build_bundle = {
         **bundle,
         "experiment": {

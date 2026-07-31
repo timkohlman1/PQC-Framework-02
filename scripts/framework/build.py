@@ -475,7 +475,7 @@ def execute_build(
     return_code = configure_execution.return_code
     if configure_execution.return_code == 0:
         if progress is not None:
-            progress("build", "Building application", f"CMake/Ninja preset: {build_preset}; native incremental optimisation enabled.")
+            progress("build", "Building application", f"CMake/Ninja preset: {build_preset}.")
         build_execution = runner(construct_build_command(build_preset), repo_root_path)
         return_code = build_execution.return_code
 

@@ -113,7 +113,7 @@ Use `experiment/mqtt-broker/README.md` for certificate provisioning, gateway dep
 
 ## Safety and evidence
 
-Private signing keys, credentials, real `.env` files, generated broker runtime state, local signing tuples, build output, and result output must not be committed or packaged. Secrets must not be baked into the image. Gateway credentials and private material must be supplied outside the repository and mounted or referenced only for the current run.
+Disposable experiment signing, certificate, broker, and client material used by an owning workflow is retained in that workflow's ignored result directory with a SHA-256 `material-inventory.json`, together with applicable unsigned/signed application images and bootloader outputs. These result copies are sensitive reproduction evidence, not authoritative future inputs. SSH/VPN keys, tokens, production or externally managed credentials, real `.env` files, and unrelated host credentials must never be copied into results, committed, packaged in AI replacement archives, or baked into images.
 
 Generated-state preflight is the primary mechanism for signing-state compatibility and provenance. Pytest cleanup is supplementary cross-platform hygiene and must not remove source files, canonical signing keys, or reusable tuple members. Workflows must never silently reconstruct partial signing state.
 

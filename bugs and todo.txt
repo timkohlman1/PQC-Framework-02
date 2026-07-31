@@ -25,6 +25,14 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 
 All image and crypto material that go into creating a build should be copied into the build result folder. Modify the secret handling rules accordingly to allow this to happen.  This should include both the signed and unsigned version of the application image if applicable, both public and private signing keys and certificates used in producing the build or that will be used in orchestrating an experiment (e.g. the MQTT broker material). The same approach should be done for bootloader builds as well.   I should have the material I would need to manually flash the esp32 and keys to install on the MQTT broker and any other experiment infrastructure.
 
+-----------
+
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+For all firmware runs involving IP networking, the orchestration on the gateway should start a packet capture on the gateway host to monitor all network traffic between the gateway and the STM32 device. This packet capture should then be saved as an experiment artifact so that it can be opened in a tool such as wireshark and used for analysis. 
+
+
 
 
 

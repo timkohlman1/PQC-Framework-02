@@ -225,8 +225,11 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
     assert "scripts/framework/signing.py" in manifest["signing"]["requested_fingerprint_inputs"]
     assert manifest["signing"]["signed_image_sha256"] == expected_signed_sha
     assert manifest["signing"]["sign_environment"] == {"IMAGE_HEADER_SIZE": "8192"}
-    assert manifest["signing"]["key_material_copied_to_results"] is False
-    assert not (result.result_dir / "ecdsa_p256_private_key.der").exists()
+    assert manifest["signing"]["key_material_copied_to_results"] is True
+    assert (result.result_dir / "cryptographic-material/firmware-signing/private/ecdsa_p256_private_key.der").read_bytes() == b"local test private key"
+    assert (result.result_dir / "artifacts/application/unsigned/application.bin").read_bytes() == b"relocated app image"
+    assert (result.result_dir / "artifacts/application/signed/application.bin").read_bytes() == b"signed image bytes"
+    assert (result.result_dir / "material-inventory.json").is_file()
     assert "Private signing keys are local-only evidence inputs" in log_text
     assert "Input fingerprint status: available" in log_text
 

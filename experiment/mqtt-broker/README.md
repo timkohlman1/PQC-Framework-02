@@ -345,3 +345,8 @@ the authoritative evidence for what ran, its return codes, and its outcomes.
 Experiment workflows emit timestamped stage messages using the configured progress timezone. The default is `Australia/Melbourne`; set `PQC_PROGRESS_TIMEZONE` to an IANA timezone such as `UTC` when another basis is required. Timestamps include the timezone abbreviation.
 
 Application builds report reuse evaluation separately from compilation: the framework reports whether a reusable immutable build was selected, why a new build is required, CMake configuration, compilation start, completion, return code, and compiler warning count. Managed MQTT experiments also report broker stop-existing, deployment, startup, status, readiness probing, gateway-side publish/subscribe validation, log collection, and shutdown. These messages are operational context only; retained logs and the result manifest remain authoritative evidence.
+
+## Result-retained certificate material
+
+When an experiment selects an MQTT certificate profile, the owning result retains that complete disposable profile beneath `cryptographic-material/mqtt/<certificate-profile>/` and records each file in `material-inventory.json`. This includes applicable CA chains, broker certificates and private keys, and mutual-TLS client certificates and private keys. These copies support manual broker installation and result reproduction; canonical generated state remains authoritative for later runs. SSH/VPN credentials, tokens, production material, and unrelated host credentials are never retained.
+

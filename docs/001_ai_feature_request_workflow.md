@@ -99,4 +99,4 @@ Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -Desti
 - Do not move CubeMX-generated folders unless explicitly requested.
 - Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, or benchmark success without explicit logs/manifests.
 - Do not ask for or suggest committing secrets.
-- Do not request private SSH, VPN, TLS, MQTT, firmware-signing, wolfBoot-signing, certificate, `.env`, token, or production credential material.
+- Do not request private SSH/VPN keys, tokens, production credentials, real `.env` files, or user-supplied private experiment material in AI context archives. Repository implementation may explicitly retain disposable experiment cryptographic material in ignored result directories under the canonical security policy.

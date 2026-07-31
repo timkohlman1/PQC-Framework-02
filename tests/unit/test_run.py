@@ -336,6 +336,75 @@ def test_run_rejects_boot_algorithm_for_direct_flash(tmp_path, capsys):
     assert "--boot-algorithm is only valid" in capsys.readouterr().err
 
 
+
+def test_record_run_summary_preserves_signed_firmware_hash(tmp_path):
+    cli = load_experiment_module()
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    signed_hash = "51cfe24582e70d204c737d8a75edf1f3d01a283703e3e69fff09fae52cadbbba"
+    build_hash = "77deb8bc6aa276457ed4415fa78bb652bb587b798b6ecb1dc7f76f4efe610014"
+    retained_artifact = result_dir / "application_signed.bin"
+    retained_artifact.write_bytes(b"signed application")
+    (result_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "firmware": {
+                    "artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                    "artifact_path": "/workspace/build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                    "sha256": signed_hash,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cli._record_run_summary(
+        result_dir=result_dir,
+        final_return_code=0,
+        failure_stage="none",
+        build_return_code=0,
+        flash_return_code=0,
+        uart_return_code=0,
+        artifact_copy_return_code=0,
+        copied_artifact_path=retained_artifact,
+        duration_seconds=1.0,
+        referenced_build_number=106,
+        referenced_build_artifact_sha256=build_hash,
+        referenced_build_manifest=tmp_path / "build-manifest.json",
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["firmware"]["sha256"] == signed_hash
+    assert manifest["build_reference"]["artifact_sha256"] == build_hash
+    assert manifest["run"]["referenced_build_artifact_sha256"] == build_hash
+
+
+def test_record_run_summary_uses_build_hash_when_firmware_hash_is_missing(tmp_path):
+    cli = load_experiment_module()
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    build_hash = "77deb8bc6aa276457ed4415fa78bb652bb587b798b6ecb1dc7f76f4efe610014"
+    (result_dir / "manifest.json").write_text(
+        json.dumps({"firmware": {"artifact": "build/Debug/firmware.elf"}}),
+        encoding="utf-8",
+    )
+
+    cli._record_run_summary(
+        result_dir=result_dir,
+        final_return_code=0,
+        failure_stage="none",
+        build_return_code=0,
+        flash_return_code=0,
+        uart_return_code=0,
+        artifact_copy_return_code=0,
+        copied_artifact_path=None,
+        duration_seconds=1.0,
+        referenced_build_artifact_sha256=build_hash,
+    )
+
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["firmware"]["sha256"] == build_hash
+
 def test_wolfboot_application_build_uses_relocated_elf_before_signing():
     cli = load_experiment_module()
     bundle = {
@@ -364,6 +433,38 @@ def test_wolfboot_application_build_uses_relocated_elf_before_signing():
     )
     assert bundle["experiment"]["firmware"]["artifact"] == (
         "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+    )
+
+
+def test_wolfboot_application_build_prefers_configured_input_elf_for_algorithm_specific_bin():
+    cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "firmware": {
+                "mode": "wolfboot_mldsa65",
+                "artifact": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+            }
+        },
+        "board": {},
+        "host": {},
+        "boot": {},
+    }
+    signing_profile = {
+        "input_elf": "build/RelocatedDebug/stm32_basic_hal1.elf",
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+    }
+
+    build_bundle = cli._wolfboot_application_build_bundle(
+        bundle=bundle,
+        signing_profile=signing_profile,
+    )
+
+    assert build_bundle["experiment"]["firmware"]["artifact"] == (
+        "build/RelocatedDebug/stm32_basic_hal1.elf"
+    )
+    assert bundle["experiment"]["firmware"]["artifact"] == (
+        "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
     )
 
 

@@ -159,17 +159,9 @@ Run `./scripts/dev.ps1 pytest` when required by the phase plan or when broader v
 
 ## 9. Secrets and generated artifacts
 
-Never request, expose, commit, package, copy into results, place in build contexts, or bake into images:
+Disposable experiment-only TLS, MQTT, wolfBoot, firmware-signing, CA, client, and broker material must be copied into the owning build or experiment result when it was used to produce, verify, flash, or orchestrate that result. Retain unsigned and signed application images, bootloader outputs, public/private keys, certificates, chains, keystores, tuple manifests, and explicitly selected infrastructure artifacts. Record every copied file in a SHA-256 material inventory.
 
-- SSH or VPN private keys
-- TLS, MQTT, wolfBoot, firmware-signing, or other private keys
-- MQTT passwords or password files
-- real `.env` files
-- private certificates or private CA material
-- tokens, production credentials, or production secrets
-- generated broker runtime credentials or signing material
-
-Non-secret public metadata such as approved key fingerprints may be recorded when the owning workflow requires it. Private material must remain local.
+Do not commit this generated material, bake it into images/static build contexts, or include it in AI replacement ZIPs. Result directories remain ignored and sensitive. Never copy SSH/VPN private keys, tokens, production credentials, externally managed/non-exportable material, unrelated `.env` files, or host control-plane credentials into results. Workflows must copy explicitly selected files and must never sweep broad credential directories.
 
 Do not commit generated build output, result output, caches, local generated-state manifests, local signing tuples, broker runtime state, or tool-generated binaries. The canonical security and exclusion rules are in `docs/006_security_and_secrets.md` and repository ignore files.
 

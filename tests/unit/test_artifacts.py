@@ -52,3 +52,33 @@ def test_copy_firmware_artifacts_uses_canonical_names_and_hashes(tmp_path):
     assert copied["bin"]["path"] is None
     assert copied["bin"]["copied"] is False
     assert copied["bin"]["missing_reason"] == "source artifact not generated"
+
+
+def test_copy_material_to_result_records_private_material(tmp_path):
+    artifacts = load_artifacts_module()
+    source = tmp_path / "private.key"
+    source.write_bytes(b"disposable experiment key")
+    result_dir = tmp_path / "result"
+
+    entry = artifacts.copy_material_to_result(
+        source, result_dir, "cryptographic-material/mqtt/server.key",
+        role="mqtt_server_private_key", private=True, required_for=["broker_installation"],
+    )
+    inventory = artifacts.write_material_inventory(result_dir, [entry])
+
+    assert (result_dir / entry["path"]).read_bytes() == b"disposable experiment key"
+    assert entry["private"] is True
+    assert entry["classification"] == "disposable_experiment_material"
+    assert inventory.name == "material-inventory.json"
+
+
+def test_copy_material_rejects_parent_traversal(tmp_path):
+    artifacts = load_artifacts_module()
+    source = tmp_path / "firmware.bin"
+    source.write_bytes(b"firmware")
+    try:
+        artifacts.copy_material_to_result(source, tmp_path / "result", "../outside.bin", role="firmware")
+    except ValueError as exc:
+        assert "result-relative" in str(exc)
+    else:
+        raise AssertionError("parent traversal should be rejected")
