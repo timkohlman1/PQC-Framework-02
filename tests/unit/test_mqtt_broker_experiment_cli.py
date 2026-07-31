@@ -437,3 +437,49 @@ def test_gateway_mqtt_client_host_allows_transport_override_for_plaintext():
     assert experiment_cli._mqtt_gateway_client_host(
         bundle, tls_enabled=False
     ) == "10.1.1.18"
+
+
+def test_e2e_clients_emit_topic_qualified_independent_broker_evidence():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+
+    assert 'publisher_client_id = "pqc-host-e2e-publisher"' in source
+    assert 'subscriber_client_id = "pqc-host-e2e-subscriber"' in source
+    assert '-i {shlex.quote(subscriber_client_id)} -v -t {response_topic}' in source
+    assert '-i {shlex.quote(publisher_client_id)} -t {command_topic}' in source
+    assert 'mqtt-subscriber-raw.log' in source
+    assert 'mqtt-broker-message-evidence.json' in source
+    assert 'failure_stage = "broker_message_evidence"' in source
+
+
+def test_broker_message_evidence_parser_requires_both_directions():
+    experiment_cli = load_experiment_module()
+    log = """
+mqtt | New client connected from 10.1.1.119:50000 as pqc-stm32-tls-e2e (p2, c1, k30).
+mqtt | Received SUBSCRIBE from pqc-stm32-tls-e2e
+mqtt | Sending SUBACK to pqc-stm32-tls-e2e
+mqtt | Received PUBLISH from pqc-host-e2e-publisher (d0, q0, r0, m0, 'pqc/experiments/stm32/tls/command', ... (3 bytes))
+mqtt | Sending PUBLISH to pqc-stm32-tls-e2e (d0, q0, r0, m0, 'pqc/experiments/stm32/tls/command', ... (3 bytes))
+mqtt | Received PUBLISH from pqc-stm32-tls-e2e (d0, q0, r0, m0, 'pqc/experiments/stm32/tls/response', ... (22 bytes))
+mqtt | Sending PUBLISH to pqc-host-e2e-subscriber (d0, q0, r0, m0, 'pqc/experiments/stm32/tls/response', ... (22 bytes))
+"""
+    evidence = experiment_cli._parse_mqtt_broker_message_evidence(
+        log,
+        stm32_client_id="pqc-stm32-tls-e2e",
+        publisher_client_id="pqc-host-e2e-publisher",
+        subscriber_client_id="pqc-host-e2e-subscriber",
+        command_topic="pqc/experiments/stm32/tls/command",
+        response_topic="pqc/experiments/stm32/tls/response",
+    )
+    assert evidence["passed"] is True
+    assert all(value is True for key, value in evidence.items() if key != "passed")
+
+    incomplete = experiment_cli._parse_mqtt_broker_message_evidence(
+        log.replace("Sending PUBLISH to pqc-host-e2e-subscriber", "not delivered"),
+        stm32_client_id="pqc-stm32-tls-e2e",
+        publisher_client_id="pqc-host-e2e-publisher",
+        subscriber_client_id="pqc-host-e2e-subscriber",
+        command_topic="pqc/experiments/stm32/tls/command",
+        response_topic="pqc/experiments/stm32/tls/response",
+    )
+    assert incomplete["passed"] is False
+    assert incomplete["response_publish_delivered"] is False

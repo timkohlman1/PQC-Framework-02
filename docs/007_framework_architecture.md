@@ -712,3 +712,9 @@ its owning wolfBoot build workflow.
 Successful application-signing results retain the unsigned image, signed image, source ELF when available, and the validated signing tuple under `artifacts/application/` and `cryptographic-material/firmware-signing/`. Successful wolfBoot builds retain ELF/BIN/HEX outputs when generated and the validated bootloader signing tuple under `artifacts/bootloader/` and `cryptographic-material/bootloader-signing/`. MQTT prerequisite preparation retains the selected certificate-profile directory under `cryptographic-material/mqtt/`.
 
 `material-inventory.json` is the result-local index. Each entry records a result-relative path, source path, SHA-256 digest, size, role, classification, private/public flag, and intended use. Canonical generated state remains the only source for later workflows; archived copies are reproduction evidence and must not be auto-selected as future inputs.
+
+### MQTT broker packet-evidence boundary
+
+Managed MQTT experiment brokers enable packet-level Mosquitto logging. End-to-end STM32 runs retain explicit host publisher/subscriber identities, topic-qualified subscriber output, the complete broker log, and a parsed `mqtt-broker-message-evidence.json` summary. A passing result requires independent broker evidence for STM32 subscription acknowledgement, command publication routing to the STM32, response publication received from the STM32, and response routing to the host subscriber, in addition to the existing UART and payload-correlation checks.
+
+Broker packet logs establish broker-observed MQTT routing. They do not independently prove firmware-internal state or necessarily expose complete application payload bytes; those claims require the corresponding UART and retained subscriber evidence.

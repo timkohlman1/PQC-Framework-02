@@ -350,3 +350,11 @@ Application builds report reuse evaluation separately from compilation: the fram
 
 When an experiment selects an MQTT certificate profile, the owning result retains that complete disposable profile beneath `cryptographic-material/mqtt/<certificate-profile>/` and records each file in `material-inventory.json`. This includes applicable CA chains, broker certificates and private keys, and mutual-TLS client certificates and private keys. These copies support manual broker installation and result reproduction; canonical generated state remains authoritative for later runs. SSH/VPN credentials, tokens, production material, and unrelated host credentials are never retained.
 
+
+## Packet-level MQTT evidence
+
+All experiment broker profiles enable Mosquitto `log_type all` output with connection messages and explicit timestamps. Recorded broker logs therefore provide an independent source for MQTT CONNECT, SUBSCRIBE/SUBACK, PUBLISH routing, unsubscribe, and disconnect activity where emitted by the installed Mosquitto version.
+
+STM32 end-to-end runs use explicit host publisher and subscriber client IDs. Subscriber output is topic-qualified and retained as `mqtt-subscriber-raw.log`. The framework parses the retained broker log into `mqtt-broker-message-evidence.json` and requires evidence that the command publish was received and routed to the STM32 and that the response publish was received from the STM32 and routed to the host subscriber. UART markers remain supporting firmware evidence; they are not sufficient by themselves when broker packet evidence is required.
+
+Mosquitto debug output records packet direction, client ID, topic, QoS, and packet metadata, but does not provide an authoritative copy of every application payload. The retained host subscriber output remains the payload-level cross-check.

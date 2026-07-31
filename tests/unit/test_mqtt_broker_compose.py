@@ -704,3 +704,18 @@ def test_mqtt_validator_reports_subscriber_failure_without_blank_polling():
     assert "expected MQTT payload was not received" in normalized_source
     assert 'logs=$(docker logs "$subscriber" 2>&1 || true)' in normalized_source
     assert 'grep -Fx -- "$message"' in normalized_source
+
+
+def test_all_mosquitto_profiles_enable_packet_level_experiment_logging():
+    profiles = (
+        "classical",
+        "classical-server-auth",
+        "oqs",
+        "oqs-mtls",
+    )
+    for profile in profiles:
+        config = Path(f"experiment/mqtt-broker/config/{profile}/mosquitto.conf").read_text(encoding="utf-8")
+        assert "log_type all" in config
+        assert "connection_messages true" in config
+        assert "log_timestamp true" in config
+        assert "log_timestamp_format %Y-%m-%dT%H:%M:%S" in config
