@@ -427,8 +427,6 @@ def _temporarily_patch_boot_timing_instrumentation(
 #define PQC_BOOT_TIMING_DWT_CYCCNTENA (1UL << 0)
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
 #define PQC_BOOT_TIMING_MAILBOX_VERSION 2UL
-#define PQC_BOOT_STACK_SENTINEL 0xA5U
-#define PQC_BOOT_STACK_SCAN_GUARD_BYTES 256U
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
 #define PQC_BOOT_HSI_HZ 16000000UL
 #define PQC_BOOT_MSI_HZ 4000000UL
@@ -535,32 +533,6 @@ static uint32_t pqc_boot_timing_counter_elapsed(uint32_t start_cycles)
     return PQC_BOOT_TIMING_DWT_CYCCNT - start_cycles;
 }
 
-static uintptr_t pqc_boot_current_stack_pointer(void)
-{
-    uintptr_t sp;
-    __asm__ volatile ("mrs %0, msp" : "=r" (sp));
-    return sp;
-}
-
-static uint8_t *pqc_boot_stack_paint_start(void) { extern uint8_t _end; return &_end; }
-static uint8_t *pqc_boot_stack_paint_end(void)
-{
-    uintptr_t sp = pqc_boot_current_stack_pointer();
-    if (sp <= PQC_BOOT_STACK_SCAN_GUARD_BYTES) return pqc_boot_stack_paint_start();
-    return (uint8_t *)(sp - PQC_BOOT_STACK_SCAN_GUARD_BYTES);
-}
-static void pqc_boot_stack_paint(uint8_t *start, uint8_t *end)
-{
-    uint8_t *cursor; if (end <= start) return;
-    for (cursor = start; cursor < end; cursor++) *cursor = PQC_BOOT_STACK_SENTINEL;
-}
-static uint32_t pqc_boot_stack_high_water(uint8_t *start, uint8_t *end)
-{
-    uint8_t *cursor; if (end <= start) return PQC_BOOT_STACK_UNAVAILABLE;
-    for (cursor = start; cursor < end; cursor++) if (*cursor != PQC_BOOT_STACK_SENTINEL) return (uint32_t)(end - cursor);
-    return 0U;
-}
-
 static void pqc_boot_timing_write_mailbox(uint32_t elapsed_cycles, int verification_result, uint32_t max_stack_used_bytes)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
@@ -581,17 +553,13 @@ static void pqc_boot_timing_write_mailbox(uint32_t elapsed_cycles, int verificat
 
 int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 {
-    uint32_t start_cycles, elapsed_cycles, max_stack_used_bytes;
-    uint8_t *stack_paint_start, *stack_paint_end;
+    uint32_t start_cycles, elapsed_cycles;
     int ret;
-    stack_paint_start = pqc_boot_stack_paint_start();
-    stack_paint_end = pqc_boot_stack_paint_end();
-    pqc_boot_stack_paint(stack_paint_start, stack_paint_end);
     pqc_boot_timing_counter_start(&start_cycles);
     ret = wolfBoot_verify_authenticity_impl(img);
     elapsed_cycles = pqc_boot_timing_counter_elapsed(start_cycles);
-    max_stack_used_bytes = pqc_boot_stack_high_water(stack_paint_start, stack_paint_end);
-    pqc_boot_timing_write_mailbox(elapsed_cycles, ret, max_stack_used_bytes);
+    pqc_boot_timing_write_mailbox(
+        elapsed_cycles, ret, PQC_BOOT_STACK_UNAVAILABLE);
     return ret;
 }
 #endif

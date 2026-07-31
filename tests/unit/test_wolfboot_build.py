@@ -202,8 +202,10 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "RCC_PLLSOURCE_HSI" not in patched_image_source
         assert "verification_result" in patched_image_source
         assert "max_stack_used_bytes" in patched_image_source
-        assert "pqc_boot_stack_high_water" in patched_image_source
-        assert "PQC_BOOT_STACK_SENTINEL" in patched_image_source
+        assert "PQC_BOOT_STACK_UNAVAILABLE" in patched_image_source
+        assert "pqc_boot_stack_high_water" not in patched_image_source
+        assert "pqc_boot_stack_paint" not in patched_image_source
+        assert "PQC_BOOT_STACK_SENTINEL" not in patched_image_source
         assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
         assert "wolfBoot_printf" not in patched_image_source
         assert "pqc_boot_timing_uart_write" not in patched_hal_source
