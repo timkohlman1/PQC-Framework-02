@@ -63,7 +63,7 @@ SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain g
 
 ## Secure-boot example
 
-When no secure-boot algorithm is specified, the framework uses wolfBoot with `integrity_sha256`. This verifies the application SHA-256 digest but performs no signature or signing-key authentication.
+When no secure-boot algorithm is specified, the framework uses wolfBoot with `integrity_sha256`. This verifies the application SHA-256 digest but performs no signature or signing-key authentication. It therefore does not require or resolve a signing tuple.
 
 A named algorithm implies wolfBoot; `--boot-mode wolfboot` is not required.
 

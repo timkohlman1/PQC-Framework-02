@@ -405,6 +405,21 @@ def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
     assert experiment_profile["secure_boot_flash"]["signed_application_offset"] == "0x08020000"
 
 
+def test_integrity_secure_boot_profile_includes_canonical_flash_offsets():
+    experiment_cli = load_experiment_module()
+    repo_root = Path(__file__).resolve().parents[2]
+
+    bundle = experiment_cli.load_secure_boot_experiment_bundle(
+        repo_root / "configs/experiments/secure_boot_uart.yaml",
+        algorithm="integrity_sha256",
+        target_profile=repo_root / "configs/targets/stm32l4r5_wolfboot.yaml",
+    )
+    secure_boot_flash = bundle["experiment"]["secure_boot_flash"]
+
+    assert secure_boot_flash["wolfboot_offset"] == "0x08000000"
+    assert secure_boot_flash["signed_application_offset"] == "0x08020000"
+
+
 def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
     experiment_cli = load_experiment_module()
     profile = tmp_path / "profile.yaml"

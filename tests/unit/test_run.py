@@ -526,3 +526,53 @@ def test_wolfboot_signed_firmware_is_selected_only_after_signing():
     assert bundle["experiment"]["firmware"]["artifact"] == (
         "build/Release/stm32_basic_hal1_v1_signed.bin"
     )
+
+def test_integrity_signing_profile_does_not_require_signing_tuple(tmp_path, monkeypatch):
+    cli = load_experiment_module()
+    profile = {
+        "id": "wolfboot_integrity_sha256_app",
+        "signature_algorithm": "integrity_sha256",
+    }
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_signing_material",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("integrity-only mode must not resolve signing material")),
+    )
+
+    prepared = cli._prepare_signing_profile_dependencies(profile=profile, repo_root=tmp_path)
+
+    assert prepared is profile
+    assert "private_key" not in prepared
+    assert "resolved_signing_context" not in prepared
+
+
+def test_authenticated_signing_profile_still_requires_resolved_tuple(tmp_path, monkeypatch):
+    cli = load_experiment_module()
+    profile = {
+        "id": "wolfboot_mldsa65_app",
+        "signature_algorithm": "mldsa65",
+        "private_key": "placeholder.der",
+    }
+    private_key = tmp_path / "secrets" / "wolfboot" / "tuples" / "mldsa65-development" / "private_key.der"
+
+    class SigningContext:
+        def __init__(self):
+            self.private_key = private_key
+
+        def public_manifest(self, repo_root):
+            return {"tuple_id": "mldsa65-development"}
+
+    observed = {}
+
+    def fake_resolve_signing_material(**kwargs):
+        observed.update(kwargs)
+        return SigningContext()
+
+    monkeypatch.setattr(cli, "resolve_signing_material", fake_resolve_signing_material)
+
+    prepared = cli._prepare_signing_profile_dependencies(profile=profile, repo_root=tmp_path)
+
+    assert observed == {"profile": profile, "repo_root": tmp_path}
+    assert prepared["private_key"] == "secrets/wolfboot/tuples/mldsa65-development/private_key.der"
+    assert prepared["resolved_signing_context"] == {"tuple_id": "mldsa65-development"}

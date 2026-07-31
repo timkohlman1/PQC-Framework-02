@@ -1907,6 +1907,18 @@ def run_create_run_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare_signing_profile_dependencies(*, profile: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    """Resolve key-backed signing material only for authenticated signatures."""
+
+    if str(profile.get("signature_algorithm", "")).strip() == "integrity_sha256":
+        return profile
+    signing_context = resolve_signing_material(profile=profile, repo_root=repo_root)
+    return {
+        **profile,
+        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
+        "resolved_signing_context": signing_context.public_manifest(repo_root),
+    }
+
 def _prepare_dependencies_for_result(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> dict[str, dict[str, Any]]:
     try:
         context = prepare_external_dependencies(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
@@ -2829,18 +2841,13 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         return build_result.return_code
 
     try:
-        signing_context = resolve_signing_material(
+        signing_profile = _prepare_signing_profile_dependencies(
             profile=signing_profile,
             repo_root=repo_root,
         )
     except ExternalDependencyError as exc:
         print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
         return 14
-    signing_profile = {
-        **signing_profile,
-        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
-        "resolved_signing_context": signing_context.public_manifest(repo_root),
-    }
     emit_progress("sign", "Signing relocated experiment firmware")
     signing_result = execute_application_signing(
         profile=signing_profile,
@@ -3279,15 +3286,10 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
     )
     validate_application_signing_profile_config(profile)
     try:
-        signing_context = resolve_signing_material(profile=profile, repo_root=repo_root)
+        profile = _prepare_signing_profile_dependencies(profile=profile, repo_root=repo_root)
     except ExternalDependencyError as exc:
         print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
         return 14
-    profile = {
-        **profile,
-        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
-        "resolved_signing_context": signing_context.public_manifest(repo_root),
-    }
 
     result = execute_application_signing(
         profile=profile,

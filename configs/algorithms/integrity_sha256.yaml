@@ -48,6 +48,7 @@ profiles:
       artifact: build/Release/stm32_basic_hal1_integrity_v1_signed.bin
     secure_boot_flash:
       signature_algorithm: integrity_sha256
+      wolfboot_offset: 0x08000000
       unsigned_application_artifact: build/Release/stm32_basic_hal1_integrity.bin
       signed_application_artifact: build/Release/stm32_basic_hal1_integrity_v1_signed.bin
       signed_application_offset: 0x08020000
