@@ -142,3 +142,5 @@ Application builds no longer use framework-level source, header, tool, or depend
 After a successful build, the framework calculates the final ELF SHA-256. This digest is the artifact identity recorded in the run manifest and immutable build record. Normal build identities use `build-<number>-<elf-sha256-prefix>`. Flash provenance verifies that the selected ELF matches the SHA-256 in the referenced immutable record; it does not recalculate source-state fingerprints.
 
 Managed STM32 MQTT experiments retain verbose broker packet evidence alongside UART and topic-qualified subscriber output. See `experiment/mqtt-broker/README.md` and `docs/007_framework_architecture.md` for the cross-validation contract and evidence limits.
+
+Disposable experiment cryptographic material may be retained only in ignored result directories when the owning workflow selects it explicitly. Private signing keys, TLS private keys, and certificates copied into results remain sensitive experiment artifacts. They must not be committed, published, or baked into the image. SSH/VPN keys, tokens, production credentials, and unrelated host secrets remain prohibited.

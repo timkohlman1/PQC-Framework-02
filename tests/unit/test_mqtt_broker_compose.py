@@ -304,6 +304,7 @@ def test_mqtt_cert_provisioning_synchronizes_authoritative_stepca_material(tmp_p
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(module, "broker_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "_certificate_valid_for", lambda *_args, **_kwargs: True)
 
     args = module.build_parser().parse_args([
         "provision-certs",

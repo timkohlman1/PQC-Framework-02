@@ -221,7 +221,7 @@ def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     assert 'expected_response_count = 2 if reconnect_attempts > 0 else 1' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
-    assert 'matched_count=$(grep -Fxc "$expected" "$response_file" || true)' in source
+    assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source
     assert 'marker.get("response_count") == expected_response_count' in source
     assert 'marker.get("expected_response_count") == expected_response_count' in source
 
