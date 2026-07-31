@@ -168,3 +168,36 @@ benchmark entry points; they are not prerequisites for `run`.
 The `--boot-algorithm` option applies only to wolfBoot signing and verification.
 TLS key exchange and certificate/signature selections remain in the MQTT
 experiment profile.
+
+## Network packet-capture artifacts
+
+Every full firmware run whose experiment profile contains `network` enables gateway packet capture by default. The capture starts after the managed broker is ready and before the STM32 reset that begins UART and network execution. Cleanup stops only the `tcpdump` process created for the current run, copies the capture into the result directory, records its SHA-256 digest and byte count in `manifest.json`, and removes the temporary gateway files.
+
+The retained files are:
+
+- `gateway-network-capture.pcap` — packet data readable by Wireshark or `tcpdump -r`.
+- `gateway-network-capture.log` — start, stop, copy, and `tcpdump` diagnostic evidence.
+
+Example inspection:
+
+```powershell
+wireshark .\results\<run-id>\gateway-network-capture.pcap
+```
+
+or inside the development container:
+
+```powershell
+.\scripts\dev.ps1 python -c "import subprocess; subprocess.run(['tcpdump', '-nn', '-r', 'results/<run-id>/gateway-network-capture.pcap'], check=True)"
+```
+
+Configure a known STM32/ST67 MAC address to avoid unrelated gateway traffic:
+
+```yaml
+network:
+  packet_capture:
+    enabled: true
+    interface: any
+    stm32_mac_address: "02:11:22:33:44:55"
+```
+
+Replace the example address with the actual device address. When the MAC is omitted, the framework captures all traffic visible on the selected interface so that DHCP and other pre-address traffic are not lost. The manifest records the effective interface and filter. A missing, empty, uncollectable, or unsuccessfully stopped capture fails an otherwise successful network experiment rather than creating unsupported evidence.

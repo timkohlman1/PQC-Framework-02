@@ -90,6 +90,11 @@ from framework.mqtt_fake_transport import (
 )
 from framework.wolfboot_build import execute_wolfboot_build
 from framework.progress import emit_progress
+from framework.packet_capture import (
+    packet_capture_config,
+    start_gateway_packet_capture,
+    stop_and_collect_gateway_packet_capture,
+)
 from framework.tls_algorithms import resolve_tls_algorithm_set
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
@@ -633,11 +638,111 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
     return tuple(markers)
 
 
+
+def _execute_uart_capture_with_optional_gateway_packet_capture(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+    duration_seconds: int,
+    restart_command: str,
+):
+    """Run UART capture while owning packet capture for any IP-network profile."""
+
+    if packet_capture_config(bundle) is None:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=duration_seconds,
+            restart_command=restart_command,
+        )
+        return uart_result, uart_result.return_code, ("none" if uart_result.return_code == 0 else "uart")
+
+    packet_capture, packet_capture_start = start_gateway_packet_capture(
+        bundle=bundle, repo_root=repo_root, run_id=result_dir.name
+    )
+    update_manifest(result_dir / "manifest.json", {"gateway_packet_capture": {
+        "enabled": True,
+        "start_return_code": None if packet_capture_start is None else packet_capture_start.return_code,
+        "interface": None if packet_capture is None else packet_capture.interface,
+        "filter": None if packet_capture is None else packet_capture.capture_filter,
+        "stm32_mac_address": None if packet_capture is None else packet_capture.stm32_mac_address,
+        "artifact": None,
+        "status": "running" if packet_capture is not None else "start_failed",
+    }})
+    if packet_capture is None:
+        return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture_start"
+
+    emit_progress("capture", "Gateway packet capture started", detail=(
+        f"Interface: {packet_capture.interface}; filter: {packet_capture.capture_filter or 'none (all gateway traffic)'}"
+    ))
+    uart_result = None
+    try:
+        uart_result = execute_uart_capture(
+            bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+            duration_seconds=duration_seconds, restart_command=restart_command,
+        )
+    finally:
+        packet_capture_result = stop_and_collect_gateway_packet_capture(
+            capture=packet_capture, repo_root=repo_root, result_dir=result_dir
+        )
+        update_manifest(result_dir / "manifest.json", {"gateway_packet_capture": {
+            "enabled": True,
+            "status": "collected" if packet_capture_result.return_code == 0 else "failed",
+            "interface": packet_capture.interface,
+            "filter": packet_capture.capture_filter,
+            "stm32_mac_address": packet_capture.stm32_mac_address,
+            "artifact": None if packet_capture_result.artifact_path is None else packet_capture_result.artifact_path.name,
+            "log": packet_capture_result.log_path.name,
+            "sha256": packet_capture_result.sha256,
+            "size_bytes": packet_capture_result.size_bytes,
+            "stop_return_code": packet_capture_result.stop.return_code,
+            "copy_return_code": packet_capture_result.copy.return_code,
+            "failure_reason": packet_capture_result.failure_reason,
+        }})
+    if packet_capture_result.return_code != 0:
+        return uart_result, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture"
+    assert uart_result is not None
+    return uart_result, uart_result.return_code, ("none" if uart_result.return_code == 0 else "uart")
+
 def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path, duration_seconds: int, restart_command: str):
     broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     if not broker_started:
         _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
+
+    packet_capture, packet_capture_start = start_gateway_packet_capture(
+        bundle=bundle,
+        repo_root=repo_root,
+        run_id=result_dir.name,
+    )
+    if packet_capture_start is not None:
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "gateway_packet_capture": {
+                    "enabled": True,
+                    "start_return_code": packet_capture_start.return_code,
+                    "interface": None if packet_capture is None else packet_capture.interface,
+                    "filter": None if packet_capture is None else packet_capture.capture_filter,
+                    "stm32_mac_address": None if packet_capture is None else packet_capture.stm32_mac_address,
+                    "artifact": None,
+                    "status": "running" if packet_capture is not None else "start_failed",
+                }
+            },
+        )
+    if packet_capture is None:
+        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture_start"
+    emit_progress(
+        "capture",
+        "Gateway packet capture started",
+        detail=(
+            f"Interface: {packet_capture.interface}; "
+            f"filter: {packet_capture.capture_filter or 'none (all gateway traffic)'}"
+        ),
+    )
 
     experiment = bundle["experiment"]
     mqtt = experiment["mqtt"]
@@ -801,6 +906,46 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         elif missing_uart_markers:
             failure_stage = "mqtt_uart_markers"
     finally:
+        packet_capture_result = stop_and_collect_gateway_packet_capture(
+            capture=packet_capture,
+            repo_root=repo_root,
+            result_dir=result_dir,
+        )
+        update_manifest(
+            result_dir / "manifest.json",
+            {
+                "gateway_packet_capture": {
+                    "enabled": True,
+                    "status": "collected" if packet_capture_result.return_code == 0 else "failed",
+                    "interface": packet_capture.interface,
+                    "filter": packet_capture.capture_filter,
+                    "stm32_mac_address": packet_capture.stm32_mac_address,
+                    "artifact": (
+                        None
+                        if packet_capture_result.artifact_path is None
+                        else packet_capture_result.artifact_path.name
+                    ),
+                    "log": packet_capture_result.log_path.name,
+                    "sha256": packet_capture_result.sha256,
+                    "size_bytes": packet_capture_result.size_bytes,
+                    "stop_return_code": packet_capture_result.stop.return_code,
+                    "copy_return_code": packet_capture_result.copy.return_code,
+                    "failure_reason": packet_capture_result.failure_reason,
+                }
+            },
+        )
+        emit_progress(
+            "capture",
+            "Gateway packet capture collected"
+            if packet_capture_result.return_code == 0
+            else "Gateway packet capture failed",
+            detail=(
+                f"Artifact: {packet_capture_result.artifact_path}; "
+                f"bytes: {packet_capture_result.size_bytes}"
+                if packet_capture_result.return_code == 0
+                else str(packet_capture_result.failure_reason)
+            ),
+        )
         broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     broker_log_path = result_dir / "mqtt-broker-log.log"
     if broker_log_rc == 0 and broker_log_path.exists():
@@ -816,6 +961,9 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             json.dumps(broker_message_evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    if passed and packet_capture_result.return_code != 0:
+        passed = False
+        failure_stage = "gateway_packet_capture"
     if passed and broker_log_rc != 0:
         passed = False
         failure_stage = "broker_log_collection"
@@ -1320,6 +1468,10 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
             raise ConfigError("network.wifi.psk must be between 8 and 63 bytes")
         if ipv4_mode != "dhcp":
             raise ConfigError("network.ipv4.mode must be dhcp")
+        try:
+            packet_capture_config({"experiment": config})
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
 
     validate_mqtt_tls_config(config)
 
@@ -2411,15 +2563,13 @@ def _run_full_baseline_with_existing_build(
             restart_command=_monitor_restart_command(bundle, None),
         )
     else:
-        uart_result = execute_uart_capture(
+        uart_result, final_return_code, failure_stage = _execute_uart_capture_with_optional_gateway_packet_capture(
             bundle=bundle,
             repo_root=repo_root,
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
         )
-        final_return_code = uart_result.return_code
-        failure_stage = "none" if final_return_code == 0 else "uart"
     _record_run_summary(
         result_dir=result_dir,
         final_return_code=final_return_code,
@@ -2778,15 +2928,13 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             restart_command=_monitor_restart_command(bundle, None),
         )
     else:
-        uart_result = execute_uart_capture(
+        uart_result, final_return_code, failure_stage = _execute_uart_capture_with_optional_gateway_packet_capture(
             bundle=bundle,
             repo_root=repo_root,
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
         )
-        final_return_code = uart_result.return_code
-        failure_stage = "none" if final_return_code == 0 else "uart"
 
     _record_run_summary(
         result_dir=result_dir,
@@ -2996,15 +3144,13 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             restart_command=_monitor_restart_command(bundle, None),
         )
     else:
-        uart_result = execute_uart_capture(
+        uart_result, final_return_code, failure_stage = _execute_uart_capture_with_optional_gateway_packet_capture(
             bundle=bundle,
             repo_root=repo_root,
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
         )
-        final_return_code = uart_result.return_code
-        failure_stage = "none" if final_return_code == 0 else "uart"
     _record_run_summary(
         result_dir=result_dir,
         final_return_code=final_return_code,

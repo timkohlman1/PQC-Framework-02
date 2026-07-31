@@ -1,146 +1,73 @@
-# PQC-Framework-02
+# Project Documentation Index and Ownership Map
 
-STM32 embedded-security experiment framework for direct-flash firmware, wolfBoot secure boot, reproducible evidence collection, and bounded MQTT/TLS preparation.
+## Purpose
 
-## Current scope
+This file is the canonical index for project-maintained documentation. Use it to locate the authoritative owner for a subject, determine a document's lifecycle, and distinguish project documentation from upstream material.
 
-The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform. Implemented firmware capabilities include HAL/CMSIS-RTOS v2 FreeRTOS execution, classical and ML-DSA wolfBoot profiles, STM32-local lwIP and wolfSSL preparation, fake/no-network wolfMQTT initialization, and recorded plaintext, classical TLS, and hybrid P-256 plus ML-KEM-768 MQTT-over-TLS paths through the ST67/lwIP transport.
+A document being indexed does not make every statement in it current. Lifecycle classifications below determine how it should be used.
 
-Evidence boundaries are strict:
+## Ownership rules
 
-- Build-only evidence proves compilation and linkage only.
-- STM32 local-only and fake/no-network evidence does not prove external networking.
-- Host-side or broker-side validation does not prove STM32 or end-to-end wireless success.
-- The unavailable transport boundary performs no socket I/O.
-- The ST67W61M1 integration supports configured-AP association, link-up, host-side lwIP DHCP, and live IPv4 evidence in capability-gated hardware runs. Earlier local smoke markers remain limited to their execution point.
-- STM32 firmware builds are intentionally limited to Ethernet-style IPv4 over the ST67 netif. IPv6, bridge, PPP/PPPoE/PPPoS/L2TP, and SLIP components are disabled or excluded from the firmware target.
-- The non-network lwIP runtime smoke exercises version, IPv4 formatting, and checksum helpers only; it does not initialize a netif or prove external networking.
-- MQTT capability claims remain run-specific: only retained UART, broker, subscriber, and manifest evidence can establish plaintext, classical TLS, or hybrid PQC success.
+Project-owned documentation consists of the tracked root entry documents, tracked documents under `docs/`, and the tracked MQTT broker documentation listed below. Every project-owned document must appear in this index.
 
-The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
+Documentation inside vendor or submodule trees is upstream-owned and is excluded from project-maintained documentation consistency checks. The current submodule roots are:
 
-## Documentation
+- `tools/wolfboot/`
+- `Middlewares/Third_Party/wolfMQTT/`
 
-- `docs/README.md` — documentation index and ownership map
-- `AI_BUILD_GUIDE.md` — mandatory rules for AI-assisted implementation and review
-- `docs/001_ai_feature_request_workflow.md` — maintained AI request workflow; there is no separate release-readiness prompt document
-- `docs/007_framework_architecture.md` — architecture, evidence model, capability matrix, and deferred-test register
-- `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, and UART procedures
-- `docs/006_security_and_secrets.md` — secret handling and signing-state safety
-- `experiment/mqtt-broker/README.md` — broker provisioning, deployment, and host-side validation
-- `docs/non_hardware_mqtt_tls_development_plan.md` — active MQTT/TLS roadmap
+Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generated build trees, virtual environments, result directories, and dependency caches is also outside this index unless a project-owned document is explicitly listed below.
 
-The maintained project prompt is `docs/008_chatgpt_project_prompt.md`.
+## Lifecycle definitions
 
-## Default workflow
+- **Current reference:** maintained description of the current project, policy, architecture, or workflow.
+- **Operational guide:** maintained instructions for a bounded setup or operational task.
+- **AI workflow:** maintained instructions or prompt material for AI-assisted work.
+- **Active plan:** maintained roadmap with current implementation status and remaining work.
+- **Historical plan:** preserved goals and sequencing; not a current-state authority.
+- **Decision record:** preserved architectural decision and rationale; later current references may supersede operational details.
+- **Remediation plan:** bounded maintenance plan used to execute documentation corrections.
 
-The default development path is Docker-hosted Linux execution through the project wrapper scripts, `scripts\dev.ps1` and `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis, but they are not the reproducible validation gate.
+## Canonical ownership map
 
-Build the development image:
+| Path | Classification | Lifecycle | Canonical subject ownership | Intended audience |
+|---|---|---|---|---|
+| `AI_BUILD_GUIDE.md` | AI context guide | Current reference | AI-assisted development rules, safety constraints, evidence rules, test expectations, and repository navigation | AI assistants and developers preparing AI requests |
+| `README.md` | Project entry point | Current reference | Human-facing purpose, current summary, common commands, and routing to detailed documentation | Developers, reviewers, operators |
+| `docs/000_project_overview.md` | Project overview | Current reference | Detailed project purpose, scope, implemented boundaries, and evidence model overview | New developers, reviewers, researchers |
+| `docs/001_ai_feature_request_workflow.md` | AI workflow guide | AI workflow | Canonical feature-request and review workflow for AI-assisted changes | Developers and AI assistants |
+| `docs/002_host_gateway_setup.md` | Setup guide | Operational guide | Development-host access, SSH configuration, and gateway identity | Operators and developers using the gateway |
+| `docs/003_stm32_board_setup.md` | Hardware setup guide | Operational guide | Board, ST-LINK, UART, memory, and physical hardware setup | Firmware developers and hardware operators |
+| `docs/004_baseline_hal_app.md` | Firmware behavior reference | Current reference | Baseline HAL/FreeRTOS application behavior, UART markers, and local-smoke limitations | Firmware developers and test authors |
+| `docs/005_remote_flash_workflow.md` | Workflow guide | Operational guide | Docker-wrapper build, signing, flash, secure-boot, and UART workflows | Operators, firmware developers, test authors |
+| `docs/006_security_and_secrets.md` | Security policy | Current reference | Secret handling, private generated state, signing-tuple safety, and packaging exclusions | All contributors and operators |
+| `docs/007_framework_architecture.md` | Architecture reference | Current reference | Detailed current architecture, capability matrix, evidence boundaries, file map, and deferred-test register | Developers, reviewers, test authors, researchers |
+| `docs/008_chatgpt_project_prompt.md` | AI prompt | AI workflow | Maintained reusable project prompt that routes work through the canonical AI workflow | Developers starting AI-assisted work |
+| `docs/README.md` | Documentation index | Current reference | Project documentation inventory, ownership, lifecycle, audience, and exclusion rules | All documentation users and maintainers |
+| `docs/decisions/0001_keep_cubemx_project_at_repo_root.md` | Architecture decision record | Decision record | Rationale for retaining the CubeMX project at repository root | Firmware and build-system maintainers |
+| `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md` | Architecture decision record | Decision record | wolfBoot STM32L4 target support assessment and accepted direction | Secure-boot and platform maintainers |
+| `docs/decisions/0003_secure_boot_flash_layout.md` | Architecture decision record | Decision record | STM32L4R5 secure-boot flash layout decision and rationale | Secure-boot, linker, and firmware maintainers |
+| `docs/local build commands.txt` | Local-tooling troubleshooting guide | Operational guide | Host-native diagnostic fallback commands; never the normal reproducible workflow | Developers diagnosing CubeMX, IDE, or local toolchain issues |
+| `docs/non_hardware_mqtt_tls_development_plan.md` | MQTT/TLS roadmap | Active plan | Current phase status, evidence boundaries, remaining limitations, and deferred work for non-hardware MQTT/TLS development | Firmware, network, security, and test developers |
+| `docs/pqc_iot_experiment_framework_plan.md` | Framework roadmap | Historical plan | Original framework goals, sequencing, checklists, and pass criteria | Maintainers reviewing project history and original intent |
+| `experiment/mqtt-broker/README.md` | Broker operations guide | Operational guide | Canonical MQTT broker Compose profiles, provisioning, deployment, validation, and broker evidence limits | Network/security developers and gateway operators |
+| `experiment/mqtt-broker/config/oqs/README.md` | OQS broker profile reference | Operational guide | OQS Mosquitto profile algorithms, generated certificate material, and runtime diagnostic limits | PQC/TLS experimenters and broker maintainers |
 
-```powershell
-.\scripts\dev.ps1 build-image
-```
+## Subject routing
 
-Run unit tests, repository Python tools, or the complete capability-gated test selection:
+Use `README.md` for initial orientation and common commands. Use `AI_BUILD_GUIDE.md` and `docs/001_ai_feature_request_workflow.md` for AI-assisted changes. Use `docs/007_framework_architecture.md` for detailed current capability and evidence questions. Use the topic-specific operational guide for setup or execution details. Use the active MQTT/TLS plan for current roadmap status. Treat the historical framework plan and decision records as preserved context rather than current operational authority.
 
-```powershell
-.\scripts\dev.ps1 pytest tests/unit
-.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py --help
-.\scripts\dev.ps1 pytest
-```
+## Maintenance contract
 
-Use `.\scripts\dev.ps1 python-gateway <script> [arguments...]` for Python tools that require configured gateway SSH access.
+When adding, relocating, reclassifying, or removing a project-owned document:
 
-Inspect or build the direct-flash baseline:
+1. Update this index in the same change.
+2. Keep the path tracked and valid.
+3. Assign one classification, lifecycle, canonical subject owner, and intended audience.
+4. Avoid creating a second canonical owner for an existing subject.
+5. Do not add vendor or submodule documentation to project-maintained consistency checks.
 
-```powershell
-.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
-```
+`tests/unit/test_documentation_integrity.py` enforces index coverage and tracked-path validity without snapshotting complete document contents.
 
-Run the direct-flash workflow through Docker and the SSH gateway. SSH/SCP uses runtime-mounted SSH access; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough; hardware workflows remain gateway-mediated:
+### Packet capture for networked firmware runs
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
-```
-
-Run the hardware test selection when the required gateway and board capabilities are intentionally available:
-
-```powershell
-.\scripts\dev.ps1 pytest-hardware
-```
-
-On Linux or macOS, use the equivalent `./scripts/dev.sh` commands.
-
-Representative host-native commands remain diagnostic fallback only:
-
-```powershell
-cmake --preset Debug
-cmake --build --preset Debug
-cmake --preset RelocatedDebug
-cmake --build --preset RelocatedDebug
-python -m pytest tests/integration/test_local_build.py -m integration --pqc-require-local-build
-```
-
-## Secure-boot example
-
-Use `run` for an end-to-end MQTT/TLS experiment through wolfBoot:
-
-```powershell
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml `
-    --boot-mode wolfboot `
-    --boot-algorithm ecdsa_p256
-```
-
-The workflow prepares dependencies and signing material, builds wolfBoot and the relocated MQTT firmware, signs and flashes both images, validates UART and broker behaviour, stops the broker, and retains one result set. Omit the boot options for direct flash. MQTT/TLS algorithms remain owned by the experiment YAML.
-
-For a manual secure-boot sequence, create the framework-recorded relocated application before signing:
-
-```powershell
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --boot-algorithm ecdsa_p256
-```
-
-Further manual commands, signing-tuple rules, and diagnostic fallbacks are documented in `docs/005_remote_flash_workflow.md`.
-
-## MQTT and broker orientation
-
-The repository includes framework schema validation, deterministic fake/no-network execution, an initial plaintext ST67/lwIP STM32 MQTT path, classical and experimental OQS broker profiles, and native host wolfMQTT/wolfSSL compatibility validation. The canonical broker Compose file is `experiment/mqtt-broker/compose.yaml`.
-
-Use `experiment/mqtt-broker/README.md` for certificate provisioning, gateway deployment, broker lifecycle commands, and the PowerShell `--client-args` forwarding contract. Those workflows produce host-side or broker-side evidence only; they do not prove wolfMQTT-on-STM32 or end-to-end wireless operation.
-
-## Safety and evidence
-
-Disposable experiment signing, certificate, broker, and client material used by an owning workflow is retained in that workflow's ignored result directory with a SHA-256 `material-inventory.json`, together with applicable unsigned/signed application images and bootloader outputs. These result copies are sensitive reproduction evidence, not authoritative future inputs. SSH/VPN keys, tokens, production or externally managed credentials, real `.env` files, and unrelated host credentials must never be copied into results, committed, packaged in AI replacement archives, or baked into images.
-
-Generated-state preflight is the primary mechanism for signing-state compatibility and provenance. Pytest cleanup is supplementary cross-platform hygiene and must not remove source files, canonical signing keys, or reusable tuple members. Workflows must never silently reconstruct partial signing state.
-
-Do not claim build, signing, flashing, gateway, hardware, UART, runtime, timing, memory, benchmark, MQTT/TLS, Wi-Fi, or end-to-end success without explicit logs, manifests, or equivalent evidence from the relevant workflow. A skipped capability-gated test is not evidence that the capability succeeded.
-
-Detailed signing-tuple, automated-test evidence, MQTT broker lifecycle, classical TLS, and hybrid PQC procedures are owned by `docs/005_remote_flash_workflow.md`, `docs/007_framework_architecture.md`, and `experiment/mqtt-broker/README.md`.
-
-### Declared certificate prerequisites
-
-TLS experiment profiles declare `mqtt.tls.certificate_profile`. Running `experiment build` or `experiment-gateway run` prepares or reuses the matching tuple under `secrets/mqtt/<profile>/`, validates public provenance, and embeds the resolved public material into generated build configuration. Do not invoke certificate provisioning as a separate prerequisite and do not place authoritative certificates under `experiment/mqtt-broker/runtime/`.
-
-### Certificate services
-
-Classical X.509 certificate generation is owned by `framework/certs` (step-ca, Vault, and LocalStack KMS). All MQTT TLS profiles use TLS 1.3; the PQC MQTT profile uses hybrid key exchange with a classical broker certificate. Run the certificate services and synchronize `stepca-classical` material before encrypted MQTT builds. See `framework/certs/README.md` and `experiment/mqtt-broker/README.md`.
-
-## Experiment console progress
-
-Experiment commands emit timestamped stage messages for resolved cryptography, prerequisites, CMake configuration and build execution, gateway operations, broker/MQTT lifecycle work, cleanup, and final result recording. Timestamps default to `Australia/Melbourne`, include `AEST` or `AEDT`, and may be overridden with `PQC_PROGRESS_TIMEZONE` using an IANA timezone name.
-
-Progress output is operational context only. The result manifest and retained logs remain authoritative evidence.
-
-### Application build identity and incremental compilation
-
-Application builds no longer use framework-level source, header, tool, or dependency fingerprints and are never selected from a reusable build pool. Every build request invokes `cmake --preset <preset>` followed by `cmake --build --preset <preset>`. The retained CMake/Ninja build directory provides native incremental optimisation, so unchanged object files may be reused by Ninja without the framework claiming cross-run artifact compatibility.
-
-After a successful build, the framework calculates the final ELF SHA-256. This digest is the artifact identity recorded in the run manifest and immutable build record. Normal build identities use `build-<number>-<elf-sha256-prefix>`. Flash provenance verifies that the selected ELF matches the SHA-256 in the referenced immutable record; it does not recalculate source-state fingerprints.
-
-Managed STM32 MQTT experiments retain verbose broker packet evidence alongside UART and topic-qualified subscriber output. See `experiment/mqtt-broker/README.md` and `docs/007_framework_architecture.md` for the cross-validation contract and evidence limits.
-
-Disposable experiment cryptographic material may be retained only in ignored result directories when the owning workflow selects it explicitly. Private signing keys, TLS private keys, and certificates copied into results remain sensitive experiment artifacts. They must not be committed, published, or baked into the image. SSH/VPN keys, tokens, production credentials, and unrelated host secrets remain prohibited.
+Experiment profiles with a `network` block automatically retain `gateway-network-capture.pcap` and `gateway-network-capture.log` in the run result. Configure `network.packet_capture.stm32_mac_address` when the device MAC is known; otherwise the selected interface defaults to `any` and is captured without a narrowing filter so DHCP and DNS traffic remain visible. See `docs/002_host_gateway_setup.md` for the gateway `tcpdump` prerequisite and `docs/005_remote_flash_workflow.md` for inspection commands.

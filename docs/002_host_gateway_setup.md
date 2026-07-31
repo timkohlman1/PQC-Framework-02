@@ -104,3 +104,19 @@ When the gateway is reachable only through a VPN, establish the VPN on the devel
 - Broker deployment, certificate provisioning, and host/broker evidence: `experiment/mqtt-broker/README.md`
 - Secret and generated-state handling: `docs/006_security_and_secrets.md`
 - Canonical capability and evidence matrix: `docs/007_framework_architecture.md`
+
+## Gateway packet-capture prerequisite
+
+Firmware experiments containing a top-level `network` configuration start a bounded packet capture on the gateway before the STM32 is reset. Install `tcpdump` on the gateway and grant the experiment SSH user permission to capture packets without an interactive privilege prompt. A typical Linux capability-based setup is:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tcpdump
+sudo setcap cap_net_raw,cap_net_admin=eip "$(command -v tcpdump)"
+getcap "$(command -v tcpdump)"
+tcpdump --version
+```
+
+The expected `getcap` result includes `cap_net_admin,cap_net_raw=eip`. Site policy may instead provide an equivalent dedicated capture group or wrapper. The experiment workflow invokes `tcpdump` directly and does not issue interactive `sudo` commands.
+
+Packet-capture settings belong under `network.packet_capture` in the experiment profile. `interface` defaults to `any`. `stm32_mac_address` is optional but preferred when the ST67W61M1 MAC address is known because it limits the capture to Ethernet frames involving that device while retaining DHCP, DNS, TCP, TLS, MQTT, ARP, and related traffic. The address must use six colon-separated hexadecimal octets.

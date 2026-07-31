@@ -12,6 +12,9 @@ network:
     psk: lukeisadog
   ipv4:
     mode: dhcp
+  packet_capture:
+    enabled: true
+    interface: any
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick

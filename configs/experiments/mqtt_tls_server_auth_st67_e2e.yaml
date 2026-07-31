@@ -12,6 +12,9 @@ network:
     psk: lukeisadog
   ipv4:
     mode: dhcp
+  packet_capture:
+    enabled: true
+    interface: any
 mqtt:
   schema_version: 1
   enabled: true
