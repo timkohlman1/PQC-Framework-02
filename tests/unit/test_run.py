@@ -104,6 +104,11 @@ def args_for(experiment_path: Path, results_dir: Path) -> Namespace:
         configure_preset=None,
         build_preset="Debug",
         uart_duration_seconds=10,
+        boot_mode="direct_flash",
+        boot_algorithm=None,
+        target_profile=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
+        build_number=None,
+        force=False,
     )
 
 
@@ -294,4 +299,93 @@ def test_run_subcommand_is_registered_with_mandatory_uart_capture():
     assert args.build_preset == "Debug"
     assert args.configure_preset is None
     assert args.uart_duration_seconds == cli.DEFAULT_CAPTURE_DURATION_SECONDS
+    assert args.boot_mode == "direct_flash"
+    assert args.boot_algorithm is None
     assert not hasattr(args, "capture_uart")
+
+
+def test_run_subcommand_accepts_explicit_wolfboot_selection():
+    cli = load_experiment_module()
+    parser = cli.build_arg_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--experiment",
+            "configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml",
+            "--boot-mode",
+            "wolfboot",
+            "--boot-algorithm",
+            "ecdsa_p256",
+        ]
+    )
+
+    assert args.func is cli.run_full_baseline_command
+    assert args.boot_mode == "wolfboot"
+    assert args.boot_algorithm == "ecdsa_p256"
+    assert args.target_profile == Path("configs/targets/stm32l4r5_wolfboot.yaml")
+
+
+def test_run_rejects_boot_algorithm_for_direct_flash(tmp_path, capsys):
+    cli = load_experiment_module()
+    experiment_path = write_sample_configs(tmp_path / "configs")
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = "direct_flash"
+    args.boot_algorithm = "ecdsa_p256"
+
+    assert cli.run_full_baseline_command(args) == 2
+    assert "--boot-algorithm is only valid" in capsys.readouterr().err
+
+
+def test_wolfboot_application_build_uses_relocated_elf_before_signing():
+    cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "firmware": {
+                "mode": "wolfboot_ecdsa_p256",
+                "artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+            }
+        },
+        "board": {},
+        "host": {},
+        "boot": {},
+    }
+    signing_profile = {
+        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+    }
+
+    build_bundle = cli._wolfboot_application_build_bundle(
+        bundle=bundle,
+        signing_profile=signing_profile,
+    )
+
+    assert build_bundle["experiment"]["firmware"]["artifact"] == (
+        "build/RelocatedDebug/stm32_basic_hal1.elf"
+    )
+    assert bundle["experiment"]["firmware"]["artifact"] == (
+        "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+    )
+
+
+def test_wolfboot_signed_firmware_is_selected_only_after_signing():
+    cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "firmware": {
+                "mode": "wolfboot_ecdsa_p256",
+                "artifact": "build/RelocatedDebug/stm32_basic_hal1.elf",
+            }
+        }
+    }
+    signing_profile = {
+        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+    }
+
+    cli._select_signed_firmware_artifact(
+        bundle=bundle,
+        signing_profile=signing_profile,
+    )
+
+    assert bundle["experiment"]["firmware"]["artifact"] == (
+        "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+    )

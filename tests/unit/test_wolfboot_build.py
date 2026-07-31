@@ -418,14 +418,17 @@ def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user
 def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
     wolfboot_build = load_wolfboot_build_module()
     repo_root = Path(__file__).resolve().parents[2]
-    profile_path = repo_root / "configs" / "builds" / "wolfboot_stm32l4_ecdsa_p256.yaml"
+    target_profile = repo_root / "configs" / "targets" / "stm32l4r5_wolfboot.yaml"
     spec = importlib.util.spec_from_file_location(
         "experiment_cli_for_wolfboot_profile", repo_root / "scripts/experiment.py"
     )
     assert spec is not None and spec.loader is not None
     experiment_cli = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(experiment_cli)
-    profile = experiment_cli.load_config(profile_path)
+    profile, resolved_repo_root = experiment_cli.load_secure_boot_profile_section(
+        target_profile=target_profile, algorithm="ecdsa_p256", section="build"
+    )
+    assert resolved_repo_root == repo_root
 
     assert profile["build"]["args"] == "WOLFBOOT_ROOT=. wolfboot.elf"
     assert profile["build"]["signing_tuple"]["tuple_id"] == "ecdsa_p256-development"

@@ -136,18 +136,18 @@ profiles:
       status: defined_phase_11_5d_build_only_not_boot_validated
       profile: configs/algorithms/ecc521.yaml
       config_template: configs/wolfboot/stm32l4r5_ecc521.config
-      command: python scripts/experiment.py build-wolfboot --algorithm ecc521
+      command: python scripts/experiment.py build-wolfboot --boot-algorithm ecc521
     application_signing_profile:
       status: defined_phase_11_5d_signing_only_not_flashing_or_boot_validated
       profile: configs/algorithms/ecc521.yaml
       input_image: build/RelocatedDebug/stm32_basic_hal1_ecc521.bin
       signed_image: build/RelocatedDebug/stm32_basic_hal1_ecc521_v1_signed.bin
       private_key: secrets/wolfboot/ecc521_private_key.der
-      command: python scripts/experiment.py sign-application --algorithm ecc521
+      command: python scripts/experiment.py sign-application --boot-algorithm ecc521
     secure_boot_flash_profile:
       status: defined_phase_11_5d_flash_profile_not_hardware_validated
       experiment: configs/experiments/secure_boot_uart.yaml
-      command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm ecc521
+      command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm ecc521
       wolfboot_offset: 134217728
       signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc521_v1_signed.bin
       signed_application_offset: 134348800

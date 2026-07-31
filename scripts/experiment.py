@@ -10,7 +10,7 @@ The initial supported commands are:
     python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
     python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py sign-application --algorithm ecdsa_p256
+    python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
     python scripts/experiment.py sign-application --profile configs/algorithms/ed25519.yaml
     python scripts/experiment.py sign-application --profile configs/algorithms/rsa2048.yaml
     python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
@@ -2367,10 +2367,382 @@ def _run_full_baseline_with_existing_build(
     return final_return_code
 
 
-def run_full_baseline_command(args: argparse.Namespace) -> int:
-    """Run the known-good automated baseline from build through UART verdict."""
+
+def _compose_wolfboot_run_bundle(
+    *,
+    experiment_path: Path,
+    boot_algorithm: str,
+    target_profile: Path,
+) -> dict[str, dict[str, Any]]:
+    """Compose an existing experiment with canonical wolfBoot runtime settings."""
+
+    direct_bundle = load_experiment_bundle(experiment_path)
+    secure_bundle = load_secure_boot_experiment_bundle(
+        Path("configs/experiments/secure_boot_uart.yaml"),
+        algorithm=boot_algorithm,
+        target_profile=target_profile,
+    )
+
+    original_experiment = direct_bundle["experiment"]
+    secure_experiment = secure_bundle["experiment"]
+    merged_uart = _merge_config(
+        original_experiment.get("uart", {}),
+        secure_experiment.get("uart", {}),
+    )
+    merged_experiment = {
+        **original_experiment,
+        "boot": secure_experiment["boot"],
+        "boot_crypto": secure_experiment["boot_crypto"],
+        "firmware": dict(secure_experiment["firmware"]),
+        "secure_boot_benchmark_profile": dict(
+            secure_experiment["secure_boot_benchmark_profile"]
+        ),
+        "secure_boot_flash": dict(secure_experiment["secure_boot_flash"]),
+        "uart": merged_uart,
+    }
+    validate_experiment_config(merged_experiment)
+    return {
+        "experiment": merged_experiment,
+        "board": direct_bundle["board"],
+        "host": direct_bundle["host"],
+        "boot": secure_bundle["boot"],
+    }
+
+
+def _wolfboot_application_build_bundle(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    signing_profile: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Return a build-stage bundle that validates the relocated ELF, not the future signed BIN."""
+
+    input_image = Path(str(require_field(signing_profile, "input_image", "application signing profile")))
+    relocated_elf = input_image.with_suffix(".elf").as_posix()
+    build_bundle = {
+        **bundle,
+        "experiment": {
+            **bundle["experiment"],
+            "firmware": {
+                **bundle["experiment"]["firmware"],
+                "artifact": relocated_elf,
+            },
+        },
+    }
+    return build_bundle
+
+
+def _select_signed_firmware_artifact(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    signing_profile: dict[str, Any],
+) -> None:
+    """Select the signed application only after signing has completed."""
+
+    bundle["experiment"]["firmware"]["artifact"] = str(
+        require_field(signing_profile, "signed_image", "application signing profile")
+    )
+
+
+def _record_wolfboot_run_stage(
+    *,
+    result_dir: Path,
+    stage: str,
+    return_code: int,
+    evidence_dir: Path | None = None,
+    log_path: Path | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    evidence: dict[str, Any] = {
+        "return_code": return_code,
+        "result_directory": None if evidence_dir is None else str(evidence_dir),
+        "log": None if log_path is None else str(log_path),
+    }
+    if extra:
+        evidence.update(extra)
+    update_manifest(result_dir / "manifest.json", {stage: evidence})
+
+
+def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
+    """Run an experiment end to end through wolfBoot without manual prerequisites."""
 
     from time import perf_counter
+
+    if not args.boot_algorithm:
+        print(
+            "Error: --boot-algorithm is required when --boot-mode wolfboot.",
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "build_number", None) is not None:
+        print(
+            "Error: --build-number is not supported with --boot-mode wolfboot because the relocated application, bootloader, and signature must be prepared as one run.",
+            file=sys.stderr,
+        )
+        return 2
+
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    bundle = _compose_wolfboot_run_bundle(
+        experiment_path=args.experiment,
+        boot_algorithm=args.boot_algorithm,
+        target_profile=args.target_profile,
+    )
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    _report_experiment_start(bundle, manifest["run_id"])
+    start = perf_counter()
+
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "boot_selection": {
+                "mode": "wolfboot",
+                "algorithm": args.boot_algorithm,
+                "target_profile": str(args.target_profile),
+                "source_experiment": str(args.experiment),
+            }
+        },
+    )
+
+    emit_progress("prereq", "Preparing all experiment prerequisites")
+    try:
+        bundle = _prepare_dependencies_for_result(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+        )
+    except ExternalDependencyError as exc:
+        print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
+
+    build_profile, _ = load_secure_boot_profile_section(
+        target_profile=args.target_profile,
+        algorithm=args.boot_algorithm,
+        section="build",
+    )
+    validate_wolfboot_build_profile_config(build_profile)
+    emit_progress("boot", "Building wolfBoot", detail=f"Algorithm: {args.boot_algorithm}.")
+    wolfboot_result = execute_wolfboot_build(
+        profile=build_profile,
+        repo_root=repo_root,
+        results_root=result_dir / "prerequisites",
+    )
+    _record_wolfboot_run_stage(
+        result_dir=result_dir,
+        stage="wolfboot_build",
+        return_code=wolfboot_result.return_code,
+        evidence_dir=wolfboot_result.result_dir,
+        log_path=wolfboot_result.log_path,
+        extra={
+            "artifact": str(wolfboot_result.artifact_path),
+            "artifact_sha256": wolfboot_result.artifact_sha256,
+        },
+    )
+    if wolfboot_result.return_code != 0:
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=wolfboot_result.return_code,
+            failure_stage="wolfboot_build",
+            build_return_code=None,
+            artifact_copy_return_code=None,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+        )
+        return wolfboot_result.return_code
+
+    signing_profile, _ = load_secure_boot_profile_section(
+        target_profile=args.target_profile,
+        algorithm=args.boot_algorithm,
+        section="signing",
+    )
+    validate_application_signing_profile_config(signing_profile)
+    build_bundle = _wolfboot_application_build_bundle(
+        bundle=bundle,
+        signing_profile=signing_profile,
+    )
+
+    emit_progress("build", "Building relocated experiment firmware")
+    build_result = execute_build(
+        bundle=build_bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        configure_preset="RelocatedDebug",
+        build_preset="RelocatedDebug",
+        force=getattr(args, "force", False),
+        progress=_build_progress,
+    )
+    if build_result.return_code != 0:
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=build_result.return_code,
+            failure_stage="application_build",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=None,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
+        )
+        return build_result.return_code
+
+    try:
+        signing_context = resolve_signing_material(
+            profile=signing_profile,
+            repo_root=repo_root,
+        )
+    except ExternalDependencyError as exc:
+        print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
+        return 14
+    signing_profile = {
+        **signing_profile,
+        "private_key": signing_context.private_key.relative_to(repo_root).as_posix(),
+        "resolved_signing_context": signing_context.public_manifest(repo_root),
+    }
+    emit_progress("sign", "Signing relocated experiment firmware")
+    signing_result = execute_application_signing(
+        profile=signing_profile,
+        repo_root=repo_root,
+        results_root=result_dir / "prerequisites",
+    )
+    _record_wolfboot_run_stage(
+        result_dir=result_dir,
+        stage="application_signing",
+        return_code=signing_result.return_code,
+        evidence_dir=signing_result.result_dir,
+        log_path=signing_result.log_path,
+        extra={
+            "signed_image": str(signing_result.signed_image_path),
+            "signed_image_sha256": signing_result.signed_image_sha256,
+        },
+    )
+    if signing_result.return_code != 0:
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=signing_result.return_code,
+            failure_stage="application_signing",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=None,
+            flash_return_code=None,
+            uart_return_code=None,
+            copied_artifact_path=None,
+            duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
+        )
+        return signing_result.return_code
+
+    _select_signed_firmware_artifact(
+        bundle=bundle,
+        signing_profile=signing_profile,
+    )
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "firmware": {
+                "artifact": bundle["experiment"]["firmware"]["artifact"],
+                "artifact_path": str(signing_result.signed_image_path),
+                "artifact_exists": signing_result.signed_image_path.exists(),
+                "sha256": signing_result.signed_image_sha256,
+                "result_artifact": signing_result.retained_signed_image_path.name,
+                "result_artifact_path": str(signing_result.retained_signed_image_path),
+            }
+        },
+    )
+
+    emit_progress("flash", "Flashing wolfBoot and signed experiment firmware")
+    try:
+        flash_result = execute_secure_boot_flash(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+        )
+    except SecureBootFlashProfileError as exc:
+        print(f"Secure-boot flash profile failed: {exc}", file=sys.stderr)
+        return 43
+    if flash_result.return_code != 0:
+        _record_run_summary(
+            result_dir=result_dir,
+            final_return_code=flash_result.return_code,
+            failure_stage="secure_boot_flash",
+            build_return_code=build_result.return_code,
+            artifact_copy_return_code=0,
+            flash_return_code=flash_result.return_code,
+            uart_return_code=None,
+            copied_artifact_path=signing_result.retained_signed_image_path,
+            duration_seconds=perf_counter() - start,
+            referenced_build_number=getattr(build_result, "build_number", None),
+            referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+            referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
+        )
+        return flash_result.return_code
+
+    emit_progress("uart", "Running experiment validation through wolfBoot")
+    if _is_st67_mqtt_e2e(bundle):
+        uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+    else:
+        uart_result = execute_uart_capture(
+            bundle=bundle,
+            repo_root=repo_root,
+            result_dir=result_dir,
+            duration_seconds=args.uart_duration_seconds,
+            restart_command=_monitor_restart_command(bundle, None),
+        )
+        final_return_code = uart_result.return_code
+        failure_stage = "none" if final_return_code == 0 else "uart"
+
+    _record_run_summary(
+        result_dir=result_dir,
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        build_return_code=build_result.return_code,
+        artifact_copy_return_code=0,
+        flash_return_code=flash_result.return_code,
+        uart_return_code=None if uart_result is None else uart_result.return_code,
+        copied_artifact_path=signing_result.retained_signed_image_path,
+        duration_seconds=perf_counter() - start,
+        referenced_build_number=getattr(build_result, "build_number", None),
+        referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
+        referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
+    )
+    _report_run_result(
+        passed_label="MQTT secure-boot end-to-end run passed"
+        if _is_st67_mqtt_e2e(bundle)
+        else "Secure-boot run passed",
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        run_id=manifest["run_id"],
+        result_dir=result_dir,
+        build_log=build_result.log_path,
+        copied_artifact=signing_result.retained_signed_image_path,
+        flash_log=flash_result.log_path,
+        uart_log=None if uart_result is None else uart_result.log_path,
+    )
+    return final_return_code
+
+
+def run_full_baseline_command(args: argparse.Namespace) -> int:
+    """Run the selected experiment end to end through direct flash or wolfBoot."""
+
+    from time import perf_counter
+
+    if getattr(args, "boot_mode", "direct_flash") == "wolfboot":
+        return _run_full_wolfboot_command(args)
+    if getattr(args, "boot_algorithm", None):
+        print(
+            "Error: --boot-algorithm is only valid with --boot-mode wolfboot.",
+            file=sys.stderr,
+        )
+        return 2
 
     bundle = load_experiment_bundle(args.experiment)
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
@@ -2624,7 +2996,7 @@ def run_wolfboot_build_command(args: argparse.Namespace) -> int:
     """Run a configured wolfBoot build profile without flashing or UART access."""
 
     profile, repo_root = load_secure_boot_profile_section(
-        target_profile=args.target_profile, algorithm=args.algorithm, section="build"
+        target_profile=args.target_profile, algorithm=args.boot_algorithm, section="build"
     )
     validate_wolfboot_build_profile_config(profile)
 
@@ -2657,7 +3029,7 @@ def run_sign_application_command(args: argparse.Namespace) -> int:
     """Run a configured local application-signing profile without flashing or UART access."""
 
     profile, repo_root = load_secure_boot_profile_section(
-        target_profile=args.target_profile, algorithm=args.algorithm, section="signing"
+        target_profile=args.target_profile, algorithm=args.boot_algorithm, section="signing"
     )
     validate_application_signing_profile_config(profile)
     try:
@@ -2798,7 +3170,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         )
         return 45
 
-    bundle = load_secure_boot_experiment_bundle(args.experiment, algorithm=args.algorithm, target_profile=args.target_profile)
+    bundle = load_secure_boot_experiment_bundle(args.experiment, algorithm=args.boot_algorithm, target_profile=args.target_profile)
     if args.negative_corrupt_application:
         bundle["experiment"].setdefault("secure_boot_flash", {})[
             "negative_test_corrupt_application"
@@ -3924,6 +4296,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         help="Bounded UART capture duration used for the baseline pass/fail verdict.",
     )
+    run_parser.add_argument(
+        "--boot-mode",
+        choices=("direct_flash", "wolfboot"),
+        default="direct_flash",
+        help="Firmware boot path. wolfboot performs prerequisite provisioning, relocated build, bootloader build, signing, two-artifact flash, and normal experiment validation.",
+    )
+    run_parser.add_argument(
+        "--boot-algorithm",
+        dest="boot_algorithm",
+        default=None,
+        help="Secure-boot signing algorithm ID from configs/algorithms/. Required when --boot-mode wolfboot.",
+    )
+    run_parser.add_argument(
+        "--target-profile",
+        default=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
+        type=Path,
+        help="Canonical secure-boot target profile used when --boot-mode wolfboot.",
+    )
     run_parser.set_defaults(func=run_full_baseline_command)
 
 
@@ -3931,7 +4321,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "build-wolfboot",
         help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
     )
-    wolfboot_build_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
+    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
     wolfboot_build_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -3948,7 +4338,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "sign-application",
         help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
     )
-    sign_application_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
+    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
     sign_application_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -3971,7 +4361,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a wolfBoot secure-boot experiment YAML config.",
     )
-    secure_boot_flash_parser.add_argument("--algorithm", required=True, help="Secure-boot algorithm ID from configs/algorithms/.")
+    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
     secure_boot_flash_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",

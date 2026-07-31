@@ -242,10 +242,10 @@ jobs:
               --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 
       - name: Build wolfBoot profile in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --algorithm ecdsa_p256
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --boot-algorithm ecdsa_p256
 
       - name: Sign relocated application in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py sign-application --algorithm ecdsa_p256
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
 
       - name: Run non-hardware local-build integration tests in container
         run: |

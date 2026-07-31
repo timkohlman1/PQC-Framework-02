@@ -25,17 +25,19 @@ Public CA material is exported to `secrets/public/ca`:
 
 The MQTT broker normally presents its leaf certificate plus intermediate chain. MQTT clients authenticate it using `root-ca.crt`/`ca.crt`. For mTLS, the STM32 also presents `client.crt` and proves possession of `client.key`.
 
-## Start
+## Runtime lifecycle
+
+Normal experiment runs own the local CA/Vault Compose lifecycle. Existing broker and client certificates are reused while they remain valid for more than 30 days. Missing, expired, invalid, or near-expiry identities trigger finite provisioning jobs using one-year leaf certificates. The CA/Vault/LocalStack/step-ca project is stopped and removed after provisioning, including failure paths.
+
+A development-only full PKI reset is available:
 
 ```powershell
-Copy-Item sample.env.stepca .env.stepca
-# Edit the demonstration values as required.
-docker compose up -d --build
-
-docker compose exec vault vault status
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --reset-pki
 ```
 
-Vault is exposed only on `127.0.0.1:8200` for local Python integration tests.
+This removes the local Compose volumes and generated CA, broker, and STM32 identity material before creating a new hierarchy. Do not use it where certificate continuity matters.
+
+Vault is exposed only on `127.0.0.1:8200` while the temporary infrastructure is running.
 
 ## Test
 

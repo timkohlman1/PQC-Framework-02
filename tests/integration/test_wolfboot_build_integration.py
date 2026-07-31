@@ -46,7 +46,7 @@ def test_real_wolfboot_build_profile_records_evidence_when_tooling_is_available(
             sys.executable,
             "scripts/experiment.py",
             "build-wolfboot",
-            "--algorithm",
+            "--boot-algorithm",
             "ecdsa_p256",
             "--results-dir",
             str(results_dir),

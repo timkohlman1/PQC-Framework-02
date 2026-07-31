@@ -6,6 +6,8 @@ x-cert-env: &cert_env
   CERT_MODE: server   # server|client
   CERT_KEY_UID: "0"
   CERT_KEY_GID: "0"
+  CERT_NOT_AFTER: ${CERT_NOT_AFTER:-8760h}
+  CERT_RENEW_BEFORE: ${CERT_RENEW_BEFORE:-720h}
 
 x-cert-sidecar: &cert_sidecar
   image: smallstep/step-cli:0.28.7
@@ -25,11 +27,14 @@ x-cert-sidecar: &cert_sidecar
         CRT=/certs/tls.crt; KEY=/certs/tls.key
       fi
 
-      # issue if missing/invalid
-      if [ -s "$$CRT" ] && step certificate inspect "$$CRT" >/dev/null 2>&1; then
-        echo "[cert] Existing certificate found — skipping issuance."
+      # Reuse only certificates that are valid and outside the renewal window.
+      if [ -s "$$CRT" ] \
+          && step certificate verify "$$CRT" --roots /trust/ca.crt >/dev/null 2>&1 \
+          && ! step certificate needs-renewal "$$CRT" --expires-in "$${CERT_RENEW_BEFORE}" >/dev/null 2>&1; then
+        echo "[cert] Existing certificate is valid beyond the renewal window — skipping issuance."
       else
-        echo "[cert] No certificate found — issuing new one."
+        echo "[cert] Certificate missing, expired, invalid, or near expiry — issuing a replacement."
+        rm -f "$$CRT" "$$KEY"
         SANS_ARGS=""
         OLD_IFS=$$IFS
         IFS=,
@@ -38,9 +43,9 @@ x-cert-sidecar: &cert_sidecar
         done
         IFS=$$OLD_IFS
         if [ "$${CERT_KTY}" = "EC" ]; then
-          step ca certificate --root /trust/ca.crt --ca-url "$${STEP_CA_URL}" $$SANS_ARGS "$${CERT_CN}" "$$CRT" "$$KEY" --kty EC --curve "$${CERT_EC_CURVE}" --provisioner "$${DOCKER_STEPCA_INIT_PROVISIONER_NAME}" --provisioner-password-file /tmp/prov.pw
+          step ca certificate --root /trust/ca.crt --ca-url "$${STEP_CA_URL}" $$SANS_ARGS "$${CERT_CN}" "$$CRT" "$$KEY" --kty EC --curve "$${CERT_EC_CURVE}" --provisioner "$${DOCKER_STEPCA_INIT_PROVISIONER_NAME}" --provisioner-password-file /tmp/prov.pw --not-after "$${CERT_NOT_AFTER}"
         else
-          step ca certificate --root /trust/ca.crt --ca-url "$${STEP_CA_URL}" $$SANS_ARGS "$${CERT_CN}" "$$CRT" "$$KEY" --kty RSA --size "$${CERT_RSA_BITS}" --provisioner "$${DOCKER_STEPCA_INIT_PROVISIONER_NAME}" --provisioner-password-file /tmp/prov.pw
+          step ca certificate --root /trust/ca.crt --ca-url "$${STEP_CA_URL}" $$SANS_ARGS "$${CERT_CN}" "$$CRT" "$$KEY" --kty RSA --size "$${CERT_RSA_BITS}" --provisioner "$${DOCKER_STEPCA_INIT_PROVISIONER_NAME}" --provisioner-password-file /tmp/prov.pw --not-after "$${CERT_NOT_AFTER}"
         fi
         cp /trust/ca.crt /certs/ca.crt
       fi
@@ -73,9 +78,7 @@ x-cert-sidecar: &cert_sidecar
       fi
 
       rm -f /tmp/prov.pw
-
-      # renew in background
-      step ca renew --root /trust/ca.crt --ca-url "$${STEP_CA_URL}" "$$CRT" "$$KEY" --daemon
+      echo "[cert] Certificate material ready; finite provisioning job complete."
     '
   volumes:
     - ./secrets/public/ca:/trust:ro
@@ -96,7 +99,7 @@ x-cert-sidecar: &cert_sidecar
       condition: service_healthy
     stepca_secure_root:
       condition: service_completed_successfully
-  restart: unless-stopped
+  restart: "no"
 
 services:
 
@@ -148,6 +151,21 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Finite policy migration job. It updates the JWK provisioner so the
+  # internal-PKI leaf lifetime can be one year rather than ACME-style short lived.
+  stepca_policy:
+    image: python:3.13-alpine
+    user: "0:0"
+    environment:
+      STEPCA_CONFIG: /stepca/config/ca.json
+      CERT_NOT_AFTER: ${CERT_NOT_AFTER:-8760h}
+      CERT_MAX_NOT_AFTER: ${CERT_MAX_NOT_AFTER:-8784h}
+    command: ["python", "/app/update_policy.py"]
+    volumes:
+      - ./services/stepca-policy/update_policy.py:/app/update_policy.py:ro
+      - stepca-data:/stepca
+    restart: "no"
+
   # =========================
   # SECURITY SERVICES: CERTIFICATE PUBLISHING SIDECARS
   # =========================
@@ -182,6 +200,8 @@ services:
       CERT_SANS: localstack,localstack
       CERT_KEY_UID: "0"
       CERT_KEY_GID: "0"
+      CERT_NOT_AFTER: ${CERT_NOT_AFTER:-8760h}
+      CERT_RENEW_BEFORE: ${CERT_RENEW_BEFORE:-720h}
     volumes:
       - ./secrets/runtime/localstack:/certs
       - ./secrets/public/ca:/trust:ro

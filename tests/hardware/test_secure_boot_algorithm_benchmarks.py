@@ -294,7 +294,7 @@ def _prepare_profile_artifacts(repo_root: Path, profile: SecureBootBenchmarkProf
 
     wolfboot_completed = _run_cli(
         repo_root,
-        ["build-wolfboot", "--algorithm", profile.signature_algorithm],
+        ["build-wolfboot", "--boot-algorithm", profile.signature_algorithm],
     )
     assert wolfboot_completed.returncode == 0, (
         f"{profile.name} build-wolfboot stdout:\n{wolfboot_completed.stdout}\n"
@@ -316,7 +316,7 @@ def _prepare_profile_artifacts(repo_root: Path, profile: SecureBootBenchmarkProf
 
     signing_completed = _run_cli(
         repo_root,
-        ["sign-application", "--algorithm", profile.signature_algorithm],
+        ["sign-application", "--boot-algorithm", profile.signature_algorithm],
     )
     assert signing_completed.returncode == 0, (
         f"{profile.name} sign-application stdout:\n{signing_completed.stdout}\n"
@@ -332,7 +332,7 @@ def _run_profile_benchmark(repo_root: Path, profile: SecureBootBenchmarkProfile)
             "flash-secure-boot",
             "--experiment",
             profile.experiment_profile,
-            "--algorithm",
+            "--boot-algorithm",
             profile.signature_algorithm,
             "--repeat-count",
             str(REPEAT_COUNT),

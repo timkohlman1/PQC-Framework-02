@@ -351,14 +351,17 @@ def test_execute_application_signing_requires_private_key_when_keygen_disabled(t
 
 def test_default_application_signing_profile_is_safe_and_phase_10g_scoped():
     repo_root = Path(__file__).resolve().parents[2]
-    profile_path = repo_root / "configs" / "signing" / "wolfboot_ecdsa_p256_app.yaml"
+    target_profile = repo_root / "configs" / "targets" / "stm32l4r5_wolfboot.yaml"
     spec = importlib.util.spec_from_file_location(
         "experiment_cli_for_signing_profile", repo_root / "scripts/experiment.py"
     )
     assert spec is not None and spec.loader is not None
     experiment_cli = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(experiment_cli)
-    profile = experiment_cli.load_config(profile_path)
+    profile, resolved_repo_root = experiment_cli.load_secure_boot_profile_section(
+        target_profile=target_profile, algorithm="ecdsa_p256", section="signing"
+    )
+    assert resolved_repo_root == repo_root
 
     assert profile["signature_algorithm"] == "ecdsa_p256"
     assert profile["private_key"] == (

@@ -8,18 +8,9 @@ unless the request will examine prior AI prompts / interactions
 
 -----------
 
-
------------
-
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
-I'm confused about the different folders in the configs directory, the number of fields in each json file. I suspect there is some duplication and sprawl that's occurred as the framework has been built up incrementally, and I'd like to simplify it. 
-
------------
-
-Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
-
-All builds should include a bootloader partition and bootloader code,  the default should be classic bootloader validation, with the PQC firmware signing options available for evaluating this aspect of PQC adoption.  There is no need to maintain both a Debug and RelocatedDebug profile any more since every build will have the bootloader / secure boot image.
+All builds should use the Relocated profile, the default and baseline secureboot equivalent firmware image should be a basic integrity check of the application firmware without any signing or signing key validation, with the PQC firmware signing options available for evaluating secure boot signing modes defined in the non-default secureboot profiles.  There is no need to maintain both a Debug and RelocatedDebug profile any more since every build will have the bootloader / secure boot image. Additinally, please increase the allocated space so that the MLDSA87 parameter set can be used (it was excluded because it was below the supported size by wolfboot), and then add a MLDSA87 profile to complement the existing MLDSA65 and MLDSA44 profiles
 
 -----------
 

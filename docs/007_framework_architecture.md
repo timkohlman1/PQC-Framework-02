@@ -688,3 +688,20 @@ Console progress is not an additional evidence class and must not be interpreted
 ### Application build execution and artifact identity
 
 Framework-level application build reuse and source/dependency fingerprinting are disabled. Each application build invokes CMake configuration and `cmake --build`; the retained Ninja build tree provides native incremental recompilation. Successful builds receive a new normal build number and an identity derived from the final ELF SHA-256. Run manifests and immutable build records store `reuse_enabled: false`, `incremental_build_system: cmake-ninja`, `artifact_identity_algorithm: sha256-elf`, and the ELF digest. Flash verification compares the selected ELF against the referenced immutable record digest and does not re-evaluate repository source state.
+
+
+### Integrated MQTT secure-boot execution
+
+The `run` command supports `--boot-mode wolfboot --boot-algorithm <id>` for
+end-to-end MQTT experiments. The experiment YAML remains authoritative for
+MQTT/TLS cryptography, broker orchestration, and expected protocol evidence.
+The boot algorithm is resolved independently from `configs/algorithms/` and the
+target from `configs/targets/`.
+
+The integrated path prepares dependencies and signing state, builds wolfBoot,
+builds the selected experiment with the relocated application preset, signs the
+resulting image, performs the two-artifact flash, and then executes the normal
+MQTT broker/UART command-response validation. All stage references are recorded
+under the primary experiment result directory. Partial or mismatched signing
+tuples continue to fail safely; only a completely absent tuple may be created by
+its owning wolfBoot build workflow.

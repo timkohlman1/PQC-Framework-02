@@ -42,19 +42,15 @@ Build the development image:
 .\scripts\dev.ps1 build-image
 ```
 
-Run unit tests or the complete capability-gated test selection:
+Run unit tests, repository Python tools, or the complete capability-gated test selection:
 
 ```powershell
 .\scripts\dev.ps1 pytest tests/unit
 .\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py --help
-
-For Python scripts that access the configured gateway over SSH, use the gateway-aware passthrough:
-
-```powershell
-.\scripts\dev.ps1 python-gateway <script> [arguments...]
-```
 .\scripts\dev.ps1 pytest
 ```
+
+Use `.\scripts\dev.ps1 python-gateway <script> [arguments...]` for Python tools that require configured gateway SSH access.
 
 Inspect or build the direct-flash baseline:
 
@@ -89,16 +85,25 @@ python -m pytest tests/integration/test_local_build.py -m integration --pqc-requ
 
 ## Secure-boot example
 
-The normal secure-boot path records relocated-build provenance before signing:
+Use `run` for an end-to-end MQTT/TLS experiment through wolfBoot:
 
 ```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --algorithm ecdsa_p256
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --algorithm ecdsa_p256
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm ecdsa_p256
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ecdsa_p256
 ```
 
-Generated-state preflight is the primary compatibility and provenance mechanism. Pytest cleanup is supplementary cross-platform hygiene only. Do not run wolfBoot `keysclean`, delete reusable signing-tuple members, silently reconstruct partial signing state, or silently replace a canonical private key. Full profile coverage and diagnostic fallback commands are owned by `docs/005_remote_flash_workflow.md`.
+The workflow prepares dependencies and signing material, builds wolfBoot and the relocated MQTT firmware, signs and flashes both images, validates UART and broker behaviour, stops the broker, and retains one result set. Omit the boot options for direct flash. MQTT/TLS algorithms remain owned by the experiment YAML.
+
+For a manual secure-boot sequence, create the framework-recorded relocated application before signing:
+
+```powershell
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+.\scripts\dev.ps1 experiment sign-application --boot-algorithm ecdsa_p256
+```
+
+Further manual commands, signing-tuple rules, and diagnostic fallbacks are documented in `docs/005_remote_flash_workflow.md`.
 
 ## MQTT and broker orientation
 
@@ -109,6 +114,8 @@ Use `experiment/mqtt-broker/README.md` for certificate provisioning, gateway dep
 ## Safety and evidence
 
 Private signing keys, credentials, real `.env` files, generated broker runtime state, local signing tuples, build output, and result output must not be committed or packaged. Secrets must not be baked into the image. Gateway credentials and private material must be supplied outside the repository and mounted or referenced only for the current run.
+
+Generated-state preflight is the primary mechanism for signing-state compatibility and provenance. Pytest cleanup is supplementary cross-platform hygiene and must not remove source files, canonical signing keys, or reusable tuple members. Workflows must never silently reconstruct partial signing state.
 
 Do not claim build, signing, flashing, gateway, hardware, UART, runtime, timing, memory, benchmark, MQTT/TLS, Wi-Fi, or end-to-end success without explicit logs, manifests, or equivalent evidence from the relevant workflow. A skipped capability-gated test is not evidence that the capability succeeded.
 
@@ -127,7 +134,6 @@ Classical X.509 certificate generation is owned by `framework/certs` (step-ca, V
 Experiment commands emit timestamped stage messages for resolved cryptography, prerequisites, CMake configuration and build execution, gateway operations, broker/MQTT lifecycle work, cleanup, and final result recording. Timestamps default to `Australia/Melbourne`, include `AEST` or `AEDT`, and may be overridden with `PQC_PROGRESS_TIMEZONE` using an IANA timezone name.
 
 Progress output is operational context only. The result manifest and retained logs remain authoritative evidence.
-
 
 ### Application build identity and incremental compilation
 

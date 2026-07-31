@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -169,9 +170,138 @@ def remote_shell_path(path: str) -> str:
     return shlex.quote(path)
 
 
+
+
+def _certificate_valid_for(path: Path, *, renewal_days: int) -> bool:
+    """Return True when an X.509 certificate is valid beyond the renewal window."""
+    if not path.is_file():
+        return False
+    completed = subprocess.run(
+        ["openssl", "x509", "-checkend", str(max(0, renewal_days) * 86400), "-noout", "-in", str(path)],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _run_local_compose(
+    certs_root: Path, arguments: list[str], *, certificate_days: int | None = None
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    if certificate_days is not None:
+        environment["CERT_NOT_AFTER"] = f"{max(1, certificate_days) * 24}h"
+    return subprocess.run(
+        ["docker", "compose", *arguments],
+        cwd=certs_root,
+        env=environment,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+
+
+def _remove_generated_pki(certs_root: Path) -> None:
+    for relative in ("secrets/public/ca", "secrets/runtime/mqtt-broker", "secrets/runtime/stm32", "secrets/runtime/localstack"):
+        directory = certs_root / relative
+        if not directory.exists():
+            continue
+        for path in directory.iterdir():
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+
+
+def ensure_framework_certificates(args: argparse.Namespace, source_root: Path) -> bool:
+    """Ensure finite, fresh framework/certs outputs and always stop local infrastructure."""
+    public_ca = source_root / "secrets" / "public" / "ca"
+    broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
+    client_identity = source_root / "secrets" / "runtime" / "stm32"
+    required = [
+        public_ca / "root-ca.crt",
+        public_ca / "intermediate-ca.crt",
+        public_ca / "ca-chain.crt",
+        broker_identity / "tls.crt",
+        broker_identity / "tls.key",
+        client_identity / "client.crt",
+        client_identity / "client.key",
+    ]
+    fresh = (
+        not args.reset_pki
+        and all(path.is_file() for path in required)
+        and _certificate_valid_for(broker_identity / "tls.crt", renewal_days=args.renew_before_days)
+        and _certificate_valid_for(client_identity / "client.crt", renewal_days=args.renew_before_days)
+    )
+    if fresh:
+        return False
+    if args.dry_run:
+        print("docker compose certificate infrastructure would be started, provisioned, and stopped")
+        return True
+
+    lifecycle_log: list[str] = []
+    try:
+        if args.reset_pki:
+            down = _run_local_compose(source_root, ["down", "--volumes", "--remove-orphans"])
+            lifecycle_log.append(f"reset down rc={down.returncode}\n{down.stdout}{down.stderr}")
+            _remove_generated_pki(source_root)
+        start = _run_local_compose(
+            source_root, ["up", "-d", "--build", "stepca_secure_root"], certificate_days=args.days
+        )
+        lifecycle_log.append(f"start rc={start.returncode}\n{start.stdout}{start.stderr}")
+        if start.returncode != 0:
+            details = (start.stderr or start.stdout).strip()
+            message = "failed to start local CA/Vault certificate infrastructure"
+            if details:
+                message += f": {details}"
+            raise SystemExit(message)
+        ready = _run_local_compose(source_root, ["wait", "stepca_secure_root"])
+        lifecycle_log.append(f"stepca_secure_root wait rc={ready.returncode}\n{ready.stdout}{ready.stderr}")
+        if ready.returncode != 0:
+            raise SystemExit("local CA/Vault initialization failed")
+        policy = _run_local_compose(
+            source_root, ["run", "--rm", "--no-deps", "stepca_policy"], certificate_days=args.days
+        )
+        lifecycle_log.append(f"stepca_policy rc={policy.returncode}\n{policy.stdout}{policy.stderr}")
+        if policy.returncode != 0:
+            raise SystemExit("step-ca certificate lifetime policy update failed")
+        restarted = _run_local_compose(
+            source_root, ["restart", "stepca"], certificate_days=args.days
+        )
+        lifecycle_log.append(
+            f"stepca process restart rc={restarted.returncode}\n{restarted.stdout}{restarted.stderr}"
+        )
+        if restarted.returncode != 0:
+            raise SystemExit("step-ca process restart failed after policy update")
+        healthy = _run_local_compose(
+            source_root, ["up", "-d", "--wait", "stepca"], certificate_days=args.days
+        )
+        lifecycle_log.append(
+            f"stepca post-restart health rc={healthy.returncode}\n{healthy.stdout}{healthy.stderr}"
+        )
+        if healthy.returncode != 0:
+            raise SystemExit("step-ca did not become healthy after policy update")
+        for service in ("mqtt-broker_cert", "stm32_client_cert"):
+            issued = _run_local_compose(
+                source_root, ["run", "--rm", "--no-deps", service], certificate_days=args.days
+            )
+            lifecycle_log.append(f"{service} rc={issued.returncode}\n{issued.stdout}{issued.stderr}")
+            if issued.returncode != 0:
+                raise SystemExit(f"certificate issuance job failed: {service}")
+    finally:
+        stopped = _run_local_compose(source_root, ["down", "--remove-orphans"])
+        lifecycle_log.append(f"stop rc={stopped.returncode}\n{stopped.stdout}{stopped.stderr}")
+        (source_root / "certificate-lifecycle.log").write_text("\n\n".join(lifecycle_log) + "\n", encoding="utf-8")
+    return True
+
 def sync_stepca_certs(args: argparse.Namespace) -> None:
     """Stage the authoritative classical step-ca material for broker workflows."""
     source_root = repo_root() / "framework" / "certs"
+    infrastructure_started = ensure_framework_certificates(args, source_root)
     public_ca = source_root / "secrets" / "public" / "ca"
     broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
     client_identity = source_root / "secrets" / "runtime" / "stm32"
@@ -220,6 +350,10 @@ def sync_stepca_certs(args: argparse.Namespace) -> None:
         "intermediate_ca_sha256": copied["intermediate-ca.crt"],
         "ca_chain_sha256": copied["ca-chain.crt"],
         "server_certificate_sha256": copied["server.crt"],
+        "certificate_validity_days": args.days,
+        "renew_before_days": args.renew_before_days,
+        "local_ca_infrastructure_started": infrastructure_started,
+        "local_ca_infrastructure_stopped": True,
         "files": copied,
     }
     (cert_dir / "certificate-provenance.json").write_text(
@@ -568,6 +702,8 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--client-name", default=DEFAULT_CLIENT_NAME)
     provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
     provision.add_argument("--days", type=int, default=365)
+    provision.add_argument("--renew-before-days", type=int, default=30)
+    provision.add_argument("--reset-pki", action="store_true", help="delete local CA/Vault volumes and generated certificate material before provisioning")
     provision.add_argument("--dry-run", action="store_true")
     provision.set_defaults(func=sync_stepca_certs)
 
@@ -576,6 +712,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="deprecated alias for provision-certs; synchronizes the same classical step-ca identity material",
     )
     oqs_provision.add_argument("--certificate-profile", default="stepca-classical")
+    oqs_provision.add_argument("--days", type=int, default=365)
+    oqs_provision.add_argument("--renew-before-days", type=int, default=30)
+    oqs_provision.add_argument("--reset-pki", action="store_true")
     oqs_provision.add_argument("--dry-run", action="store_true")
     oqs_provision.set_defaults(func=sync_stepca_certs)
 

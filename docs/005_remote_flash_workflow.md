@@ -46,10 +46,10 @@ The `flash` path refuses SCP/SSH unless the artifact matches recorded build prov
 Secure boot consumes the configured wolfBoot artifact and signed relocated application. The secure-boot workflow selects one canonical target and algorithm. The normal command pattern is:
 
 ```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --algorithm <algorithm>
+.\scripts\dev.ps1 experiment build-wolfboot --boot-algorithm <algorithm>
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --algorithm <algorithm>
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm <algorithm> --repeat-count 5
+.\scripts\dev.ps1 experiment sign-application --boot-algorithm <algorithm>
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm <algorithm> --repeat-count 5
 ```
 
 Supported algorithm IDs are:
@@ -75,7 +75,7 @@ Do not run wolfBoot `keysclean` or manually delete tuple members. Pytest startup
 Negative corrupted-application test:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --negative-corrupt-application
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm ecdsa_p256 --negative-corrupt-application
 ```
 
 The workflow corrupts a result-local copy. It must not modify the canonical signed image or private key.
@@ -144,3 +144,27 @@ failure stage and `pytest.log` for the ordered collection, setup, call, and
 teardown records. Test-triggered build evidence is below the same run's
 `builds/` directory. These test-only builds are diagnostic evidence and are not
 normal reusable firmware builds.
+
+
+## End-to-end MQTT experiments through wolfBoot
+
+For MQTT experiments, use the normal `run` command and select the secure-boot
+domain separately:
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ecdsa_p256
+```
+
+This path owns all prerequisites. It provisions experiment dependencies and
+signing state, builds wolfBoot, builds the MQTT application with the relocated
+preset, signs that exact application, prepares the broker, flashes both images,
+captures UART, validates MQTT command/response behaviour, collects broker logs,
+and stops the broker. Standalone secure-boot commands remain diagnostic and
+benchmark entry points; they are not prerequisites for `run`.
+
+The `--boot-algorithm` option applies only to wolfBoot signing and verification.
+TLS key exchange and certificate/signature selections remain in the MQTT
+experiment profile.

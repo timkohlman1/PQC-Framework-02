@@ -46,3 +46,42 @@ def test_remote_repo_root_rejects_unrelated_directory():
         assert "must end with /experiment/mqtt-broker" in str(exc)
     else:
         raise AssertionError("expected invalid remote directory to be rejected")
+
+
+def test_provision_defaults_to_long_lived_leaf_policy():
+    module = load_module()
+    args = module.build_parser().parse_args(["provision-certs"])
+    assert args.days == 365
+    assert args.renew_before_days == 30
+    assert args.reset_pki is False
+
+
+def test_certificate_lifecycle_skips_compose_when_material_is_fresh(tmp_path, monkeypatch):
+    module = load_module()
+    args = module.build_parser().parse_args(["provision-certs"])
+    for relative in (
+        "secrets/public/ca/root-ca.crt",
+        "secrets/public/ca/intermediate-ca.crt",
+        "secrets/public/ca/ca-chain.crt",
+        "secrets/runtime/mqtt-broker/tls.crt",
+        "secrets/runtime/mqtt-broker/tls.key",
+        "secrets/runtime/stm32/client.crt",
+        "secrets/runtime/stm32/client.key",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("material", encoding="utf-8")
+    monkeypatch.setattr(module, "_certificate_valid_for", lambda *a, **k: True)
+    monkeypatch.setattr(module, "_run_local_compose", lambda *a, **k: (_ for _ in ()).throw(AssertionError("compose should not start")))
+    assert module.ensure_framework_certificates(args, tmp_path) is False
+
+
+def test_certificate_policy_forces_stepca_process_restart() -> None:
+    source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
+
+    policy_position = source.index('"stepca_policy"')
+    restart_position = source.index('["restart", "stepca"]', policy_position)
+    health_position = source.index('["up", "-d", "--wait", "stepca"]', restart_position)
+    issuance_position = source.index('for service in ("mqtt-broker_cert", "stm32_client_cert")', health_position)
+
+    assert policy_position < restart_position < health_position < issuance_position
