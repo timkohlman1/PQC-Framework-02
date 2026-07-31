@@ -7,7 +7,7 @@ from framework import build_records
 
 def sample_bundle():
     return {
-        "experiment": {"id": "baseline", "firmware": {"artifact": "build/Debug/app.elf"}},
+        "experiment": {"id": "baseline", "firmware": {"artifact": "build/Release/app.elf"}},
         "board": {"id": "board_a"},
         "host": {"id": "gateway"},
     }

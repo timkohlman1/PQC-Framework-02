@@ -33,8 +33,8 @@ profiles:
     require_input_build_provenance: true
     status: configured_phase_10g_signing_only_not_flashing_or_boot_validated
     boot_profile: wolfboot_ecdsa_p256
-    input_image: build/RelocatedDebug/stm32_basic_hal1.bin
-    signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+    input_image: build/Release/stm32_basic_hal1.bin
+    signed_image: build/Release/stm32_basic_hal1_v1_signed.bin
     signature_algorithm: ecdsa_p256
     signature_size_bytes: 64
     classical_benchmark_profile:
@@ -64,7 +64,7 @@ profiles:
     boot_crypto: ecdsa_p256
     firmware:
       mode: wolfboot_ecdsa_p256
-      artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+      artifact: build/Release/stm32_basic_hal1_v1_signed.bin
     secure_boot_benchmark_profile:
       profile_id: ecc256_reference
       algorithm: ECC256
@@ -87,8 +87,8 @@ profiles:
       signature_algorithm: ecdsa_p256
       signature_size_bytes: 64
       wolfboot_offset: 0x08000000
-      unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1.bin
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+      unsigned_application_artifact: build/Release/stm32_basic_hal1.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_v1_signed.bin
       signed_application_offset: 0x08020000
       signing_private_key: secrets/wolfboot/ecdsa_p256_private_key.der
       boot_timing_source: framework_derived_from_uart_cycles_and_reported_hclk
@@ -116,8 +116,8 @@ profiles:
       wolfboot_size: 0x00020000
       primary_slot_base: 0x08020000
       primary_slot_size: 0x000E0000
-      primary_slot_entry: 0x08022000
-      image_header_size: 0x00002000
+      primary_slot_entry: 0x08023000
+      image_header_size: 0x00003000
       update_slot_base: 0x08100000
       update_slot_size: 0x000E0000
       swap_metadata_base: 0x081E0000
@@ -130,11 +130,11 @@ profiles:
       wolfboot_partition_swap_address: 0x081E0000
     relocated_application_build:
       status: defined_phase_10e_build_only_not_boot_validated
-      cmake_configure_preset: RelocatedDebug
-      cmake_build_preset: RelocatedDebug
+      cmake_configure_preset: Release
+      cmake_build_preset: Release
       linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
-      vector_table_offset: 0x00022000
-      linked_application_start: 0x08022000
+      vector_table_offset: 0x00023000
+      linked_application_start: 0x08023000
       runtime_boot_validated: false
     target_support_assessment:
       status: assessed_phase_10c
@@ -151,8 +151,8 @@ profiles:
     application_signing_profile:
       status: defined_phase_10g_signing_only_not_flashing_or_boot_validated
       profile: configs/algorithms/ecdsa_p256.yaml
-      input_image: build/RelocatedDebug/stm32_basic_hal1.bin
-      signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+      input_image: build/Release/stm32_basic_hal1.bin
+      signed_image: build/Release/stm32_basic_hal1_v1_signed.bin
       private_key: secrets/wolfboot/ecdsa_p256_private_key.der
       command: python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
     secure_boot_flash_profile:
@@ -160,7 +160,7 @@ profiles:
       experiment: configs/experiments/secure_boot_uart.yaml
       command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm ecdsa_p256
       wolfboot_offset: 0x08000000
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_v1_signed.bin
       signed_application_offset: 0x08020000
       positive_boot_evidence_status: defined_phase_10i
       negative_corrupted_application_test_status: defined_phase_10j

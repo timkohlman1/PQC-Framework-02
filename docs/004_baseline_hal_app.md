@@ -78,14 +78,14 @@ configs/experiments/baseline_direct_uart.yaml
 configs/boot/direct_flash.yaml
 ```
 
-The same application is built for wolfBoot with the `RelocatedDebug` preset and relocated linker script:
+The same application is built for wolfBoot with the `Release` preset and relocated linker script:
 
 ```text
 CMakePresets.json
 STM32L4R5XX_FLASH_RELOCATED.ld
 ```
 
-The relocated application entry address is `0x08022000`, leaving the current 8192-byte wolfBoot image-header reserve at the signed image slot start.
+The relocated application entry address is `0x08023000`, leaving the current 12288-byte wolfBoot image-header reserve at the signed image slot start.
 
 
 ## ST67 Wi-Fi association and DHCP

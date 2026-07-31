@@ -78,13 +78,13 @@ Runner = Callable[[list[str], Path], CommandExecution]
 BuildProgress = Callable[[str, str, str | None], None]
 
 
-def construct_configure_command(preset: str = "Debug") -> list[str]:
+def construct_configure_command(preset: str = "Release") -> list[str]:
     """Construct the CMake configure command for a preset."""
 
     return ["cmake", "--preset", preset]
 
 
-def construct_build_command(preset: str = "Debug") -> list[str]:
+def construct_build_command(preset: str = "Release") -> list[str]:
     """Construct the CMake build command for a preset."""
 
     return ["cmake", "--build", "--preset", preset]
@@ -284,7 +284,7 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 
 
-def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> tuple[Path, dict[str, Any]]:
+def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release") -> tuple[Path, dict[str, Any]]:
     """Write the resolved profile-specific CMake algorithm selection."""
     selected = resolve_tls_algorithm_set(bundle)
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
@@ -299,7 +299,7 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     )
     return path, selected
 
-def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Debug") -> Path:
+def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release") -> Path:
     """Write experiment Wi-Fi configuration without exposing the PSK in command logs."""
     experiment = bundle.get("experiment", {})
     network = experiment.get("network", {}) if isinstance(experiment, dict) else {}
@@ -399,8 +399,8 @@ def execute_build(
     bundle: dict[str, dict[str, Any]],
     repo_root: Path | str,
     result_dir: Path | str,
-    configure_preset: str = "Debug",
-    build_preset: str = "Debug",
+    configure_preset: str = "Release",
+    build_preset: str = "Release",
     force: bool = False,
     runner: Runner = default_runner,
     git_runner: GitRunner | None = None,

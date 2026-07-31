@@ -52,9 +52,10 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
 
     assert relocated_build < signing
     assert "python scripts/experiment.py build" in workflow
-    assert "--configure-preset RelocatedDebug" in workflow
-    assert "--build-preset RelocatedDebug" in workflow
-    assert "--artifact build/RelocatedDebug/stm32_basic_hal1.elf" in workflow
+    assert "Release is the default" in workflow
+    assert "`--debug`" in workflow
+    assert "RelocatedDebug" not in workflow
+    assert "--artifact build/Release/stm32_basic_hal1.elf" in workflow
 
 
 def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() -> None:
@@ -63,8 +64,8 @@ def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() ->
 
     assert ".\\scripts\\dev.ps1 experiment build-wolfboot" in workflow
     assert ".\\scripts\\dev.ps1 experiment build --experiment" in workflow
-    assert "--configure-preset RelocatedDebug" in workflow
-    assert "--build-preset RelocatedDebug" in workflow
+    assert "--configure-preset Release" in workflow
+    assert "--build-preset Release" in workflow
     assert "generated-state provenance" in workflow
     assert "## Diagnostic fallback" in workflow
     assert "Host-native commands may be used only" in workflow

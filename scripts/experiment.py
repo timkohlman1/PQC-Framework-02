@@ -1513,7 +1513,7 @@ def validate_host_config(config: dict[str, Any]) -> None:
 
 SECURE_BOOT_BENCHMARK_MINIMUM_ALGORITHMS = {"ed25519", "ecdsa_p256", "rsa2048"}
 SECURE_BOOT_BENCHMARK_EXPANDED_ALGORITHMS = {"ecc384", "ecc521", "ed448", "rsa3072", "rsa4096"}
-SECURE_BOOT_BENCHMARK_POST_QUANTUM_ALGORITHMS = {"mldsa44", "mldsa65"}
+SECURE_BOOT_BENCHMARK_POST_QUANTUM_ALGORITHMS = {"mldsa44", "mldsa65", "mldsa87"}
 SECURE_BOOT_BENCHMARK_SUPPORTED_ALGORITHMS = (
     SECURE_BOOT_BENCHMARK_MINIMUM_ALGORITHMS
     | SECURE_BOOT_BENCHMARK_EXPANDED_ALGORITHMS
@@ -1590,8 +1590,8 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "wolfBoot build profile")
 
     algorithm = require_field(config, "signature_algorithm", "wolfBoot build profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
-        raise ConfigError("wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65")
+    if algorithm not in {"integrity_sha256", "ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65", "mldsa87"}:
+        raise ConfigError("wolfBoot build profile signature_algorithm must be integrity_sha256, ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, mldsa65, or mldsa87")
 
     build_config = config.get("build")
     if not isinstance(build_config, dict):
@@ -1615,7 +1615,6 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
         "input_image",
         "signed_image",
         "signature_algorithm",
-        "private_key",
         "image_version",
         "sign.command",
     ]
@@ -1624,8 +1623,11 @@ def validate_application_signing_profile_config(config: dict[str, Any]) -> None:
         require_field(config, field, "application signing profile")
 
     algorithm = require_field(config, "signature_algorithm", "application signing profile")
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
-        raise ConfigError("application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65")
+    if algorithm not in {"integrity_sha256", "ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65", "mldsa87"}:
+        raise ConfigError("application signing profile signature_algorithm must be integrity_sha256, ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, mldsa65, or mldsa87")
+
+    if algorithm != "integrity_sha256":
+        require_field(config, "private_key", "application signing profile")
 
     sign_config = config.get("sign")
     if not isinstance(sign_config, dict):
@@ -2804,8 +2806,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         bundle=build_bundle,
         repo_root=repo_root,
         result_dir=result_dir,
-        configure_preset="RelocatedDebug",
-        build_preset="RelocatedDebug",
+        configure_preset="Release",
+        build_preset="Release",
         force=getattr(args, "force", False),
         progress=_build_progress,
     )
@@ -2967,18 +2969,28 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
 
 
 def run_full_baseline_command(args: argparse.Namespace) -> int:
-    """Run the selected experiment end to end through direct flash or wolfBoot."""
+    """Run the selected experiment end to end through direct flash or wolfBoot.
+
+    wolfBoot is the default. Supplying a secure-boot algorithm implies wolfBoot;
+    omitting both boot options selects the integrity_sha256 baseline. Direct flash
+    remains available only as an explicit override.
+    """
 
     from time import perf_counter
 
-    if getattr(args, "boot_mode", "direct_flash") == "wolfboot":
+    explicit_boot_mode = getattr(args, "boot_mode", None)
+    explicit_boot_algorithm = getattr(args, "boot_algorithm", None)
+    if explicit_boot_mode == "direct_flash":
+        if explicit_boot_algorithm:
+            print(
+                "Error: --boot-algorithm cannot be combined with --boot-mode direct_flash.",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        args.boot_mode = "wolfboot"
+        args.boot_algorithm = explicit_boot_algorithm or "integrity_sha256"
         return _run_full_wolfboot_command(args)
-    if getattr(args, "boot_algorithm", None):
-        print(
-            "Error: --boot-algorithm is only valid with --boot-mode wolfboot.",
-            file=sys.stderr,
-        )
-        return 2
 
     bundle = load_experiment_bundle(args.experiment)
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
@@ -4378,8 +4390,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     build_parser.add_argument(
         "--build-preset",
-        default="Debug",
+        default="Release",
         help="CMake build preset to invoke.",
+    )
+    build_parser.add_argument(
+        "--debug",
+        action="store_const",
+        const="Debug",
+        dest="build_preset",
+        help="Use the relocated Debug build instead of the default relocated Release build.",
     )
     build_parser.add_argument(
         "--configure-preset",
@@ -4393,7 +4412,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Repository-relative expected ELF path for this build. "
             "Defaults to the experiment firmware artifact and is intended for "
-            "provenance-recorded alternate presets such as RelocatedDebug."
+            "provenance-recorded alternate presets such as Release."
         ),
     )
     build_parser.add_argument(
@@ -4460,8 +4479,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     build_flash_parser.add_argument(
         "--build-preset",
-        default="Debug",
+        default="Release",
         help="CMake build preset to invoke before flashing.",
+    )
+    build_flash_parser.add_argument(
+        "--debug",
+        action="store_const",
+        const="Debug",
+        dest="build_preset",
+        help="Use the relocated Debug build instead of the default relocated Release build.",
     )
     build_flash_parser.add_argument(
         "--configure-preset",
@@ -4511,8 +4537,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--build-preset",
-        default="Debug",
+        default="Release",
         help="CMake build preset to invoke before flashing.",
+    )
+    run_parser.add_argument(
+        "--debug",
+        action="store_const",
+        const="Debug",
+        dest="build_preset",
+        help="Use the relocated Debug build instead of the default relocated Release build.",
     )
     run_parser.add_argument(
         "--configure-preset",
@@ -4533,20 +4566,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--boot-mode",
         choices=("direct_flash", "wolfboot"),
-        default="direct_flash",
-        help="Firmware boot path. wolfboot performs prerequisite provisioning, relocated build, bootloader build, signing, two-artifact flash, and normal experiment validation.",
+        default=None,
+        help="Optional boot-path override. Omitting it uses wolfBoot; direct_flash explicitly bypasses secure boot.",
     )
     run_parser.add_argument(
         "--boot-algorithm",
         dest="boot_algorithm",
         default=None,
-        help="Secure-boot signing algorithm ID from configs/algorithms/. Required when --boot-mode wolfboot.",
+        help="Secure-boot mode from configs/algorithms/. Supplying one implies wolfBoot; omitting it uses integrity_sha256.",
     )
     run_parser.add_argument(
         "--target-profile",
         default=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
         type=Path,
-        help="Canonical secure-boot target profile used when --boot-mode wolfboot.",
+        help="Canonical secure-boot target profile used by the inferred or explicit wolfBoot workflow.",
     )
     run_parser.set_defaults(func=run_full_baseline_command)
 
@@ -4555,7 +4588,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "build-wolfboot",
         help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
     )
-    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
+    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
     wolfboot_build_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -4572,7 +4605,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "sign-application",
         help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
     )
-    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
+    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
     sign_application_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -4595,7 +4628,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a wolfBoot secure-boot experiment YAML config.",
     )
-    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", required=True, help="Secure-boot signing algorithm ID from configs/algorithms/.")
+    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
     secure_boot_flash_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",

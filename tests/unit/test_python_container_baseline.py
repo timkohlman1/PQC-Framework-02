@@ -118,8 +118,8 @@ def test_readme_documents_container_default_boundaries_and_fallbacks() -> None:
         "experiment status",
         "cmake --preset Debug",
         "cmake --build --preset Debug",
-        "cmake --preset RelocatedDebug",
-        "cmake --build --preset RelocatedDebug",
+        "cmake --preset Release",
+        "cmake --build --preset Release",
         "--pqc-require-local-build",
     ]
     for term in workflow_terms:

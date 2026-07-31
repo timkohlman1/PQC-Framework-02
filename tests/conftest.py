@@ -22,7 +22,7 @@ GENERATED_BUILD_CLEANUP_DONE_KEY = "pqc_generated_build_cleanup_done"
 
 CMAKE_BUILD_DIRS_TO_CLEAN = (
     Path("build/Debug"),
-    Path("build/RelocatedDebug"),
+    Path("build/Release"),
 )
 WOLFBOOT_GENERATED_FILES_TO_CLEAN = (
     Path("tools/wolfboot/.config"),

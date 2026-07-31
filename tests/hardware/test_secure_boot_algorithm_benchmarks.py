@@ -49,7 +49,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/ecdsa_p256.yaml",
         signing_profile="configs/algorithms/ecdsa_p256.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="ed25519",
@@ -61,7 +61,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/ed25519.yaml",
         signing_profile="configs/algorithms/ed25519.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_ed25519_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="rsa2048",
@@ -73,7 +73,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/rsa2048.yaml",
         signing_profile="configs/algorithms/rsa2048.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_rsa2048_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="ecc384",
@@ -85,7 +85,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/ecc384.yaml",
         signing_profile="configs/algorithms/ecc384.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_ecc384_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="ecc521",
@@ -97,7 +97,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/ecc521.yaml",
         signing_profile="configs/algorithms/ecc521.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ecc521_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_ecc521_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="ed448",
@@ -109,7 +109,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/ed448.yaml",
         signing_profile="configs/algorithms/ed448.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_ed448_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_ed448_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="rsa3072",
@@ -121,7 +121,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/rsa3072.yaml",
         signing_profile="configs/algorithms/rsa3072.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa3072_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_rsa3072_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="rsa4096",
@@ -133,7 +133,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/rsa4096.yaml",
         signing_profile="configs/algorithms/rsa4096.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_rsa4096_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="mldsa44",
@@ -145,7 +145,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/mldsa44.yaml",
         signing_profile="configs/algorithms/mldsa44.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin",
     ),
     SecureBootBenchmarkProfile(
         name="mldsa65",
@@ -157,7 +157,7 @@ BENCHMARK_PROFILES = (
         build_profile="configs/algorithms/mldsa65.yaml",
         signing_profile="configs/algorithms/mldsa65.yaml",
         experiment_profile="configs/experiments/secure_boot_uart.yaml",
-        signed_application_artifact="build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+        signed_application_artifact="build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin",
     ),
 )
 
@@ -273,7 +273,7 @@ def _clean_generated_secure_boot_outputs(repo_root: Path) -> None:
     public key, or generated keystore member from the reusable local tuple.
     """
 
-    shutil.rmtree(repo_root / "build" / "RelocatedDebug", ignore_errors=True)
+    shutil.rmtree(repo_root / "build" / "Release", ignore_errors=True)
 
 
 def _parse_result_directory(repo_root: Path, stdout: str) -> Path:
@@ -302,13 +302,13 @@ def _prepare_profile_artifacts(repo_root: Path, profile: SecureBootBenchmarkProf
     )
     assert (repo_root / "tools" / "wolfboot" / "wolfboot.elf").is_file()
 
-    configure_completed = _run_command(repo_root, ["cmake", "--preset", "RelocatedDebug"])
+    configure_completed = _run_command(repo_root, ["cmake", "--preset", "Release"])
     assert configure_completed.returncode == 0, (
         f"{profile.name} cmake configure stdout:\n{configure_completed.stdout}\n"
         f"{profile.name} cmake configure stderr:\n{configure_completed.stderr}"
     )
 
-    build_completed = _run_command(repo_root, ["cmake", "--build", "--preset", "RelocatedDebug"])
+    build_completed = _run_command(repo_root, ["cmake", "--build", "--preset", "Release"])
     assert build_completed.returncode == 0, (
         f"{profile.name} cmake build stdout:\n{build_completed.stdout}\n"
         f"{profile.name} cmake build stderr:\n{build_completed.stderr}"

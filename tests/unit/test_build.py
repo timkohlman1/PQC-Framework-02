@@ -43,7 +43,7 @@ def sample_bundle() -> dict[str, dict[str, object]]:
             "boot": "direct_flash",
             "firmware": {
                 "mode": "direct_flash",
-                "artifact": "build/Debug/stm32_basic_hal1.elf",
+                "artifact": "build/Release/stm32_basic_hal1.elf",
             },
             "uart": {
                 "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -168,7 +168,7 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -278,7 +278,7 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -416,7 +416,7 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -550,7 +550,7 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -669,7 +669,7 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -829,7 +829,7 @@ def _create_matching_build_record(
         result_dir=result_dir,
         build_number=build_number,
         firmware_elf_path=source_elf,
-        firmware_artifact="build/Debug/stm32_basic_hal1.elf",
+        firmware_artifact="build/Release/stm32_basic_hal1.elf",
         firmware_artifact_path=str(source_elf),
         firmware_sha256=hashlib.sha256(source_elf.read_bytes()).hexdigest(),
         source={},
@@ -870,7 +870,7 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
             "id": "baseline_direct_uart",
             "firmware": {
                 "mode": "direct_flash",
-                "artifact": "build/Debug/stm32_basic_hal1.elf",
+                "artifact": "build/Release/stm32_basic_hal1.elf",
             },
         },
         "board": {},
@@ -905,7 +905,7 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
     class FakeBuildResult:
         return_code = 0
         duration_seconds = 0.1
-        elf_path = tmp_path / "build/RelocatedDebug/stm32_basic_hal1.elf"
+        elf_path = tmp_path / "build/Release/stm32_basic_hal1.elf"
         log_path = tmp_path / "results/run/build.log"
         build_skipped = False
         build_skip_reason = None
@@ -914,8 +914,8 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
 
     def fake_execute_build(**kwargs):
         captured["execute_bundle"] = kwargs["bundle"]
-        assert kwargs["configure_preset"] == "RelocatedDebug"
-        assert kwargs["build_preset"] == "RelocatedDebug"
+        assert kwargs["configure_preset"] == "Release"
+        assert kwargs["build_preset"] == "Release"
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
@@ -924,19 +924,19 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         Namespace(
             experiment=Path("configs/experiments/baseline_direct_uart.yaml"),
             results_dir=tmp_path / "results",
-            configure_preset="RelocatedDebug",
-            build_preset="RelocatedDebug",
-            artifact=Path("build/RelocatedDebug/stm32_basic_hal1.elf"),
+            configure_preset="Release",
+            build_preset="Release",
+            artifact=Path("build/Release/stm32_basic_hal1.elf"),
             force=False,
         )
     )
 
     assert exit_code == 0
-    expected = "build/RelocatedDebug/stm32_basic_hal1.elf"
+    expected = "build/Release/stm32_basic_hal1.elf"
     assert captured["bundle"]["experiment"]["firmware"]["artifact"] == expected
     assert captured["execute_bundle"]["experiment"]["firmware"]["artifact"] == expected
     assert original_bundle["experiment"]["firmware"]["artifact"] == (
-        "build/Debug/stm32_basic_hal1.elf"
+        "build/Release/stm32_basic_hal1.elf"
     )
 
 
@@ -1072,7 +1072,7 @@ def test_execute_build_always_invokes_configure_and_build(tmp_path):
     result_dir = repo_root / "results" / "run-1"
     result_dir.mkdir(parents=True)
     (result_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
-    artifact = repo_root / "build" / "Debug" / "stm32_basic_hal1.elf"
+    artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.elf"
     calls = []
 
     def runner(command, cwd):
@@ -1084,19 +1084,19 @@ def test_execute_build_always_invokes_configure_and_build(tmp_path):
 
     result = build.execute_build(sample_bundle(), repo_root, result_dir, runner=runner)
     assert result.return_code == 0
-    assert calls == [["cmake", "--preset", "Debug"], ["cmake", "--build", "--preset", "Debug"]]
+    assert calls == [["cmake", "--preset", "Release"], ["cmake", "--build", "--preset", "Release"]]
     assert result.build_skipped is False
     assert result.build_fingerprint is None
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["build"]["reuse_enabled"] is False
     assert manifest["build"]["artifact_identity"] == manifest["firmware"]["sha256"]
     generated_state = json.loads(
-        (repo_root / ".pqc-generated-state" / "scopes" / "cmake-Debug.json").read_text(
+        (repo_root / ".pqc-generated-state" / "scopes" / "cmake-Release.json").read_text(
             encoding="utf-8"
         )
     )
     assert generated_state["status"] == "success"
-    assert generated_state["scope"] == "cmake-Debug"
-    assert generated_state["artifacts"][0]["path"] == "build/Debug/stm32_basic_hal1.elf"
+    assert generated_state["scope"] == "cmake-Release"
+    assert generated_state["artifacts"][0]["path"] == "build/Release/stm32_basic_hal1.elf"
     assert generated_state["artifacts"][0]["sha256"] == manifest["firmware"]["sha256"]
     assert generated_state["identity"]["input_fingerprint"]["status"] == "disabled"

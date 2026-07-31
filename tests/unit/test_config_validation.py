@@ -26,7 +26,7 @@ def test_validate_experiment_config_rejects_missing_board():
         "host": "gateway",
         "firmware": {
             "mode": "direct_flash",
-            "artifact": "build/Debug/stm32_basic_hal1.elf",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
         },
         "uart": {
             "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -49,7 +49,7 @@ def test_validate_experiment_config_rejects_missing_boot():
         "host": "gateway",
         "firmware": {
             "mode": "direct_flash",
-            "artifact": "build/Debug/stm32_basic_hal1.elf",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
         },
         "uart": {
             "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -201,7 +201,7 @@ def test_load_experiment_bundle_rejects_board_id_mismatch(tmp_path):
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -291,7 +291,7 @@ def test_load_experiment_bundle_rejects_planned_wolfboot_boot_profile_for_execut
                 "boot: wolfboot_ecdsa_p256",
                 "firmware:",
                 "  mode: wolfboot_ecdsa_p256",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -329,7 +329,7 @@ def test_validate_boot_config_for_inspection_accepts_planned_flash_layout_metada
             "wolfboot_size": "0x00020000",
             "primary_slot_base": "0x08020000",
             "primary_slot_size": "0x000E0000",
-            "primary_slot_entry": "0x08022000",
+            "primary_slot_entry": "0x08023000",
             "image_header_size": "0x00002000",
             "update_slot_base": "0x08100000",
             "update_slot_size": "0x000E0000",
@@ -360,7 +360,7 @@ def test_validate_boot_config_still_rejects_planned_flash_layout_for_execution()
         "flash_layout_status": "defined_phase_10d_planned_not_implemented",
         "secure_boot_layout": {
             "primary_slot_base": "0x08020000",
-            "primary_slot_entry": "0x08022000",
+            "primary_slot_entry": "0x08023000",
         },
     }
 
@@ -375,8 +375,8 @@ def test_validate_application_signing_profile_accepts_ed25519_algorithm():
     config = {
         "id": "wolfboot_test_signing",
         "description": "Invalid signing profile.",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
         "signature_algorithm": "ed25519",
         "image_version": 1,
         "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
@@ -394,8 +394,8 @@ def test_validate_application_signing_profile_requires_keygen_command_when_enabl
     config = {
         "id": "wolfboot_test_signing",
         "description": "Invalid signing profile.",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
         "signature_algorithm": "ecdsa_p256",
         "image_version": 1,
         "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
@@ -417,9 +417,9 @@ def test_validate_application_signing_profile_requires_binary_conversion_command
     config = {
         "id": "wolfboot_test_signing",
         "description": "Invalid signing profile.",
-        "input_elf": "build/RelocatedDebug/stm32_basic_hal1.elf",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_elf": "build/Release/stm32_basic_hal1.elf",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
         "signature_algorithm": "ecdsa_p256",
         "image_version": 1,
         "private_key": "secrets/wolfboot/ecdsa_p256_private_key.der",
@@ -442,8 +442,8 @@ def _valid_classical_profile_model() -> dict[str, object]:
         "reference_algorithm": "ecdsa_p256",
         "minimum_algorithms": {"ed25519": True, "ecdsa_p256": True, "rsa2048": True},
         "expanded_algorithms": {"ecc384": True, "ecc521": True, "ed448": True, "rsa3072": True, "rsa4096": True},
-        "post_quantum_algorithms": {"mldsa44": True, "mldsa65": True},
-        "unavailable_algorithms": {"mldsa87": {"reason": "Requires a larger image header."}},
+        "post_quantum_algorithms": {"mldsa44": True, "mldsa65": True, "mldsa87": True},
+        "unavailable_algorithms": {},
         "common_evidence": {
             "board": "board_a", "application_payload": "same_relocated_hal_application_payload",
             "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
@@ -493,8 +493,8 @@ def test_validate_application_signing_profile_rejects_unsupported_algorithm():
     config = {
         "id": "wolfboot_test_signing",
         "description": "Invalid signing profile.",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
         "signature_algorithm": "sphincsplus",
         "image_version": 1,
         "private_key": "secrets/wolfboot/sphincsplus_private_key.der",
@@ -503,7 +503,7 @@ def test_validate_application_signing_profile_rejects_unsupported_algorithm():
 
     with pytest.raises(
         experiment_cli.ConfigError,
-        match="ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65",
+        match="integrity_sha256, ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, mldsa65, or mldsa87",
     ):
         experiment_cli.validate_application_signing_profile_config(config)
 
@@ -580,8 +580,8 @@ def test_validate_application_signing_profile_accepts_mldsa_header_fit_algorithm
     config = {
         "id": "wolfboot_mldsa65_app",
         "description": "ML-DSA-65 signing profile.",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+        "input_image": "build/Release/stm32_basic_hal1_mldsa65.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin",
         "signature_algorithm": "mldsa65",
         "private_key": "secrets/wolfboot/mldsa65_private_key.der",
         "image_version": 1,
@@ -603,7 +603,7 @@ def minimal_mqtt_experiment_config() -> dict[str, object]:
         "boot": "direct_flash",
         "firmware": {
             "mode": "direct_flash",
-            "artifact": "build/Debug/stm32_basic_hal1.elf",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
         },
         "uart": {
             "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -759,7 +759,7 @@ def test_validate_experiment_network_requires_valid_wifi_and_dhcp():
         "board": "board_a",
         "host": "gateway",
         "boot": "direct_flash",
-        "firmware": {"mode": "direct_flash", "artifact": "build/Debug/stm32_basic_hal1.elf"},
+        "firmware": {"mode": "direct_flash", "artifact": "build/Release/stm32_basic_hal1.elf"},
         "uart": {"expected_boot_message": "boot", "expected_tick_message": "tick"},
         "network": {
             "wifi": {"ssid": "hiphopopotamus", "psk": "lukeisadog"},

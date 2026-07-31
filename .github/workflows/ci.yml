@@ -66,10 +66,10 @@ jobs:
           cmake --preset Debug
           cmake --build --preset Debug
 
-      - name: Configure and build RelocatedDebug preset
+      - name: Configure and build Release preset (Release is the default relocated layout; `--debug` selects Debug)
         run: |
-          cmake --preset RelocatedDebug
-          cmake --build --preset RelocatedDebug
+          cmake --preset Release
+          cmake --build --preset Release
 
   wolfboot-build-integration:
     name: Legacy runner wolfBoot build integration
@@ -237,9 +237,9 @@ jobs:
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
             python scripts/experiment.py build \
               --experiment configs/experiments/baseline_direct_uart.yaml \
-              --configure-preset RelocatedDebug \
-              --build-preset RelocatedDebug \
-              --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+              --configure-preset Release \
+              --build-preset Release \
+              --artifact build/Release/stm32_basic_hal1.elf
 
       - name: Build wolfBoot profile in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --boot-algorithm ecdsa_p256

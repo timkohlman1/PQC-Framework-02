@@ -85,7 +85,7 @@ def write_sample_configs(configs_root: Path) -> Path:
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -296,10 +296,10 @@ def test_run_subcommand_is_registered_with_mandatory_uart_capture():
     )
 
     assert args.func is cli.run_full_baseline_command
-    assert args.build_preset == "Debug"
+    assert args.build_preset == "Release"
     assert args.configure_preset is None
     assert args.uart_duration_seconds == cli.DEFAULT_CAPTURE_DURATION_SECONDS
-    assert args.boot_mode == "direct_flash"
+    assert args.boot_mode is None
     assert args.boot_algorithm is None
     assert not hasattr(args, "capture_uart")
 
@@ -333,9 +333,45 @@ def test_run_rejects_boot_algorithm_for_direct_flash(tmp_path, capsys):
     args.boot_algorithm = "ecdsa_p256"
 
     assert cli.run_full_baseline_command(args) == 2
-    assert "--boot-algorithm is only valid" in capsys.readouterr().err
+    assert "cannot be combined with --boot-mode direct_flash" in capsys.readouterr().err
 
 
+
+
+def test_run_defaults_to_integrity_wolfboot(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = write_sample_configs(tmp_path / "configs")
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = None
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "integrity_sha256"}
+
+
+def test_run_algorithm_implies_wolfboot(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = write_sample_configs(tmp_path / "configs")
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = "mldsa87"
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "mldsa87"}
 
 def test_record_run_summary_preserves_signed_firmware_hash(tmp_path):
     cli = load_experiment_module()
@@ -349,8 +385,8 @@ def test_record_run_summary_preserves_signed_firmware_hash(tmp_path):
         json.dumps(
             {
                 "firmware": {
-                    "artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
-                    "artifact_path": "/workspace/build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                    "artifact": "build/Release/stm32_basic_hal1_v1_signed.bin",
+                    "artifact_path": "/workspace/build/Release/stm32_basic_hal1_v1_signed.bin",
                     "sha256": signed_hash,
                 }
             }
@@ -385,7 +421,7 @@ def test_record_run_summary_uses_build_hash_when_firmware_hash_is_missing(tmp_pa
     result_dir.mkdir()
     build_hash = "77deb8bc6aa276457ed4415fa78bb652bb587b798b6ecb1dc7f76f4efe610014"
     (result_dir / "manifest.json").write_text(
-        json.dumps({"firmware": {"artifact": "build/Debug/firmware.elf"}}),
+        json.dumps({"firmware": {"artifact": "build/Release/firmware.elf"}}),
         encoding="utf-8",
     )
 
@@ -411,7 +447,7 @@ def test_wolfboot_application_build_uses_relocated_elf_before_signing():
         "experiment": {
             "firmware": {
                 "mode": "wolfboot_ecdsa_p256",
-                "artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                "artifact": "build/Release/stm32_basic_hal1_v1_signed.bin",
             }
         },
         "board": {},
@@ -419,8 +455,8 @@ def test_wolfboot_application_build_uses_relocated_elf_before_signing():
         "boot": {},
     }
     signing_profile = {
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
     }
 
     build_bundle = cli._wolfboot_application_build_bundle(
@@ -429,10 +465,10 @@ def test_wolfboot_application_build_uses_relocated_elf_before_signing():
     )
 
     assert build_bundle["experiment"]["firmware"]["artifact"] == (
-        "build/RelocatedDebug/stm32_basic_hal1.elf"
+        "build/Release/stm32_basic_hal1.elf"
     )
     assert bundle["experiment"]["firmware"]["artifact"] == (
-        "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+        "build/Release/stm32_basic_hal1_v1_signed.bin"
     )
 
 
@@ -442,7 +478,7 @@ def test_wolfboot_application_build_prefers_configured_input_elf_for_algorithm_s
         "experiment": {
             "firmware": {
                 "mode": "wolfboot_mldsa65",
-                "artifact": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+                "artifact": "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin",
             }
         },
         "board": {},
@@ -450,9 +486,9 @@ def test_wolfboot_application_build_prefers_configured_input_elf_for_algorithm_s
         "boot": {},
     }
     signing_profile = {
-        "input_elf": "build/RelocatedDebug/stm32_basic_hal1.elf",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin",
+        "input_elf": "build/Release/stm32_basic_hal1.elf",
+        "input_image": "build/Release/stm32_basic_hal1_mldsa65.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin",
     }
 
     build_bundle = cli._wolfboot_application_build_bundle(
@@ -461,10 +497,10 @@ def test_wolfboot_application_build_prefers_configured_input_elf_for_algorithm_s
     )
 
     assert build_bundle["experiment"]["firmware"]["artifact"] == (
-        "build/RelocatedDebug/stm32_basic_hal1.elf"
+        "build/Release/stm32_basic_hal1.elf"
     )
     assert bundle["experiment"]["firmware"]["artifact"] == (
-        "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
+        "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin"
     )
 
 
@@ -474,12 +510,12 @@ def test_wolfboot_signed_firmware_is_selected_only_after_signing():
         "experiment": {
             "firmware": {
                 "mode": "wolfboot_ecdsa_p256",
-                "artifact": "build/RelocatedDebug/stm32_basic_hal1.elf",
+                "artifact": "build/Release/stm32_basic_hal1.elf",
             }
         }
     }
     signing_profile = {
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
     }
 
     cli._select_signed_firmware_artifact(
@@ -488,5 +524,5 @@ def test_wolfboot_signed_firmware_is_selected_only_after_signing():
     )
 
     assert bundle["experiment"]["firmware"]["artifact"] == (
-        "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+        "build/Release/stm32_basic_hal1_v1_signed.bin"
     )

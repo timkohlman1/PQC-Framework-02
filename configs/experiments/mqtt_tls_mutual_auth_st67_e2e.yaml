@@ -5,7 +5,7 @@ host: gateway
 boot: direct_flash
 firmware:
   mode: direct_flash
-  artifact: build/Debug/stm32_basic_hal1.elf
+  artifact: build/Release/stm32_basic_hal1.elf
 network:
   wifi:
     ssid: pqc

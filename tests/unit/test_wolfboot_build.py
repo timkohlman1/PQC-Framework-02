@@ -401,7 +401,7 @@ def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user
         for duplicated_wolfboot_setting in duplicated_wolfboot_settings:
             assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
 
-        assert "IMAGE_HEADER_SIZE=8192" in config_text
+        assert "IMAGE_HEADER_SIZE=12288" in config_text
         assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
         assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
         assert "CFLAGS_EXTRA+=-include" not in config_text
@@ -712,3 +712,61 @@ def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_mak
         assert not path.exists()
     for path in preserved_sources:
         assert path.is_file()
+
+
+def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkeypatch, tmp_path):
+    wolfboot_build = load_wolfboot_build_module()
+    repo_root = tmp_path / "repo"
+    source_dir = repo_root / "tools" / "wolfboot"
+    artifact_path = source_dir / "wolfboot.elf"
+    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_integrity.config"
+    source_dir.mkdir(parents=True)
+    config_template_path.parent.mkdir(parents=True)
+    config_template_path.write_text(
+        "TARGET=stm32l4\nSIGN=NONE\nHASH=SHA256\nSTM32CUBE=../..\n",
+        encoding="utf-8",
+    )
+
+    profile = sample_profile()
+    profile["id"] = "wolfboot_stm32l4_integrity"
+    profile["signature_algorithm"] = "integrity_sha256"
+    profile["build"] = {
+        "command": "make",
+        "args": "WOLFBOOT_ROOT=. wolfboot.elf",
+        "config_template": "configs/wolfboot/stm32l4r5_integrity.config",
+        "generated_config": "tools/wolfboot/.config",
+        "signing_tuple": {},
+    }
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("integrity-only build entered a signing-material path")
+
+    monkeypatch.setattr(wolfboot_build, "_prepare_persistent_signing_tuple", forbidden)
+    monkeypatch.setattr(wolfboot_build, "_prepare_wolfboot_signing_artifacts", forbidden)
+    monkeypatch.setattr(wolfboot_build, "_coordinate_wolfboot_signing_key_before_build", forbidden)
+    monkeypatch.setattr(wolfboot_build, "_coordinate_wolfboot_signing_key_after_build", forbidden)
+
+    def fake_runner(command, cwd):
+        artifact_path.write_text("integrity wolfboot elf", encoding="utf-8")
+        return wolfboot_build.WolfBootCommandExecution(
+            command=command,
+            return_code=0,
+            stdout="ok",
+            stderr="",
+            duration_seconds=0.01,
+        )
+
+    result = wolfboot_build.execute_wolfboot_build(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=tmp_path / "results",
+        runner=fake_runner,
+        timestamp=datetime(2026, 7, 31, 4, 55, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.return_code == 0
+    assert result.signing_key_path is None
+    assert result.wolfboot_private_key_path is None
+    manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["wolfboot_build"]["signature_algorithm"] == "integrity_sha256"
+    assert manifest["signing_key_consistency"]["status"] == "not_configured"

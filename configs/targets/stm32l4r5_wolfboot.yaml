@@ -28,21 +28,21 @@ profiles:
       args: -O binary {input_elf} {input_image}
       command: arm-none-eabi-objcopy
       enabled: true
-    image_header_size_bytes: 8192
+    image_header_size_bytes: 12288
     image_version: 1
-    input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+    input_elf: build/Release/stm32_basic_hal1.elf
     key_policy: local_private_key_never_commit
     keygen:
       command: tools/keytools/keygen
       enabled: false
       stdin: Yes\n
       working_dir: tools/wolfboot
-    relocated_build_preset: RelocatedDebug
+    relocated_build_preset: Release
     retained_signed_image: application_signed.bin
     sign:
       command: tools/keytools/sign
       environment:
-        IMAGE_HEADER_SIZE: "8192"
+        IMAGE_HEADER_SIZE: "12288"
       working_dir: tools/wolfboot
     signing_tuple:
       manifest: tuple.json
@@ -53,7 +53,7 @@ profiles:
     secure_boot_benchmark_profile:
       application_payload: same_relocated_hal_application_payload
       board: board_a
-      image_header_size_bytes: 8192
+      image_header_size_bytes: 12288
       image_version: 1
       measurement_method: uart_explicit_wolfboot_mailbox_markers
       profile_model: configs/benchmarks/classical_signing_profiles.yaml
@@ -67,7 +67,7 @@ profiles:
       boot_timing_unavailable_behavior: record_null_verification_time_ms
       corrupted_application_artifact: corrupted_application_signed.bin
       corruption_method: flip_first_byte
-      image_header_size_bytes: 8192
+      image_header_size_bytes: 12288
       image_version: 1
       negative_test_corrupt_application: false
       signed_application_pass_offset_to_helper: true
@@ -80,7 +80,7 @@ profiles:
       expected_tick_message: tick
   boot:
     application_signing_profile:
-      input_elf: build/RelocatedDebug/stm32_basic_hal1.elf
+      input_elf: build/Release/stm32_basic_hal1.elf
       output_evidence: results/signing
       runtime_boot_validated: false
     application_slot_concept: planned_signed_application_primary_slot

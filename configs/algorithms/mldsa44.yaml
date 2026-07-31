@@ -25,14 +25,14 @@ profiles:
       signing_tuple:
         tuple_id: mldsa44-development
         directory: secrets/wolfboot/tuples/mldsa44-development
-    notes: This profile is build-only for the post-Phase 11 ML-DSA-44 benchmark profile. It uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=2, IMAGE_SIGNATURE_SIZE=2420, and the existing 8192-byte image-header reserve. The framework coordinates the canonical local ML-DSA-44 signing key with the wolfBoot working-tree private key and records SHA-256 key fingerprints as non-secret consistency evidence. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+    notes: This profile is build-only for the post-Phase 11 ML-DSA-44 benchmark profile. It uses wolfBoot SIGN=ML_DSA with ML_DSA_LEVEL=2, IMAGE_SIGNATURE_SIZE=2420, and the existing 12288-byte image-header reserve. The framework coordinates the canonical local ML-DSA-44 signing key with the wolfBoot working-tree private key and records SHA-256 key fingerprints as non-secret consistency evidence. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
   signing:
     id: wolfboot_mldsa44_app
     description: Sign the relocated STM32 HAL application image for the wolfBoot ML-DSA-44 primary slot benchmark profile.
     status: configured_post_phase_11_mldsa_signing_only_not_flashing_or_boot_validated
     boot_profile: wolfboot_mldsa44
-    input_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44.bin
-    signed_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+    input_image: build/Release/stm32_basic_hal1_mldsa44.bin
+    signed_image: build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin
     signature_algorithm: mldsa44
     signature_size_bytes: 2420
     mldsa_benchmark_profile:
@@ -62,7 +62,7 @@ profiles:
       tuple_id: mldsa44-development
       directory: secrets/wolfboot/tuples/mldsa44-development
       public_key: keystore.c
-    notes: This profile is signing-only for the post-Phase 11 ML-DSA-44 benchmark profile. The private key path is intentionally under secrets/ and must remain local. Build the matching wolfBoot profile first so tools/wolfboot/.config contains ML_DSA_LEVEL=2 and IMAGE_SIGNATURE_SIZE=2420. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+    notes: This profile is signing-only for the post-Phase 11 ML-DSA-44 benchmark profile. The private key path is intentionally under secrets/ and must remain local. Build the matching wolfBoot profile first so tools/wolfboot/.config contains ML_DSA_LEVEL=2 and IMAGE_SIGNATURE_SIZE=2420. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 12288-byte image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
   experiment:
     id: wolfboot_mldsa44_uart
     description: Flash wolfBoot and the signed ML-DSA-44 application image, then capture UART benchmark evidence.
@@ -70,7 +70,7 @@ profiles:
     boot_crypto: mldsa44
     firmware:
       mode: wolfboot_mldsa44
-      artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+      artifact: build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin
     secure_boot_benchmark_profile:
       profile_id: mldsa44_benchmark
       algorithm: ML-DSA-44
@@ -89,19 +89,19 @@ profiles:
       mldsa_scope_status: post_phase_11_mldsa_profiles
       mldsa44_status: configured_post_phase_11_mldsa_profile_not_hardware_validated
       mldsa65_status: configured_post_phase_11_mldsa_profile_not_hardware_validated
-      mldsa87_status: unsupported_current_8192_byte_header_layout
-      mldsa_scope_limitations: ML-DSA-44 and ML-DSA-65 are configured because wolfBoot's ML-DSA examples use the current 8192-byte image-header reserve for those signature sizes. ML-DSA-87 is not configured because the example requires IMAGE_HEADER_SIZE=12288.
+      mldsa87_status: configured_post_phase_11_mldsa_profile_not_hardware_validated
+      mldsa_scope_limitations: ML-DSA-44, ML-DSA-65, and ML-DSA-87 are configured with the shared IMAGE_HEADER_SIZE=12288 reserve.
     secure_boot_flash:
       evidence_phase: post_phase_11_mldsa_benchmark_profile
       signature_algorithm: mldsa44
       signature_size_bytes: 2420
       wolfboot_offset: 0x08000000
-      unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa44.bin
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+      unsigned_application_artifact: build/Release/stm32_basic_hal1_mldsa44.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin
       signed_application_offset: 0x08020000
       signing_private_key: secrets/wolfboot/mldsa44_private_key.der
       boot_timing_source: uart_explicit_verification_time_marker
-      notes: This ML-DSA secure-boot benchmark profile uses the same relocated application payload, 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the classical profiles. Hardware success must only be claimed from user-provided flash and UART logs.
+      notes: This ML-DSA secure-boot benchmark profile uses the same relocated application payload, 12288-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the classical profiles. Hardware success must only be claimed from user-provided flash and UART logs.
   boot:
     id: wolfboot_mldsa44
     mode: wolfboot_mldsa44
@@ -125,8 +125,8 @@ profiles:
       wolfboot_size: 0x00020000
       primary_slot_base: 0x08020000
       primary_slot_size: 0x000E0000
-      primary_slot_entry: 0x08022000
-      image_header_size: 0x00002000
+      primary_slot_entry: 0x08023000
+      image_header_size: 0x00003000
       update_slot_base: 0x08100000
       update_slot_size: 0x000E0000
       swap_metadata_base: 0x081E0000
@@ -139,11 +139,11 @@ profiles:
       wolfboot_partition_swap_address: 0x081E0000
     relocated_application_build:
       status: defined_phase_10e_build_only_not_boot_validated
-      cmake_configure_preset: RelocatedDebug
-      cmake_build_preset: RelocatedDebug
+      cmake_configure_preset: Release
+      cmake_build_preset: Release
       linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
-      vector_table_offset: 0x00022000
-      linked_application_start: 0x08022000
+      vector_table_offset: 0x00023000
+      linked_application_start: 0x08023000
       runtime_boot_validated: false
     target_support_assessment:
       status: assessed_phase_10c
@@ -160,8 +160,8 @@ profiles:
     application_signing_profile:
       status: defined_phase_10g_signing_only_not_flashing_or_boot_validated
       profile: configs/algorithms/mldsa44.yaml
-      input_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44.bin
-      signed_image: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+      input_image: build/Release/stm32_basic_hal1_mldsa44.bin
+      signed_image: build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin
       private_key: secrets/wolfboot/mldsa44_private_key.der
       command: python scripts/experiment.py sign-application --boot-algorithm mldsa44
     secure_boot_flash_profile:
@@ -169,7 +169,7 @@ profiles:
       experiment: configs/experiments/secure_boot_uart.yaml
       command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm mldsa44
       wolfboot_offset: 0x08000000
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_mldsa44_v1_signed.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_mldsa44_v1_signed.bin
       signed_application_offset: 0x08020000
       positive_boot_evidence_status: defined_phase_10i
       negative_corrupted_application_test_status: defined_phase_10j
@@ -182,6 +182,6 @@ profiles:
       signature_algorithm: mldsa44
       mldsa_level: 2
       signature_size_bytes: 2420
-      image_header_size_bytes: 8192
+      image_header_size_bytes: 12288
       current_header_fit: true
-      unsupported_variant_note: ML-DSA-87 is not configured under the current 8192-byte image-header reserve.
+      unsupported_variant_note: ML-DSA-87 is configured under the shared 12288-byte image-header reserve.

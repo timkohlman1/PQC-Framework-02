@@ -87,7 +87,7 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert manifest["build"]["purpose"] == "automated_test"
     assert isinstance(manifest["build"]["identity"], str)
     assert manifest["build"]["identity"]
-    assert manifest["firmware"]["artifact"] == "build/Debug/stm32_basic_hal1.elf"
+    assert manifest["firmware"]["artifact"] == "build/Release/stm32_basic_hal1.elf"
     assert manifest["firmware"]["artifact_exists"] is True
     assert isinstance(manifest["firmware"]["sha256"], str)
     assert len(manifest["firmware"]["sha256"]) == 64
@@ -161,7 +161,7 @@ def test_debug_and_relocated_cmake_presets_build_with_freertos(
 
     repo_root = _repo_root()
 
-    for preset in ("Debug", "RelocatedDebug"):
+    for preset in ("Debug", "Release"):
         configure = subprocess.run(
             ["cmake", "--preset", preset],
             cwd=repo_root,

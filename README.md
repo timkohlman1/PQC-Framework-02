@@ -1,73 +1,105 @@
-# Project Documentation Index and Ownership Map
+# PQC-Framework-02
 
-## Purpose
+STM32 embedded-security experiment framework for wolfBoot secure boot, reproducible evidence collection, and bounded MQTT/TLS experiments.
 
-This file is the canonical index for project-maintained documentation. Use it to locate the authoritative owner for a subject, determine a document's lifecycle, and distinguish project documentation from upstream material.
+## Current scope
 
-A document being indexed does not make every statement in it current. Lifecycle classifications below determine how it should be used.
+The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, packet-capture, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform.
 
-## Ownership rules
+Evidence boundaries are strict:
 
-Project-owned documentation consists of the tracked root entry documents, tracked documents under `docs/`, and the tracked MQTT broker documentation listed below. Every project-owned document must appear in this index.
+- Build-only evidence proves compilation and linkage only.
+- STM32 local-only and fake/no-network evidence does not prove external networking.
+- Host-side or broker-side validation does not prove STM32 or end-to-end wireless success.
+- MQTT, TLS, Wi-Fi, secure-boot, timing, and memory claims require retained run evidence.
 
-Documentation inside vendor or submodule trees is upstream-owned and is excluded from project-maintained documentation consistency checks. The current submodule roots are:
+The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
 
-- `tools/wolfboot/`
-- `Middlewares/Third_Party/wolfMQTT/`
+The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum helpers; it does not initialize a netif and is not external-network evidence.
 
-Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generated build trees, virtual environments, result directories, and dependency caches is also outside this index unless a project-owned document is explicitly listed below.
+## Documentation
 
-## Lifecycle definitions
+- `docs/README.md` — documentation index and ownership map
+- `AI_BUILD_GUIDE.md` — mandatory AI-assisted development rules
+- `docs/001_ai_feature_request_workflow.md` — maintained AI workflow; there is no separate release-readiness prompt document
+- `docs/008_chatgpt_project_prompt.md` — maintained reusable project prompt
+- `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
+- `docs/006_security_and_secrets.md` — secret handling and signing-state safety
+- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, and deferred tests
+- `experiment/mqtt-broker/README.md` — broker provisioning, operation, and PowerShell `--client-args` forwarding contract
 
-- **Current reference:** maintained description of the current project, policy, architecture, or workflow.
-- **Operational guide:** maintained instructions for a bounded setup or operational task.
-- **AI workflow:** maintained instructions or prompt material for AI-assisted work.
-- **Active plan:** maintained roadmap with current implementation status and remaining work.
-- **Historical plan:** preserved goals and sequencing; not a current-state authority.
-- **Decision record:** preserved architectural decision and rationale; later current references may supersede operational details.
-- **Remediation plan:** bounded maintenance plan used to execute documentation corrections.
+## Default workflow
 
-## Canonical ownership map
+The default development path is Docker-hosted Linux execution through the project wrapper scripts `scripts\dev.ps1` and `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
 
-| Path | Classification | Lifecycle | Canonical subject ownership | Intended audience |
-|---|---|---|---|---|
-| `AI_BUILD_GUIDE.md` | AI context guide | Current reference | AI-assisted development rules, safety constraints, evidence rules, test expectations, and repository navigation | AI assistants and developers preparing AI requests |
-| `README.md` | Project entry point | Current reference | Human-facing purpose, current summary, common commands, and routing to detailed documentation | Developers, reviewers, operators |
-| `docs/000_project_overview.md` | Project overview | Current reference | Detailed project purpose, scope, implemented boundaries, and evidence model overview | New developers, reviewers, researchers |
-| `docs/001_ai_feature_request_workflow.md` | AI workflow guide | AI workflow | Canonical feature-request and review workflow for AI-assisted changes | Developers and AI assistants |
-| `docs/002_host_gateway_setup.md` | Setup guide | Operational guide | Development-host access, SSH configuration, and gateway identity | Operators and developers using the gateway |
-| `docs/003_stm32_board_setup.md` | Hardware setup guide | Operational guide | Board, ST-LINK, UART, memory, and physical hardware setup | Firmware developers and hardware operators |
-| `docs/004_baseline_hal_app.md` | Firmware behavior reference | Current reference | Baseline HAL/FreeRTOS application behavior, UART markers, and local-smoke limitations | Firmware developers and test authors |
-| `docs/005_remote_flash_workflow.md` | Workflow guide | Operational guide | Docker-wrapper build, signing, flash, secure-boot, and UART workflows | Operators, firmware developers, test authors |
-| `docs/006_security_and_secrets.md` | Security policy | Current reference | Secret handling, private generated state, signing-tuple safety, and packaging exclusions | All contributors and operators |
-| `docs/007_framework_architecture.md` | Architecture reference | Current reference | Detailed current architecture, capability matrix, evidence boundaries, file map, and deferred-test register | Developers, reviewers, test authors, researchers |
-| `docs/008_chatgpt_project_prompt.md` | AI prompt | AI workflow | Maintained reusable project prompt that routes work through the canonical AI workflow | Developers starting AI-assisted work |
-| `docs/README.md` | Documentation index | Current reference | Project documentation inventory, ownership, lifecycle, audience, and exclusion rules | All documentation users and maintainers |
-| `docs/decisions/0001_keep_cubemx_project_at_repo_root.md` | Architecture decision record | Decision record | Rationale for retaining the CubeMX project at repository root | Firmware and build-system maintainers |
-| `docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md` | Architecture decision record | Decision record | wolfBoot STM32L4 target support assessment and accepted direction | Secure-boot and platform maintainers |
-| `docs/decisions/0003_secure_boot_flash_layout.md` | Architecture decision record | Decision record | STM32L4R5 secure-boot flash layout decision and rationale | Secure-boot, linker, and firmware maintainers |
-| `docs/local build commands.txt` | Local-tooling troubleshooting guide | Operational guide | Host-native diagnostic fallback commands; never the normal reproducible workflow | Developers diagnosing CubeMX, IDE, or local toolchain issues |
-| `docs/non_hardware_mqtt_tls_development_plan.md` | MQTT/TLS roadmap | Active plan | Current phase status, evidence boundaries, remaining limitations, and deferred work for non-hardware MQTT/TLS development | Firmware, network, security, and test developers |
-| `docs/pqc_iot_experiment_framework_plan.md` | Framework roadmap | Historical plan | Original framework goals, sequencing, checklists, and pass criteria | Maintainers reviewing project history and original intent |
-| `experiment/mqtt-broker/README.md` | Broker operations guide | Operational guide | Canonical MQTT broker Compose profiles, provisioning, deployment, validation, and broker evidence limits | Network/security developers and gateway operators |
-| `experiment/mqtt-broker/config/oqs/README.md` | OQS broker profile reference | Operational guide | OQS Mosquitto profile algorithms, generated certificate material, and runtime diagnostic limits | PQC/TLS experimenters and broker maintainers |
+```powershell
+.\scripts\dev.ps1 build-image
+.\scripts\dev.ps1 pytest tests/unit
+.\scripts\dev.ps1 pytest
+.\scripts\dev.ps1 python scripts/experiment.py --help
+.\scripts\dev.ps1 python-gateway scripts/experiment.py --help
+```
 
-## Subject routing
+All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
 
-Use `README.md` for initial orientation and common commands. Use `AI_BUILD_GUIDE.md` and `docs/001_ai_feature_request_workflow.md` for AI-assisted changes. Use `docs/007_framework_architecture.md` for detailed current capability and evidence questions. Use the topic-specific operational guide for setup or execution details. Use the active MQTT/TLS plan for current roadmap status. Treat the historical framework plan and decision records as preserved context rather than current operational authority.
+```powershell
+.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+```
 
-## Maintenance contract
 
-When adding, relocating, reclassifying, or removing a project-owned document:
+Host-native diagnostic fallback:
 
-1. Update this index in the same change.
-2. Keep the path tracked and valid.
-3. Assign one classification, lifecycle, canonical subject owner, and intended audience.
-4. Avoid creating a second canonical owner for an existing subject.
-5. Do not add vendor or submodule documentation to project-maintained consistency checks.
+```powershell
+cmake --preset Release
+cmake --build --preset Release
+cmake --preset Debug
+cmake --build --preset Debug
+python -m pytest tests/integration/test_local_build.py -m integration --pqc-require-local-build
+```
 
-`tests/unit/test_documentation_integrity.py` enforces index coverage and tracked-path validity without snapshotting complete document contents.
+SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough.
 
-### Packet capture for networked firmware runs
+## Secure-boot example
 
-Experiment profiles with a `network` block automatically retain `gateway-network-capture.pcap` and `gateway-network-capture.log` in the run result. Configure `network.packet_capture.stm32_mac_address` when the device MAC is known; otherwise the selected interface defaults to `any` and is captured without a narrowing filter so DHCP and DNS traffic remain visible. See `docs/002_host_gateway_setup.md` for the gateway `tcpdump` prerequisite and `docs/005_remote_flash_workflow.md` for inspection commands.
+When no secure-boot algorithm is specified, the framework uses wolfBoot with `integrity_sha256`. This verifies the application SHA-256 digest but performs no signature or signing-key authentication.
+
+A named algorithm implies wolfBoot; `--boot-mode wolfboot` is not required.
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml `
+    --boot-algorithm mldsa87
+```
+
+ML-DSA-44, ML-DSA-65, and ML-DSA-87 are explicit non-default signing evaluation profiles. Release and Debug share the same relocated layout:
+
+```text
+wolfBoot primary slot:    0x08020000
+manifest/header reserve:  0x00003000
+application vector table: 0x08023000
+```
+
+For manual packaging, create the framework-recorded Release build before signing:
+
+```powershell
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment sign-application
+```
+
+Detailed commands and signing-tuple rules are owned by `docs/005_remote_flash_workflow.md`.
+
+## MQTT and broker orientation
+
+The repository includes plaintext, classical TLS, and hybrid PQC MQTT experiment profiles. Use `experiment/mqtt-broker/README.md` for certificate provisioning, deployment, broker lifecycle, and host-side validation.
+
+Networked profiles can retain `gateway-network-capture.pcap` and `gateway-network-capture.log`. Packet capture is supporting evidence only; correlate it with UART, broker, subscriber, and manifest evidence. Setup and inspection details are in `docs/002_host_gateway_setup.md` and `docs/005_remote_flash_workflow.md`.
+
+## Safety and evidence
+
+Private signing keys and generated credentials must not be committed or baked into the image. Disposable experiment signing and certificate material selected by an owning workflow may be retained only in ignored result directories with a SHA-256 material inventory. SSH/VPN keys, tokens, production credentials, unrelated host credentials, and real `.env` files must not be copied into results, committed, packaged, or baked into images.
+
+Generated-state preflight is the primary compatibility and provenance mechanism. Pytest cleanup is supplementary cross-platform hygiene. Workflows must never silently reconstruct partial signing state.
+
+Do not claim build, signing, flashing, hardware, UART, network, MQTT/TLS, timing, memory, or end-to-end success without explicit logs, manifests, or equivalent evidence. A skipped capability-gated test is not evidence of success.

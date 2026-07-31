@@ -8,15 +8,9 @@ unless the request will examine prior AI prompts / interactions
 
 -----------
 
-Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
-
-All builds should use the Relocated profile, the default and baseline secureboot equivalent firmware image should be a basic integrity check of the application firmware without any signing or signing key validation, with the PQC firmware signing options available for evaluating secure boot signing modes defined in the non-default secureboot profiles.  There is no need to maintain both a Debug and RelocatedDebug profile any more since every build will have the bootloader / secure boot image. Additinally, please increase the allocated space so that the MLDSA87 parameter set can be used (it was excluded because it was below the supported size by wolfboot), and then add a MLDSA87 profile to complement the existing MLDSA65 and MLDSA44 profiles
 
 -----------
 
-Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
-
-Step me through generating the 4 differnet TLS profile builds using Debug and Release presets and compare the differences between these presets. Ensure relevant config json's can specify one or the other and that both presets have test coverage.
 
 -----------
 

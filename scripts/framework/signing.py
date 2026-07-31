@@ -157,7 +157,6 @@ def validate_application_signing_profile(profile: dict[str, Any]) -> None:
         "input_image",
         "signed_image",
         "signature_algorithm",
-        "private_key",
         "image_version",
         "sign.command",
     ]
@@ -166,10 +165,13 @@ def validate_application_signing_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
+    if algorithm not in {"integrity_sha256", "ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65", "mldsa87"}:
         raise ApplicationSigningProfileError(
-            "application signing profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65"
+            "application signing profile signature_algorithm must be integrity_sha256, ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, mldsa65, or mldsa87"
         )
+
+    if algorithm != "integrity_sha256":
+        _required(profile, "private_key")
 
     sign_config = profile.get("sign")
     if not isinstance(sign_config, dict):
@@ -206,7 +208,7 @@ def _format_context(profile: dict[str, Any], repo_root: Path) -> dict[str, str]:
         "input_image": str(repo_root / str(profile["input_image"])),
         "input_elf": str(repo_root / str(profile.get("input_elf", ""))),
         "signed_image": str(repo_root / str(profile["signed_image"])),
-        "private_key": str(repo_root / str(profile["private_key"])),
+        "private_key": str(repo_root / str(profile.get("private_key", ""))),
         "image_version": str(profile["image_version"]),
         "signature_algorithm": str(profile["signature_algorithm"]),
     }
@@ -822,7 +824,8 @@ def execute_application_signing(
     input_elf_config = _optional_str(profile, "input_elf")
     input_elf_path = None if input_elf_config is None else repo_root_path / input_elf_config
     signed_image_path = repo_root_path / str(profile["signed_image"])
-    private_key_path = repo_root_path / str(profile["private_key"])
+    integrity_only = str(profile.get("signature_algorithm")) == "integrity_sha256"
+    private_key_path = repo_root_path / str(profile.get("private_key", "__integrity_only_no_private_key__"))
     keygen_enabled = _optional_bool(profile, "keygen.enabled")
     binary_conversion_enabled = _optional_bool(profile, "binary_conversion.enabled")
     private_key_existed_before = private_key_path.is_file()
@@ -838,7 +841,7 @@ def execute_application_signing(
     fingerprint_evidence = _fingerprint_evidence(repo_root=repo_root_path, profile=profile)
     input_provenance_error: str | None = None
     if _optional_bool(profile, "require_input_build_provenance") and input_elf_path is not None and input_elf_path.is_file():
-        input_scope = f"cmake-{str(profile.get('build_preset', 'RelocatedDebug'))}"
+        input_scope = f"cmake-{str(profile.get('build_preset', 'Release'))}"
         try:
             require_recorded_artifact(
                 repo_root=repo_root_path,
@@ -912,7 +915,7 @@ def execute_application_signing(
     elif return_code == 0:
         input_image_sha256 = calculate_file_sha256(input_image_path)
 
-    if return_code == 0 and not private_key_path.is_file():
+    if return_code == 0 and not integrity_only and not private_key_path.is_file():
         if keygen_enabled:
             private_key_path.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -938,7 +941,7 @@ def execute_application_signing(
             return_code = PRIVATE_KEY_MISSING_RETURN_CODE
             failure_reason = f"Configured private signing key does not exist and key generation is disabled: {private_key_path}"
 
-    if return_code == 0 and not private_key_path.is_file():
+    if return_code == 0 and not integrity_only and not private_key_path.is_file():
         return_code = PRIVATE_KEY_MISSING_RETURN_CODE
         failure_reason = f"Configured private signing key is still absent after key generation: {private_key_path}"
 
@@ -1005,9 +1008,10 @@ def execute_application_signing(
                 retained_signed_image_path, result_dir, "artifacts/application/signed/application.bin",
                 role="application_signed_image", required_for=["manual_flash", "signature_verification"],
             ))
-        result_materials.append(copy_material_to_result(
-            private_key_path, result_dir, f"cryptographic-material/firmware-signing/private/{private_key_path.name}",
-            role="firmware_signing_private_key", private=True,
+        if not integrity_only:
+            result_materials.append(copy_material_to_result(
+                private_key_path, result_dir, f"cryptographic-material/firmware-signing/private/{private_key_path.name}",
+                role="firmware_signing_private_key", private=True,
             required_for=["repeat_signing", "signature_verification"],
         ))
         tuple_directory = configured_tuple_directory(

@@ -163,9 +163,7 @@ def test_generated_state_preflight_is_primary_and_pytest_cleanup_is_supplementar
 
 def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
     command_fragment = (
-        "experiment build --experiment configs/experiments/baseline_direct_uart.yaml "
-        "--configure-preset relocateddebug --build-preset relocateddebug "
-        "--artifact build/relocateddebug/stm32_basic_hal1.elf"
+        "experiment build --experiment configs/experiments/baseline_direct_uart.yaml"
     )
     for path in ("README.md", "docs/005_remote_flash_workflow.md"):
         content = _read(path).lower()
@@ -173,6 +171,8 @@ def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
         signing_index = content.find("experiment sign-application", build_index + 1)
         assert build_index >= 0, f"{path} is missing the framework-recorded relocated build"
         assert signing_index > build_index, f"{path} must show relocated build before signing"
+        assert "release is the default" in content
+        assert "relocateddebug" not in content
 
     guide = _read("AI_BUILD_GUIDE.md")
     assert "framework-recorded relocated application build before signing" in guide

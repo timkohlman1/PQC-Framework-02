@@ -25,14 +25,14 @@ profiles:
       signing_tuple:
         tuple_id: ecc384-development
         directory: secrets/wolfboot/tuples/ecc384-development
-    notes: This profile is build-only for the Phase 11.5d ECC384 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 8192-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
+    notes: This profile is build-only for the Phase 11.5d ECC384 expanded classical benchmark profile. It uses the same STM32L4R5 layout, relocated application payload, shared 12288-byte image-header reserve, boot-timing instrumentation, runtime stack high-water instrumentation, and result model as the ECC256, ED25519, and RSA2048 paths. Private key material remains local and is not copied into results. A successful build does not prove signing, flashing, UART boot, or hardware success.
   signing:
     id: wolfboot_ecc384_app
     description: Sign the relocated STM32 HAL application image for the wolfBoot ECC384 benchmark profile.
     status: configured_phase_11_5d_signing_only_not_flashing_or_boot_validated
     boot_profile: wolfboot_ecc384
-    input_image: build/RelocatedDebug/stm32_basic_hal1_ecc384.bin
-    signed_image: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+    input_image: build/Release/stm32_basic_hal1_ecc384.bin
+    signed_image: build/Release/stm32_basic_hal1_ecc384_v1_signed.bin
     signature_algorithm: ecc384
     signature_size_bytes: 96
     classical_benchmark_profile:
@@ -55,7 +55,7 @@ profiles:
     signing_tuple:
       tuple_id: ecc384-development
       directory: secrets/wolfboot/tuples/ecc384-development
-    notes: This profile is signing-only for the Phase 11.5d ECC384 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 8192-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
+    notes: This profile is signing-only for the Phase 11.5d ECC384 expanded classical benchmark profile. The private key path is intentionally under secrets/ and must remain local. The matching wolfBoot build profile initializes the complete persistent signing tuple when it is entirely absent; application signing never generates a private key by itself, converts the relocated ELF to the configured BIN image when needed, signs the BIN image with the shared 12288-byte Phase 11 image-header reserve, records signing metadata under results/signing, and retains only the signed image artifact. It does not copy private keys into results, flash hardware, capture UART, or prove secure-boot runtime behaviour.
   experiment:
     id: wolfboot_ecc384_uart
     description: Flash wolfBoot and the signed ECC384 application image, then capture UART benchmark evidence.
@@ -63,7 +63,7 @@ profiles:
     boot_crypto: ecc384
     firmware:
       mode: wolfboot_ecc384
-      artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+      artifact: build/Release/stm32_basic_hal1_ecc384_v1_signed.bin
     secure_boot_benchmark_profile:
       profile_id: ecc384_benchmark
       algorithm: ECC384
@@ -87,12 +87,12 @@ profiles:
       signature_algorithm: ecc384
       signature_size_bytes: 96
       wolfboot_offset: 134217728
-      unsigned_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384.bin
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+      unsigned_application_artifact: build/Release/stm32_basic_hal1_ecc384.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_ecc384_v1_signed.bin
       signed_application_offset: 134348800
       signing_private_key: secrets/wolfboot/ecc384_private_key.der
       boot_timing_source: uart_explicit_verification_time_marker
-      notes: Phase 11.5d uses the same relocated application payload and shared 8192-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256, ED25519, and RSA2048 profiles. The secure-boot flash workflow refuses to flash when available ECC384 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
+      notes: Phase 11.5d uses the same relocated application payload and shared 12288-byte image-header reserve, UART markers, repeated-run model, static metrics model, runtime memory model, key-consistency evidence, and secure-boot benchmark manifest schema as the ECC256, ED25519, and RSA2048 profiles. The secure-boot flash workflow refuses to flash when available ECC384 canonical and wolfBoot private-key fingerprints differ. Hardware success must only be claimed from user-provided flash and UART logs.
   boot:
     id: wolfboot_ecc384
     mode: wolfboot_ecc384
@@ -118,7 +118,7 @@ profiles:
       primary_slot_base: 134348800
       primary_slot_size: 917504
       primary_slot_entry: 134356992
-      image_header_size: 8192
+      image_header_size: 12288
       update_slot_base: 135266304
       update_slot_size: 917504
       swap_metadata_base: 136183808
@@ -127,7 +127,7 @@ profiles:
       physical_flash_page_assumption: 4096
       runtime_boot_validated: false
     relocated_application:
-      build_preset: RelocatedDebug
+      build_preset: Release
       linker_script: STM32L4R5XX_FLASH_RELOCATED.ld
       vector_offset: 139264
       application_start: 134356992
@@ -140,8 +140,8 @@ profiles:
     application_signing_profile:
       status: defined_phase_11_5d_signing_only_not_flashing_or_boot_validated
       profile: configs/algorithms/ecc384.yaml
-      input_image: build/RelocatedDebug/stm32_basic_hal1_ecc384.bin
-      signed_image: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+      input_image: build/Release/stm32_basic_hal1_ecc384.bin
+      signed_image: build/Release/stm32_basic_hal1_ecc384_v1_signed.bin
       private_key: secrets/wolfboot/ecc384_private_key.der
       command: python scripts/experiment.py sign-application --boot-algorithm ecc384
     secure_boot_flash_profile:
@@ -149,10 +149,10 @@ profiles:
       experiment: configs/experiments/secure_boot_uart.yaml
       command: python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm ecc384
       wolfboot_offset: 134217728
-      signed_application_artifact: build/RelocatedDebug/stm32_basic_hal1_ecc384_v1_signed.bin
+      signed_application_artifact: build/Release/stm32_basic_hal1_ecc384_v1_signed.bin
       signed_application_offset: 134348800
       positive_boot_evidence_status: uses_existing_phase_10i_marker_model
       negative_corrupted_application_test_status: uses_existing_phase_10j_negative_test_model
       boot_timing_status: uses_existing_phase_10k_timing_model
       manifest_consolidation_status: uses_existing_phase_10l_and_phase_11_benchmark_schema
-    notes: This ECC384 profile reuses the Phase 11 shared 8 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines ECC384 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.
+    notes: This ECC384 profile reuses the Phase 11 shared 12 KB image-header layout and the existing relocated application payload so algorithm comparisons remain comparable. It defines ECC384 build, signing, and secure-boot flash profile links, but hardware success and benchmark values require explicit user-provided logs.

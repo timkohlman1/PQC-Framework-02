@@ -15,7 +15,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Debug")
+    set(CMAKE_BUILD_TYPE "Release")
 endif()
 
 # Set the project name
@@ -30,16 +30,15 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Select the linker script and vector-table offset for the requested build profile.
 #
-# The default Debug/Release presets keep the CubeMX direct-flash layout at
-# 0x08000000. The RelocatedDebug preset overrides these cache variables to build
-# the HAL application for wolfBoot handoff at 0x08022000 using the shared Phase 11 8 KB image-header reserve.
+# Debug and Release both use the fixed wolfBoot-relocated application layout.
+# Release is the default build type; Debug changes compiler settings only.
 set(STM32_LINKER_SCRIPT
-    "${CMAKE_SOURCE_DIR}/STM32L4R5XX_FLASH.ld"
+    "${CMAKE_SOURCE_DIR}/STM32L4R5XX_FLASH_RELOCATED.ld"
     CACHE FILEPATH
     "Linker script used for this STM32 firmware build"
 )
 set(STM32_APP_VECTOR_OFFSET
-    "0x00000000"
+    "0x00023000"
     CACHE STRING
     "Vector table offset from FLASH_BASE for this STM32 firmware build"
 )

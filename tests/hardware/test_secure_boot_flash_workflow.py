@@ -13,8 +13,8 @@ BUILD_PROVENANCE_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.y
 SIGNING_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
 WOLFBOOT_BUILD_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
-RELOCATED_APPLICATION_ELF = "build/RelocatedDebug/stm32_basic_hal1.elf"
-SIGNED_APPLICATION_ARTIFACT = "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+RELOCATED_APPLICATION_ELF = "build/Release/stm32_basic_hal1.elf"
+SIGNED_APPLICATION_ARTIFACT = "build/Release/stm32_basic_hal1_v1_signed.bin"
 EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 EXPECTED_BOOT_MODE = "wolfboot_ecdsa_p256"
 EXPECTED_BOOT_CRYPTO = "ecdsa_p256"
@@ -161,9 +161,9 @@ def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path) 
             "--results-dir",
             str(results_dir),
             "--configure-preset",
-            "RelocatedDebug",
+            "Release",
             "--build-preset",
-            "RelocatedDebug",
+            "Release",
             "--artifact",
             RELOCATED_APPLICATION_ELF,
             "--force",

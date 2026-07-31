@@ -28,12 +28,12 @@ def sample_state(build_state):
         build_fingerprint="a" * 64,
         build_fingerprint_algorithm="sha256-build-inputs-v1",
         build_fingerprint_inputs=["CMakeLists.txt", "Core/Src/main.c"],
-        firmware_artifact="build/Debug/stm32_basic_hal1.elf",
-        firmware_artifact_path="/repo/build/Debug/stm32_basic_hal1.elf",
+        firmware_artifact="build/Release/stm32_basic_hal1.elf",
+        firmware_artifact_path="/repo/build/Release/stm32_basic_hal1.elf",
         firmware_sha256="b" * 64,
         result_artifacts={
             "elf": {
-                "source_path": "/repo/build/Debug/stm32_basic_hal1.elf",
+                "source_path": "/repo/build/Release/stm32_basic_hal1.elf",
                 "path": "firmware.elf",
                 "artifact_path": "/repo/results/run/firmware.elf",
                 "sha256": "b" * 64,

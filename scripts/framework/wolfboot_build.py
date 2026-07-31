@@ -177,10 +177,21 @@ def validate_wolfboot_build_profile(profile: dict[str, Any]) -> None:
         _required(profile, field)
 
     algorithm = str(_required(profile, "signature_algorithm"))
-    if algorithm not in {"ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65"}:
+    if algorithm not in {"integrity_sha256", "ecdsa_p256", "ed25519", "rsa2048", "ecc384", "ecc521", "ed448", "rsa3072", "rsa4096", "mldsa44", "mldsa65", "mldsa87"}:
         raise WolfBootBuildProfileError(
-            "wolfBoot build profile signature_algorithm must be ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, or mldsa65"
+            "wolfBoot build profile signature_algorithm must be integrity_sha256, ecdsa_p256, ed25519, rsa2048, ecc384, ecc521, ed448, rsa3072, rsa4096, mldsa44, mldsa65, or mldsa87"
         )
+
+
+def _requires_signing_material(profile: dict[str, Any]) -> bool:
+    """Return whether the selected wolfBoot profile requires signing keys.
+
+    The integrity-only baseline uses ``SIGN=NONE`` and embeds no verification
+    key, so it must not enter persistent-tuple, key-generation, key-sync, or
+    private-material retention paths.
+    """
+
+    return str(profile.get("signature_algorithm", "")) != "integrity_sha256"
 
 
 def construct_wolfboot_build_command(profile: dict[str, Any]) -> list[str]:
@@ -1671,32 +1682,44 @@ def execute_wolfboot_build(
                         else:
                             try:
                                 _remove_wolfboot_host_tool_outputs(source_dir)
-                                persistent_tuple_paths, signing_artifact_error = (
-                                    _prepare_persistent_signing_tuple(
-                                        profile=profile,
-                                        repo_root=repo_root_path,
-                                        source_dir=source_dir,
+                                if _requires_signing_material(profile):
+                                    persistent_tuple_paths, signing_artifact_error = (
+                                        _prepare_persistent_signing_tuple(
+                                            profile=profile,
+                                            repo_root=repo_root_path,
+                                            source_dir=source_dir,
+                                        )
                                     )
-                                )
-                                if persistent_tuple_paths is None:
-                                    (
-                                        generated_signing_artifact_cleanup_paths,
-                                        signing_artifact_error,
-                                    ) = _prepare_wolfboot_signing_artifacts(
-                                        profile=profile,
-                                        repo_root=repo_root_path,
-                                        source_dir=source_dir,
-                                        signing_key_path=signing_key_path,
-                                        wolfboot_private_key_path=wolfboot_private_key_path,
+                                    if persistent_tuple_paths is None:
+                                        (
+                                            generated_signing_artifact_cleanup_paths,
+                                            signing_artifact_error,
+                                        ) = _prepare_wolfboot_signing_artifacts(
+                                            profile=profile,
+                                            repo_root=repo_root_path,
+                                            source_dir=source_dir,
+                                            signing_key_path=signing_key_path,
+                                            wolfboot_private_key_path=wolfboot_private_key_path,
+                                        )
+                                    if signing_artifact_error is None:
+                                        key_sync_before_build_message = (
+                                            _coordinate_wolfboot_signing_key_before_build(
+                                                signing_key_path=signing_key_path,
+                                                wolfboot_private_key_path=wolfboot_private_key_path,
+                                            )
+                                        )
+                                else:
+                                    persistent_tuple_paths = None
+                                    signing_artifact_error = None
+                                    generated_signing_artifact_cleanup_paths = []
+                                    key_sync_before_build_message = (
+                                        "Integrity-only wolfBoot profile does not use signing material."
                                     )
+
                                 if signing_artifact_error is not None:
                                     return_code = PROFILE_ERROR_RETURN_CODE
                                     failure_reason = signing_artifact_error
                                 else:
-                                    key_sync_before_build_message = _coordinate_wolfboot_signing_key_before_build(
-                                        signing_key_path=signing_key_path,
-                                        wolfboot_private_key_path=wolfboot_private_key_path,
-                                    )
                                     execution = runner(command, working_directory)
                                     return_code = execution.return_code
                                     if return_code == 0 and persistent_tuple_paths is not None:
@@ -1767,12 +1790,17 @@ def execute_wolfboot_build(
         elif failure_reason is None:
             failure_reason = f"wolfBoot build command failed with return code {return_code}."
 
-    key_sync_after_build_message = _coordinate_wolfboot_signing_key_after_build(
-        signing_key_path=signing_key_path,
-        wolfboot_private_key_path=wolfboot_private_key_path,
-        return_code=return_code,
-        persistent_tuple=persistent_tuple_paths is not None,
-    )
+    if _requires_signing_material(profile):
+        key_sync_after_build_message = _coordinate_wolfboot_signing_key_after_build(
+            signing_key_path=signing_key_path,
+            wolfboot_private_key_path=wolfboot_private_key_path,
+            return_code=return_code,
+            persistent_tuple=persistent_tuple_paths is not None,
+        )
+    else:
+        key_sync_after_build_message = (
+            "Integrity-only wolfBoot profile does not use signing material."
+        )
     (
         key_consistency_status,
         key_consistency_message,
@@ -1943,6 +1971,10 @@ def execute_wolfboot_build(
             "boot_timing_instrumentation_patch_applied": boot_timing_instrumentation_patch_applied,
             "boot_timing_image_path": None if boot_timing_image_path is None else str(boot_timing_image_path),
             "boot_timing_hal_path": None if boot_timing_hal_path is None else str(boot_timing_hal_path),
+        },
+        "signing_key_consistency": {
+            "status": key_consistency_status,
+            "message": key_consistency_message,
         },
         "artifact": {
             "path": str(artifact_path),

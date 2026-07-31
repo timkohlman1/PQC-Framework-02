@@ -18,8 +18,8 @@ from pathlib import Path
 from framework.generated_state import build_identity, preflight_generated_state
 root = Path({str(repo_root)!r})
 identity = build_identity(workflow='stm32_cmake', profile='Debug', input_fingerprint={{'fingerprint':'new'}}, toolchain={{'command':['cmake']}}, execution={{'host_system':'integration'}})
-result = preflight_generated_state(repo_root=root, scope='cmake-Debug', expected_identity=identity, cleanup_paths=[Path('build/Debug')], final_artifact_paths=[Path('build/Debug/app.elf')])
-assert not (root / 'build/Debug/app.elf').exists()
+result = preflight_generated_state(repo_root=root, scope='cmake-Debug', expected_identity=identity, cleanup_paths=[Path('build/Debug')], final_artifact_paths=[Path('build/Release/app.elf')])
+assert not (root / 'build/Release/app.elf').exists()
 print(result.reason)
 """
     env = dict(os.environ)

@@ -73,7 +73,7 @@ def test_managed_broker_cleanup_receives_bundle_and_uses_selected_profile():
     assert "bundle: dict[str, dict[str, Any]]" in source
     assert source.count(
         "_collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)"
-    ) == 2
+    ) == 3
     assert 'extra_args=[*common, "--profile", profile, "--tail", "100000"]' in source
     assert 'extra_args=[*common, "--profile", "classical", "--tail", "100000"]' not in source
 

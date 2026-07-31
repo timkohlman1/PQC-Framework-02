@@ -114,7 +114,7 @@ def test_load_experiment_bundle_resolves_board_host_and_boot_configs(tmp_path):
                 "boot: direct_flash",
                 "firmware:",
                 "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
+                "  artifact: build/Release/stm32_basic_hal1.elf",
                 "uart:",
                 "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
                 "  expected_tick_message: tick",
@@ -142,7 +142,7 @@ def test_status_summary_states_no_hardware_actions(tmp_path):
             "description": "Test experiment.",
             "firmware": {
                 "mode": "direct_flash",
-                "artifact": "build/Debug/stm32_basic_hal1.elf",
+                "artifact": "build/Release/stm32_basic_hal1.elf",
             },
             "uart": {
                 "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -245,8 +245,8 @@ def test_planned_wolfboot_flash_layout_metadata_is_loadable_for_inspection(tmp_p
                 "  wolfboot_size: 0x00020000",
                 "  primary_slot_base: 0x08020000",
                 "  primary_slot_size: 0x000E0000",
-                "  primary_slot_entry: 0x08022000",
-                "  image_header_size: 0x00002000",
+                "  primary_slot_entry: 0x08023000",
+                "  image_header_size: 0x00003000",
                 "  update_slot_base: 0x08100000",
                 "  update_slot_size: 0x000E0000",
                 "  swap_metadata_base: 0x081E0000",
@@ -275,7 +275,7 @@ def test_planned_wolfboot_flash_layout_metadata_is_loadable_for_inspection(tmp_p
     assert layout["wolfboot_base"] == "0x08000000"
     assert layout["wolfboot_size"] == "0x00020000"
     assert layout["primary_slot_base"] == "0x08020000"
-    assert layout["primary_slot_entry"] == "0x08022000"
+    assert layout["primary_slot_entry"] == "0x08023000"
     assert layout["update_slot_base"] == "0x08100000"
     assert layout["swap_metadata_base"] == "0x081E0000"
     assert layout["wolfboot_partition_boot_address"] == "0x08020000"
@@ -293,9 +293,9 @@ def test_application_signing_profile_is_loadable(tmp_path):
             [
                 "id: wolfboot_ecdsa_p256_app",
                 "description: Test signing profile.",
-                "input_elf: build/RelocatedDebug/stm32_basic_hal1.elf",
-                "input_image: build/RelocatedDebug/stm32_basic_hal1.bin",
-                "signed_image: build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                "input_elf: build/Release/stm32_basic_hal1.elf",
+                "input_image: build/Release/stm32_basic_hal1.bin",
+                "signed_image: build/Release/stm32_basic_hal1_v1_signed.bin",
                 "signature_algorithm: ecdsa_p256",
                 "signature_size_bytes: 64",
                 "image_version: 1",
@@ -352,6 +352,7 @@ expanded_algorithms:
 post_quantum_algorithms:
   mldsa44: true
   mldsa65: true
+  mldsa87: true
 common_evidence:
   board: board_a
   application_payload: same_relocated_hal_application_payload
@@ -364,7 +365,7 @@ common_evidence:
     experiment_cli.validate_classical_benchmark_profile_model_config(config)
     assert config["reference_algorithm"] == "ecdsa_p256"
     assert set(config["minimum_algorithms"]) == {"ed25519", "ecdsa_p256", "rsa2048"}
-    assert set(config["post_quantum_algorithms"]) == {"mldsa44", "mldsa65"}
+    assert set(config["post_quantum_algorithms"]) == {"mldsa44", "mldsa65", "mldsa87"}
 
 
 def test_baseline_experiment_loads_wifi_dhcp_configuration():
@@ -399,7 +400,7 @@ def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
         "configs/wolfboot/stm32l4r5_ecdsa_p256.config"
     )
     assert signing_profile["sign"]["args"].startswith("--ecc256 ")
-    assert signing_profile["image_header_size_bytes"] == 8192
+    assert signing_profile["image_header_size_bytes"] == 12288
     assert experiment_profile["boot"] == "wolfboot_ecdsa_p256"
     assert experiment_profile["secure_boot_flash"]["signed_application_offset"] == "0x08020000"
 

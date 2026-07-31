@@ -21,9 +21,9 @@ def sample_profile() -> dict[str, object]:
     return {
         "id": "wolfboot_ecdsa_p256_app",
         "description": "Test signing profile.",
-        "input_elf": "build/RelocatedDebug/stm32_basic_hal1.elf",
-        "input_image": "build/RelocatedDebug/stm32_basic_hal1.bin",
-        "signed_image": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+        "input_elf": "build/Release/stm32_basic_hal1.elf",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
         "retained_signed_image": "application_signed.bin",
         "signature_algorithm": "ecdsa_p256",
         "signature_size_bytes": 64,
@@ -63,8 +63,8 @@ def test_construct_signing_commands_expand_profile_placeholders(tmp_path):
         "arm-none-eabi-objcopy",
         "-O",
         "binary",
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.elf"),
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1.elf"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1.bin"),
     ]
     assert keygen_command == [
         "tools/keytools/keygen",
@@ -75,7 +75,7 @@ def test_construct_signing_commands_expand_profile_placeholders(tmp_path):
     assert sign_command == [
         "tools/keytools/sign",
         "--ecc256",
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1.bin"),
         str(repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"),
         "1",
     ]
@@ -152,9 +152,9 @@ def test_signing_environment_overrides_are_temporary(monkeypatch, tmp_path):
 def test_execute_application_signing_generates_key_signs_and_records_metadata(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"
-    input_elf = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.elf"
-    input_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    input_elf = repo_root / "build" / "Release" / "stm32_basic_hal1.elf"
+    input_image = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_image = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     private_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     input_elf.parent.mkdir(parents=True)
     input_elf.write_bytes(b"relocated app elf")
@@ -237,8 +237,8 @@ def test_execute_application_signing_generates_key_signs_and_records_metadata(tm
 def test_execute_application_signing_uses_existing_private_key_without_keygen(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"
-    input_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    input_image = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_image = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     private_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     input_image.parent.mkdir(parents=True)
     private_key.parent.mkdir(parents=True)
@@ -270,9 +270,9 @@ def test_execute_application_signing_uses_existing_private_key_without_keygen(tm
 def test_execute_application_signing_regenerates_bin_when_configured_elf_exists(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"
-    input_elf = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.elf"
-    input_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    input_elf = repo_root / "build" / "Release" / "stm32_basic_hal1.elf"
+    input_image = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_image = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     private_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     input_elf.parent.mkdir(parents=True)
     private_key.parent.mkdir(parents=True)
@@ -336,7 +336,7 @@ def test_execute_application_signing_records_missing_input_without_generating_ke
 def test_execute_application_signing_requires_private_key_when_keygen_disabled(tmp_path):
     signing = load_signing_module()
     repo_root = tmp_path / "repo"
-    input_image = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
+    input_image = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
     input_image.parent.mkdir(parents=True)
     input_image.write_bytes(b"relocated app image")
     profile = sample_profile()
@@ -376,13 +376,13 @@ def test_default_application_signing_profile_is_safe_and_phase_10g_scoped():
         "secrets/wolfboot/tuples/ecdsa_p256-development"
     )
     assert profile["signing_tuple"]["manifest"] == "tuple.json"
-    assert profile["input_elf"] == "build/RelocatedDebug/stm32_basic_hal1.elf"
-    assert profile["input_image"] == "build/RelocatedDebug/stm32_basic_hal1.bin"
+    assert profile["input_elf"] == "build/Release/stm32_basic_hal1.elf"
+    assert profile["input_image"] == "build/Release/stm32_basic_hal1.bin"
     assert profile["binary_conversion"]["command"] == "arm-none-eabi-objcopy"
     assert profile["keygen"]["working_dir"] == "tools/wolfboot"
     assert profile["keygen"]["command"] == "tools/keytools/keygen"
     assert profile["sign"]["command"] == "tools/keytools/sign"
-    assert profile["signed_image"] == "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin"
+    assert profile["signed_image"] == "build/Release/stm32_basic_hal1_v1_signed.bin"
 
 
 
@@ -391,8 +391,8 @@ def test_construct_ed25519_signing_commands_expand_profile_placeholders(tmp_path
     repo_root = tmp_path / "repo"
     profile = sample_profile()
     profile["id"] = "wolfboot_ed25519_app"
-    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519.bin"
-    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin"
+    profile["input_image"] = "build/Release/stm32_basic_hal1_ed25519.bin"
+    profile["signed_image"] = "build/Release/stm32_basic_hal1_ed25519_v1_signed.bin"
     profile["signature_algorithm"] = "ed25519"
     profile["private_key"] = "secrets/wolfboot/ed25519_private_key.der"
     profile["keygen"]["args"] = "--ed25519 -g {private_key}"
@@ -410,7 +410,7 @@ def test_construct_ed25519_signing_commands_expand_profile_placeholders(tmp_path
     assert sign_command == [
         "tools/keytools/sign",
         "--ed25519",
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_ed25519.bin"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1_ed25519.bin"),
         str(repo_root / "secrets" / "wolfboot" / "ed25519_private_key.der"),
         "1",
     ]
@@ -421,8 +421,8 @@ def test_construct_rsa2048_signing_commands_expand_profile_placeholders(tmp_path
     repo_root = tmp_path
     profile = sample_profile()
     profile["id"] = "wolfboot_rsa2048_app"
-    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048.bin"
-    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin"
+    profile["input_image"] = "build/Release/stm32_basic_hal1_rsa2048.bin"
+    profile["signed_image"] = "build/Release/stm32_basic_hal1_rsa2048_v1_signed.bin"
     profile["signature_algorithm"] = "rsa2048"
     profile["private_key"] = "secrets/wolfboot/rsa2048_private_key.der"
     profile["keygen"]["args"] = "--rsa2048 -g {private_key}"
@@ -440,7 +440,7 @@ def test_construct_rsa2048_signing_commands_expand_profile_placeholders(tmp_path
     assert sign_command == [
         "tools/keytools/sign",
         "--rsa2048",
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_rsa2048.bin"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1_rsa2048.bin"),
         str(repo_root / "secrets" / "wolfboot" / "rsa2048_private_key.der"),
         "1",
     ]
@@ -452,8 +452,8 @@ def test_construct_phase_11_5d_expanded_signing_commands_expand_profile_placehol
     repo_root = tmp_path
     profile = sample_profile()
     profile["id"] = "wolfboot_rsa4096_app"
-    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096.bin"
-    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin"
+    profile["input_image"] = "build/Release/stm32_basic_hal1_rsa4096.bin"
+    profile["signed_image"] = "build/Release/stm32_basic_hal1_rsa4096_v1_signed.bin"
     profile["signature_algorithm"] = "rsa4096"
     profile["private_key"] = "secrets/wolfboot/rsa4096_private_key.der"
     profile["keygen"]["args"] = "--rsa4096 -g {private_key}"
@@ -471,7 +471,7 @@ def test_construct_phase_11_5d_expanded_signing_commands_expand_profile_placehol
     assert sign_command == [
         "tools/keytools/sign",
         "--rsa4096",
-        str(repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_rsa4096.bin"),
+        str(repo_root / "build" / "Release" / "stm32_basic_hal1_rsa4096.bin"),
         str(repo_root / "secrets" / "wolfboot" / "rsa4096_private_key.der"),
         "1",
     ]
@@ -483,8 +483,8 @@ def test_validate_application_signing_profile_accepts_mldsa65():
     profile["id"] = "wolfboot_mldsa65_app"
     profile["signature_algorithm"] = "mldsa65"
     profile["private_key"] = "secrets/wolfboot/mldsa65_private_key.der"
-    profile["input_image"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65.bin"
-    profile["signed_image"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
+    profile["input_image"] = "build/Release/stm32_basic_hal1_mldsa65.bin"
+    profile["signed_image"] = "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin"
     profile["keygen"]["args"] = "--ml_dsa -g {private_key}"
     profile["sign"]["args"] = "--ml_dsa {input_image} {private_key} {image_version}"
 

@@ -75,7 +75,7 @@ def sample_bundle():
             "boot_crypto": "ecdsa_p256",
             "firmware": {
                 "mode": "wolfboot_ecdsa_p256",
-                "artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                "artifact": "build/Release/stm32_basic_hal1_v1_signed.bin",
             },
             "uart": {
                 "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
@@ -116,8 +116,8 @@ def sample_bundle():
                 "wolfboot_artifact": "tools/wolfboot/wolfboot.elf",
                 "wolfboot_offset": "0x08000000",
                 "wolfboot_pass_offset_to_helper": False,
-                "unsigned_application_artifact": "build/RelocatedDebug/stm32_basic_hal1.bin",
-                "signed_application_artifact": "build/RelocatedDebug/stm32_basic_hal1_v1_signed.bin",
+                "unsigned_application_artifact": "build/Release/stm32_basic_hal1.bin",
+                "signed_application_artifact": "build/Release/stm32_basic_hal1_v1_signed.bin",
                 "signed_application_offset": "0x08020000",
                 "signed_application_pass_offset_to_helper": True,
             },
@@ -143,7 +143,7 @@ def write_manifest(result_dir: Path):
     repo_root = result_dir.parent.parent / "repo"
     from framework.generated_state import build_identity, record_generated_state_success
     wolfboot = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
-    signed = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    signed = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     if wolfboot.is_file():
         record_generated_state_success(
             repo_root=repo_root, scope="wolfboot-test",
@@ -206,8 +206,8 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "2026-06-29_001_wolfboot_ecdsa_p256_uart"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
-    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
     write_minimal_elf32(wolfboot_artifact)
@@ -345,8 +345,8 @@ def test_execute_secure_boot_flash_refuses_mismatched_local_signing_keys_before_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "run"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
-    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     wolfboot_key = repo_root / "tools" / "wolfboot" / "wolfboot_signing_private_key.der"
     wolfboot_artifact.parent.mkdir(parents=True)
@@ -388,8 +388,8 @@ def test_execute_secure_boot_flash_refuses_missing_wolfboot_without_network(tmp_
     secure_flash = load_secure_boot_flash_module()
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "run"
-    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
-    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
     signed_artifact.parent.mkdir(parents=True)
     unsigned_artifact.write_bytes(b"unsigned app")
     signed_artifact.write_bytes(b"unsigned app" + b"S" * 64)
@@ -419,8 +419,8 @@ def test_execute_secure_boot_flash_stops_before_application_when_wolfboot_flash_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "run"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
-    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
     write_minimal_elf32(wolfboot_artifact)
@@ -454,8 +454,8 @@ def test_execute_secure_boot_flash_negative_test_flashes_corrupted_copy_without_
     repo_root = tmp_path / "repo"
     result_dir = tmp_path / "results" / "2026-06-30_001_wolfboot_ecdsa_p256_uart"
     wolfboot_artifact = repo_root / "tools" / "wolfboot" / "wolfboot.elf"
-    unsigned_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1.bin"
-    signed_artifact = repo_root / "build" / "RelocatedDebug" / "stm32_basic_hal1_v1_signed.bin"
+    unsigned_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1.bin"
+    signed_artifact = repo_root / "build" / "Release" / "stm32_basic_hal1_v1_signed.bin"
     wolfboot_artifact.parent.mkdir(parents=True)
     signed_artifact.parent.mkdir(parents=True)
     write_minimal_elf32(wolfboot_artifact)
@@ -553,7 +553,7 @@ def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
     experiment["boot"] = "wolfboot_ed25519"
     experiment["boot_crypto"] = "ed25519"
     experiment["firmware"]["mode"] = "wolfboot_ed25519"
-    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_ed25519_v1_signed.bin"
+    experiment["firmware"]["artifact"] = "build/Release/stm32_basic_hal1_ed25519_v1_signed.bin"
     experiment["secure_boot_benchmark_profile"].update(
         {
             "profile_id": "ed25519_benchmark",
@@ -586,7 +586,7 @@ def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
     experiment["boot"] = "wolfboot_rsa2048"
     experiment["boot_crypto"] = "rsa2048"
     experiment["firmware"]["mode"] = "wolfboot_rsa2048"
-    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_rsa2048_v1_signed.bin"
+    experiment["firmware"]["artifact"] = "build/Release/stm32_basic_hal1_rsa2048_v1_signed.bin"
     experiment["secure_boot_benchmark_profile"].update(
         {
             "profile_id": "rsa2048_benchmark",
@@ -626,7 +626,7 @@ def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable(
     experiment["boot"] = "wolfboot_rsa4096"
     experiment["boot_crypto"] = "rsa4096"
     experiment["firmware"]["mode"] = "wolfboot_rsa4096"
-    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_rsa4096_v1_signed.bin"
+    experiment["firmware"]["artifact"] = "build/Release/stm32_basic_hal1_rsa4096_v1_signed.bin"
     experiment["secure_boot_benchmark_profile"].update(
         {
             "profile_id": "rsa4096_benchmark",
@@ -656,7 +656,7 @@ def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable(
     assert metadata["expanded_classical_scope"]["active_algorithm"] == "RSA4096"
 
 
-def test_classical_profile_metadata_marks_mldsa65_runnable_and_mldsa87_unavailable():
+def test_classical_profile_metadata_marks_mldsa65_and_mldsa87_runnable():
     secure_flash = load_secure_boot_flash_module()
     bundle = sample_bundle()
     experiment = bundle["experiment"]
@@ -664,7 +664,7 @@ def test_classical_profile_metadata_marks_mldsa65_runnable_and_mldsa87_unavailab
     experiment["boot"] = "wolfboot_mldsa65"
     experiment["boot_crypto"] = "mldsa65"
     experiment["firmware"]["mode"] = "wolfboot_mldsa65"
-    experiment["firmware"]["artifact"] = "build/RelocatedDebug/stm32_basic_hal1_mldsa65_v1_signed.bin"
+    experiment["firmware"]["artifact"] = "build/Release/stm32_basic_hal1_mldsa65_v1_signed.bin"
     experiment["secure_boot_benchmark_profile"].update(
         {
             "profile_id": "mldsa65_benchmark",
@@ -693,6 +693,6 @@ def test_classical_profile_metadata_marks_mldsa65_runnable_and_mldsa87_unavailab
     assert metadata["signature_size_bytes"] == 3309
     assert metadata["capability_status"]["mldsa65"]["runnable"] is True
     assert metadata["capability_status"]["mldsa65"]["unavailable"] is None
-    assert metadata["capability_status"]["mldsa87"]["runnable"] is False
-    assert metadata["capability_status"]["mldsa87"]["unavailable"]["status"] == "unavailable"
+    assert metadata["capability_status"]["mldsa87"]["runnable"] is True
+    assert metadata["capability_status"]["mldsa87"]["unavailable"] is None
     assert metadata["mldsa_scope"]["active_algorithm"] == "ML-DSA-65"

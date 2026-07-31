@@ -139,3 +139,8 @@ wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b
 ```
 
 A successful `wolfboot.elf` build is not evidence that this layout flashes, signs, swaps, updates, or boots correctly. Those checks remain later phases and require user-provided signing, flashing, hardware, and UART evidence.
+
+
+## Relocated secure-boot build defaults
+
+All firmware builds use the fixed wolfBoot-relocated layout. Release is the default build mode and `--debug` selects the Debug compiler configuration without changing the flash addresses. The primary slot begins at `0x08020000`; its 12 KiB manifest reserve ends at `0x08022FFF`; the application vector table begins at `0x08023000`. The default wolfBoot mode is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. ML-DSA-44, ML-DSA-65, and ML-DSA-87 remain explicit non-default signing evaluation profiles.

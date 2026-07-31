@@ -338,8 +338,8 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
 
     minimum_required = ["ED25519", "ECC256", "RSA2048"]
     expanded_required = ["ECC384", "ECC521", "ED448", "RSA3072", "RSA4096"]
-    mldsa_supported = ["ML-DSA-44", "ML-DSA-65"]
-    mldsa_unavailable = ["ML-DSA-87"]
+    mldsa_supported = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]
+    mldsa_unavailable = []
     algorithm_to_status_field = {
         "ED25519": "ed25519_status",
         "RSA2048": "rsa2048_status",
@@ -388,7 +388,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         "scope_limitations": str(
             profile.get(
                 "mldsa_scope_limitations",
-                "ML-DSA-44 and ML-DSA-65 fit the current 8192-byte image-header reserve. ML-DSA-87 is not configured because wolfBoot's ML-DSA example requires a 12288-byte header for that signature size.",
+                "ML-DSA-44, ML-DSA-65, and ML-DSA-87 fit the shared 12288-byte image-header reserve.",
             )
         ),
     }
@@ -402,7 +402,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
         default_status = (
             "configured_post_phase_11_mldsa_profile_not_hardware_validated"
             if candidate in mldsa_supported and candidate_runnable
-            else "unsupported_current_8192_byte_header_layout"
+            else "configured_post_phase_11_mldsa_profile_not_hardware_validated"
             if candidate in mldsa_unavailable
             else "configured_phase_11_5d_expanded_classical_profile_not_hardware_validated"
             if candidate in expanded_required and candidate_runnable
@@ -418,7 +418,7 @@ def _classical_profile_metadata(experiment: dict[str, Any]) -> dict[str, Any] | 
             else {
                 "status": "unavailable",
                 "source": "profile_model",
-                "reason": "ML-DSA-87 requires an image header larger than the current 8192-byte reserve."
+                "reason": "ML-DSA-87 requires an image header larger than the current 12288-byte reserve."
                 if candidate in mldsa_unavailable
                 else f"{candidate} is not the active configured benchmark profile for this experiment.",
             },

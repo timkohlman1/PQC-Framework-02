@@ -10,7 +10,7 @@ def test_clean_generated_build_artifacts_removes_only_generated_outputs(tmp_path
 
     generated_files = [
         repo_root / "build" / "Debug" / "CMakeCache.txt",
-        repo_root / "build" / "RelocatedDebug" / "CMakeCache.txt",
+        repo_root / "build" / "Release" / "CMakeCache.txt",
         repo_root / "tools" / "wolfboot" / ".config",
         repo_root / "tools" / "wolfboot" / "wolfboot.elf",
         repo_root / "tools" / "wolfboot" / "wolfboot.bin",

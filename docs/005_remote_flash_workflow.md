@@ -6,6 +6,8 @@ This document owns the current Docker-wrapper direct-flash, secure-boot, and UAR
 
 Gateway identity is owned by `configs/hosts/gateway.yaml` and explained in `docs/002_host_gateway_setup.md`. Board/ST-LINK/UART hardware identity is owned by `docs/003_stm32_board_setup.md`.
 
+All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` to select Debug compiler settings without changing the flash addresses.
+
 ## Direct-flash workflow
 
 Build through the Docker wrapper:
@@ -47,7 +49,7 @@ Secure boot consumes the configured wolfBoot artifact and signed relocated appli
 
 ```powershell
 .\scripts\dev.ps1 experiment build-wolfboot --boot-algorithm <algorithm>
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
 .\scripts\dev.ps1 experiment sign-application --boot-algorithm <algorithm>
 .\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm <algorithm> --repeat-count 5
 ```
@@ -56,10 +58,10 @@ Supported algorithm IDs are:
 
 ```text
 Classical: ecdsa_p256, ecc384, ecc521, ed25519, ed448, rsa2048, rsa3072, rsa4096
-ML-DSA:   mldsa44, mldsa65
+ML-DSA:   mldsa44, mldsa65, mldsa87
 ```
 
-ML-DSA-87 is not a supported profile under the current 8192-byte image-header reserve. `configs/targets/stm32l4r5_wolfboot.yaml` owns shared target configuration, `configs/algorithms/*.yaml` owns algorithm differences, `configs/experiments/secure_boot_uart.yaml` is the single secure-boot experiment entry point, and `configs/wolfboot/*.config` contains native wolfBoot build templates.
+ML-DSA-87 is not a supported profile under the current 12288-byte image-header reserve. `configs/targets/stm32l4r5_wolfboot.yaml` owns shared target configuration, `configs/algorithms/*.yaml` owns algorithm differences, `configs/experiments/secure_boot_uart.yaml` is the single secure-boot experiment entry point, and `configs/wolfboot/*.config` contains native wolfBoot build templates.
 
 The relocated application build must run through the framework so generated-state provenance and the artifact hash are recorded before signing. `build-wolfboot`, `sign-application`, and `flash-secure-boot` use generated-state preflight as the primary compatibility, stale-output, and provenance mechanism.
 
@@ -201,3 +203,8 @@ network:
 ```
 
 Replace the example address with the actual device address. When the MAC is omitted, the framework captures all traffic visible on the selected interface so that DHCP and other pre-address traffic are not lost. The manifest records the effective interface and filter. A missing, empty, uncollectable, or unsuccessfully stopped capture fails an otherwise successful network experiment rather than creating unsupported evidence.
+
+
+## Relocated secure-boot build defaults
+
+All firmware builds use the fixed wolfBoot-relocated layout. Release is the default build mode and `--debug` selects the Debug compiler configuration without changing the flash addresses. The primary slot begins at `0x08020000`; its 12 KiB manifest reserve ends at `0x08022FFF`; the application vector table begins at `0x08023000`. The default wolfBoot mode is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. ML-DSA-44, ML-DSA-65, and ML-DSA-87 remain explicit non-default signing evaluation profiles.
