@@ -304,6 +304,68 @@ def test_run_subcommand_is_registered_with_mandatory_uart_capture():
     assert not hasattr(args, "capture_uart")
 
 
+def test_wolfboot_run_forwards_debug_build_presets(tmp_path, monkeypatch):
+    cli = load_experiment_module()
+    experiment_path = write_sample_configs(tmp_path / "configs")
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = "wolfboot"
+    args.boot_algorithm = "ecdsa_p256"
+    args.configure_preset = None
+    args.build_preset = "Debug"
+    observed = {}
+    result_dir = tmp_path / "results" / "run"
+    result_dir.mkdir(parents=True)
+
+    class WolfbootResult:
+        return_code = 0
+        result_dir = tmp_path / "results" / "wolfboot"
+        log_path = result_dir / "wolfboot.log"
+        artifact_path = tmp_path / "tools" / "wolfboot" / "wolfboot.elf"
+        artifact_sha256 = "wolfboot-sha256"
+
+    class BuildResult:
+        return_code = 1
+        build_number = None
+        firmware_sha256 = None
+        build_record_manifest_path = None
+
+    def fake_execute_build(**kwargs):
+        observed["configure_preset"] = kwargs["configure_preset"]
+        observed["build_preset"] = kwargs["build_preset"]
+        return BuildResult()
+
+    monkeypatch.setattr(cli, "repo_root_from_experiment_path", lambda path: tmp_path)
+    monkeypatch.setattr(cli, "_compose_wolfboot_run_bundle", lambda **kwargs: {
+        "experiment": {"firmware": {"artifact": "build/Release/stm32_basic_hal1_v1_signed.bin"}},
+        "board": {},
+        "host": {},
+        "boot": {},
+    })
+    monkeypatch.setattr(cli, "create_result_folder", lambda bundle, results: (result_dir, {"run_id": "run"}))
+    monkeypatch.setattr(cli, "_report_experiment_start", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "update_manifest", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "emit_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    monkeypatch.setattr(cli, "load_secure_boot_profile_section", lambda **kwargs: (
+        {"input_image": "build/Release/stm32_basic_hal1.bin",
+         "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin"}
+        if kwargs["section"] == "signing" else {},
+        None,
+    ))
+    monkeypatch.setattr(cli, "validate_wolfboot_build_profile_config", lambda profile: None)
+    monkeypatch.setattr(cli, "validate_application_signing_profile_config", lambda profile: None)
+    monkeypatch.setattr(cli, "execute_wolfboot_build", lambda **kwargs: WolfbootResult())
+    monkeypatch.setattr(cli, "_record_wolfboot_run_stage", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "_record_run_summary", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "execute_build", fake_execute_build)
+
+    assert cli._run_full_wolfboot_command(args) == 1
+    assert observed == {
+        "configure_preset": "Debug",
+        "build_preset": "Debug",
+    }
+
+
 def test_run_subcommand_accepts_explicit_wolfboot_selection():
     cli = load_experiment_module()
     parser = cli.build_arg_parser()
@@ -441,6 +503,25 @@ def test_record_run_summary_uses_build_hash_when_firmware_hash_is_missing(tmp_pa
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["firmware"]["sha256"] == build_hash
 
+def test_wolfboot_signing_paths_follow_selected_debug_preset():
+    cli = load_experiment_module()
+    profile = {
+        "input_elf": "build/Release/stm32_basic_hal1.elf",
+        "input_image": "build/Release/stm32_basic_hal1.bin",
+        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
+        "private_key": "secrets/wolfboot/private_key.der",
+    }
+
+    selected = cli._retarget_signing_profile_build_preset(profile, "Debug")
+
+    assert selected["input_elf"] == "build/Debug/stm32_basic_hal1.elf"
+    assert selected["input_image"] == "build/Debug/stm32_basic_hal1.bin"
+    assert selected["signed_image"] == "build/Debug/stm32_basic_hal1_v1_signed.bin"
+    assert selected["build_preset"] == "Debug"
+    assert selected["private_key"] == "secrets/wolfboot/private_key.der"
+    assert profile["input_elf"] == "build/Release/stm32_basic_hal1.elf"
+
+
 def test_wolfboot_application_build_uses_relocated_elf_before_signing():
     cli = load_experiment_module()
     bundle = {
@@ -470,6 +551,7 @@ def test_wolfboot_application_build_uses_relocated_elf_before_signing():
     assert bundle["experiment"]["firmware"]["artifact"] == (
         "build/Release/stm32_basic_hal1_v1_signed.bin"
     )
+    assert "secure_boot_flash" not in bundle["experiment"]
 
 
 def test_wolfboot_application_build_prefers_configured_input_elf_for_algorithm_specific_bin():
@@ -511,11 +593,16 @@ def test_wolfboot_signed_firmware_is_selected_only_after_signing():
             "firmware": {
                 "mode": "wolfboot_ecdsa_p256",
                 "artifact": "build/Release/stm32_basic_hal1.elf",
-            }
+            },
+            "secure_boot_flash": {
+                "unsigned_application_artifact": "build/Release/stm32_basic_hal1.bin",
+                "signed_application_artifact": "build/Release/stm32_basic_hal1_v1_signed.bin",
+            },
         }
     }
     signing_profile = {
-        "signed_image": "build/Release/stm32_basic_hal1_v1_signed.bin",
+        "input_image": "build/Debug/stm32_basic_hal1.bin",
+        "signed_image": "build/Debug/stm32_basic_hal1_v1_signed.bin",
     }
 
     cli._select_signed_firmware_artifact(
@@ -524,8 +611,15 @@ def test_wolfboot_signed_firmware_is_selected_only_after_signing():
     )
 
     assert bundle["experiment"]["firmware"]["artifact"] == (
-        "build/Release/stm32_basic_hal1_v1_signed.bin"
+        "build/Debug/stm32_basic_hal1_v1_signed.bin"
     )
+    assert bundle["experiment"]["secure_boot_flash"]["unsigned_application_artifact"] == (
+        "build/Debug/stm32_basic_hal1.bin"
+    )
+    assert bundle["experiment"]["secure_boot_flash"]["signed_application_artifact"] == (
+        "build/Debug/stm32_basic_hal1_v1_signed.bin"
+    )
+
 
 def test_integrity_signing_profile_does_not_require_signing_tuple(tmp_path, monkeypatch):
     cli = load_experiment_module()

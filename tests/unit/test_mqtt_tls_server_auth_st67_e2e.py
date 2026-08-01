@@ -257,7 +257,8 @@ def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
 def test_mqtt_uart_capture_uses_completion_marker_grace_and_hard_limit():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert 'MQTT_COMPLETION_MARKER = "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done"' in source
+    assert 'MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="' in source
+    assert "_mqtt_completion_marker(bundle)" in source
     assert 'grep -Fq "$completion_marker" "$uart_file"' in source
     assert 'termination_reason=completion_marker' in source
     assert 'termination_reason=hard_timeout' in source
@@ -270,7 +271,7 @@ def test_mqtt_uart_default_output_is_concise_and_emits_terminal_marker():
     mqtt = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     assert '#define PQC_WIFI_SCAN_VERBOSE 0' in main
     assert '#define PQC_WOLFMQTT_TLS_IO_TRACE 0' in mqtt
-    assert 'PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done' in main
+    assert 'PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done' in main
     assert 'if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))' in main
     assert 'wolfMQTT plaintext exchange:' not in main + mqtt
 

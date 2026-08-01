@@ -253,5 +253,6 @@ jobs:
             python -m pytest \
               tests/integration/test_local_build.py \
               tests/integration/test_wolfboot_build_integration.py \
+              tests/integration/test_mqtt_experiment_completion_markers.py \
               -m integration \
               --pqc-require-local-build

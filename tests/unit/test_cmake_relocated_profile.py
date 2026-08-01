@@ -141,5 +141,5 @@ def test_phase_m6_5_task_context_smoke_runs_in_network_task_and_is_separate_from
     lwip_index = network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
     wolfssl_index = network_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
     mqtt_index = network_body.index("APP_PrintWolfMQTTRuntimeStatus();")
-    completion_index = network_body.index("PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done")
+    completion_index = network_body.index('PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done')
     assert started_index < lwip_index < wolfssl_index < mqtt_index < completion_index

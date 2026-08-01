@@ -616,7 +616,7 @@ For the classical server-authenticated STM32 MQTT-over-TLS experiment, reconnect
 
 ### MQTT UART completion and logging
 
-Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done` after the final clock, heap, and task-stack evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.
+Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O records and individual Wi-Fi scan entries are disabled by default and may be re-enabled at compile time with `PQC_WOLFMQTT_TLS_IO_TRACE=1` and `PQC_WIFI_SCAN_VERBOSE=1`. The firmware emits `PQC_EXPERIMENT_COMPLETE experiment=<mqtt.tls.mode> status=done` after the final clock, heap, and task-stack evidence. The framework derives the expected marker from the same composed experiment TLS mode, so plaintext, classical server-authentication, classical mutual-authentication, and PQC-hybrid mutual-authentication runs retain distinct terminal evidence. The gateway stops capture after this marker plus the configured grace period (default three seconds), while retaining the configured UART duration as a hard limit. After completion, the scheduler continues running but the one-second UART tick stream is suppressed.
 
 ### Hybrid PQC MQTT/TLS profile
 
@@ -731,3 +731,20 @@ The unit test boundary is `tests/unit/test_gateway_packet_capture.py`, covering 
 ## Relocated secure-boot build defaults
 
 All firmware builds use the fixed wolfBoot-relocated layout. Release is the default build mode and `--debug` selects the Debug compiler configuration without changing the flash addresses. The primary slot begins at `0x08020000`; its 12 KiB manifest reserve ends at `0x08022FFF`; the application vector table begins at `0x08023000`. The default wolfBoot mode is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. It therefore does not require or resolve a signing tuple. ML-DSA-44, ML-DSA-65, and ML-DSA-87 remain explicit non-default signing evaluation profiles.
+
+
+### MQTT experiment test matrix
+
+Completion-marker composition is covered without hardware by `tests/integration/test_mqtt_experiment_completion_markers.py`. The integration cases load the maintained MQTT experiment profiles, verify the exact mode-specific marker, and validate direct-flash, integrity-wolfBoot, and ML-DSA-65 wolfBoot command selection.
+
+The physical-board matrix is implemented by `tests/hardware/test_mqtt_experiment_matrix.py` and is deliberately opt-in because it performs repeated builds, signing, destructive board flashes, broker deployment, UART capture, and network validation. It covers plaintext and classical mutual TLS with and without wolfBoot, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot. Run it through the gateway-enabled wrapper:
+
+```powershell
+.\scripts\dev.ps1 pytest-hardware `
+    tests/hardware/test_mqtt_experiment_matrix.py `
+    -m hardware `
+    --pqc-require-hardware `
+    --pqc-hardware-experiment-matrix
+```
+
+Each hardware case requires a zero CLI return code, a passed MQTT result manifest, no missing UART markers, the exact profile-specific completion marker, and secure-boot flash evidence when wolfBoot is selected.

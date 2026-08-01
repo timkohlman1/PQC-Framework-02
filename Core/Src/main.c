@@ -1810,7 +1810,7 @@ void StartNetworkTask(void *argument)
   APP_PrintApplicationClockConfiguration();
   APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
   app_experiment_complete = true;
-  APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done\r\n");
+  APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done\r\n");
 
   osThreadExit();
 }
