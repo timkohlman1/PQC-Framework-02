@@ -445,6 +445,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Fail instead of skip when hardware/UART capability is unavailable.",
     )
     group.addoption(
+        "--pqc-hardware-experiment-matrix",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the long end-to-end MQTT experiment matrix covering direct "
+            "flash and wolfBoot profiles. The matrix is skipped unless this "
+            "option is supplied."
+        ),
+    )
+    group.addoption(
         "--pqc-clean-generated-build-artifacts",
         action="store_true",
         default=False,

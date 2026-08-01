@@ -70,3 +70,17 @@ def test_server_auth_host_side_clients_do_not_unconditionally_add_client_identit
     helper = source[source.index("def _mqtt_gateway_tls_args("):source.index("def _mqtt_orchestration_host(")]
     assert helper.count("if _mqtt_mutual_tls_enabled(bundle):") == 2
     assert "authentication" in source[source.index("def _mqtt_mutual_tls_enabled("):source.index("def _mqtt_remote_client_certificate_file(")]
+
+
+def test_completion_marker_uses_generated_tls_mode():
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    experiment = Path("scripts/experiment.py").read_text(encoding="utf-8")
+
+    assert (
+        'PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done'
+        in main_c
+    )
+    assert "def _mqtt_completion_marker(" in experiment
+    assert 'tls.get("mode", "plaintext")' in experiment
+    assert "_mqtt_completion_marker(bundle)" in experiment
+    assert "MQTT_COMPLETION_MARKER =" not in experiment

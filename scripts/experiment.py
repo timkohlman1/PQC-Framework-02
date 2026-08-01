@@ -119,10 +119,21 @@ from framework.benchmark_aggregation import (
 
 MQTT_E2E_MARKER_PREFIX = "PQC_MQTT_E2E"
 MQTT_UART_CAPTURE_MARKER_PREFIX = "PQC_UART_CAPTURE"
-MQTT_COMPLETION_MARKER = "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done"
+MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="
 MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
 MQTT_STEP_PROGRESS_MESSAGES = {'provision_classical_certs': 'Provisioning classical broker certificates', 'provision_oqs_certs': 'Provisioning OQS broker certificates', 'deploy_broker': 'Deploying broker framework', 'start_broker': 'Starting broker', 'status_after_start': 'Checking broker readiness and status', 'validate_classical_mqtt': 'Publishing and subscribing with classical MQTT/TLS validation', 'validate_oqs_tls': 'Validating OQS TLS connectivity', 'validate_oqs_mqtt': 'Publishing and subscribing with OQS MQTT/TLS validation', 'collect_broker_logs': 'Collecting broker logs', 'stop_broker': 'Stopping broker'}
+
+
+def _mqtt_completion_marker(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the firmware completion marker for the configured MQTT TLS mode."""
+
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    mode = str(tls.get("mode", "plaintext")).strip() if isinstance(tls, dict) else "plaintext"
+    if not mode:
+        mode = "plaintext"
+    return f"{MQTT_COMPLETION_MARKER_PREFIX}{mode} status=done"
 
 
 def _warning_count_from_build_result(build_result: Any) -> int | None:
@@ -623,7 +634,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
     markers = [
         "ST67 DHCP: result=passed", "mqtt_connect=passed",
         "mqtt_subscribe=passed", "mqtt_receive=passed",
-        "mqtt_publish=passed", "end_to_end=passed", MQTT_COMPLETION_MARKER,
+        "mqtt_publish=passed", "end_to_end=passed", _mqtt_completion_marker(bundle),
     ]
     if isinstance(mqtt, dict):
         broker = mqtt.get("broker", {})
@@ -827,7 +838,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
         f"{restart_command} 1>&2; reset_rc=$?; attempts=0; publish_failures=0; publish_rc=0; "
         f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
-        f'completion_marker={shlex.quote(MQTT_COMPLETION_MARKER)}; completion_seen=0; '
+        f'completion_marker={shlex.quote(_mqtt_completion_marker(bundle))}; completion_seen=0; '
         f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
         'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
         'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
@@ -2655,6 +2666,32 @@ def _compose_wolfboot_run_bundle(
     }
 
 
+def _retarget_build_artifact_path(path_value: Any, build_preset: str) -> str:
+    """Return a configured build artifact path under the selected CMake preset."""
+
+    path = Path(str(path_value))
+    parts = list(path.parts)
+    if len(parts) >= 3 and parts[0] == "build":
+        parts[1] = build_preset
+        return Path(*parts).as_posix()
+    return path.as_posix()
+
+
+def _retarget_signing_profile_build_preset(
+    signing_profile: dict[str, Any],
+    build_preset: str,
+) -> dict[str, Any]:
+    """Return signing paths adjusted to the application build preset."""
+
+    selected = dict(signing_profile)
+    for field in ("input_elf", "input_image", "signed_image"):
+        value = selected.get(field)
+        if value is not None and str(value).strip():
+            selected[field] = _retarget_build_artifact_path(value, build_preset)
+    selected["build_preset"] = build_preset
+    return selected
+
+
 def _wolfboot_application_build_bundle(
     *,
     bundle: dict[str, dict[str, Any]],
@@ -2690,9 +2727,17 @@ def _select_signed_firmware_artifact(
 ) -> None:
     """Select the signed application only after signing has completed."""
 
-    bundle["experiment"]["firmware"]["artifact"] = str(
+    signed_image = str(
         require_field(signing_profile, "signed_image", "application signing profile")
     )
+    bundle["experiment"]["firmware"]["artifact"] = signed_image
+
+    secure_boot_flash = bundle["experiment"].get("secure_boot_flash")
+    if isinstance(secure_boot_flash, dict):
+        secure_boot_flash["signed_application_artifact"] = signed_image
+        input_image = signing_profile.get("input_image")
+        if input_image is not None and str(input_image).strip():
+            secure_boot_flash["unsigned_application_artifact"] = str(input_image)
 
 
 def _record_wolfboot_run_stage(
@@ -2807,19 +2852,24 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         algorithm=args.boot_algorithm,
         section="signing",
     )
+    signing_profile = _retarget_signing_profile_build_preset(
+        signing_profile,
+        args.build_preset,
+    )
     validate_application_signing_profile_config(signing_profile)
     build_bundle = _wolfboot_application_build_bundle(
         bundle=bundle,
         signing_profile=signing_profile,
     )
 
+    configure_preset = args.configure_preset or args.build_preset
     emit_progress("build", "Building relocated experiment firmware")
     build_result = execute_build(
         bundle=build_bundle,
         repo_root=repo_root,
         result_dir=result_dir,
-        configure_preset="Release",
-        build_preset="Release",
+        configure_preset=configure_preset,
+        build_preset=args.build_preset,
         force=getattr(args, "force", False),
         progress=_build_progress,
     )

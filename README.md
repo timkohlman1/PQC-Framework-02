@@ -98,8 +98,21 @@ Networked profiles can retain `gateway-network-capture.pcap` and `gateway-networ
 
 ## Safety and evidence
 
-Private signing keys and generated credentials must not be committed or baked into the image. Disposable experiment signing and certificate material selected by an owning workflow may be retained only in ignored result directories with a SHA-256 material inventory. SSH/VPN keys, tokens, production credentials, unrelated host credentials, and real `.env` files must not be copied into results, committed, packaged, or baked into images.
+Private signing keys and generated credentials must not be committed or baked into the image. Disposable experiment signing and certificate material selected by an owning workflow may be retained only in ignored result directories with a SHA-256 material inventory. SSH/VPN keys, tokens, production credentials, unrelated host credentials, and real `.env` files must not be copied into results, committed, packaged, or baked into images. Result archives that retain disposable private keys are intentionally self-contained but sensitive; review their material inventory before sharing and do not publish them unchanged.
 
 Generated-state preflight is the primary compatibility and provenance mechanism. Pytest cleanup is supplementary cross-platform hygiene. Workflows must never silently reconstruct partial signing state.
 
 Do not claim build, signing, flashing, hardware, UART, network, MQTT/TLS, timing, memory, or end-to-end success without explicit logs, manifests, or equivalent evidence. A skipped capability-gated test is not evidence of success.
+
+
+Opt-in physical MQTT experiment matrix:
+
+```powershell
+.\scripts\dev.ps1 pytest-hardware `
+    tests/hardware/test_mqtt_experiment_matrix.py `
+    -m hardware `
+    --pqc-require-hardware `
+    --pqc-hardware-experiment-matrix
+```
+
+This long matrix covers direct-flash and wolfBoot execution for plaintext and classical mutual TLS, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot.

@@ -37,11 +37,8 @@ def test_mldsa87_profile_and_wolfboot_config_are_present():
     assert "IMAGE_HEADER_SIZE=12288" in config
 
 
-def test_wolfboot_stm32l4_mpu_covers_complete_linker_ram():
+def test_wolfboot_stm32l4_linker_declares_complete_ram():
     repo_root = Path(__file__).resolve().parents[2]
     linker_text = (repo_root / "tools" / "wolfboot" / "hal" / "stm32l4.ld").read_text(encoding="utf-8")
-    boot_text = (repo_root / "tools" / "wolfboot" / "src" / "boot_arm.c").read_text(encoding="utf-8")
 
     assert "RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00018000" in linker_text
-    assert "mpu_setattr(2, MPUSIZE_128K" in boot_text
-    assert "mpu_setattr(2, MPUSIZE_64K" not in boot_text

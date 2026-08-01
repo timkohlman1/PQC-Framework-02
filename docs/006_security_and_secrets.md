@@ -25,7 +25,7 @@ The following remain prohibited from result artifacts, replacement ZIPs, images,
 - production or externally managed certificates and keys;
 - real `.env` files and unrelated password stores.
 
-Production, externally managed, or non-exportable material must fail closed rather than be archived. Result folders containing disposable private keys are sensitive experiment records and must stay ignored by Git.
+Production, externally managed, or non-exportable material must fail closed rather than be archived. Result folders containing disposable private keys are sensitive experiment records and must stay ignored by Git. Retention of these disposable private keys is intentional for reproducible research evidence; the result directory or any ZIP made from it must be classified and handled as sensitive key material. Do not publish, attach to public issues, or share externally without an explicit review of `material-inventory.json` and removal of material that is not authorised for that destination.
 
 ## wolfBoot signing state
 

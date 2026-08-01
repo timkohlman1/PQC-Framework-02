@@ -53,7 +53,7 @@ def test_mqtt_exchange_uses_concise_structured_runtime_evidence():
     assert "mqtt_connect=%s" in source
     assert "mqtt_publish=%s" in source
     assert "end_to_end=%s" in source
-    assert "PQC_EXPERIMENT_COMPLETE experiment=mqtt_tls_server_auth status=done" in main_c
+    assert 'PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done' in main_c
     assert "wolfMQTT plaintext exchange:" not in combined
     for removed_phase_marker in (
         "wolfMQTT: client init begin",
