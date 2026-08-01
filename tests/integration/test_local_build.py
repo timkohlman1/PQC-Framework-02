@@ -91,8 +91,8 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert manifest["firmware"]["artifact_exists"] is True
     assert isinstance(manifest["firmware"]["sha256"], str)
     assert len(manifest["firmware"]["sha256"]) == 64
-    assert manifest["build"]["configure_preset"] == "Debug"
-    assert manifest["build"]["build_preset"] == "Debug"
+    assert manifest["build"]["configure_preset"] == "Release"
+    assert manifest["build"]["build_preset"] == "Release"
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
 
@@ -111,8 +111,8 @@ def test_real_local_build_command_completes_without_flash_or_uart(
 
     assert "Build purpose: automated_test" in build_log
     assert "Build number: unavailable" in build_log
-    assert "Command: cmake --preset Debug" in build_log
-    assert "Command: cmake --build --preset Debug" in build_log
+    assert "Command: cmake --preset Release" in build_log
+    assert "Command: cmake --build --preset Release" in build_log
     assert "Final return code: 0" in build_log
     assert "Output ELF exists: true" in build_log
     assert f"Output ELF SHA-256: {manifest['firmware']['sha256']}" in build_log
