@@ -17,6 +17,80 @@ unless the request will examine prior AI prompts / interactions
 
 -----------
 
+end to end profile tests
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm integrity_sha256
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ecdsa_p256
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ed25519
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm rsa2048
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ecc384
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ecc521
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm ed448
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm rsa3072
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm rsa4096
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm mldsa44
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm mldsa65
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml `
+    --boot-mode wolfboot `
+    --boot-algorithm mldsa87
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml
 
 
 

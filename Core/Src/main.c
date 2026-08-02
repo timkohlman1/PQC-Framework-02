@@ -953,7 +953,7 @@ void PQC_WolfMQTT_DiagnosticMarker(const char *marker)
 
 static void APP_PrintWolfMQTTRuntimeStatus(void)
 {
-  static char status_line[640];
+  static char status_line[768];
 
   if (PQC_WolfMQTT_RuntimeStatusLine(
           status_line, (uint32_t)sizeof(status_line), "freertos_task", true))

@@ -1,8 +1,0 @@
-CI local build preset expectation fix
-=====================================
-
-Updates tests/integration/test_local_build.py so the real local build
-integration test expects the current default Release configure/build
-presets and matching Release commands in build.log.
-
-No production code is changed.

@@ -174,3 +174,21 @@ def test_clienthello_diagnostics_do_not_log_key_share_payload():
     assert "0x0032U" in diagnostic
     assert "0x0033U" not in diagnostic
     assert "key_share" not in diagnostic
+
+
+def test_wolfmqtt_runtime_status_buffer_fits_plaintext_evidence_line():
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    # The complete plaintext status line is longer than the former 640-byte
+    # buffer because the TLS-only fields are rendered as "not_required".
+    assert "static char status_line[768];" in main_c
+
+    for field in (
+        "mqtt_connect=%s",
+        "mqtt_subscribe=%s",
+        "mqtt_receive=%s",
+        "mqtt_publish=%s",
+        "end_to_end=%s",
+    ):
+        assert field in source
