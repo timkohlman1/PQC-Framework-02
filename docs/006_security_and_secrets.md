@@ -154,3 +154,6 @@ Runtime, build, broker-compose, and result directories are not authoritative key
 `framework/certs` is the authoritative owner of the classical X.509 root, intermediate, MQTT broker identity, and future STM32 mTLS identity. MQTT orchestration may materialise current runtime copies but must not generate a replacement CA when material is absent.
 
 wolfBoot signing keys are not X.509 identities and must not be issued by step-ca. The wolfBoot tooling remains responsible for algorithm-compatible generation and public-key export. Vault may store authoritative wolfBoot private signing material under a policy and AppRole separate from certificate materialisation. LocalStack KMS remains suitable for the experiment Vault auto-unseal role; it must not be described as a non-exportable PQC firmware signer unless the selected algorithm and signing interface are explicitly implemented and tested.
+
+
+TLS key logs retained as `mqtt-broker-tls-keylog.log` are experiment-only secret material because they permit decryption of the associated packet capture. They belong only in ignored result directories, must be inventoried by SHA-256 in the result manifest, and must not be committed or copied into AI context or replacement archives.

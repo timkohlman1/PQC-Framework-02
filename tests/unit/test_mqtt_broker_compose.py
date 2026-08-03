@@ -32,8 +32,8 @@ def test_mqtt_broker_compose_declares_classical_and_oqs_profiles():
     assert "mqtt-oqs:" in compose
     assert 'profiles: ["classical"]' in compose
     assert 'profiles: ["oqs"]' in compose
-    assert "eclipse-mosquitto:2.0" in compose
-    assert "openquantumsafe/mosquitto" in compose
+    assert "eclipse-mosquitto:2.1.2-alpine" in compose
+    assert "eclipse-mosquitto" in compose
     assert "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883" in compose
     assert "${MQTT_OQS_TLS_PORT:-8884}:8883" in compose
 
@@ -60,7 +60,7 @@ def test_mqtt_broker_compose_copies_acl_files_to_container_local_paths():
     assert "chmod 0640 /tmp/mosquitto-aclfile" in compose
     assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in compose
     assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt" in compose
-    assert "exec mosquitto -c /mosquitto/config/mosquitto.conf" in compose
+    assert "exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf" in compose
 
 
 def test_mqtt_broker_compose_avoids_fixed_container_and_network_names():
@@ -364,7 +364,7 @@ def test_mqtt_remote_cleanup_command_removes_root_owned_mosquitto_paths():
     command = module.remote_cleanup_command("~/pqc-framework-02/experiment/mqtt-broker")
 
     assert "docker run --rm" in command
-    assert "eclipse-mosquitto:2.0" in command
+    assert "eclipse-mosquitto:2.1.2-alpine" in command
     assert "-v $HOME/pqc-framework-02/experiment/mqtt-broker:/work" in command
     assert "rm -rf /work/data /work/log" in command
     assert "rm -rf $HOME/pqc-framework-02/experiment/mqtt-broker" in command
@@ -394,14 +394,14 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro" in compose
     assert "../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro" in compose
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
-    assert "OPENSSL_MODULES" in compose
-    assert "-groups SecP256r1MLKEM768" in compose
-    assert "New, TLSv1.3" in compose
-    assert "Certificate chain" in compose
-    assert "Cipher is (NONE)" in compose
-    assert "Verify return code: 0 (ok)" in compose
-    assert "Groups = SecP256r1MLKEM768" in openssl_config
-    assert "oqsprovider = oqsprovider_sect" in openssl_config
+    assert "OPENSSL_MODULES" not in compose
+    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
+    assert "--tls-version tlsv1.3" in compose
+    assert "--cafile /tmp/mosquitto-certs/ca.crt" in compose
+    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "oqsprovider" not in openssl_config
+    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
 
 def test_mqtt_control_script_has_provision_and_validation_subcommands():
     module = _load_ctl_module()
@@ -420,7 +420,7 @@ def test_mqtt_control_script_has_provision_and_validation_subcommands():
     assert classical_mqtt.command == "validate-classical-mqtt"
     assert classical_mqtt.topic == "pqc/test/e2e"
     assert classical_mqtt.message == "pqc-classical-mqtt-e2e"
-    assert classical_mqtt.image == "eclipse-mosquitto:2.0"
+    assert classical_mqtt.image == "eclipse-mosquitto:2.1.2-alpine"
     assert callable(classical_mqtt.func)
     assert not isinstance(classical_mqtt.func, type(parser))
     assert oqs_mqtt.command == "validate-oqs-mqtt"
@@ -521,7 +521,7 @@ def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshak
     module.validate_oqs_tls(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
-    assert "openquantumsafe/mosquitto:latest" in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
     assert "--network host" in command_text
     assert "-connect 127.0.0.1:28884" in command_text
     assert "-groups SecP256r1MLKEM768" in command_text
@@ -565,8 +565,8 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "timk@pqc-gateway1" in command_text
-    assert "eclipse-mosquitto:2.0" in command_text
-    assert "openquantumsafe/mosquitto:latest" not in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
+    assert "openquantumsafe/mosquitto" not in command_text
     assert "--entrypoint mosquitto_sub" in command_text
     assert "--entrypoint mosquitto_pub" in command_text
     assert "--network host" in command_text
@@ -616,7 +616,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "timk@pqc-gateway1" in command_text
-    assert "openquantumsafe/mosquitto:latest" in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
     assert "--entrypoint mosquitto_sub" in command_text
     assert "--entrypoint mosquitto_pub" in command_text
     assert "--network host" in command_text
@@ -627,7 +627,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
     assert "--tls-version tlsv1.3" in command_text
     assert "-h localhost" in command_text
     assert "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf" in command_text
-    assert "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules" in command_text
+    assert "OPENSSL_MODULES" not in command_text
     assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in command_text
     assert '-t "$topic" -C 1' in command_text
     assert '-t "$topic" -m "$message"' in command_text
@@ -720,3 +720,21 @@ def test_all_mosquitto_profiles_enable_packet_level_experiment_logging():
         assert "connection_messages true" in config
         assert "log_timestamp true" in config
         assert "log_timestamp_format %Y-%m-%dT%H:%M:%S" in config
+
+
+def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    assert "openquantumsafe/mosquitto" not in compose
+    assert "eclipse-mosquitto:latest" not in compose
+    assert compose.count("image: eclipse-mosquitto:2.1.2-alpine") == 4
+    assert compose.count("--tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log") == 4
+    assert compose.count("chmod 0700 /mosquitto/keylog") == 4
+    assert compose.count("umask 077") == 4
+    assert "./runtime/tls-keylog/" not in compose
+
+
+def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
+    for profile in ("oqs", "oqs-mtls"):
+        config = _read(BROKER_ROOT / "config" / profile / "openssl.cnf")
+        assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in config
+        assert "oqsprovider" not in config

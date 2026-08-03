@@ -22,5 +22,5 @@ def test_non_hybrid_readiness_retains_existing_probe_path():
 
 
 def test_hybrid_server_auth_profile_is_present():
-    profile = Path(__file__).resolve().parents[2] / "configs" / "experiments" / "mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml"
+    profile = Path(__file__).resolve().parents[2] / "configs" / "experiments" / "mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
     assert profile.is_file()

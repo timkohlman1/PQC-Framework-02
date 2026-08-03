@@ -320,13 +320,13 @@ def test_mqtt_broker_experiment_marks_step_timeout_failed(tmp_path, monkeypatch)
 def test_pqc_experiment_uses_separate_oqs_client_containers():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
 
-    assert "openquantumsafe/mosquitto:latest" in source
+    assert "eclipse-mosquitto:2.1.2-alpine" in source
     assert "docker run -d " in source
     assert '--name "$subscriber" --entrypoint mosquitto_sub' in source
     assert 'docker rm -f "$subscriber"' in source
     assert "docker run --rm " in source
     assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in source
-    assert "OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules" in source
+    assert "OPENSSL_MODULES" not in source
     assert "--entrypoint mosquitto_sub" in source
     assert "--entrypoint mosquitto_pub" in source
     assert 'docker exec -i "$oqs_container_id"' not in source
@@ -483,3 +483,12 @@ mqtt | Sending PUBLISH to pqc-host-e2e-subscriber (d0, q0, r0, m0, 'pqc/experime
     )
     assert incomplete["passed"] is False
     assert incomplete["response_publish_delivered"] is False
+
+
+def test_managed_tls_experiments_collect_broker_keylog_into_result_directory():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine"' in source
+    assert 'MQTT_TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"' in source
+    assert 'subcommand="collect-tls-keylog"' in source
+    assert '"sha256": hashlib.sha256(data).hexdigest()' in source
+    assert '"tls_keylog": keylog_evidence' in source

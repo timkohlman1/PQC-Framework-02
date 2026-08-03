@@ -646,6 +646,7 @@ def test_validate_mqtt_tls_config_accepts_host_side_schema_with_broker_reference
     config["mqtt"]["transport_backend"] = "host_socket"
     config["mqtt"]["tls"] = {
         "mode": "classical_tls",
+        "key_exchange_group": "secp256r1",
         "certificate_profile": "server-ecdsa-p256",
         "certificate_authority_algorithm": "ecdsa-p256",
         "server_certificate_algorithm": "ecdsa-p256",
@@ -739,6 +740,7 @@ def test_validate_mqtt_tls_config_rejects_fake_transport_with_non_fake_backend()
     }
     config["mqtt"]["tls"] = {
         "mode": "classical_tls",
+        "key_exchange_group": "secp256r1",
         "certificate_profile": "server-ecdsa-p256",
         "certificate_authority_algorithm": "ecdsa-p256",
         "server_certificate_algorithm": "ecdsa-p256",
@@ -781,6 +783,7 @@ def _minimal_mqtt_dns_config(host: str, dns_required):
             "broker": {"host": host, "port": 8883, "dns_required": dns_required},
             "tls": {
                 "mode": "classical_tls_server_auth",
+                "key_exchange_group": "secp256r1",
                 "certificate_profile": "server-ecdsa-p256",
                 "certificate_authority_algorithm": "ecdsa-p256",
                 "server_certificate_algorithm": "ecdsa-p256",

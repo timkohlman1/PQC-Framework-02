@@ -85,3 +85,14 @@ def test_certificate_policy_forces_stepca_process_restart() -> None:
     issuance_position = source.index('for service in ("mqtt-broker_cert", "stm32_client_cert")', health_position)
 
     assert policy_position < restart_position < health_position < issuance_position
+
+
+def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
+    source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
+    assert 'MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"' in source
+    assert "openquantumsafe/mosquitto" not in source
+    assert 'sub.add_parser("collect-tls-keylog"' in source
+    assert 'TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"' in source
+    assert 'docker compose --project-name' in source
+    assert 'exec -T' in source
+    assert 'test -s /mosquitto/keylog/' in source

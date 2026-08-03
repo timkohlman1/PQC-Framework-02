@@ -102,8 +102,8 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     classical = _service(config, "mqtt-classical")
     oqs = _service(config, "mqtt-oqs")
 
-    assert classical["image"] == "eclipse-mosquitto:2.0"
-    assert oqs["image"] == "openquantumsafe/mosquitto:latest"
+    assert classical["image"] == "eclipse-mosquitto:2.1.2-alpine"
+    assert oqs["image"] == "eclipse-mosquitto:2.1.2-alpine"
     assert classical["profiles"] == ["classical"]
     assert oqs["profiles"] == ["oqs"]
     assert classical["user"] == "0:0"
@@ -128,7 +128,7 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     assert "/mosquitto/log" not in oqs_mount_targets
 
     assert oqs["environment"]["OPENSSL_CONF"] == "/mosquitto/config/openssl.cnf"
-    assert oqs["environment"]["OPENSSL_MODULES"] == "/opt/oqssa/lib64/ossl-modules"
+    assert "OPENSSL_MODULES" not in oqs.get("environment", {})
 
 
 @pytest.mark.integration

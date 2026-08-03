@@ -43,7 +43,7 @@ def test_stm32_tls_path_uses_wolfssl_over_lwip_and_hardware_rng():
 
 def test_generated_header_keeps_client_credentials_mutual_tls_only():
     source = Path("scripts/framework/build.py").read_text(encoding="utf-8")
-    server_auth = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    server_auth = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
 
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
@@ -59,7 +59,7 @@ def test_generated_header_keeps_client_credentials_mutual_tls_only():
 
 
 def test_m11_config_selects_server_auth_profile_and_reconnect():
-    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "evidence_class: stm32_st67_classical_tls_e2e" in config
     assert "transport_backend: st67w61m1_lwip_wolfssl" in config
     assert "broker_profile: classical-server-auth" in config
@@ -122,7 +122,7 @@ def test_tls_peer_ip_setup_precedes_ca_load_and_cannot_report_mqtt_success_on_fa
 
 
 def test_m11_config_uses_experiment_selected_fqdn_and_requires_dns():
-    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "host: pqc-gateway1.pqcnet" in config
     assert "server_name: pqc-gateway1.pqcnet" in config
     assert "dns_required: true" in config
@@ -152,7 +152,7 @@ def test_dns_required_controls_uart_pass_markers():
 
 def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "def _mqtt_orchestration_host(" in source
     assert source.count("_mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)") == 2
     assert 'configured = str(orchestration.get("host", "")).strip()' in source
@@ -256,7 +256,7 @@ def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
 
 def test_mqtt_uart_capture_uses_completion_marker_grace_and_hard_limit():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    config = Path("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert 'MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="' in source
     assert "_mqtt_completion_marker(bundle)" in source
     assert 'grep -Fq "$completion_marker" "$uart_file"' in source
@@ -330,18 +330,18 @@ def test_wolfssl_session_creation_logs_method_context_and_session_pointers_direc
     assert "socket_context->tls = wolfSSL_new(socket_context->tls_ctx);" in source
 
 
-def test_classical_tls_does_not_reuse_tcp_result_for_pqc_group_validation():
+def test_all_tls_profiles_validate_the_configured_group_before_session_creation():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
-    assert 'if (PQC_WolfMQTT_PQCHybridRequested()) {' in source
-    hybrid_start = source.index('if (PQC_WolfMQTT_PQCHybridRequested()) {')
-    session_start = source.index('stage=session_create operation=begin', hybrid_start)
-    hybrid_block = source[hybrid_start:session_start]
+    assert 'if (socket_context->tls_requested) {' in source
+    group_start = source.index('if (socket_context->tls_requested) {')
+    session_start = source.index('stage=session_create operation=begin', group_start)
+    group_block = source[group_start:session_start]
 
-    assert 'PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);' in hybrid_block
-    assert 'if (result != WOLFSSL_SUCCESS)' in hybrid_block
-    assert 'PQC_WolfMQTT_CloseTransport(socket_context);' in hybrid_block
-    assert 'return MQTT_CODE_ERROR_TLS_CONNECT;' in hybrid_block
+    assert 'int groups[] = { PQC_TLS_GROUP_ID };' in group_block
+    assert 'PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);' in group_block
+    assert 'if (result != WOLFSSL_SUCCESS)' in group_block
+    assert 'return MQTT_CODE_ERROR_TLS_CONNECT;' in group_block
 
 
 def test_tls_context_and_transport_close_are_reported_directly():

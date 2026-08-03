@@ -11,9 +11,9 @@ EXPERIMENT_CLI = REPO_ROOT / "scripts" / "experiment.py"
 
 EXPERIMENT_MARKERS = (
     ("configs/experiments/mqtt_plaintext_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=plaintext status=done"),
-    ("configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_server_auth status=done"),
-    ("configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
-    ("configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=pqc_hybrid_tls_mutual status=done"),
+    ("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_server_auth status=done"),
+    ("configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
+    ("configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml", "PQC_EXPERIMENT_COMPLETE experiment=pqc_hybrid_tls_mutual status=done"),
 )
 
 def _load_experiment_module():

@@ -20,8 +20,9 @@ DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
 DEFAULT_SERVER_ALIAS = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
-CLASSICAL_IMAGE = "eclipse-mosquitto:2.0"
-OQS_IMAGE = "openquantumsafe/mosquitto:latest"
+MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
+CLASSICAL_IMAGE = MOSQUITTO_IMAGE
+OQS_IMAGE = MOSQUITTO_IMAGE
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
 BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
@@ -30,6 +31,7 @@ BROKER_PROFILE_SERVICES = {
     "oqs-mtls": "mqtt-oqs-mtls",
 }
 BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
+TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"
 HOST_BROKER_EVIDENCE_CLASS = "host_side"
 HOST_BROKER_EVIDENCE_LABEL = "host-side/broker-side MQTT/TLS compatibility evidence"
 HOST_BROKER_EVIDENCE_BOUNDARY = (
@@ -417,7 +419,7 @@ def deploy(args: argparse.Namespace) -> None:
 def remote_cleanup_command(remote_dir: str) -> str:
     remote_path = remote_shell_path(remote_dir)
     return (
-        f"docker run --rm -v {remote_path}:/work --entrypoint sh eclipse-mosquitto:2.0 "
+        f"docker run --rm -v {remote_path}:/work --entrypoint sh {MOSQUITTO_IMAGE} "
         "-c 'rm -rf "
         "/work/data /work/log "
         "/work/experiment/mqtt-broker/data "
@@ -488,6 +490,36 @@ def logs(args: argparse.Namespace) -> None:
     service = BROKER_PROFILE_SERVICES[args.profile]
     compose_remote(args, ["logs", "--tail", str(args.tail), service])
 
+
+def collect_tls_keylog(args: argparse.Namespace) -> None:
+    """Copy the selected broker profile TLS key log from the live container."""
+    host = load_host_config(repo_root() / args.host_config)
+    target = ssh_target(host)
+    service = BROKER_PROFILE_SERVICES[args.profile]
+    remote_command = (
+        f"cd {remote_shell_path(args.remote_dir)} && "
+        f"docker compose --project-name {shlex.quote(args.project_name)} "
+        f"exec -T {shlex.quote(service)} sh -c "
+        f"{shlex.quote('test -s /mosquitto/keylog/' + TLS_KEYLOG_FILENAME + ' && cat /mosquitto/keylog/' + TLS_KEYLOG_FILENAME)}"
+    )
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = ["ssh", target, remote_command]
+    if args.dry_run:
+        print("DRY RUN: " + shlex.join(command))
+        return
+    completed = subprocess.run(command, capture_output=True, check=False)
+    if completed.returncode != 0:
+        if output.exists():
+            output.unlink()
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise SystemExit(detail or "TLS key log collection failed")
+    if not completed.stdout:
+        if output.exists():
+            output.unlink()
+        raise SystemExit("TLS key log is missing or empty")
+    output.write_bytes(completed.stdout)
+    print(f"TLS key log copied: {output}")
 
 def validate_oqs_tls(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
@@ -579,7 +611,6 @@ def validate_mqtt_pubsub(
     if oqs_client:
         client_container_options = (
             f"-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
-            f"-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
             f"-v {remote_shell_path(oqs_config)}:/mosquitto/config/openssl.cnf:ro "
         )
     validation_script = "\n".join([
@@ -744,6 +775,12 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     logs_parser.add_argument("--tail", type=int, default=100)
     logs_parser.set_defaults(func=logs)
+
+    keylog_parser = sub.add_parser("collect-tls-keylog", help="copy a broker TLS key log from the gateway")
+    add_common_remote_options(keylog_parser)
+    keylog_parser.add_argument("--profile", choices=BROKER_PROFILES, required=True)
+    keylog_parser.add_argument("--output", required=True)
+    keylog_parser.set_defaults(func=collect_tls_keylog)
 
     validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)

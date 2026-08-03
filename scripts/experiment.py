@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import hashlib
 import ipaddress
 import json
 import shlex
@@ -58,6 +59,8 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MQTT_BROKER_SCRIPT_RELATIVE_PATH = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py")
+MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
+MQTT_TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -95,7 +98,7 @@ from framework.packet_capture import (
     start_gateway_packet_capture,
     stop_and_collect_gateway_packet_capture,
 )
-from framework.tls_algorithms import resolve_tls_algorithm_set
+from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
@@ -376,7 +379,6 @@ def _wait_for_plaintext_mqtt_broker(
         container_options = (
             "--network host "
             "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
-            "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
             f"-v {oqs_config}:/mosquitto/config/openssl.cnf:ro "
             f"-v {certificate_dir}:/certs:ro "
         )
@@ -390,7 +392,7 @@ def _wait_for_plaintext_mqtt_broker(
             'attempt=$((attempt + 1)); cleanup; '
             f'docker run -d {container_options}'
             '--name "$subscriber" --entrypoint mosquitto_sub '
-            'openquantumsafe/mosquitto:latest '
+            'eclipse-mosquitto:2.1.2-alpine '
             f'-h {host} -p {port} {tls_args} -t {topic} -C 1 >/dev/null; sub_start_rc=$?; '
             'if [ "$sub_start_rc" -ne 0 ]; then '
             'echo "subscriber_start_failed attempt=$attempt rc=$sub_start_rc"; '
@@ -402,7 +404,7 @@ def _wait_for_plaintext_mqtt_broker(
             'docker logs "$subscriber" 2>&1 || true; '
             f'sleep {delay_seconds}; continue; fi; '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest '
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
             f'-h {host} -p {port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
             'found=0; poll=0; while [ "$poll" -lt 10 ]; do '
             'poll=$((poll + 1)); response=$(docker logs "$subscriber" 2>&1 || true); '
@@ -524,21 +526,67 @@ def _collect_and_stop_managed_mqtt_broker(
 ) -> tuple[int, int]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
+    evidence_class = str(mqtt.get("evidence_class", "")) if isinstance(mqtt, dict) else ""
+    tls_enabled = evidence_class in {
+        "stm32_st67_classical_tls_e2e",
+        "stm32_st67_pqc_hybrid_tls_e2e",
+    }
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
         extra_args=[*common, "--profile", profile, "--tail", "100000"],
     )
+
+    keylog_evidence: dict[str, Any] = {"enabled": tls_enabled, "artifact": None}
+    if tls_enabled:
+        keylog_path = result_dir / MQTT_TLS_KEYLOG_FILENAME
+        emit_progress("broker", "Collecting MQTT TLS key schedule", detail=f"Profile: {profile}.")
+        keylog_result = _run_mqtt_broker_step(
+            repo_root=repo_root, result_dir=result_dir, step_name="tls-keylog-collection",
+            subcommand="collect-tls-keylog",
+            extra_args=[*common, "--profile", profile, "--output", str(keylog_path)],
+        )
+        keylog_evidence["return_code"] = keylog_result.return_code
+        keylog_evidence["collection_log"] = "mqtt-broker-tls-keylog-collection.log"
+        if keylog_result.return_code == 0 and keylog_path.is_file() and keylog_path.stat().st_size > 0:
+            data = keylog_path.read_bytes()
+            keylog_evidence.update({
+                "status": "collected",
+                "artifact": keylog_path.name,
+                "size_bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "failure_reason": None,
+            })
+        else:
+            keylog_evidence.update({
+                "status": "failed",
+                "size_bytes": None,
+                "sha256": None,
+                "failure_reason": "copy_failed_or_empty",
+            })
+    else:
+        keylog_evidence.update({"status": "not_applicable", "return_code": None, "failure_reason": None})
+
     emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}.")
     stop_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
     )
     emit_progress("broker", "MQTT broker log collection complete" if logs_result.return_code == 0 else "MQTT broker log collection failed", detail=f"Return code: {logs_result.return_code}; log: mqtt-broker-log.log")
     emit_progress("broker", "MQTT broker stopped" if stop_result.return_code == 0 else "MQTT broker stop failed", detail=f"Return code: {stop_result.return_code}; log: mqtt-broker-stop.log")
-    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"log": "mqtt-broker-log.log", "log_return_code": logs_result.return_code, "stop_log": "mqtt-broker-stop.log", "stop_return_code": stop_result.return_code, "cleanup_completed": stop_result.return_code == 0}})
-    return logs_result.return_code, stop_result.return_code
-
+    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {
+        "image": MQTT_BROKER_IMAGE,
+        "log": "mqtt-broker-log.log",
+        "log_return_code": logs_result.return_code,
+        "tls_keylog": keylog_evidence,
+        "stop_log": "mqtt-broker-stop.log",
+        "stop_return_code": stop_result.return_code,
+        "cleanup_completed": stop_result.return_code == 0,
+    }})
+    collection_return_code = logs_result.return_code
+    if tls_enabled and keylog_evidence.get("status") != "collected":
+        collection_return_code = collection_return_code or 1
+    return collection_return_code, stop_result.return_code
 
 def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
     marker_line = ""
@@ -795,18 +843,17 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         common_container_options = (
             "--network host "
             "-e OPENSSL_CONF=/mosquitto/config/openssl.cnf "
-            "-e OPENSSL_MODULES=/opt/oqssa/lib64/ossl-modules "
             f"-v {oqs_config}:/mosquitto/config/openssl.cnf:ro "
             f"-v {certificate_dir}:/certs:ro "
         )
         mqtt_sub = (
             f'docker run --rm --name "{oqs_subscriber_name}" '
             f"{common_container_options}"
-            "--entrypoint mosquitto_sub openquantumsafe/mosquitto:latest"
+            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine"
         )
         mqtt_pub = (
             f"docker run --rm {common_container_options}"
-            "--entrypoint mosquitto_pub openquantumsafe/mosquitto:latest"
+            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine"
         )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
     else:
@@ -1350,6 +1397,12 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     if mode_mutual != (authentication == "mutual"):
         raise ConfigError("mqtt.tls.mode and mqtt.tls.authentication must describe the same authentication mode")
     if tls_mode not in {"disabled", "plaintext", "not_applicable", "unavailable"}:
+        key_exchange_group = str(tls_config.get("key_exchange_group", "")).strip()
+        if key_exchange_group not in TLS_GROUPS:
+            raise ConfigError("TLS experiments must declare mqtt.tls.key_exchange_group as one of: " + ", ".join(TLS_GROUPS))
+        group_is_hybrid = bool(TLS_GROUPS[key_exchange_group].get("hybrid", False))
+        if tls_mode.startswith("pqc_hybrid_") != group_is_hybrid:
+            raise ConfigError("mqtt.tls.mode is incompatible with mqtt.tls.key_exchange_group")
         certificate_profile = tls_config.get("certificate_profile")
         if not isinstance(certificate_profile, str) or not certificate_profile.strip():
             raise ConfigError("TLS experiments must declare mqtt.tls.certificate_profile")

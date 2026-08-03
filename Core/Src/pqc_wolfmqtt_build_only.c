@@ -27,6 +27,12 @@
 #ifndef PQC_MQTT_TLS_AUTHENTICATION
 #define PQC_MQTT_TLS_AUTHENTICATION "server"
 #endif
+#ifndef PQC_TLS_GROUP_ID
+#define PQC_TLS_GROUP_ID WOLFSSL_ECC_SECP256R1
+#endif
+#ifndef PQC_TLS_GROUP_NAME
+#define PQC_TLS_GROUP_NAME "secp256r1"
+#endif
 #ifndef PQC_MQTT_TLS_CLIENT_CERT_PEM
 #define PQC_MQTT_TLS_CLIENT_CERT_PEM ""
 #endif
@@ -634,8 +640,8 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
             "wolfMQTT TLS: mutual_authentication=enabled client_credentials=loaded\r\n");
     }
 
-    if (PQC_WolfMQTT_PQCHybridRequested()) {
-        int groups[] = { WOLFSSL_SECP256R1MLKEM768 };
+    if (socket_context->tls_requested) {
+        int groups[] = { PQC_TLS_GROUP_ID };
         result = wolfSSL_CTX_set_groups(socket_context->tls_ctx, groups, 1);
         socket_context->pqc_group_configured = (result == WOLFSSL_SUCCESS);
         PQC_WolfMQTT_DiagnosticCode("pqc_group_config", result, 0);
@@ -733,14 +739,14 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     PQC_WolfMQTT_DiagnosticCode("handshake", result, 0);
     socket_context->tls_handshake_complete = true;
-    if (PQC_WolfMQTT_PQCHybridRequested()) {
+    if (socket_context->tls_requested) {
         const char *curve_name = wolfSSL_get_curve_name(socket_context->tls);
-        char marker[192];
+        char marker[224];
         socket_context->pqc_group_negotiated =
-            (curve_name != NULL) && (strstr(curve_name, "MLKEM768") != NULL);
+            (curve_name != NULL) && (strcmp(curve_name, PQC_TLS_GROUP_NAME) == 0);
         (void)snprintf(marker, sizeof(marker),
-            "wolfMQTT TLS: protocol=TLSv1.3 configured_group=SecP256r1MLKEM768 negotiated_group=%s pqc_group=%s\r\n",
-            curve_name != NULL ? curve_name : "unavailable",
+            "wolfMQTT TLS: protocol=TLSv1.3 configured_group=%s negotiated_group=%s key_exchange_group=%s\r\n",
+            PQC_TLS_GROUP_NAME, curve_name != NULL ? curve_name : "unavailable",
             socket_context->pqc_group_negotiated ? "passed" : "failed");
         PQC_WolfMQTT_DiagnosticMarker(marker);
         if (!socket_context->pqc_group_negotiated) {

@@ -21,9 +21,9 @@ class HardwareExperimentCase:
 CASES = (
     HardwareExperimentCase("plaintext-direct", "configs/experiments/mqtt_plaintext_st67_e2e.yaml", ("--boot-mode", "direct_flash"), None, "PQC_EXPERIMENT_COMPLETE experiment=plaintext status=done"),
     HardwareExperimentCase("plaintext-integrity", "configs/experiments/mqtt_plaintext_st67_e2e.yaml", ("--boot-mode", "wolfboot", "--boot-algorithm", "integrity_sha256"), "integrity_sha256", "PQC_EXPERIMENT_COMPLETE experiment=plaintext status=done"),
-    HardwareExperimentCase("classical-mtls-direct", "configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml", ("--boot-mode", "direct_flash"), None, "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
-    HardwareExperimentCase("classical-mtls-integrity", "configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml", ("--boot-mode", "wolfboot", "--boot-algorithm", "integrity_sha256"), "integrity_sha256", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
-    HardwareExperimentCase("pqc-hybrid-mtls-mldsa65", "configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml", ("--boot-mode", "wolfboot", "--boot-algorithm", "mldsa65"), "mldsa65", "PQC_EXPERIMENT_COMPLETE experiment=pqc_hybrid_tls_mutual status=done"),
+    HardwareExperimentCase("classical-mtls-direct", "configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml", ("--boot-mode", "direct_flash"), None, "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
+    HardwareExperimentCase("classical-mtls-integrity", "configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml", ("--boot-mode", "wolfboot", "--boot-algorithm", "integrity_sha256"), "integrity_sha256", "PQC_EXPERIMENT_COMPLETE experiment=classical_tls_mutual status=done"),
+    HardwareExperimentCase("pqc-hybrid-mtls-mldsa65", "configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml", ("--boot-mode", "wolfboot", "--boot-algorithm", "mldsa65"), "mldsa65", "PQC_EXPERIMENT_COMPLETE experiment=pqc_hybrid_tls_mutual status=done"),
 )
 
 def _result_dir(results_root: Path) -> Path:

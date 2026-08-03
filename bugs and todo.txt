@@ -9,6 +9,12 @@ unless the request will examine prior AI prompts / interactions
 -----------
 
 
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+
+
+
 -----------
 
 

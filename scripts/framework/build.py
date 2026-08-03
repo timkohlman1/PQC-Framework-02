@@ -294,7 +294,13 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ALGORITHM_MODE "{selected["mode"]}")\n'
         f'set(PQC_TLS_ENABLE_RSA {cmake_boolean(selected["rsa"])})\n'
         f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
-        f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n',
+        f'set(PQC_TLS_ENABLE_ECC {cmake_boolean(selected["ecc"])})\n'
+        f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
+        f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'
+        f'set(PQC_TLS_GROUP_ID {selected["group_token"]})\n'
+        f'set(PQC_TLS_GROUP_NAME "{selected["group_name"]}")\n',
         encoding="utf-8",
     )
     return path, selected

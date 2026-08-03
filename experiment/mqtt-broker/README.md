@@ -219,7 +219,7 @@ OQS broker logs are emitted to Docker stdout only. The OQS profile disables Mosq
 
 ## OQS image user compatibility
 
-The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current OQS Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
+The startup script creates a runtime-user-owned `/tmp/mosquitto-aclfile` when possible. Images with a `mosquitto` user use `mosquitto`; the current shared Eclipse Mosquitto image uses `nobody`, so the OQS config sets `user nobody` and the ACL copy is owned by that runtime user.
 
 
 ## STM32 plaintext command/response orchestration
@@ -264,7 +264,7 @@ Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O r
 
 ## Hybrid PQC server-authenticated profile
 
-The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = SecP256r1MLKEM768` so the Mosquitto server process can select the same hybrid key share as the client.
+The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024` so the Mosquitto server process can select the same hybrid key share as the client.
 
 Provision OQS certificates after deployment. The provisioning command retrieves only the public CA certificate for the local firmware build. The strict TLS validator fails when OpenSSL exits unsuccessfully, no peer certificate is presented, the cipher is `(NONE)`, TLS 1.3 is not negotiated, or certificate verification fails.
 
@@ -308,8 +308,8 @@ The `validate-oqs-mqtt` client containers load the project-managed OQS OpenSSL c
 
 The framework provides two mutual-TLS profiles alongside the existing server-authentication profiles:
 
-- `configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml`
-- `configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml`
+- `configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml`
+- `configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml`
 
 The classical mutual-TLS profile uses the same classical TLS algorithm set as
 the classical server-authentication profile. The hybrid mutual-TLS profile uses
@@ -358,3 +358,12 @@ All experiment broker profiles enable Mosquitto `log_type all` output with conne
 STM32 end-to-end runs use explicit host publisher and subscriber client IDs. Subscriber output is topic-qualified and retained as `mqtt-subscriber-raw.log`. The framework parses the retained broker log into `mqtt-broker-message-evidence.json` and requires evidence that the command publish was received and routed to the STM32 and that the response publish was received from the STM32 and routed to the host subscriber. UART markers remain supporting firmware evidence; they are not sufficient by themselves when broker packet evidence is required.
 
 Mosquitto debug output records packet direction, client ID, topic, QoS, and packet metadata, but does not provide an authoritative copy of every application payload. The retained host subscriber output remains the payload-level cross-check.
+
+
+## TLS traffic decryption key log
+
+All broker profiles use the pinned `eclipse-mosquitto:2.1.2-alpine` image. The hybrid profiles select `SecP256r1MLKEM768` through the native OpenSSL 3.5 TLS group configuration; no external OQS provider is loaded. TLS broker processes start with Mosquitto's `--tls-keylog` option.
+
+Recorded TLS firmware experiments retain `mqtt-broker-tls-keylog.log` in the same result directory as `gateway-network-capture.pcap`. The manifest records the key-log filename, byte count, SHA-256 digest, collection return code, and failure status. Plaintext experiments mark TLS key logging as not applicable.
+
+In Wireshark, open **Edit → Preferences → Protocols → TLS** and select the retained `mqtt-broker-tls-keylog.log` as the `(Pre)-Master-Secret log filename`, then open the corresponding packet capture. The key log permits decryption of that experiment's TLS traffic and must be treated as sensitive generated evidence.

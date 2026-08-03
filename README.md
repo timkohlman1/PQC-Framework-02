@@ -1,20 +1,13 @@
 # PQC-Framework-02
-
 STM32 embedded-security experiment framework for wolfBoot secure boot, reproducible evidence collection, and bounded MQTT/TLS experiments.
-
 ## Current scope
-
 The repository provides Docker-hosted build, test, signing, experiment, gateway, UART, benchmark, packet-capture, and broker workflows for the NUCLEO-L4R5ZI-P / STM32L4R5 platform.
-
 Evidence boundaries are strict:
-
 - Build-only evidence proves compilation and linkage only.
 - STM32 local-only and fake/no-network evidence does not prove external networking.
 - Host-side or broker-side validation does not prove STM32 or end-to-end wireless success.
 - MQTT, TLS, Wi-Fi, secure-boot, timing, and memory claims require retained run evidence.
-
 The canonical capability matrix and detailed limitations are in `docs/007_framework_architecture.md`.
-
 The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum helpers; it does not initialize a netif and is not external-network evidence.
 
 ## Documentation
@@ -47,7 +40,6 @@ All application builds use the fixed wolfBoot-relocated layout. Release is the d
 .\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
 .\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
 ```
-
 
 Host-native diagnostic fallback:
 
@@ -104,7 +96,6 @@ Generated-state preflight is the primary compatibility and provenance mechanism.
 
 Do not claim build, signing, flashing, hardware, UART, network, MQTT/TLS, timing, memory, or end-to-end success without explicit logs, manifests, or equivalent evidence. A skipped capability-gated test is not evidence of success.
 
-
 Opt-in physical MQTT experiment matrix:
 
 ```powershell
@@ -116,3 +107,44 @@ Opt-in physical MQTT experiment matrix:
 ```
 
 This long matrix covers direct-flash and wolfBoot execution for plaintext and classical mutual TLS, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot.
+
+## MQTT TLS key-exchange profile matrix
+
+Each TLS group has server-authentication and mutual-authentication profiles. The selected group controls wolfSSL source inclusion and named-group advertisement; unrelated ECC, X25519, and ML-KEM implementations are excluded from that firmware build.
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_x25519_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_x25519_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp384r1_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp384r1_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp521r1_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_secp521r1_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_X25519MLKEM768_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_SecP384r1MLKEM1024_server_auth_st67_e2e.yaml
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/mqtt_tls_SecP384r1MLKEM1024_mutual_auth_st67_e2e.yaml
+```
+
+The same experiment profiles support `--boot-mode wolfboot --boot-algorithm <algorithm>`. Secure-boot selection is independent of the MQTT TLS key-exchange group.
+
+Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expectations alone. Compare retained UART heap-boundary and task stack high-water markers for each group, especially `SecP384r1MLKEM1024`; increase memory only when recorded minimum headroom violates the project threshold or allocation failures occur.

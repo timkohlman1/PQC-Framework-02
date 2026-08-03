@@ -1,5 +1,6 @@
-id: mqtt_tls_pqc_hybrid_server_auth_st67_e2e
-description: Hybrid P-256 plus ML-KEM-768 server-authenticated MQTT over TLS 1.3 from STM32 through ST67W61M1 to the gateway OQS broker.
+id: mqtt_tls_SecP384r1MLKEM1024_mutual_auth_st67_e2e
+description: SecP384r1MLKEM1024 mutual-authenticated MQTT over TLS 1.3 from STM32
+  through ST67W61M1 to the gateway broker.
 board: board_a
 host: gateway
 boot: direct_flash
@@ -20,18 +21,18 @@ mqtt:
   enabled: true
   evidence_class: stm32_st67_pqc_hybrid_tls_e2e
   transport_backend: st67w61m1_lwip_wolfssl
-  broker_profile: oqs
+  broker_profile: oqs-mtls
   broker:
     host: pqc-gateway1.pqcnet
-    port: 8884
+    port: 8885
     server_name: pqc-gateway1.pqcnet
     dns_required: true
-  client_id: pqc-stm32-pqc-tls-e2e
+  client_id: pqc-stm32-secp384r1mlkem1024-mtls-e2e
   topics:
-    command: pqc/experiments/stm32/pqc-tls/command
-    response: pqc/experiments/stm32/pqc-tls/response
+    command: pqc/experiments/stm32/secp384r1mlkem1024/mutual_auth/command
+    response: pqc/experiments/stm32/secp384r1mlkem1024/mutual_auth/response
   command_payload: run
-  correlation_payload: pqc-stm32-pqc-tls-e2e-ok
+  correlation_payload: pqc-stm32-secp384r1mlkem1024-mtls-e2e-ok
   reconnect_attempts: 1
   orchestration:
     host: 10.1.1.18
@@ -39,8 +40,9 @@ mqtt:
     hard_limit_seconds: 180
   tls:
     tls_version: tls1.3
-    mode: pqc_hybrid_tls_server_auth
-    key_exchange_group: SecP256r1MLKEM768
+    mode: pqc_hybrid_tls_mutual
+    authentication: mutual
+    key_exchange_group: SecP384r1MLKEM1024
     server_signature_algorithm: classical
     certificate_profile: stepca-classical
     certificate_authority_algorithm: classical-x509
@@ -48,7 +50,8 @@ mqtt:
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
-      throughput_bytes_per_second: The bounded control exchange does not establish throughput.
+      throughput_bytes_per_second: The bounded control exchange does not establish
+        throughput.
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick

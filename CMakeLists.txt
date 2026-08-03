@@ -58,14 +58,22 @@ enable_language(C ASM)
 set(PQC_TLS_ALGORITHM_MODE "classical" CACHE STRING "Resolved TLS algorithm mode")
 set(PQC_TLS_ENABLE_RSA 1 CACHE BOOL "Compile RSA certificate verification")
 set(PQC_TLS_ENABLE_RSA_PSS 1 CACHE BOOL "Compile and advertise RSA-PSS")
+set(PQC_TLS_ENABLE_ECC 1 CACHE BOOL "Compile prime-curve ECC key exchange")
+set(PQC_TLS_ECC_BITS 256 CACHE STRING "Selected prime-curve size")
+set(PQC_TLS_ENABLE_CURVE25519 0 CACHE BOOL "Compile X25519 key exchange")
 set(PQC_TLS_ENABLE_MLKEM_768 0 CACHE BOOL "Compile ML-KEM-768 hybrid key exchange")
+set(PQC_TLS_ENABLE_MLKEM_1024 0 CACHE BOOL "Compile ML-KEM-1024 hybrid key exchange")
+set(PQC_TLS_GROUP_ID WOLFSSL_ECC_SECP256R1 CACHE STRING "wolfSSL named-group token")
+set(PQC_TLS_GROUP_NAME secp256r1 CACHE STRING "TLS named-group display name")
 set(PQC_TLS_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_tls_algorithm_selection.cmake")
 if(EXISTS "${PQC_TLS_SELECTION_FILE}")
     include("${PQC_TLS_SELECTION_FILE}")
 endif()
 message("TLS algorithm mode: " ${PQC_TLS_ALGORITHM_MODE})
 message("TLS RSA/RSA-PSS: " ${PQC_TLS_ENABLE_RSA} "/" ${PQC_TLS_ENABLE_RSA_PSS})
-message("TLS ML-KEM-768: " ${PQC_TLS_ENABLE_MLKEM_768})
+message("TLS group: " ${PQC_TLS_GROUP_NAME} " (" ${PQC_TLS_GROUP_ID} ")")
+message("TLS ECC/Curve25519: " ${PQC_TLS_ENABLE_ECC} "/" ${PQC_TLS_ENABLE_CURVE25519})
+message("TLS ML-KEM-768/1024: " ${PQC_TLS_ENABLE_MLKEM_768} "/" ${PQC_TLS_ENABLE_MLKEM_1024})
 
 
 # Create an executable object type
@@ -97,7 +105,6 @@ set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/aes.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/asn.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/coding.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/ecc.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/kdf.c"
@@ -110,19 +117,32 @@ set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
     "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
 )
 
+
+if(PQC_TLS_ENABLE_ECC)
+    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/ecc.c"
+    )
+endif()
+
+if(PQC_TLS_ENABLE_CURVE25519)
+    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/curve25519.c"
+    )
+endif()
+
 if(PQC_TLS_ENABLE_RSA)
     list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
         "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/rsa.c"
     )
 endif()
 
-if(PQC_TLS_ENABLE_MLKEM_768)
+if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
     list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
         "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
     )
 endif()
 
-if(PQC_TLS_ENABLE_MLKEM_768)
+if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
     list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
         "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
         "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
@@ -154,7 +174,13 @@ target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
     PQC_WOLFSSL_SOURCE_BUILD=1
     PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
     PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+    PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
+    PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+    PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
     PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
+    PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+    PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
+    PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
 )
 
 
@@ -233,7 +259,13 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_WOLFSSL_SOURCE_BUILD=1
     PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
     PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+    PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
+    PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+    PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
     PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
+    PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+    PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
+    PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS

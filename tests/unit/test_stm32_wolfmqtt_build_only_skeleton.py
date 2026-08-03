@@ -119,11 +119,11 @@ def test_tls_handshake_result_is_recorded_inside_lwip_connect_function():
     assert connect < record < failure_check
 
 
-def test_pqc_hybrid_group_array_matches_mutable_wolfssl_api():
+def test_selected_tls_group_array_matches_mutable_wolfssl_api():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
-    assert "int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" in source
-    assert "const int groups[] = { WOLFSSL_SECP256R1MLKEM768 };" not in source
+    assert "int groups[] = { PQC_TLS_GROUP_ID };" in source
+    assert "const int groups[] = { PQC_TLS_GROUP_ID };" not in source
 
 def test_mlkem_portable_implementation_sources_are_wired_without_arch_assembly():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")

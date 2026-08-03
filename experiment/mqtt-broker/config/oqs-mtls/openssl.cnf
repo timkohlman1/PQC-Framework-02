@@ -1,21 +1,10 @@
 openssl_conf = openssl_init
 
 [openssl_init]
-providers = provider_sect
 ssl_conf = ssl_sect
-
-[provider_sect]
-default = default_sect
-oqsprovider = oqsprovider_sect
-
-[default_sect]
-activate = 1
-
-[oqsprovider_sect]
-activate = 1
 
 [ssl_sect]
 system_default = tls_defaults
 
 [tls_defaults]
-Groups = SecP256r1MLKEM768
+Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024

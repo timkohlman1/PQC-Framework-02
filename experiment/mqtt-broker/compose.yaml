@@ -1,6 +1,6 @@
 services:
   mqtt-classical:
-    image: eclipse-mosquitto:2.0
+    image: eclipse-mosquitto:2.1.2-alpine
     restart: unless-stopped
     profiles: ["classical"]
     user: "0:0"
@@ -28,7 +28,12 @@ services:
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
         chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt
-        exec mosquitto -c /mosquitto/config/mosquitto.conf
+        mkdir -p /mosquitto/keylog
+        rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
+        chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
+        chmod 0700 /mosquitto/keylog
+        umask 077
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
       - "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883"
@@ -50,7 +55,7 @@ services:
       start_period: 10s
 
   mqtt-classical-server-auth:
-    image: eclipse-mosquitto:2.0
+    image: eclipse-mosquitto:2.1.2-alpine
     restart: unless-stopped
     profiles: ["classical-server-auth"]
     user: "0:0"
@@ -76,7 +81,12 @@ services:
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key
         chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
-        exec mosquitto -c /mosquitto/config/mosquitto.conf
+        mkdir -p /mosquitto/keylog
+        rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
+        chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
+        chmod 0700 /mosquitto/keylog
+        umask 077
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
     volumes:
@@ -92,7 +102,7 @@ services:
       start_period: 5s
 
   mqtt-oqs:
-    image: openquantumsafe/mosquitto:latest
+    image: eclipse-mosquitto:2.1.2-alpine
     restart: unless-stopped
     profiles: ["oqs"]
     user: "0:0"
@@ -119,30 +129,30 @@ services:
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
         chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
-        exec mosquitto -c /mosquitto/config/mosquitto.conf
+        mkdir -p /mosquitto/keylog
+        rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
+        chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
+        chmod 0700 /mosquitto/keylog
+        umask 077
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
     environment:
       OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
-      OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
     volumes:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /tmp/mosquitto-certs/ca.crt -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
-        ]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
       timeout: 12s
       retries: 3
       start_period: 10s
 
   mqtt-oqs-mtls:
-    image: openquantumsafe/mosquitto:latest
+    image: eclipse-mosquitto:2.1.2-alpine
     restart: unless-stopped
     profiles: ["oqs-mtls"]
     user: "0:0"
@@ -169,23 +179,23 @@ services:
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key
         chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
-        exec mosquitto -c /mosquitto/config/mosquitto.conf
+        mkdir -p /mosquitto/keylog
+        rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
+        chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
+        chmod 0700 /mosquitto/keylog
+        umask 077
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
     ports:
       - "${MQTT_OQS_MTLS_PORT:-8885}:8883"
     environment:
       OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
-      OPENSSL_MODULES: "/opt/oqssa/lib64/ossl-modules"
     volumes:
       - ./config/oqs-mtls/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs-mtls/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs-mtls/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "output=$$(timeout 8 sh -c \"echo | openssl s_client -connect 127.0.0.1:8883 -tls1_3 -groups SecP256r1MLKEM768 -CAfile /tmp/mosquitto-certs/ca.crt -cert /mosquitto/config/certs/client.crt -key /mosquitto/config/certs/client.key -verify_return_error 2>&1\") && printf '%s\n' \"$$output\" | grep -q 'New, TLSv1.3' && printf '%s\n' \"$$output\" | grep -q 'Certificate chain' && ! printf '%s\n' \"$$output\" | grep -q 'Cipher is (NONE)' && printf '%s\n' \"$$output\" | grep -q 'Verify return code: 0 (ok)'",
-        ]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --cert /mosquitto/config/certs/client.crt --key /mosquitto/config/certs/client.key --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
       timeout: 12s
       retries: 3
