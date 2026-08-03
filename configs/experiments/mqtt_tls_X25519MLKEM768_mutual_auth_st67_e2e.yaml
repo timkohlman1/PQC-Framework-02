@@ -1,6 +1,5 @@
 id: mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e
-description: X25519MLKEM768 mutual-authenticated MQTT over TLS 1.3 from STM32 through
-  ST67W61M1 to the gateway broker.
+description: X25519MLKEM768 mutual-authenticated MQTT over TLS 1.3 from STM32 through ST67W61M1 to the gateway broker.
 board: board_a
 host: gateway
 boot: direct_flash
@@ -50,8 +49,7 @@ mqtt:
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
-      throughput_bytes_per_second: The bounded control exchange does not establish
-        throughput.
+      throughput_bytes_per_second: The bounded control exchange does not establish throughput.
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick

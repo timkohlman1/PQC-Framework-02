@@ -11,6 +11,7 @@
 #define WOLFSSL_NO_SOCK
 #define NO_ERROR_STRINGS
 #define NO_OLD_TLS
+#define WOLFSSL_NO_TLS12
 #define WOLFSSL_NO_ASM
 #define WOLFSSL_SP_MATH_ALL
 #define USE_SLOW_SHA256

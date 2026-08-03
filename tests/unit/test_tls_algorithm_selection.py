@@ -42,3 +42,9 @@ def test_settings_expose_independent_group_capability_guards():
         assert marker in settings
     assert "WOLFSSL_NO_ML_KEM_768" in settings
     assert "WOLFSSL_NO_ML_KEM_1024" in settings
+
+
+def test_settings_disable_tls12_for_tls13_only_group_pruning():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
+    assert "#define WOLFSSL_TLS13" in settings
+    assert "#define WOLFSSL_NO_TLS12" in settings

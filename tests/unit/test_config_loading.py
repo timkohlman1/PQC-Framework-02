@@ -442,3 +442,21 @@ def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
         assert "unsupported profile_kind" in str(exc)
     else:
         raise AssertionError("unsupported profile_kind was accepted")
+
+
+def test_all_repository_yaml_configs_are_accepted_by_framework_loader():
+    """Prevent unsupported YAML formatting from reaching runtime commands."""
+    experiment_cli = load_experiment_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    config_paths = sorted((repo_root / "configs").rglob("*.yaml"))
+
+    assert config_paths, "expected repository YAML configuration files"
+
+    failures: list[str] = []
+    for config_path in config_paths:
+        try:
+            experiment_cli.load_config(config_path)
+        except Exception as exc:  # report every malformed config in one test run
+            failures.append(f"{config_path.relative_to(repo_root)}: {exc}")
+
+    assert not failures, "repository YAML parser failures:\n" + "\n".join(failures)

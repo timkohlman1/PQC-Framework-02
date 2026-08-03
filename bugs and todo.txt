@@ -86,19 +86,60 @@ end to end profile tests
     --boot-mode wolfboot `
     --boot-algorithm mldsa87
 
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml
+
+
 
 .\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml
+    --experiment configs/experiments/mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e.yaml
 
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_mutual_auth_st67_e2e.yaml
+FULL TLS EXPERIMENT MATRIX:
+--------------------------
+$profiles = @(
+    "configs/experiments/mqtt_plaintext_st67_e2e.yaml"
 
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_pqc_hybrid_mutual_auth_st67_e2e.yaml
+    "configs/experiments/mqtt_tls_x25519_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_x25519_mutual_auth_st67_e2e.yaml"
 
+    "configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml"
 
+    "configs/experiments/mqtt_tls_secp384r1_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_secp384r1_mutual_auth_st67_e2e.yaml"
+
+    "configs/experiments/mqtt_tls_secp521r1_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_secp521r1_mutual_auth_st67_e2e.yaml"
+
+    "configs/experiments/mqtt_tls_X25519MLKEM768_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e.yaml"
+
+    "configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml"
+
+    "configs/experiments/mqtt_tls_SecP384r1MLKEM1024_server_auth_st67_e2e.yaml"
+    "configs/experiments/mqtt_tls_SecP384r1MLKEM1024_mutual_auth_st67_e2e.yaml"
+)
+
+$completed = 0
+
+foreach ($profile in $profiles) {
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "Running $($completed + 1) of $($profiles.Count)"
+    Write-Host $profile
+    Write-Host "============================================================"
+
+    & .\scripts\dev.ps1 experiment-gateway run `
+        --experiment $profile
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Experiment failed with exit code $LASTEXITCODE`: $profile"
+    }
+
+    $completed++
+}
+
+Write-Host ""
+Write-Host "Completed all $completed MQTT experiment profiles successfully."
 
 
 
@@ -132,3 +173,11 @@ docker run --rm --network host eclipse-mosquitto:2.0 \
   mosquitto_pub -h 127.0.0.1 -p 1883 \
   -t pqc/experiments/stm32/command \
   -m pqc-stm32-e2e-ok
+
+
+.\scripts\dev.ps1 pytest-hardware `
+    tests/hardware/test_mqtt_experiment_matrix.py `
+    -m hardware `
+    --pqc-require-hardware `
+    --pqc-hardware-experiment-matrix `
+    -x -vv
