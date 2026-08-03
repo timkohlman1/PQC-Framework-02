@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_pqc_profile_selects_hybrid_tls13_server_auth():
-    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "evidence_class: stm32_st67_pqc_hybrid_tls_e2e" in config
     assert "broker_profile: oqs" in config
     assert "mode: pqc_hybrid_tls_server_auth" in config
@@ -25,7 +25,7 @@ def test_stm32_wolfssl_enables_tls13_mlkem768_and_strict_group_check():
     ):
         assert source_file in cmake
     assert "wolfcrypt/src/wc_mlkem_asm.S" not in cmake
-    for marker in ("wolfTLSv1_3_client_method", "PQC_TLS_GROUP_ID", "PQC_TLS_GROUP_NAME", "wolfSSL_CTX_set_groups", "wolfSSL_get_curve_name", "strcmp(curve_name, PQC_TLS_GROUP_NAME) == 0", "key_exchange_group=%s"):
+    for marker in ("wolfTLSv1_3_client_method", "WOLFSSL_SECP256R1MLKEM768", "wolfSSL_CTX_set_groups", "wolfSSL_get_curve_name", 'strstr(curve_name, "MLKEM768")', "pqc_group=%s"):
         assert marker in source
 
 
@@ -36,11 +36,11 @@ def test_oqs_broker_is_server_auth_and_healthcheck_uses_hybrid_group():
     assert "tls_version tlsv1.3" in config
     assert "require_certificate false" in config
     assert "use_identity_as_username false" in config
-    assert "allow_anonymous true" in config
+    assert "listener_allow_anonymous true" in config
     acl = Path("experiment/mqtt-broker/config/oqs/aclfile").read_text(encoding="utf-8")
     assert "topic readwrite pqc/#" in acl
     assert "user pqc-mqtt-client" not in acl
-    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "Groups = SecP256r1MLKEM768" in openssl_config
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
@@ -57,17 +57,18 @@ def test_config_schema_accepts_pqc_evidence_and_mode():
 
 
 def test_pqc_profile_uses_extended_uart_hard_limit():
-    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "hard_limit_seconds: 180" in config
 
 
-def test_hybrid_groups_are_guarded_by_project_capability_selection():
+def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
-    algorithms = Path("scripts/framework/tls_algorithms.py").read_text(encoding="utf-8")
-    for token in ("WOLFSSL_X25519MLKEM768", "WOLFSSL_SECP256R1MLKEM768", "WOLFSSL_SECP384R1MLKEM1024"):
-        assert token in algorithms
-    assert "#if PQC_TLS_ENABLE_MLKEM_768 || PQC_TLS_ENABLE_MLKEM_1024" in settings
+    api = Path("tools/wolfboot/lib/wolfssl/src/ssl_api_ext.c").read_text(encoding="utf-8")
+    assert "#define WOLFSSL_HAVE_MLKEM" in settings
     assert "#define WOLFSSL_PQC_HYBRIDS" in settings
+    hybrid_case = "case WOLFSSL_SECP256R1MLKEM768:"
+    assert hybrid_case in api
+    assert api.index("#ifdef WOLFSSL_PQC_HYBRIDS") < api.index(hybrid_case)
 
 
 def test_tls_build_excludes_mldsa_verification_support():
@@ -100,7 +101,7 @@ def test_tls_handshake_boundary_instrumentation_is_wired():
 def test_mlkem_client_key_share_uses_bounded_stack_and_scratch_memory():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     experiment = Path(
-        "configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
+        "configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml"
     ).read_text(encoding="utf-8")
 
     assert "#define WOLFSSL_SMALL_STACK" in settings

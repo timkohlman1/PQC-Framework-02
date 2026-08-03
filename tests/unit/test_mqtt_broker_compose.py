@@ -15,6 +15,15 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+
+
+def _service_block(compose: str, service: str) -> str:
+    marker = f"  {service}:\n"
+    start = compose.index(marker)
+    next_service = compose.find("\n  mqtt-", start + len(marker))
+    return compose[start:] if next_service == -1 else compose[start:next_service]
+
+
 def _load_ctl_module():
     spec = importlib.util.spec_from_file_location("mqtt_broker_ctl", SCRIPT_PATH)
     assert spec is not None
@@ -38,7 +47,7 @@ def test_mqtt_broker_compose_declares_classical_and_oqs_profiles():
     assert "${MQTT_OQS_TLS_PORT:-8884}:8883" in compose
 
 
-def test_mqtt_broker_compose_copies_acl_files_to_container_local_paths():
+def test_mqtt_broker_compose_mounts_acl_files_directly_and_copies_private_keys():
     compose = _read(BROKER_ROOT / "compose.yaml")
 
     assert "user: \"0:0\"" in compose
@@ -47,20 +56,43 @@ def test_mqtt_broker_compose_copies_acl_files_to_container_local_paths():
     assert "- -ec" in compose
     assert "command: |" not in compose
     assert "aclfile.source" in compose
-    assert "cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile" in compose
+    assert "cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile" not in compose
     assert "cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key" in compose
-    assert "chmod 0640 /tmp/mosquitto-aclfile /tmp/mosquitto-certs/server.key" in compose
-    assert "if id mosquitto >/dev/null 2>&1; then" in compose
-    assert 'runtime_user="$(id -u mosquitto)"' in compose
-    assert 'chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-aclfile /tmp/mosquitto-certs/*' in compose
-    assert "elif id nobody >/dev/null 2>&1; then" in compose
-    assert 'runtime_user="$(id -u nobody)"' in compose
-    assert "runtime_user=0" in compose
-    assert "runtime_group=0" in compose
-    assert "chmod 0640 /tmp/mosquitto-aclfile" in compose
+    assert "chmod 0640 /tmp/mosquitto-certs/server.key" in compose
+    classical = _service_block(compose, "mqtt-classical")
+    classical_server_auth = _service_block(compose, "mqtt-classical-server-auth")
+    oqs = _service_block(compose, "mqtt-oqs")
+    oqs_mtls = _service_block(compose, "mqtt-oqs-mtls")
+
+    for block in (classical, classical_server_auth):
+        assert "if id mosquitto >/dev/null 2>&1; then" in block
+        assert 'runtime_user="$(id -u mosquitto)"' in block
+
+    for block in (oqs, oqs_mtls):
+        assert "if id nobody >/dev/null 2>&1; then" in block
+        assert 'runtime_user="$(id -u nobody)"' in block
+        assert 'runtime_user="$(id -u mosquitto)"' not in block
+
+    assert compose.count('chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*') == 4
+    assert compose.count("runtime_user=0") == 4
+    assert compose.count("runtime_group=0") == 4
+    assert "/tmp/mosquitto-aclfile" not in compose
     assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in compose
     assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt" in compose
     assert "exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf" in compose
+
+
+def test_mosquitto_configs_use_listener_specific_anonymous_options_without_deprecated_global_switch():
+    for relative_path in (
+        "config/classical/mosquitto.conf",
+        "config/classical-server-auth/mosquitto.conf",
+        "config/oqs/mosquitto.conf",
+        "config/oqs-mtls/mosquitto.conf",
+    ):
+        config = _read(BROKER_ROOT / relative_path)
+        assert "per_listener_settings" not in config
+        assert "\nallow_anonymous " not in config
+        assert "listener_allow_anonymous " in config
 
 
 def test_mqtt_broker_compose_avoids_fixed_container_and_network_names():
@@ -76,7 +108,7 @@ def test_classical_mosquitto_config_enforces_tls_and_client_certificates():
 
     assert "listener 8883 0.0.0.0" in config
     assert "tls_version tlsv1.3" in config
-    assert "allow_anonymous true" in config
+    assert "listener_allow_anonymous true" in config
     assert "require_certificate true" in config
     assert "use_identity_as_username true" in config
     assert "cafile /tmp/mosquitto-certs/ca-chain.crt" in config
@@ -376,13 +408,13 @@ def test_oqs_mosquitto_config_enforces_server_authenticated_tls_with_project_cer
 
     assert "listener 8883 0.0.0.0" in config
     assert "tls_version tlsv1.3" in config
-    assert "allow_anonymous true" in config
+    assert "listener_allow_anonymous true" in config
     assert "require_certificate false" in config
     assert "use_identity_as_username false" in config
     assert "cafile /tmp/mosquitto-certs/ca.crt" in config
     assert "certfile /tmp/mosquitto-certs/server.crt" in config
     assert "keyfile /tmp/mosquitto-certs/server.key" in config
-    assert "acl_file /tmp/mosquitto-aclfile" in config
+    assert "acl_file /mosquitto/config/aclfile.source" in config
     assert "user nobody" in config
 
 def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthcheck():
@@ -395,13 +427,13 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro" in compose
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "OPENSSL_MODULES" not in compose
-    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "Groups = SecP256r1MLKEM768" in openssl_config
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
     assert "--tls-version tlsv1.3" in compose
     assert "--cafile /tmp/mosquitto-certs/ca.crt" in compose
-    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "Groups = SecP256r1MLKEM768" in openssl_config
     assert "oqsprovider" not in openssl_config
-    assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in openssl_config
+    assert "Groups = SecP256r1MLKEM768" in openssl_config
 
 def test_mqtt_control_script_has_provision_and_validation_subcommands():
     module = _load_ctl_module()
@@ -736,5 +768,5 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
 def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
     for profile in ("oqs", "oqs-mtls"):
         config = _read(BROKER_ROOT / "config" / profile / "openssl.cnf")
-        assert "Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024" in config
+        assert "Groups = SecP256r1MLKEM768" in config
         assert "oqsprovider" not in config

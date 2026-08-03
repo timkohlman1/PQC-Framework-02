@@ -16,7 +16,7 @@ def test_stm32_mqtt_uses_real_lwip_socket_callbacks():
 def test_plaintext_broker_listener_is_separate_from_tls_listener():
     config = Path("experiment/mqtt-broker/config/classical/mosquitto.conf").read_text(encoding="utf-8")
     assert "listener 1883 0.0.0.0" in config
-    assert "allow_anonymous true" in config
+    assert "listener_allow_anonymous true" in config
     assert "listener 8883 0.0.0.0" in config
     assert "require_certificate true" in config
 

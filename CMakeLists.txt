@@ -127,6 +127,7 @@ endif()
 if(PQC_TLS_ENABLE_CURVE25519)
     list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
         "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/curve25519.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/fe_low_mem.c"
     )
 endif()
 
