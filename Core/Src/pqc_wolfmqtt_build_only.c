@@ -13,6 +13,11 @@
 #include "lwip/sockets.h"
 #include "pqc_wifi_config.h"
 
+#ifndef PQC_TLS_COMPILED
+#define PQC_TLS_COMPILED 1
+#endif
+
+#if PQC_TLS_COMPILED
 /* wolfSSL uses RNG as a legacy type alias. STM32 CMSIS uses the same name
  * for the hardware peripheral pointer. Drop the CMSIS macro before wolfSSL
  * headers and address the peripheral explicitly through RNG_BASE below. */
@@ -23,6 +28,7 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfssl/ssl.h"
 #include "wolfssl/wolfcrypt/random.h"
+#endif
 
 #ifndef PQC_MQTT_TLS_AUTHENTICATION
 #define PQC_MQTT_TLS_AUTHENTICATION "server"
@@ -50,8 +56,13 @@ __attribute__((weak)) void PQC_WolfMQTT_DiagnosticMarker(const char *marker) { (
 
 typedef struct {
     int socket_fd;
+#if PQC_TLS_COMPILED
     WOLFSSL_CTX *tls_ctx;
     WOLFSSL *tls;
+#else
+    void *tls_ctx;
+    void *tls;
+#endif
     bool tls_requested;
     bool tcp_connected;
     bool tls_handshake_complete;
@@ -77,10 +88,62 @@ typedef struct {
     size_t payload_length;
 } PQC_WolfMQTTMessageContext;
 
+#if PQC_TLS_COMPILED
 #define PQC_WOLFSSL_RNG_READY_SPIN_LIMIT 1000000UL
 #define PQC_STM32_RNG ((RNG_TypeDef *)RNG_BASE)
 
 static bool s_rng_ready;
+
+#if PQC_TLS_COMPILED
+static bool PQC_WolfMQTT_TLSGroupNamesMatch(const char *configured, const char *negotiated)
+{
+    size_t configured_index = 0U;
+    size_t negotiated_index = 0U;
+
+    if ((configured == NULL) || (negotiated == NULL)) {
+        return false;
+    }
+
+    while ((configured[configured_index] != '\0') ||
+           (negotiated[negotiated_index] != '\0')) {
+        unsigned char configured_character;
+        unsigned char negotiated_character;
+
+        while ((configured[configured_index] == '-') ||
+               (configured[configured_index] == '_')) {
+            configured_index++;
+        }
+        while ((negotiated[negotiated_index] == '-') ||
+               (negotiated[negotiated_index] == '_')) {
+            negotiated_index++;
+        }
+
+        configured_character = (unsigned char)configured[configured_index];
+        negotiated_character = (unsigned char)negotiated[negotiated_index];
+        if ((configured_character >= (unsigned char)'A') &&
+            (configured_character <= (unsigned char)'Z')) {
+            configured_character = (unsigned char)(configured_character -
+                (unsigned char)'A' + (unsigned char)'a');
+        }
+        if ((negotiated_character >= (unsigned char)'A') &&
+            (negotiated_character <= (unsigned char)'Z')) {
+            negotiated_character = (unsigned char)(negotiated_character -
+                (unsigned char)'A' + (unsigned char)'a');
+        }
+        if (configured_character != negotiated_character) {
+            return false;
+        }
+        if (configured_character == '\0') {
+            return true;
+        }
+        configured_index++;
+        negotiated_index++;
+    }
+
+    return true;
+}
+
+#endif
 
 static void PQC_WolfMQTT_DiagnosticCode(const char *stage, int result, int error)
 {
@@ -94,6 +157,7 @@ static void PQC_WolfMQTT_DiagnosticCode(const char *stage, int result, int error
 
 
 
+#if PQC_TLS_COMPILED
 static void PQC_WolfMQTT_DiagnosticWolfSSLState(const char *stage)
 {
     char marker[192];
@@ -149,6 +213,8 @@ static void PQC_WolfMQTT_DiagnosticHandshakeBoundary(
     }
 }
 
+
+#endif
 
 static void PQC_WolfMQTT_DiagnosticDnsServer(void)
 {
@@ -276,12 +342,18 @@ int PQC_WolfSSL_HardwareSeed(unsigned char *output, unsigned int size)
     return 0;
 }
 
+#endif
+
 static bool PQC_WolfMQTT_TLSRequested(void)
 {
+#if PQC_TLS_COMPILED
     return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
+#else
+    return false;
+#endif
 }
 
 static bool PQC_WolfMQTT_PQCHybridRequested(void)
@@ -308,6 +380,7 @@ static int PQC_WolfMQTT_SetTimeout(int socket_fd, int option, int timeout_ms)
     return lwip_setsockopt(socket_fd, SOL_SOCKET, option, &timeout, sizeof(timeout));
 }
 
+#if PQC_TLS_COMPILED
 static int PQC_WolfSSL_IORecv(WOLFSSL *ssl, char *buffer, int length, void *context)
 {
     PQC_WolfMQTTSocketContext *socket_context = context;
@@ -529,6 +602,8 @@ static int PQC_WolfSSL_IOSend(WOLFSSL *ssl, char *buffer, int length, void *cont
     return WOLFSSL_CBIO_ERR_GENERAL;
 }
 
+#endif
+
 static void PQC_WolfMQTT_CloseTransport(PQC_WolfMQTTSocketContext *context)
 {
     char marker[224];
@@ -544,8 +619,10 @@ static void PQC_WolfMQTT_CloseTransport(PQC_WolfMQTTSocketContext *context)
     if ((written > 0) && ((size_t)written < sizeof(marker))) {
         PQC_WolfMQTT_DiagnosticMarker(marker);
     }
+#if PQC_TLS_COMPILED
     if (context->tls != NULL) { wolfSSL_free(context->tls); context->tls = NULL; }
     if (context->tls_ctx != NULL) { wolfSSL_CTX_free(context->tls_ctx); context->tls_ctx = NULL; }
+#endif
     if (context->socket_fd >= 0) {
         (void)lwip_shutdown(context->socket_fd, SHUT_RDWR);
         (void)lwip_close(context->socket_fd);
@@ -577,6 +654,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     PQC_WolfMQTT_DiagnosticCode("tcp_connect", result, 0);
     if (!socket_context->tls_requested) return MQTT_CODE_SUCCESS;
 
+#if PQC_TLS_COMPILED
     WOLFSSL_METHOD *tls_method;
 
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: context create begin\r\n");
@@ -743,7 +821,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         const char *curve_name = wolfSSL_get_curve_name(socket_context->tls);
         char marker[224];
         socket_context->pqc_group_negotiated =
-            (curve_name != NULL) && (strcmp(curve_name, PQC_TLS_GROUP_NAME) == 0);
+            PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name);
         (void)snprintf(marker, sizeof(marker),
             "wolfMQTT TLS: protocol=TLSv1.3 configured_group=%s negotiated_group=%s key_exchange_group=%s\r\n",
             PQC_TLS_GROUP_NAME, curve_name != NULL ? curve_name : "unavailable",
@@ -756,6 +834,10 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
     return MQTT_CODE_SUCCESS;
+#else
+    PQC_WolfMQTT_CloseTransport(socket_context);
+    return MQTT_CODE_ERROR_TLS_CONNECT;
+#endif
 }
 
 static int PQC_WolfMQTT_LwIPRead(void *context, byte *buffer, int length, int timeout_ms)
@@ -763,7 +845,10 @@ static int PQC_WolfMQTT_LwIPRead(void *context, byte *buffer, int length, int ti
     PQC_WolfMQTTSocketContext *c = context;
     if ((c == NULL) || (c->socket_fd < 0)) return -1;
     (void)PQC_WolfMQTT_SetTimeout(c->socket_fd, SO_RCVTIMEO, timeout_ms);
-    return c->tls_requested ? wolfSSL_read(c->tls, buffer, length) : lwip_recv(c->socket_fd, buffer, (size_t)length, 0);
+#if PQC_TLS_COMPILED
+    if (c->tls_requested) return wolfSSL_read(c->tls, buffer, length);
+#endif
+    return lwip_recv(c->socket_fd, buffer, (size_t)length, 0);
 }
 
 static int PQC_WolfMQTT_LwIPWrite(void *context, const byte *buffer, int length, int timeout_ms)
@@ -771,13 +856,18 @@ static int PQC_WolfMQTT_LwIPWrite(void *context, const byte *buffer, int length,
     PQC_WolfMQTTSocketContext *c = context;
     if ((c == NULL) || (c->socket_fd < 0)) return -1;
     (void)PQC_WolfMQTT_SetTimeout(c->socket_fd, SO_SNDTIMEO, timeout_ms);
-    return c->tls_requested ? wolfSSL_write(c->tls, buffer, length) : lwip_send(c->socket_fd, buffer, (size_t)length, 0);
+#if PQC_TLS_COMPILED
+    if (c->tls_requested) return wolfSSL_write(c->tls, buffer, length);
+#endif
+    return lwip_send(c->socket_fd, buffer, (size_t)length, 0);
 }
 
 static int PQC_WolfMQTT_LwIPDisconnect(void *context)
 {
     PQC_WolfMQTTSocketContext *c = context;
+#if PQC_TLS_COMPILED
     if ((c != NULL) && (c->tls != NULL)) (void)wolfSSL_shutdown(c->tls);
+#endif
     PQC_WolfMQTT_CloseTransport(c);
     return MQTT_CODE_SUCCESS;
 }
@@ -878,6 +968,7 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
     PQC_WolfMQTTBuildOnlyStatus second;
     int reconnect_result=MQTT_CODE_SUCCESS;
     bool reconnect_attempted=false;
+#if PQC_TLS_COMPILED
     if (PQC_WolfMQTT_TLSRequested()) {
         int wolfssl_init_result = wolfSSL_Init();
         PQC_WolfMQTT_DiagnosticCode("wolfssl_init", wolfssl_init_result, 0);
@@ -885,9 +976,12 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
             PQC_WolfMQTT_DiagnosticWolfSSLState("wolfssl_init");
         }
     }
+#endif
     result=PQC_WolfMQTT_RunExchangeCycle(&first,0U);
     if((result==MQTT_CODE_SUCCESS)&&(PQC_MQTT_RECONNECT_ATTEMPTS>0)) { reconnect_attempted=true; reconnect_result=PQC_WolfMQTT_RunExchangeCycle(&second,1U); } else memset(&second,0,sizeof(second));
+#if PQC_TLS_COMPILED
     if (PQC_WolfMQTT_TLSRequested()) (void)wolfSSL_Cleanup();
+#endif
     written=snprintf(buffer,size,
       "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_context=%s tls_session=%s tls_peer_identity=%s tls_handshake=%s pqc_group_config=%s ca_load=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
       context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e"),

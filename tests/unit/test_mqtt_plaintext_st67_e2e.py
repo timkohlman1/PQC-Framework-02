@@ -123,3 +123,39 @@ def test_mqtt_reconnect_locals_are_scoped_to_enabled_builds():
         "bool reconnect_attempted=false;",
     ):
         assert function.index(declaration) > disabled_guard
+
+
+def test_plaintext_build_excludes_wolfssl_tls_sources_and_link_target():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+
+    assert 'if(PQC_TLS_ALGORITHM_MODE STREQUAL "plaintext")' in cmake
+    assert "set(PQC_TLS_COMPILED 0)" in cmake
+    assert "if(PQC_TLS_COMPILED)" in cmake
+    assert "Core/Src/pqc_wolfssl_build_only.c" in cmake
+    assert "Core/Src/pqc_wolfssl_transport.c" in cmake
+    assert "pqc_wolfssl_stm32_build_only" in cmake
+
+    source_block = cmake.split("target_sources(${CMAKE_PROJECT_NAME} PRIVATE", 1)[1]
+    unconditional_sources = source_block.split("if(PQC_TLS_COMPILED)", 1)[0]
+    assert "pqc_wolfssl_build_only.c" not in unconditional_sources
+    assert "pqc_wolfssl_transport.c" not in unconditional_sources
+
+
+def test_plaintext_wolfmqtt_transport_compiles_without_wolfssl_headers_or_calls():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    include_guard = source.index("#if PQC_TLS_COMPILED")
+    wolfssl_include = source.index('#include "wolfssl/ssl.h"')
+    include_guard_end = source.index("#endif", wolfssl_include)
+    assert include_guard < wolfssl_include < include_guard_end
+    assert "#if PQC_TLS_COMPILED\n    if (c->tls_requested) return wolfSSL_read" in source
+    assert "#if PQC_TLS_COMPILED\n    if (c->tls_requested) return wolfSSL_write" in source
+    assert "#if PQC_TLS_COMPILED\n    if ((c != NULL) && (c->tls != NULL))" in source
+
+
+def test_plaintext_main_omits_tls_smoke_and_transport_diagnostics():
+    source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "#if PQC_TLS_COMPILED\n#include \"pqc_wolfssl_build_only.h\"" in source
+    assert '#if PQC_TLS_COMPILED\n  APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in source
+    assert '#if PQC_TLS_COMPILED\n  APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in source

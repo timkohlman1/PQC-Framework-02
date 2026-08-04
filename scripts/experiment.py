@@ -2956,6 +2956,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         profile=signing_profile,
         repo_root=repo_root,
         results_root=result_dir / "prerequisites",
+        expected_input_elf_sha256=getattr(build_result, "firmware_sha256", None),
     )
     _record_wolfboot_run_stage(
         result_dir=result_dir,

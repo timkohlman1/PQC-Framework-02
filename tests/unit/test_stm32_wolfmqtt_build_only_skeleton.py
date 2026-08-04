@@ -192,3 +192,26 @@ def test_wolfmqtt_runtime_status_buffer_fits_plaintext_evidence_line():
         "end_to_end=%s",
     ):
         assert field in source
+
+
+def test_negotiated_tls_group_comparison_is_case_and_separator_insensitive():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    assert "PQC_WolfMQTT_TLSGroupNamesMatch" in source
+    assert "PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name)" in source
+    assert "strcmp(curve_name, PQC_TLS_GROUP_NAME)" not in source
+    assert "configured[configured_index] == '-'" in source
+    assert "negotiated[negotiated_index] == '_'" in source
+    assert "configured_character >= (unsigned char)'A'" in source
+
+
+def test_negotiated_tls_group_mismatch_still_fails_closed():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    comparison_start = source.index("static bool PQC_WolfMQTT_TLSGroupNamesMatch")
+    comparison_end = source.index("static void PQC_WolfMQTT_DiagnosticCode", comparison_start)
+    comparison = source[comparison_start:comparison_end]
+
+    assert "if (configured_character != negotiated_character)" in comparison
+    assert "return false;" in comparison
+    assert "if (!socket_context->pqc_group_negotiated)" in source
+    assert "return MQTT_CODE_ERROR_TLS_CONNECT;" in source

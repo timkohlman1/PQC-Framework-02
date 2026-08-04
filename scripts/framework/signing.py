@@ -787,6 +787,7 @@ def execute_application_signing(
     results_root: Path | str = "results",
     runner: SigningRunner = default_signing_runner,
     timestamp: datetime | None = None,
+    expected_input_elf_sha256: str | None = None,
 ) -> ApplicationSigningResult:
     """Execute a configured local application-signing workflow and record evidence."""
 
@@ -841,15 +842,25 @@ def execute_application_signing(
     fingerprint_evidence = _fingerprint_evidence(repo_root=repo_root_path, profile=profile)
     input_provenance_error: str | None = None
     if _optional_bool(profile, "require_input_build_provenance") and input_elf_path is not None and input_elf_path.is_file():
-        input_scope = f"cmake-{str(profile.get('build_preset', 'Release'))}"
-        try:
-            require_recorded_artifact(
-                repo_root=repo_root_path,
-                scope=input_scope,
-                artifact_path=input_elf_path,
-            )
-        except Exception as exc:
-            input_provenance_error = str(exc)
+        if expected_input_elf_sha256 is not None:
+            actual_input_elf_sha256 = calculate_file_sha256(input_elf_path)
+            if actual_input_elf_sha256 != expected_input_elf_sha256:
+                input_provenance_error = (
+                    "Configured input ELF does not match the ELF produced by the immediately "
+                    "preceding build invocation: "
+                    f"expected SHA-256 {expected_input_elf_sha256}, "
+                    f"actual SHA-256 {actual_input_elf_sha256}"
+                )
+        else:
+            input_scope = f"cmake-{str(profile.get('build_preset', 'Release'))}"
+            try:
+                require_recorded_artifact(
+                    repo_root=repo_root_path,
+                    scope=input_scope,
+                    artifact_path=input_elf_path,
+                )
+            except Exception as exc:
+                input_provenance_error = str(exc)
 
     signing_identity = build_identity(
         workflow="application_signing",

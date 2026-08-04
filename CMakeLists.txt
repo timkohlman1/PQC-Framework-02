@@ -69,6 +69,14 @@ set(PQC_TLS_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_tls_algorithm_
 if(EXISTS "${PQC_TLS_SELECTION_FILE}")
     include("${PQC_TLS_SELECTION_FILE}")
 endif()
+
+if(PQC_TLS_ALGORITHM_MODE STREQUAL "plaintext")
+    set(PQC_TLS_COMPILED 0)
+else()
+    set(PQC_TLS_COMPILED 1)
+endif()
+
+message("TLS compiled: " ${PQC_TLS_COMPILED})
 message("TLS algorithm mode: " ${PQC_TLS_ALGORITHM_MODE})
 message("TLS RSA/RSA-PSS: " ${PQC_TLS_ENABLE_RSA} "/" ${PQC_TLS_ENABLE_RSA_PSS})
 message("TLS group: " ${PQC_TLS_GROUP_NAME} " (" ${PQC_TLS_GROUP_ID} ")")
@@ -89,100 +97,102 @@ add_subdirectory(cmake/stm32cubemx)
 # needed to initialize wolfSSL, create/free a TLS 1.2 client WOLFSSL_CTX, and
 # clean up global state. No transport, certificate loading, handshake, MQTT,
 # Wi-Fi, or ST67W61M1 backend is enabled by this target.
-set(PQC_WOLFSSL_SOURCE_DIR
-    "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
-    CACHE PATH
-    "Repository-local wolfSSL source directory used for Phase M6.1 STM32 TLS-context smoke coverage"
-)
-
-set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/internal.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/keys.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/ssl.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/tls.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/tls13.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/src/wolfio.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/aes.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/asn.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/coding.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/kdf.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/logging.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sp_int.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
-    "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
-)
-
-
-if(PQC_TLS_ENABLE_ECC)
-    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/ecc.c"
+if(PQC_TLS_COMPILED)
+    set(PQC_WOLFSSL_SOURCE_DIR
+        "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
+        CACHE PATH
+        "Repository-local wolfSSL source directory used for Phase M6.1 STM32 TLS-context smoke coverage"
     )
-endif()
 
-if(PQC_TLS_ENABLE_CURVE25519)
-    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/curve25519.c"
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/fe_low_mem.c"
+    set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/internal.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/keys.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/ssl.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/tls.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/tls13.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/src/wolfio.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/aes.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/asn.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/coding.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hash.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/hmac.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/kdf.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/logging.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/memory.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/random.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha256.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sp_int.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_port.c"
+        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wolfmath.c"
     )
-endif()
-
-if(PQC_TLS_ENABLE_RSA)
-    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/rsa.c"
-    )
-endif()
-
-if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
-    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
-    )
-endif()
-
-if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
-    list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
-        "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
-    )
-endif()
 
 
-foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
-    if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
-        message(FATAL_ERROR
-            "Phase M6.1 wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
-            "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+    if(PQC_TLS_ENABLE_ECC)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/ecc.c"
         )
     endif()
-endforeach()
 
-add_library(pqc_wolfssl_stm32_build_only STATIC
-    ${PQC_WOLFSSL_TLS_CONTEXT_SOURCES}
-)
+    if(PQC_TLS_ENABLE_CURVE25519)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/curve25519.c"
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/fe_low_mem.c"
+        )
+    endif()
 
-target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC
-    Core/Inc
-    "${PQC_WOLFSSL_SOURCE_DIR}"
-)
+    if(PQC_TLS_ENABLE_RSA)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/rsa.c"
+        )
+    endif()
 
-target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
-    WOLFSSL_USER_SETTINGS
-    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
-    PQC_WOLFSSL_SOURCE_BUILD=1
-    PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
-    PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
-    PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
-    PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
-    PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
-    PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
-    PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
-    PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
-    PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
-)
+    if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
+        )
+    endif()
+
+    if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
+        )
+    endif()
+
+
+    foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
+        if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
+            message(FATAL_ERROR
+                "Phase M6.1 wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
+                "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+            )
+        endif()
+    endforeach()
+
+    add_library(pqc_wolfssl_stm32_build_only STATIC
+        ${PQC_WOLFSSL_TLS_CONTEXT_SOURCES}
+    )
+
+    target_include_directories(pqc_wolfssl_stm32_build_only PUBLIC
+        Core/Inc
+        "${PQC_WOLFSSL_SOURCE_DIR}"
+    )
+
+    target_compile_definitions(pqc_wolfssl_stm32_build_only PUBLIC
+        WOLFSSL_USER_SETTINGS
+        PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
+        PQC_WOLFSSL_SOURCE_BUILD=1
+        PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
+        PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+        PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
+        PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+        PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
+        PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
+        PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+        PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
+        PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
+    )
+endif()
 
 
 
@@ -220,8 +230,13 @@ add_library(pqc_wolfmqtt_stm32_build_only STATIC
 target_include_directories(pqc_wolfmqtt_stm32_build_only PUBLIC
     Core/Inc
     "${PQC_WOLFMQTT_SOURCE_DIR}"
-    "${PQC_WOLFSSL_SOURCE_DIR}"
 )
+
+if(PQC_TLS_COMPILED)
+    target_include_directories(pqc_wolfmqtt_stm32_build_only PUBLIC
+        "${PQC_WOLFSSL_SOURCE_DIR}"
+    )
+endif()
 
 target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
     BUILDING_WOLFMQTT
@@ -238,41 +253,56 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
     Core/Src/pqc_network_interface.c
-    Core/Src/pqc_wolfssl_build_only.c
-    Core/Src/pqc_wolfssl_transport.c
     Core/Src/pqc_wolfmqtt_build_only.c
     # Add user sources here
 )
 
+if(PQC_TLS_COMPILED)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        Core/Src/pqc_wolfssl_build_only.c
+        Core/Src/pqc_wolfssl_transport.c
+    )
+endif()
+
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc
-    "${PQC_WOLFSSL_SOURCE_DIR}"
     "${PQC_WOLFMQTT_SOURCE_DIR}"
     # Add user defined include paths
 )
 
+if(PQC_TLS_COMPILED)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        "${PQC_WOLFSSL_SOURCE_DIR}"
+    )
+endif()
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    PQC_WOLFSSL_BUILD_ONLY=1
-    WOLFSSL_USER_SETTINGS
-    PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
-    PQC_WOLFSSL_SOURCE_BUILD=1
-    PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
-    PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
-    PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
-    PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
-    PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
-    PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
-    PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
-    PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
-    PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
+    PQC_TLS_COMPILED=${PQC_TLS_COMPILED}
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=${STM32_APP_VECTOR_OFFSET}
     # Add user defined symbols
 )
+
+if(PQC_TLS_COMPILED)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        WOLFSSL_USER_SETTINGS
+        PQC_STM32_APP_WOLFSSL_USER_SETTINGS=1
+        PQC_WOLFSSL_SOURCE_BUILD=1
+        PQC_TLS_ENABLE_RSA=$<BOOL:${PQC_TLS_ENABLE_RSA}>
+        PQC_TLS_ENABLE_RSA_PSS=$<BOOL:${PQC_TLS_ENABLE_RSA_PSS}>
+        PQC_TLS_ENABLE_ECC=$<BOOL:${PQC_TLS_ENABLE_ECC}>
+        PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+        PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
+        PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
+        PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+        PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
+        PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
+    )
+endif()
 
 if(NOT STM32_APP_VECTOR_OFFSET STREQUAL "0x00000000")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
@@ -290,8 +320,13 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
-    pqc_wolfssl_stm32_build_only
     pqc_wolfmqtt_stm32_build_only
 
     # Add user defined libraries
 )
+
+if(PQC_TLS_COMPILED)
+    target_link_libraries(${CMAKE_PROJECT_NAME}
+        pqc_wolfssl_stm32_build_only
+    )
+endif()

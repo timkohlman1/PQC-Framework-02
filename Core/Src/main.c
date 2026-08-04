@@ -26,8 +26,13 @@
 #include "lwip.h"
 #include "pqc_wifi_config.h"
 #include "pqc_network_interface.h"
+#ifndef PQC_TLS_COMPILED
+#define PQC_TLS_COMPILED 1
+#endif
+#if PQC_TLS_COMPILED
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
+#endif
 #include "pqc_wolfmqtt_build_only.h"
 #include "w6x_api.h"
 #include "spi_iface.h"
@@ -931,6 +936,7 @@ static void APP_PrintNetworkInterfaceStatus(void)
   }
 }
 
+#if PQC_TLS_COMPILED
 static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_running)
 {
   static char smoke_line[640];
@@ -945,6 +951,8 @@ static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_run
     APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
   }
 }
+
+#endif
 
 void PQC_WolfMQTT_DiagnosticMarker(const char *marker)
 {
@@ -966,6 +974,7 @@ static void APP_PrintWolfMQTTRuntimeStatus(void)
   }
 }
 
+#if PQC_TLS_COMPILED
 static void APP_PrintWolfSSLTransportStatus(void)
 {
   char status_line[384];
@@ -981,6 +990,8 @@ static void APP_PrintWolfSSLTransportStatus(void)
     APP_UART_WriteString("wolfSSL transport boundary: evidence=unavailable-transport-only boundary=present callbacks=present network_boundary=present connect=unavailable read=unavailable write=unavailable socket_io=not-performed tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable st67w61m1=unavailable end_to_end=unavailable reason=format_failed\r\n");
   }
 }
+
+#endif
 
 static void APP_PrintFreeRTOSSchedulerStarting(void)
 {
@@ -1199,8 +1210,10 @@ int main(void)
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
   APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);
   APP_PrintNetworkInterfaceStatus();
+#if PQC_TLS_COMPILED
   APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);
   APP_PrintWolfSSLTransportStatus();
+#endif
 
   /* USER CODE END 2 */
 
@@ -1798,7 +1811,9 @@ void StartNetworkTask(void *argument)
   APP_RunST67SPIBringup();
   network_ready = app_st67_network_ready;
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
+#if PQC_TLS_COMPILED
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
+#endif
   if (network_ready)
   {
     APP_PrintWolfMQTTRuntimeStatus();
