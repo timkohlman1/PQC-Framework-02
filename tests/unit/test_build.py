@@ -1100,3 +1100,11 @@ def test_execute_build_always_invokes_configure_and_build(tmp_path):
     assert generated_state["artifacts"][0]["path"] == "build/Release/stm32_basic_hal1.elf"
     assert generated_state["artifacts"][0]["sha256"] == manifest["firmware"]["sha256"]
     assert generated_state["identity"]["input_fingerprint"]["status"] == "disabled"
+
+
+def test_failed_build_output_is_surfaced_in_ci_console():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert "def _print_build_failure_diagnostics(" in source
+    assert "Failed {stage} diagnostics" in source
+    assert "lines[-max_lines:]" in source
+    assert source.count("_print_build_failure_diagnostics(build_result)") >= 2

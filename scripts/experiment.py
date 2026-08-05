@@ -148,6 +148,36 @@ def _warning_count_from_build_result(build_result: Any) -> int | None:
     return sum(1 for line in text.splitlines() if "warning:" in line.lower())
 
 
+def _print_build_failure_diagnostics(build_result: Any, max_lines: int = 80) -> None:
+    """Print the tail of failed configure/build output to the CI console."""
+    if getattr(build_result, "return_code", 0) == 0:
+        return
+
+    execution = getattr(build_result, "build", None)
+    stage = "build"
+    if execution is None or getattr(execution, "return_code", 0) == 0:
+        execution = getattr(build_result, "configure", None)
+        stage = "configure"
+    if execution is None:
+        return
+
+    combined = "\n".join(
+        (
+            str(getattr(execution, "stdout", "")),
+            str(getattr(execution, "stderr", "")),
+        )
+    )
+    lines = [line for line in combined.splitlines() if line.strip()]
+    if not lines:
+        return
+
+    print("", file=sys.stderr)
+    print(f"Failed {stage} diagnostics (last {min(len(lines), max_lines)} lines)", file=sys.stderr)
+    print("-" * 64, file=sys.stderr)
+    for line in lines[-max_lines:]:
+        print(line, file=sys.stderr)
+
+
 def _build_decision_detail(build_result: Any) -> str:
     if getattr(build_result, "build_skipped", False):
         reason = getattr(build_result, "build_skip_reason", None) or "matching reusable build is valid"
@@ -2046,6 +2076,8 @@ def run_build_command(args: argparse.Namespace) -> int:
     else:
         outcome = "completed" if build_result.return_code == 0 else "failed"
         emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")
+    if build_result.return_code != 0:
+        _print_build_failure_diagnostics(build_result)
     if getattr(build_result, "build_skipped", False):
         print("Firmware build skipped")
     else:
@@ -3144,6 +3176,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     else:
         outcome = "completed" if build_result.return_code == 0 else "failed"
         emit_progress("build", f"Application compilation {outcome}", detail=f"{warning_text}; return code: {build_result.return_code}.")
+    if build_result.return_code != 0:
+        _print_build_failure_diagnostics(build_result)
 
     if build_result.return_code != 0:
         _record_run_summary(

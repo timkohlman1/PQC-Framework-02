@@ -28,6 +28,9 @@
 #ifndef PQC_TLS_ENABLE_ECC
 #define PQC_TLS_ENABLE_ECC 1
 #endif
+#ifndef PQC_TLS_ENABLE_CERT_ECC
+#define PQC_TLS_ENABLE_CERT_ECC 0
+#endif
 #ifndef PQC_TLS_ECC_BITS
 #define PQC_TLS_ECC_BITS 256
 #endif
@@ -61,7 +64,7 @@
 #define WOLFSSL_NO_ML_KEM_768
 #endif
 #endif
-#if PQC_TLS_ENABLE_ECC
+#if PQC_TLS_ENABLE_ECC || PQC_TLS_ENABLE_CERT_ECC
 #define HAVE_ECC
 #define ECC_MIN_KEY_SZ PQC_TLS_ECC_BITS
 #if PQC_TLS_ECC_BITS == 384

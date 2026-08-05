@@ -63,8 +63,9 @@ def test_profile_resolves_only_selected_group(group, auth):
 
 def test_cmake_conditionally_includes_algorithm_sources():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-    assert "if(PQC_TLS_ENABLE_ECC)" in cmake
+    assert "if(PQC_TLS_ENABLE_ECC OR PQC_TLS_ENABLE_CERT_ECC)" in cmake
     assert "wolfcrypt/src/ecc.c" in cmake
+    assert "PQC_TLS_ENABLE_CERT_ECC" in cmake
     assert "if(PQC_TLS_ENABLE_CURVE25519)" in cmake
     assert "wolfcrypt/src/curve25519.c" in cmake
     assert "wolfcrypt/src/fe_low_mem.c" in cmake

@@ -1,5 +1,6 @@
 from pathlib import Path
 import pytest
+from scripts.framework.build import _certificate_requires_ecc
 from scripts.framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 
 
@@ -48,3 +49,18 @@ def test_settings_disable_tls12_for_tls13_only_group_pruning():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
     assert "#define WOLFSSL_TLS13" in settings
     assert "#define WOLFSSL_NO_TLS12" in settings
+
+
+def test_stepca_classical_requires_certificate_ecc_independently_of_x25519_kex():
+    bundle = _bundle("pqc_hybrid_tls_mutual", "X25519MLKEM768")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["ecc"] is False
+    assert selected["curve25519"] is True
+    assert _certificate_requires_ecc(bundle) is True
+
+
+def test_plaintext_does_not_enable_certificate_ecc():
+    bundle = _bundle("plaintext", "none")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
+    assert _certificate_requires_ecc(bundle) is False
