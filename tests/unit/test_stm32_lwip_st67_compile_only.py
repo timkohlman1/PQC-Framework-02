@@ -414,7 +414,12 @@ def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
         "static int32_t spi_txrx(",
     )
 
-    assert helper.count("spi_port_is_ready() == 1") == 2
+    ready_checks = [
+        index
+        for index in range(len(helper))
+        if helper.startswith("spi_port_is_ready() == 1", index)
+    ]
+    assert len(ready_checks) >= 2
     assert (
         "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
         in helper
@@ -422,7 +427,7 @@ def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
     assert helper.index("spi_port_is_ready() == 1") < helper.index(
         "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
     )
-    assert helper.rindex("spi_port_is_ready() == 1") > helper.index(
+    assert ready_checks[-1] > helper.index(
         "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
     )
     assert helper.count(

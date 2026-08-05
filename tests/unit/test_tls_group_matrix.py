@@ -75,7 +75,8 @@ def test_cmake_conditionally_includes_algorithm_sources():
 def test_runtime_forces_and_verifies_selected_group():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     assert "int groups[] = { PQC_TLS_GROUP_ID };" in source
-    assert "strcmp(curve_name, PQC_TLS_GROUP_NAME) == 0" in source
+    assert "PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name)" in source
+    assert "configured_group=%s negotiated_group=%s key_exchange_group=%s" in source
 
 
 def test_tls_profiles_use_single_line_scalar_descriptions():

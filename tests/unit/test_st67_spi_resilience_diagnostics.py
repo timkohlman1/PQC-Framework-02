@@ -84,3 +84,30 @@ def test_spi_recovery_helpers_are_declared_before_use() -> None:
 
     assert clear_decl < recovery
     assert drain_decl < recovery
+
+
+
+def test_transaction_ready_event_is_validated_against_live_gpio_level():
+    source = SPI_IFACE.read_text(encoding="utf-8")
+    wait_start = source.index("static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)\n{")
+    wait_end = source.index("static void spi_drain_hw_xfer_done", wait_start)
+    wait_body = source[wait_start:wait_end]
+
+    assert "const TickType_t timeout_ticks" in wait_body
+    assert "const TickType_t start_tick = xTaskGetTickCount()" in wait_body
+    assert "while (true)" in wait_body
+    assert wait_body.count("spi_port_is_ready() == 1") >= 3
+    assert "xEventGroupWaitBits(engine->event, SPI_EVT_TXN_RDY" in wait_body
+    assert "The event was stale" in wait_body
+    assert "remaining = timeout_ticks - elapsed" in wait_body
+
+
+def test_skip_first_wait_requires_ready_gpio_to_still_be_asserted():
+    source = SPI_IFACE.read_text(encoding="utf-8")
+    signature = "static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)\n{"
+    do_xfer_start = source.index(signature)
+    task_start = source.index("static void spi_xfer_engine_task", do_xfer_start)
+    do_xfer = source[do_xfer_start:task_start]
+
+    assert "wait_txn_rdy = (spi_port_is_ready() == 1) ? 0 : 1;" in do_xfer
+    assert "wait_txn_rdy = 0;" not in do_xfer

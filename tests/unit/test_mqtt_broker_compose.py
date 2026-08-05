@@ -427,13 +427,21 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro" in compose
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "OPENSSL_MODULES" not in compose
-    assert "Groups = SecP256r1MLKEM768" in openssl_config
+    configured_groups = {
+        group
+        for line in openssl_config.splitlines()
+        if line.strip().startswith("Groups =")
+        for group in line.split("=", 1)[1].strip().split(":")
+    }
+    assert configured_groups == {
+        "X25519MLKEM768",
+        "SecP256r1MLKEM768",
+        "SecP384r1MLKEM1024",
+    }
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
     assert "--tls-version tlsv1.3" in compose
     assert "--cafile /tmp/mosquitto-certs/ca.crt" in compose
-    assert "Groups = SecP256r1MLKEM768" in openssl_config
     assert "oqsprovider" not in openssl_config
-    assert "Groups = SecP256r1MLKEM768" in openssl_config
 
 def test_mqtt_control_script_has_provision_and_validation_subcommands():
     module = _load_ctl_module()
@@ -766,7 +774,18 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
 
 
 def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
+    expected_groups = {
+        "X25519MLKEM768",
+        "SecP256r1MLKEM768",
+        "SecP384r1MLKEM1024",
+    }
     for profile in ("oqs", "oqs-mtls"):
         config = _read(BROKER_ROOT / "config" / profile / "openssl.cnf")
-        assert "Groups = SecP256r1MLKEM768" in config
+        configured_groups = {
+            group
+            for line in config.splitlines()
+            if line.strip().startswith("Groups =")
+            for group in line.split("=", 1)[1].strip().split(":")
+        }
+        assert configured_groups == expected_groups
         assert "oqsprovider" not in config
