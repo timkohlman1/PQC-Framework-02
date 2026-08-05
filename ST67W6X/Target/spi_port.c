@@ -92,9 +92,19 @@ static void spi_port_diag_begin(uint16_t len, uint8_t dma, uint8_t tx_present)
   spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
 }
 
+static uint32_t spi_port_tick_from_isr(void)
+{
+  if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+  {
+    return HAL_GetTick();
+  }
+
+  return (uint32_t)xTaskGetTickCountFromISR();
+}
+
 static void spi_port_diag_complete(uint8_t callback)
 {
-  spi_port_diag.completed_tick = (uint32_t)xTaskGetTickCountFromISR();
+  spi_port_diag.completed_tick = spi_port_tick_from_isr();
   spi_port_diag.callback_count++;
   spi_port_diag.last_callback = callback;
   spi_port_diag.active = 0U;

@@ -183,6 +183,25 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "APP_ST67ReadyDiagnosticSnapshotGet" in main_h
     assert "static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;" in main_c
     assert "xTaskGetTickCountFromISR()" in main_c
+    assert "HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);" in main_c
+    assert "static void APP_EnableST67EXTIInterrupt(void)" in main_c
+    assert "__HAL_GPIO_EXTI_CLEAR_IT(SPI_RDY_Pin);" in main_c
+    assert "__HAL_GPIO_EXTI_CLEAR_IT(USER_BUTTON_Pin);" in main_c
+    assert "HAL_NVIC_ClearPendingIRQ(EXTI15_10_IRQn);" in main_c
+    assert "HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);" in main_c
+    assert "xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED" in main_c
+    gpio_init_start = main_c.index("static void MX_GPIO_Init(void)\n{")
+    gpio_init_end = main_c.index("/* USER CODE BEGIN 4 */", gpio_init_start)
+    gpio_init_body = main_c[gpio_init_start:gpio_init_end]
+    assert "HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);" not in gpio_init_body
+    bringup_start = main_c.index("static void APP_RunST67SPIBringup(void)\n{")
+    bringup_end = main_c.index("static void APP_PrintLwIPRuntimeSmoke", bringup_start)
+    bringup_body = main_c[bringup_start:bringup_end]
+    assert bringup_body.index("APP_EnableST67EXTIInterrupt();") < bringup_body.index("status = W6X_Init();")
+    spi_port_c = _read("ST67W6X/Target/spi_port.c")
+    assert "static uint32_t spi_port_tick_from_isr(void)" in spi_port_c
+    assert "return HAL_GetTick();" in spi_port_c
+    assert "spi_port_diag.completed_tick = spi_port_tick_from_isr();" in spi_port_c
     assert "app_st67_ready_diagnostic.irq_count++;" in main_c
     assert "app_st67_ready_diagnostic.rising_count++;" in main_c
     assert "app_st67_ready_diagnostic.falling_count++;" in main_c
