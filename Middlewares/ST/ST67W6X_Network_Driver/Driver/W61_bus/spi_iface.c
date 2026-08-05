@@ -605,35 +605,48 @@ static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t e
 
 static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)
 {
-  /*
-   * SPI_RDY is a level as well as an interrupt source. The transfer task can
-   * consume SPI_EVT_TXN_RDY while selecting work, or the rising edge can occur
-   * immediately before this nested wait. In either case, waiting only for a
-   * fresh event can block while the physical READY input is already asserted.
-   */
-  if (spi_port_is_ready() == 1)
-  {
-    (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
-    return 1;
-  }
-
-  if (spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) != 0)
-  {
-    return 1;
-  }
+  const TickType_t timeout_ticks = pdMS_TO_TICKS(SPI_WAIT_TXN_TIMEOUT_MS);
+  const TickType_t start_tick = xTaskGetTickCount();
 
   /*
-   * Close the check/wait race in the opposite direction: an edge arriving at
-   * timeout may not be represented in the returned event bits yet, but the
-   * asserted GPIO level is sufficient to proceed with the transaction.
+   * SPI_EVT_TXN_RDY records an edge, but the peer can deassert SPI_RDY before
+   * the transfer task runs. Treat the GPIO level as authoritative and use the
+   * event only as a wake-up hint. This prevents clocking a transaction from a
+   * stale READY event after the physical line has returned low.
    */
-  if (spi_port_is_ready() == 1)
+  while (true)
   {
-    (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
-    return 1;
-  }
+    TickType_t elapsed;
+    TickType_t remaining;
+    EventBits_t bits;
 
-  return 0;
+    if (spi_port_is_ready() == 1)
+    {
+      (void)spi_clear_event(engine, SPI_EVT_TXN_RDY);
+      return 1;
+    }
+
+    elapsed = xTaskGetTickCount() - start_tick;
+    if (elapsed >= timeout_ticks)
+    {
+      return 0;
+    }
+    remaining = timeout_ticks - elapsed;
+
+    bits = xEventGroupWaitBits(engine->event, SPI_EVT_TXN_RDY,
+                               pdTRUE, pdFALSE, remaining);
+    if ((bits & SPI_EVT_TXN_RDY) == 0U)
+    {
+      return (spi_port_is_ready() == 1) ? 1 : 0;
+    }
+
+    if (spi_port_is_ready() == 1)
+    {
+      return 1;
+    }
+
+    /* The event was stale. Continue waiting within the original timeout. */
+  }
 }
 
 static void spi_drain_hw_xfer_done(struct spi_xfer_engine *engine)
@@ -1087,11 +1100,11 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
       spi_trace(SPI_TP_ASSERT_CS, "Assert CS\n");
       (void)spi_port_set_cs(1);
 
-      /* Transfer one packet */
+      /* Transfer one packet. A consumed READY event may already be stale. */
       if ((flags & SPI_XFER_F_SKIP_FIRST_TXN_WAIT) != 0U)
       {
         flags &= ~SPI_XFER_F_SKIP_FIRST_TXN_WAIT;
-        wait_txn_rdy = 0;
+        wait_txn_rdy = (spi_port_is_ready() == 1) ? 0 : 1;
       }
       else
       {

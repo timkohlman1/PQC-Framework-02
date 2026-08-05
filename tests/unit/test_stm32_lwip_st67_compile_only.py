@@ -414,20 +414,19 @@ def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
         "static int32_t spi_txrx(",
     )
 
-    assert helper.count("spi_port_is_ready() == 1") == 2
-    assert (
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-        in helper
+    ready_checks = [
+        index
+        for index in range(len(helper))
+        if helper.startswith("spi_port_is_ready() == 1", index)
+    ]
+    assert len(ready_checks) >= 2
+    wait_index = helper.index(
+        "xEventGroupWaitBits(engine->event, SPI_EVT_TXN_RDY,"
     )
-    assert helper.index("spi_port_is_ready() == 1") < helper.index(
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-    )
-    assert helper.rindex("spi_port_is_ready() == 1") > helper.index(
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-    )
-    assert helper.count(
-        "spi_clear_event(engine, SPI_EVT_TXN_RDY)"
-    ) == 2
+    assert "pdTRUE, pdFALSE, remaining" in helper
+    assert helper.index("spi_port_is_ready() == 1") < wait_index
+    assert ready_checks[-1] > wait_index
+    assert "spi_clear_event(engine, SPI_EVT_TXN_RDY)" in helper
     assert "(spi_wait_txn_ready(engine) == 0)" in source
     assert (
         "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0"
