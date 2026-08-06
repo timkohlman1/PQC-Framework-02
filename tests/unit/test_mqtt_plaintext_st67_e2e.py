@@ -153,6 +153,23 @@ def test_plaintext_wolfmqtt_transport_compiles_without_wolfssl_headers_or_calls(
     assert "#if PQC_TLS_COMPILED\n    if ((c != NULL) && (c->tls != NULL))" in source
 
 
+def test_plaintext_wolfmqtt_shared_network_helpers_are_not_tls_guarded():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    diagnostic = source.index("static void PQC_WolfMQTT_DiagnosticCode")
+    dns = source.index("static void PQC_WolfMQTT_DiagnosticDnsServer")
+    resolve = source.index("static int PQC_WolfMQTT_ResolveBroker")
+    rng_guard = source.index(
+        "#if PQC_TLS_COMPILED\nstatic int PQC_WolfSSL_WaitForRegisterBit"
+    )
+
+    assert diagnostic < dns < resolve < rng_guard
+    assert (
+        "#if PQC_TLS_COMPILED\nstatic bool PQC_WolfMQTT_MutualTLSRequested"
+        in source
+    )
+
+
 def test_plaintext_main_omits_tls_smoke_and_transport_diagnostics():
     source = Path("Core/Src/main.c").read_text(encoding="utf-8")
 

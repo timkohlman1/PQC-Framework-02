@@ -17,6 +17,8 @@
 #define PQC_TLS_COMPILED 1
 #endif
 
+#include "wolfmqtt/mqtt_client.h"
+
 #if PQC_TLS_COMPILED
 /* wolfSSL uses RNG as a legacy type alias. STM32 CMSIS uses the same name
  * for the hardware peripheral pointer. Drop the CMSIS macro before wolfSSL
@@ -25,7 +27,6 @@
 #undef RNG
 #endif
 
-#include "wolfmqtt/mqtt_client.h"
 #include "wolfssl/ssl.h"
 #include "wolfssl/wolfcrypt/random.h"
 #endif
@@ -94,7 +95,6 @@ typedef struct {
 
 static bool s_rng_ready;
 
-#if PQC_TLS_COMPILED
 static bool PQC_WolfMQTT_TLSGroupNamesMatch(const char *configured, const char *negotiated)
 {
     size_t configured_index = 0U;
@@ -288,6 +288,7 @@ static int PQC_WolfMQTT_ResolveBroker(const char *host, struct sockaddr_in *addr
     return result;
 }
 
+#if PQC_TLS_COMPILED
 static int PQC_WolfSSL_WaitForRegisterBit(volatile uint32_t *reg, uint32_t mask)
 {
     uint32_t spins = PQC_WOLFSSL_RNG_READY_SPIN_LIMIT;
@@ -362,11 +363,13 @@ static bool PQC_WolfMQTT_PQCHybridRequested(void)
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
 }
 
+#if PQC_TLS_COMPILED
 static bool PQC_WolfMQTT_MutualTLSRequested(void)
 {
     return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
 }
+#endif
 
 #ifndef PQC_WOLFMQTT_TLS_IO_TRACE
 #define PQC_WOLFMQTT_TLS_IO_TRACE 0

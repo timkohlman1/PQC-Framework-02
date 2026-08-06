@@ -91,3 +91,26 @@ def test_tls_profiles_use_single_line_scalar_descriptions():
                 f"{path} contains a wrapped top-level description that the minimal "
                 "YAML loader interprets as an invalid mapping line"
             )
+
+
+def test_generated_tls_selection_records_independent_ecc_minimum_bits(tmp_path):
+    from scripts.framework.build import _write_tls_algorithm_selection
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "tls": {
+                    "mode": "classical_tls_server_auth",
+                    "key_exchange_group": "secp521r1",
+                    "server_signature_algorithm": "classical",
+                    "certificate_profile": "stepca-classical",
+                }
+            }
+        }
+    }
+    path, selected = _write_tls_algorithm_selection(bundle, tmp_path)
+    generated = path.read_text(encoding="utf-8")
+    assert selected["ecc_bits"] == 521
+    assert selected["ecc_min_bits"] == 256
+    assert "set(PQC_TLS_ECC_BITS 521)" in generated
+    assert "set(PQC_TLS_ECC_MIN_BITS 256)" in generated

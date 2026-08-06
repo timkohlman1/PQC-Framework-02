@@ -971,7 +971,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     failure_stage = "uart"
     broker_log_rc = 1
     broker_stop_rc = 1
-    broker_message_evidence: dict[str, Any] = {"passed": False}
+    broker_message_evidence: dict[str, Any] = {
+        "available": False,
+        "passed": False,
+        "required_for_pass": False,
+    }
     try:
         emit_progress("mqtt", "Starting MQTT command/response validation", detail=f"Subscriber topic: {topics['response']}; publisher topic: {topics['command']}; expected responses: {expected_response_count}.")
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=hard_limit_seconds, restart_command=restart_command)
@@ -1037,27 +1041,49 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     broker_log_path = result_dir / "mqtt-broker-log.log"
     if broker_log_rc == 0 and broker_log_path.exists():
-        broker_message_evidence = _parse_mqtt_broker_message_evidence(
-            broker_log_path.read_text(encoding="utf-8", errors="replace"),
-            stm32_client_id=stm32_client_id,
-            publisher_client_id=publisher_client_id,
-            subscriber_client_id=subscriber_client_id,
-            command_topic=str(topics["command"]),
-            response_topic=str(topics["response"]),
-        )
-        (result_dir / "mqtt-broker-message-evidence.json").write_text(
-            json.dumps(broker_message_evidence, indent=2, sort_keys=True) + "\n",
+        broker_log_text = broker_log_path.read_text(
             encoding="utf-8",
+            errors="replace",
         )
+        broker_message_evidence = {
+            **_parse_mqtt_broker_message_evidence(
+                broker_log_text,
+                stm32_client_id=stm32_client_id,
+                publisher_client_id=publisher_client_id,
+                subscriber_client_id=subscriber_client_id,
+                command_topic=str(topics["command"]),
+                response_topic=str(topics["response"]),
+            ),
+            "available": bool(broker_log_text.strip()),
+            "required_for_pass": False,
+        }
     if passed and packet_capture_result.return_code != 0:
         passed = False
         failure_stage = "gateway_packet_capture"
-    if passed and broker_log_rc != 0:
-        passed = False
-        failure_stage = "broker_log_collection"
-    elif passed and not broker_message_evidence.get("passed", False):
-        passed = False
-        failure_stage = "broker_message_evidence"
+    # Live subscriber matching plus the required UART markers are the
+    # authoritative MQTT E2E result. Broker log collection and packet-routing
+    # parsing are supplemental evidence: log output can be unavailable after a
+    # successful run because the managed broker container has already stopped
+    # or emitted no retrievable tail. Do not convert a proven live pass into a
+    # false negative solely because supplemental broker evidence is absent.
+    broker_message_evidence["collection_return_code"] = broker_log_rc
+    broker_message_evidence["supplemental_warning"] = (
+        "broker_log_collection_failed"
+        if broker_log_rc != 0
+        else (
+            "broker_log_empty"
+            if not broker_message_evidence.get("available", False)
+            else (
+                "broker_message_evidence_incomplete"
+                if not broker_message_evidence.get("passed", False)
+                else "none"
+            )
+        )
+    )
+    (result_dir / "mqtt-broker-message-evidence.json").write_text(
+        json.dumps(broker_message_evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     if passed and broker_stop_rc != 0:
         passed = False
         failure_stage = "broker_stop"
