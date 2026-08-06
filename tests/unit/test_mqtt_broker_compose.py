@@ -789,3 +789,17 @@ def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
         }
         assert configured_groups == expected_groups
         assert "oqsprovider" not in config
+
+def test_classical_profile_uses_ephemeral_runtime_and_stdout_logging():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    config = _read(BROKER_ROOT / "config" / "classical" / "mosquitto.conf")
+
+    assert "image: eclipse-mosquitto:2.1.2-alpine" in compose
+    assert "./data/classical:/mosquitto/data" not in compose
+    assert "./log/classical:/mosquitto/log" not in compose
+    assert "persistence false" in config
+    assert "persistence true" not in config
+    assert "log_dest stdout" in config
+    assert "log_dest file" not in config
+    assert "/mosquitto/log/mosquitto.log" not in config
+
