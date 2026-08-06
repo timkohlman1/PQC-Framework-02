@@ -1153,3 +1153,12 @@ def test_write_application_selection_rejects_unknown_application(tmp_path):
         assert "Unsupported STM32 MQTT application" in str(exc)
     else:
         raise AssertionError("unknown application should be rejected")
+
+
+def test_write_application_selection_supports_ready_metrics(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["application"] = "mqtt_ready_metrics"
+    path, application = build._write_application_selection(bundle, tmp_path, "Release")
+    assert application == "mqtt_ready_metrics"
+    assert 'set(PQC_STM32_MQTT_APPLICATION "mqtt_ready_metrics")' in path.read_text(encoding="utf-8")

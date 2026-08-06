@@ -148,3 +148,14 @@ Each TLS group has server-authentication and mutual-authentication profiles. The
 The same experiment profiles support `--boot-mode wolfboot --boot-algorithm <algorithm>`. Secure-boot selection is independent of the MQTT TLS key-exchange group.
 
 Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expectations alone. Compare retained UART heap-boundary and task stack high-water markers for each group, especially `SecP384r1MLKEM1024`; increase memory only when recorded minimum headroom violates the project threshold or allocation failures occur.
+
+### Ready-metrics MQTT application profiles
+
+The existing MQTT profiles under `configs/experiments/` retain the bounded `mqtt_validation` workflow. Equivalent profiles for the persistent ready/timing/memory workload are under `configs/experiments/applications/ready_metrics/`. For example:
+
+```powershell
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_plaintext_st67_e2e.yaml
+```
+
+Select the matching nested TLS profile to retain the same classical or post-quantum group and server-authentication or mutual-authentication mode while using `firmware.application: mqtt_ready_metrics`.

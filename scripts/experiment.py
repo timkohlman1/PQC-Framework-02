@@ -1357,7 +1357,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
     "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
 }
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
 
 
@@ -1841,13 +1841,17 @@ def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
 
     resolved_path = experiment_path.resolve()
 
-    if resolved_path.parent.name != "experiments":
+    experiments_root = next(
+        (parent for parent in resolved_path.parents if parent.name == "experiments"),
+        None,
+    )
+    if experiments_root is None or experiments_root.parent.name != "configs":
         raise ConfigError(
-            "Experiment config must live under configs/experiments/ for automatic "
-            "board and host resolution"
+            "Experiment config must live under configs/experiments/ (including "
+            "nested subfolders) for automatic board and host resolution"
         )
 
-    return resolved_path.parent.parent
+    return experiments_root.parent
 
 
 def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:

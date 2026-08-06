@@ -764,9 +764,7 @@ The framework does not infer stack or heap sufficiency from firmware size. Each 
 
 ## Selectable STM32 MQTT application fixture
 
-STM32 MQTT experiment profiles may select `firmware.application`. The current
-registered application is `mqtt_validation`; omitted values resolve to that
-application for compatibility with existing profiles. The selector changes only
+STM32 MQTT experiment profiles may select `firmware.application`. The registered applications are `mqtt_validation` and `mqtt_ready_metrics`; omitted values resolve to `mqtt_validation` for compatibility. MQTT ST67 end-to-end profiles select `mqtt_ready_metrics`. The selector changes only
 the MQTT workload source compiled into the firmware. FreeRTOS, lwIP, ST67 Wi-Fi,
 wolfMQTT/wolfSSL, broker orchestration, packet capture, flashing, and result
 evidence remain shared framework fixtures.
@@ -776,7 +774,7 @@ before CMake configure. CMake maps the registered identifier to one application
 source and fails on unknown identifiers. The selected application is recorded in
 build and generated-state evidence. `mqtt_validation` preserves the existing
 bounded smoke-test and command/response behaviour through the shared
-`PQC_MQTTApplicationFixture` callback interface. Future MQTT workloads must add a
+`PQC_MQTTApplicationFixture` callback interface. `mqtt_ready_metrics` keeps one MQTT session active, measures from immediately before TCP connect through successful MQTT CONNECT (therefore including the selected TLS handshake), publishes `ready`, publishes a JSON connection-timing result, then publishes JSON stack/heap metrics every five seconds. After the fifth metrics publication it emits the normal experiment-complete marker while the publishing loop continues indefinitely. Packet capture, TLS key logging, UART capture, and broker instrumentation remain shared. Future MQTT workloads must add a
 registered source implementation and application-specific runtime evidence; they
 must not bypass the shared network or orchestration fixtures.
 
@@ -812,3 +810,7 @@ buffer. In-place reversal is prohibited because it can corrupt clock, memory,
 IPv4, and other recorded evidence. INFO logging suppresses whitespace-only
 records and the complete ST67 informational banner; DEBUG retains diagnostic
 detail.
+
+### Ready-metrics application experiment matrix
+
+The established MQTT experiment profiles remain at `configs/experiments/` and retain the `mqtt_validation` workload. A parallel matrix is maintained under `configs/experiments/applications/ready_metrics/`. Each nested profile preserves the transport, TLS group, and server-authentication or mutual-authentication settings of its corresponding established profile, but selects `firmware.application: mqtt_ready_metrics` and uses a distinct `ready_metrics_...` experiment ID. Experiment path resolution supports nested directories beneath `configs/experiments`, and build provenance records the actual nested profile path.

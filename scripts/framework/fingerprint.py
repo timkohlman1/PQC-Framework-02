@@ -330,6 +330,18 @@ def capture_build_tool_versions(
 def _existing_optional_inputs(repo_root: Path, relative_inputs: Iterable[str]) -> list[str]:
     return [item for item in relative_inputs if (repo_root / item).exists()]
 
+
+def _experiment_profile_input(repo_root: Path, experiment_id: str) -> str:
+    """Return the repository-relative path for a flat or nested experiment profile."""
+
+    flat = Path("configs/experiments") / f"{experiment_id}.yaml"
+    if (repo_root / flat).exists():
+        return flat.as_posix()
+    matches = sorted((repo_root / "configs/experiments").rglob(f"{experiment_id}.yaml"))
+    if len(matches) == 1:
+        return matches[0].relative_to(repo_root).as_posix()
+    return flat.as_posix()
+
 def default_build_fingerprint_inputs(
     bundle: dict[str, dict[str, object]],
     repo_root: Path | str | None = None,
@@ -347,7 +359,7 @@ def default_build_fingerprint_inputs(
     host_id = str(host["id"])
     boot_id = str(boot.get("id", experiment.get("boot", "")))
     inputs = [
-        f"configs/experiments/{experiment_id}.yaml",
+        _experiment_profile_input(Path(repo_root or "."), experiment_id),
         f"configs/boards/{board_id}.yaml",
         f"configs/hosts/{host_id}.yaml",
         *DEFAULT_FIRMWARE_BUILD_DEFINITION_INPUTS,
