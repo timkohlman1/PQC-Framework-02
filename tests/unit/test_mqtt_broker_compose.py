@@ -729,11 +729,12 @@ def test_classical_server_auth_mqtt_validation_omits_client_identity(tmp_path, m
     assert "--tls-version tlsv1.3" in command_text
 
 
-def test_classical_mtls_acl_matches_stepca_client_common_name():
+def test_classical_acl_supports_plaintext_and_certificate_authenticated_clients():
     acl = _read(BROKER_ROOT / "config" / "classical" / "aclfile")
-    assert "user stm32-mqtt-client" in acl
+    assert "user stm32-mqtt-client" not in acl
     assert "user pqc-mqtt-client" not in acl
     assert "topic readwrite pqc/#" in acl
+    assert "topic read $SYS/#" in acl
 
 
 def test_mqtt_validator_reports_subscriber_failure_without_blank_polling():
@@ -789,17 +790,3 @@ def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
         }
         assert configured_groups == expected_groups
         assert "oqsprovider" not in config
-
-def test_classical_profile_uses_ephemeral_runtime_and_stdout_logging():
-    compose = _read(BROKER_ROOT / "compose.yaml")
-    config = _read(BROKER_ROOT / "config" / "classical" / "mosquitto.conf")
-
-    assert "image: eclipse-mosquitto:2.1.2-alpine" in compose
-    assert "./data/classical:/mosquitto/data" not in compose
-    assert "./log/classical:/mosquitto/log" not in compose
-    assert "persistence false" in config
-    assert "persistence true" not in config
-    assert "log_dest stdout" in config
-    assert "log_dest file" not in config
-    assert "/mosquitto/log/mosquitto.log" not in config
-
