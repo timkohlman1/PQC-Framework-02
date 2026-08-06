@@ -21,14 +21,21 @@ def test_plaintext_broker_listener_is_separate_from_tls_listener():
     assert "require_certificate true" in config
 
 
-def test_network_task_gates_mqtt_on_dhcp_success():
-    source = Path("Core/Src/main.c").read_text(encoding="utf-8")
-    assert "static void APP_RunST67SPIBringup(void)" in source
-    assert "app_st67_network_ready = APP_RunST67WiFiDhcp();" in source
-    assert "APP_RunST67SPIBringup();" in source
-    assert "network_ready = app_st67_network_ready;" in source
-    assert "if (network_ready)" in source
-    assert "reason=network_not_ready" in source
+def test_selected_application_gates_mqtt_on_shared_fixture_network_readiness():
+    main = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    application = Path(
+        "Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
+    ).read_text(encoding="utf-8")
+
+    assert "static void APP_RunST67SPIBringup(void)" in main
+    assert "app_st67_network_ready = APP_RunST67WiFiDhcp();" in main
+    assert ".run_network_bringup = APP_RunST67SPIBringup" in main
+    assert ".is_network_ready = APP_IsNetworkReady" in main
+    assert "PQC_MQTT_ApplicationRun(&fixture);" in main
+    assert "fixture->run_network_bringup();" in application
+    assert "network_ready = fixture->is_network_ready();" in application
+    assert "if (network_ready && (fixture->print_wolfmqtt_runtime != 0))" in application
+    assert "reason=network_not_ready" in application
 
 
 def test_network_task_has_extra_stack_and_explicit_fault_diagnostics():

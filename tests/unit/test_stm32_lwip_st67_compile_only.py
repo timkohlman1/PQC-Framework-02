@@ -112,6 +112,7 @@ def test_lwip_options_use_cmsis_rtos_v2_os_port_without_runtime_startup() -> Non
 def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     main_h = _read("Core/Inc/main.h")
     main_c = _read("Core/Src/main.c")
+    application = _read("Core/App/mqtt_validation/pqc_mqtt_validation_application.c")
     it_c = _read("Core/Src/stm32l4xx_it.c")
     freertos_config = _read("Core/Inc/FreeRTOSConfig.h")
 
@@ -161,8 +162,10 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "status = W6X_Init();" in main_c
     assert "status = W6X_WiFi_Init();" in main_c
     assert "status = W6X_WiFi_Connect(&options);" in main_c
-    assert "APP_RunST67SPIBringup();" in main_c
-    assert "APP_RunST67WiFiDhcp();" in main_c
+    assert ".run_network_bringup = APP_RunST67SPIBringup" in main_c
+    assert "PQC_MQTT_ApplicationRun(&fixture);" in main_c
+    assert "fixture->run_network_bringup();" in application
+    assert "network_ready = fixture->is_network_ready();" in application
     assert "void StartNetworkTask(void *argument)" in main_c
     assert "networkTaskHandle = osThreadNew(StartNetworkTask" in main_c
     assert "PQC_WIFI_SSID[0] == '\\0'" in main_c

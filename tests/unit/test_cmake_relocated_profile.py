@@ -55,7 +55,7 @@ def test_application_emits_freertos_scheduler_uart_markers():
     assert "tick_hz=" in main_c
     assert "heap_bytes=" in main_c
     assert "default_task_stack_words=1024" in main_c
-    assert "FreeRTOS defaultTask started: heartbeat active" in main_c
+    assert "FreeRTOS defaultTask started" in main_c
     assert "FreeRTOS networkTask created: name=networkTask priority=osPriorityNormal stack_words=2048" in main_c
     assert "FreeRTOS networkTask started: initialization active" in main_c
     assert "APP_PrintFreeRTOSSchedulerStarting();" in main_c
@@ -109,23 +109,25 @@ def test_freertos_scheduler_marker_is_emitted_before_scheduler_start():
     assert marker_index < scheduler_start_index
 
 
-def test_freertos_tick_runs_from_default_task_not_main_loop():
+def test_default_task_retains_liveness_without_standalone_tick_uart_chatter():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
     task_definition = "void StartDefaultTask(void *argument)"
     task_start = main_c.rindex(task_definition)
     task_body = main_c[task_start:]
 
-    assert "FreeRTOS defaultTask started: heartbeat active" in task_body
-    assert 'const char tick_msg[] = "tick\\r\\n";' in task_body
-    assert "HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg" in task_body
+    assert "FreeRTOS defaultTask started" in task_body
+    assert "tick_msg" not in task_body
+    assert "HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg" not in task_body
     assert "osDelay(1000);" in task_body
     assert "HAL_Delay(1000);" not in task_body
 
 
-
-def test_phase_m6_5_task_context_smoke_runs_in_network_task_and_is_separate_from_heartbeat():
+def test_phase_m6_5_task_context_smoke_is_delegated_through_application_fixture():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    application = Path(
+        "Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
+    ).read_text(encoding="utf-8")
     default_start = main_c.rindex("void StartDefaultTask(void *argument)")
     network_start = main_c.rindex("void StartNetworkTask(void *argument)")
     default_body = main_c[default_start:network_start]
@@ -135,11 +137,18 @@ def test_phase_m6_5_task_context_smoke_runs_in_network_task_and_is_separate_from
     assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
     assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' not in default_body
     assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' not in default_body
-    assert r'const char tick_msg[] = "tick\r\n";' in default_body
+    assert "tick_msg" not in default_body
 
-    started_index = network_body.index("FreeRTOS networkTask started: initialization active")
-    lwip_index = network_body.index('APP_PrintLwIPRuntimeSmoke("freertos_task", true);')
-    wolfssl_index = network_body.index('APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);')
-    mqtt_index = network_body.index("APP_PrintWolfMQTTRuntimeStatus();")
-    completion_index = network_body.index('PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done')
-    assert started_index < lwip_index < wolfssl_index < mqtt_index < completion_index
+    assert ".print_lwip_runtime = APP_PrintLwIPRuntimeFixture" in network_body
+    assert ".print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture" in network_body
+    assert ".print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus" in network_body
+    assert "PQC_MQTT_ApplicationRun(&fixture);" in network_body
+
+    selected_index = application.index("PQC_APPLICATION_SELECTED application=")
+    bringup_index = application.index("fixture->run_network_bringup();")
+    lwip_index = application.index("fixture->print_lwip_runtime();")
+    wolfssl_index = application.index("fixture->print_wolfssl_runtime();")
+    mqtt_index = application.index("fixture->print_wolfmqtt_runtime();")
+    completion_index = application.index("PQC_EXPERIMENT_COMPLETE experiment=")
+    assert selected_index < bringup_index < lwip_index < wolfssl_index < mqtt_index < completion_index
+

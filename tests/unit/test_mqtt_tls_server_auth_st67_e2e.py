@@ -272,7 +272,8 @@ def test_mqtt_uart_default_output_is_concise_and_emits_terminal_marker():
     assert '#define PQC_WIFI_SCAN_VERBOSE 0' in main
     assert '#define PQC_WOLFMQTT_TLS_IO_TRACE 0' in mqtt
     assert 'PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done' in main
-    assert 'if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))' in main
+    assert 'const char tick_msg[] = "tick\\r\\n";' not in main
+    assert 'APP_UART_WriteTickPrefix' in main
     assert 'wolfMQTT plaintext exchange:' not in main + mqtt
 
 
