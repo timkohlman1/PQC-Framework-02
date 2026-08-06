@@ -4,6 +4,8 @@ board: board_a
 host: gateway
 boot: direct_flash
 firmware:
+  application: mqtt_validation
+  uart_log_level: info
   mode: direct_flash
   artifact: build/Release/stm32_basic_hal1.elf
 network:
@@ -38,4 +40,4 @@ mqtt:
       throughput_bytes_per_second: A single control exchange does not establish throughput.
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
-  expected_tick_message: tick
+  expected_tick_prefix: "[tick="

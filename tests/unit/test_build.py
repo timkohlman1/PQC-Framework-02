@@ -1108,3 +1108,48 @@ def test_failed_build_output_is_surfaced_in_ci_console():
     assert "Failed {stage} diagnostics" in source
     assert "lines[-max_lines:]" in source
     assert source.count("_print_build_failure_diagnostics(build_result)") >= 2
+
+
+def test_write_application_selection_uses_profile_application(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["application"] = "mqtt_validation"
+    path, application = build._write_application_selection(bundle, tmp_path, "Release")
+    assert application == "mqtt_validation"
+    assert path == tmp_path / "build" / "Release" / "pqc_generated" / "pqc_application_selection.cmake"
+    assert path.read_text(encoding="utf-8") == (
+        'set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")\n'
+        'set(PQC_UART_LOG_LEVEL "info")\n'
+    )
+
+
+
+def test_write_application_selection_uses_profile_uart_log_level(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["uart_log_level"] = "debug"
+    path, _ = build._write_application_selection(bundle, tmp_path, "Debug")
+    assert 'set(PQC_UART_LOG_LEVEL "debug")' in path.read_text(encoding="utf-8")
+
+
+def test_write_application_selection_rejects_unknown_uart_log_level(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["uart_log_level"] = "verbose"
+    try:
+        build._write_application_selection(bundle, tmp_path, "Release")
+    except ValueError as exc:
+        assert "Unsupported UART log level" in str(exc)
+    else:
+        raise AssertionError("unknown UART log level should be rejected")
+
+def test_write_application_selection_rejects_unknown_application(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["application"] = "unknown"
+    try:
+        build._write_application_selection(bundle, tmp_path, "Release")
+    except ValueError as exc:
+        assert "Unsupported STM32 MQTT application" in str(exc)
+    else:
+        raise AssertionError("unknown application should be rejected")

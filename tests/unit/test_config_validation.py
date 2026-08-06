@@ -814,3 +814,97 @@ def test_mqtt_dns_required_must_be_boolean():
         experiment_cli.validate_mqtt_tls_config(
             _minimal_mqtt_dns_config("pqc-gateway1.pqcnet", "true")
         )
+
+
+def test_validate_experiment_config_defaults_mqtt_validation_application():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "baseline_direct_uart", "description": "Default application.",
+        "board": "board_a", "host": "gateway", "boot": "direct_flash",
+        "firmware": {"mode": "direct_flash", "artifact": "build/Release/stm32_basic_hal1.elf"},
+        "uart": {"expected_boot_message": "boot", "expected_tick_message": "tick"},
+    }
+    experiment_cli.validate_experiment_config(config)
+    assert config["firmware"]["application"] == "mqtt_validation"
+
+
+def test_validate_experiment_config_rejects_unknown_firmware_application():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "baseline_direct_uart", "description": "Unknown application.",
+        "board": "board_a", "host": "gateway", "boot": "direct_flash",
+        "firmware": {"application": "unknown", "mode": "direct_flash", "artifact": "build/Release/stm32_basic_hal1.elf"},
+        "uart": {"expected_boot_message": "boot", "expected_tick_message": "tick"},
+    }
+    with pytest.raises(experiment_cli.ConfigError, match="firmware.application"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_experiment_config_defaults_uart_log_level_to_info():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "baseline_direct_uart", "description": "Default UART level.",
+        "board": "board_a", "host": "gateway", "boot": "direct_flash",
+        "firmware": {"mode": "direct_flash", "artifact": "build/Release/stm32_basic_hal1.elf"},
+        "uart": {"expected_boot_message": "boot", "expected_tick_message": "[tick="},
+    }
+    experiment_cli.validate_experiment_config(config)
+    assert config["firmware"]["uart_log_level"] == "info"
+
+
+def test_validate_experiment_config_rejects_unknown_uart_log_level():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "baseline_direct_uart", "description": "Unknown UART level.",
+        "board": "board_a", "host": "gateway", "boot": "direct_flash",
+        "firmware": {
+            "mode": "direct_flash",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
+            "uart_log_level": "verbose",
+        },
+        "uart": {"expected_boot_message": "boot", "expected_tick_message": "[tick="},
+    }
+    with pytest.raises(experiment_cli.ConfigError, match="firmware.uart_log_level"):
+        experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_experiment_config_accepts_tick_prefix_instead_of_heartbeat():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "mqtt_plaintext_st67_e2e",
+        "description": "Structured UART tick prefix.",
+        "board": "board_a",
+        "host": "gateway",
+        "boot": "direct_flash",
+        "firmware": {
+            "mode": "direct_flash",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
+        },
+        "uart": {
+            "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+            "expected_tick_prefix": "[tick=",
+        },
+    }
+
+    experiment_cli.validate_experiment_config(config)
+
+
+def test_validate_experiment_config_requires_tick_message_or_prefix():
+    experiment_cli = load_experiment_module()
+    config = {
+        "id": "mqtt_plaintext_st67_e2e",
+        "description": "Missing UART timing evidence.",
+        "board": "board_a",
+        "host": "gateway",
+        "boot": "direct_flash",
+        "firmware": {
+            "mode": "direct_flash",
+            "artifact": "build/Release/stm32_basic_hal1.elf",
+        },
+        "uart": {
+            "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+        },
+    }
+
+    with pytest.raises(experiment_cli.ConfigError, match="expected_tick_message or"):
+        experiment_cli.validate_experiment_config(config)

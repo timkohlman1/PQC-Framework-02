@@ -39,6 +39,11 @@ ARTIFACT_MISSING_RETURN_CODE = 3
 BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
+DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation"}
+SUPPORTED_UART_LOG_LEVELS = {"error": 0, "info": 1, "debug": 2}
+
+
 @dataclass(frozen=True)
 class CommandExecution:
     """Captured output from one command invocation."""
@@ -160,6 +165,7 @@ def _write_build_log(
     force_rebuild: bool = False,
     build_purpose: str = "experiment",
     build_identity: str | None = None,
+    firmware_application: str = DEFAULT_STM32_MQTT_APPLICATION,
 ) -> None:
     """Write the build log for one experiment build run."""
 
@@ -171,6 +177,7 @@ def _write_build_log(
         f"Build purpose: {build_purpose}",
         f"Build identity: {build_identity if build_identity is not None else 'unavailable'}",
         f"Build number: {build_number if build_number is not None else 'unavailable'}",
+        f"Firmware application: {firmware_application}",
         f"Build skipped: {str(build_skipped).lower()}",
         f"Build skip reason: {build_skip_reason if build_skip_reason is not None else 'none'}",
         f"Force rebuild requested: {str(force_rebuild).lower()}",
@@ -299,6 +306,47 @@ def _certificate_requires_ecc(bundle: dict[str, dict[str, Any]]) -> bool:
     if mode == "plaintext":
         return False
     return certificate_profile in {"stepca-classical"}
+
+
+def _resolved_firmware_application(bundle: dict[str, dict[str, Any]]) -> str:
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    application = str(firmware.get("application", DEFAULT_STM32_MQTT_APPLICATION)).strip()
+    if application not in SUPPORTED_STM32_MQTT_APPLICATIONS:
+        raise ValueError(
+            "Unsupported STM32 MQTT application: " + application
+            + "; supported applications: "
+            + ", ".join(sorted(SUPPORTED_STM32_MQTT_APPLICATIONS))
+        )
+    return application
+
+
+def _resolved_uart_log_level(bundle: dict[str, dict[str, Any]]) -> str:
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    level = str(firmware.get("uart_log_level", "info")).strip().lower()
+    if level not in SUPPORTED_UART_LOG_LEVELS:
+        raise ValueError(
+            "Unsupported UART log level: " + level
+            + "; supported levels: "
+            + ", ".join(sorted(SUPPORTED_UART_LOG_LEVELS))
+        )
+    return level
+
+
+def _write_application_selection(
+    bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release"
+) -> tuple[Path, str]:
+    """Write profile-selected STM32 application and UART log level for CMake."""
+    application = _resolved_firmware_application(bundle)
+    uart_log_level = _resolved_uart_log_level(bundle)
+    generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    path = generated_dir / "pqc_application_selection.cmake"
+    path.write_text(
+        f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
+        f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n',
+        encoding="utf-8",
+    )
+    return path, application
 
 
 def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release") -> tuple[Path, dict[str, Any]]:
@@ -488,16 +536,18 @@ def execute_build(
             build_number_error=error, build_number=None, build_skipped=False,
             build_skip_reason="build_number_error", build_skip_detail=error,
             force_rebuild=force, build_purpose=build_purpose, build_identity=None,
+            firmware_application=_resolved_firmware_application(bundle),
         )
         update_manifest(result_dir_path / "manifest.json", {
             "result": "build_failed",
             "build_number": None,
             "source": source,
-            "firmware": {"artifact": artifact_relative_path.as_posix(), "artifact_path": str(elf_path), "artifact_exists": elf_path.is_file(), "sha256": None},
+            "firmware": {"application": _resolved_firmware_application(bundle), "artifact": artifact_relative_path.as_posix(), "artifact_path": str(elf_path), "artifact_exists": elf_path.is_file(), "sha256": None},
             "build": {"configure_preset": configure_preset, "build_preset": build_preset, "purpose": build_purpose, "identity": None, "return_code": BUILD_NUMBER_ERROR_RETURN_CODE, "duration_seconds": round(duration_seconds, 3), "log": "build.log", "reuse_enabled": False, "incremental_build_system": "cmake-ninja", "build_number_error": error, "force": force},
         })
         return BuildResult(BUILD_NUMBER_ERROR_RETURN_CODE, duration_seconds, elf_path, log_path, skipped, None, None, None, [], None, None, {}, None, None, False, "build_number_error", build_purpose, None)
 
+    _, firmware_application = _write_application_selection(bundle, repo_root_path, configure_preset)
     _write_tls_algorithm_selection(bundle, repo_root_path, configure_preset)
     _write_wifi_config_header(bundle, repo_root_path, configure_preset)
 
@@ -533,6 +583,7 @@ def execute_build(
         build_number=build_number, build_skipped=False, build_skip_reason=None,
         build_skip_detail="CMake configure/build is invoked for every framework build.",
         force_rebuild=force, build_purpose=build_purpose, build_identity=build_identity_value,
+        firmware_application=firmware_application,
     )
 
     build_record_path: Path | None = None
@@ -571,7 +622,7 @@ def execute_build(
                 "board": str(bundle["board"]["id"]),
                 "source": source,
                 "build": build_record_build,
-                "firmware": {"sha256": firmware_sha256, "result_artifacts": copied},
+                "firmware": {"application": firmware_application, "sha256": firmware_sha256, "result_artifacts": copied},
             })
         else:
             assert build_number is not None
@@ -601,6 +652,7 @@ def execute_build(
                     "configure_preset": configure_preset,
                     "build_preset": build_preset,
                     "build_identity": build_identity_value,
+                    "firmware_application": firmware_application,
                     "firmware_sha256": firmware_sha256,
                 },
             )
@@ -623,7 +675,7 @@ def execute_build(
     update_manifest(result_dir_path / "manifest.json", {
         "result": "build_passed" if return_code == 0 else "build_failed",
         "build_number": build_number,
-        "firmware": {"artifact": artifact_relative_path.as_posix(), "artifact_path": str(elf_path), "artifact_exists": artifact_exists, "sha256": firmware_sha256, "result_artifacts": result_artifacts},
+        "firmware": {"application": firmware_application, "artifact": artifact_relative_path.as_posix(), "artifact_path": str(elf_path), "artifact_exists": artifact_exists, "sha256": firmware_sha256, "result_artifacts": result_artifacts},
         "source": source,
         "build": {
             "configure_preset": configure_preset,

@@ -839,3 +839,68 @@ def test_parse_wifi_dhcp_evidence_records_explicit_markers():
     assert evidence["association_success"] is True
     assert evidence["dhcp_success"] is True
     assert evidence["dhcp"]["ipv4"] == "192.168.1.42"
+
+
+def test_execute_uart_capture_accepts_structured_tick_prefix(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+    bundle = sample_bundle()
+    bundle["experiment"]["uart"].pop("expected_tick_message", None)
+    bundle["experiment"]["uart"]["expected_tick_prefix"] = "[tick="
+
+    def fake_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout=(
+                "[tick=0000000035] stm32-basic_hal1 boot v0.1.0\n"
+                "[tick=0000006028] PQC_EXPERIMENT_COMPLETE experiment=plaintext status=done\n"
+            ),
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    result = uart.execute_uart_capture(
+        bundle,
+        repo_root,
+        result_dir,
+        runner=fake_runner,
+        duration_seconds=10,
+    )
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == 0
+    assert result.tick_present is True
+    assert manifest["uart"]["expected_tick_message"] is None
+    assert manifest["uart"]["expected_tick_prefix"] == "[tick="
+
+
+def test_execute_uart_capture_legacy_tick_marker_accepts_structured_prefix(tmp_path):
+    uart = load_uart_module()
+    repo_root = tmp_path / "repo"
+    result_dir = tmp_path / "results" / "run"
+    repo_root.mkdir()
+    write_initial_manifest(result_dir)
+
+    def fake_runner(command, cwd):
+        return uart.CommandExecution(
+            command=command,
+            return_code=124,
+            stdout="[tick=0000000035] stm32-basic_hal1 boot v0.1.0\n",
+            stderr="",
+            duration_seconds=10.0,
+        )
+
+    result = uart.execute_uart_capture(
+        sample_bundle(),
+        repo_root,
+        result_dir,
+        runner=fake_runner,
+        duration_seconds=10,
+    )
+
+    assert result.return_code == 0
+    assert result.tick_present is True

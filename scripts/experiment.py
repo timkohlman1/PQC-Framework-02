@@ -1357,6 +1357,10 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
     "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
 }
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation"}
+DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
+
+
 MQTT_TLS_MODES = {
     "disabled",
     "classical_tls",
@@ -1572,11 +1576,42 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
         "firmware.mode",
         "firmware.artifact",
         "uart.expected_boot_message",
-        "uart.expected_tick_message",
     ]
 
     for field in required_fields:
         require_field(config, field, "experiment config")
+
+    uart_config = config.get("uart")
+    if not isinstance(uart_config, dict):
+        raise ConfigError("experiment config uart field must be a mapping")
+    expected_tick_message = uart_config.get("expected_tick_message")
+    expected_tick_prefix = uart_config.get("expected_tick_prefix")
+    if expected_tick_message in (None, "") and expected_tick_prefix in (None, ""):
+        raise ConfigError(
+            "experiment config requires uart.expected_tick_message or "
+            "uart.expected_tick_prefix"
+        )
+    if expected_tick_message not in (None, "") and not isinstance(expected_tick_message, str):
+        raise ConfigError("uart.expected_tick_message must be a string")
+    if expected_tick_prefix not in (None, "") and not isinstance(expected_tick_prefix, str):
+        raise ConfigError("uart.expected_tick_prefix must be a string")
+
+    firmware = config.get("firmware")
+    if not isinstance(firmware, dict):
+        raise ConfigError("experiment config firmware field must be a mapping")
+    application = firmware.get("application", DEFAULT_STM32_MQTT_APPLICATION)
+    if not isinstance(application, str) or not application.strip():
+        raise ConfigError("firmware.application must be a non-empty string")
+    if application not in SUPPORTED_STM32_MQTT_APPLICATIONS:
+        raise ConfigError(
+            "firmware.application must be one of: "
+            + ", ".join(sorted(SUPPORTED_STM32_MQTT_APPLICATIONS))
+        )
+    firmware["application"] = application
+    uart_log_level = firmware.get("uart_log_level", "info")
+    if not isinstance(uart_log_level, str) or uart_log_level.strip().lower() not in {"error", "info", "debug"}:
+        raise ConfigError("firmware.uart_log_level must be one of: debug, error, info")
+    firmware["uart_log_level"] = uart_log_level.strip().lower()
 
     if "network" in config:
         ssid = str(require_field(config, "network.wifi.ssid", "experiment config"))
@@ -1987,12 +2022,17 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
             f"Flash helper: {host['flash']['helper']}",
             f"Boot config: {boot['id']}",
             f"Boot mode: {boot['mode']}",
+            f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
             f"Firmware mode: {experiment['firmware']['mode']}",
             f"Firmware artifact: {experiment['firmware']['artifact']}",
             f"UART device: {host['uart']['device']}",
             f"UART baud: {host['uart']['baud']}",
             f"Expected boot message: {experiment['uart']['expected_boot_message']}",
-            f"Expected tick message: {experiment['uart']['expected_tick_message']}",
+            (
+                f"Expected tick prefix: {experiment['uart']['expected_tick_prefix']}"
+                if experiment["uart"].get("expected_tick_prefix")
+                else f"Expected tick message: {experiment['uart']['expected_tick_message']}"
+            ),
             "",
             "Actions performed: status only.",
             "No build, flash, UART access, SSH, hardware access, or network access was performed.",

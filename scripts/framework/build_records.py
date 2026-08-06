@@ -155,8 +155,12 @@ def resolve_verified_build_record(
 
     expected_experiment = str(bundle["experiment"]["id"])
     expected_board = str(bundle["board"]["id"])
+    expected_application = str(bundle["experiment"].get("firmware", {}).get("application", "mqtt_validation"))
     if manifest.get("experiment") != expected_experiment or manifest.get("board") != expected_board:
         return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISMATCH, BUILD_RECORD_MISMATCH_RETURN_CODE, "Referenced build record does not match the requested experiment and board.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, manifest)
+    recorded_application = _nested_get(manifest, "firmware.application")
+    if recorded_application is not None and recorded_application != expected_application:
+        return VerifiedBuildRecord(BUILD_RECORD_STATUS_MISMATCH, BUILD_RECORD_MISMATCH_RETURN_CODE, "Referenced build record does not match the requested firmware application.", build_number, record_dir, manifest_path, None, None, None, None, None, None, None, manifest)
 
     recorded_sha256, sha_error = _required_string(manifest, "firmware.sha256")
     if sha_error is not None or recorded_sha256 is None:
@@ -201,6 +205,7 @@ def build_record_manifest(
         "source": source,
         "build": build,
         "firmware": {
+            "application": str(bundle["experiment"].get("firmware", {}).get("application", "mqtt_validation")),
             "artifact": firmware_artifact,
             "artifact_path": firmware_artifact_path,
             "sha256": firmware_sha256,

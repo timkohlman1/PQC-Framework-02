@@ -218,6 +218,45 @@ target_link_libraries(LwIP PUBLIC stm32cubemx)
 # Add STM32CubeMX generated application sources to the project
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MX_Application_Src})
 
+# The experiment build writes this file before CMake configure. It selects only
+# the MQTT workload implementation; FreeRTOS, lwIP, ST67, wolfMQTT/wolfSSL and
+# the board fixture remain shared by every STM32 application.
+set(PQC_APPLICATION_SELECTION_FILE
+    "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake"
+)
+if(NOT EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
+    message(FATAL_ERROR
+        "Missing generated STM32 MQTT application selection: ${PQC_APPLICATION_SELECTION_FILE}"
+    )
+endif()
+include("${PQC_APPLICATION_SELECTION_FILE}")
+
+if(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_validation")
+    set(PQC_STM32_MQTT_APPLICATION_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
+    )
+else()
+    message(FATAL_ERROR
+        "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}"
+    )
+endif()
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${PQC_STM32_MQTT_APPLICATION_SOURCE})
+if(PQC_UART_LOG_LEVEL STREQUAL "error")
+    set(PQC_UART_LOG_LEVEL_VALUE 0)
+elseif(PQC_UART_LOG_LEVEL STREQUAL "info")
+    set(PQC_UART_LOG_LEVEL_VALUE 1)
+elseif(PQC_UART_LOG_LEVEL STREQUAL "debug")
+    set(PQC_UART_LOG_LEVEL_VALUE 2)
+else()
+    message(FATAL_ERROR "Unsupported UART log level: ${PQC_UART_LOG_LEVEL}")
+endif()
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    PQC_STM32_MQTT_APPLICATION_NAME="${PQC_STM32_MQTT_APPLICATION}"
+    PQC_UART_LOG_LEVEL=${PQC_UART_LOG_LEVEL_VALUE}
+)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${MX_LINK_DIRS})
 

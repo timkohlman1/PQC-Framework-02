@@ -14,11 +14,16 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 
 
 
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
 
 -----------
 
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
------------
 
 
 -----------

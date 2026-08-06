@@ -474,7 +474,8 @@ def _write_uart_capture_log(
     baud: int,
     requested_duration_seconds: int,
     expected_boot_message: str,
-    expected_tick_message: str,
+    expected_tick_message: str | None,
+    expected_tick_prefix: str | None,
     expected_secure_boot_message: str | None,
     boot_marker_present: bool,
     tick_present: bool,
@@ -503,7 +504,11 @@ def _write_uart_capture_log(
         "Pass/fail detection",
         "-------------------",
         f"Expected boot marker: {expected_boot_message}",
-        f"Expected tick marker: {expected_tick_message}",
+        (
+            f"Expected tick prefix: {expected_tick_prefix}"
+            if expected_tick_prefix is not None
+            else f"Expected tick marker: {expected_tick_message}"
+        ),
         f"Expected secure-boot marker: {expected_secure_boot_message if expected_secure_boot_message is not None else 'not configured'}",
         f"Boot marker present: {str(boot_marker_present).lower()}",
         f"Tick marker present: {str(tick_present).lower()}",
@@ -681,7 +686,14 @@ def execute_uart_capture(
     device = str(bundle["host"]["uart"]["device"])
     baud = int(bundle["host"]["uart"]["baud"])
     expected_boot_message = str(bundle["experiment"]["uart"]["expected_boot_message"])
-    expected_tick_message = str(bundle["experiment"]["uart"]["expected_tick_message"])
+    expected_tick_message_value = bundle["experiment"]["uart"].get("expected_tick_message")
+    expected_tick_prefix_value = bundle["experiment"]["uart"].get("expected_tick_prefix")
+    expected_tick_message = (
+        None if expected_tick_message_value in (None, "") else str(expected_tick_message_value)
+    )
+    expected_tick_prefix = (
+        None if expected_tick_prefix_value in (None, "") else str(expected_tick_prefix_value)
+    )
     expected_secure_boot_message_value = bundle["experiment"].get("uart", {}).get(
         "expected_secure_boot_message"
     )
@@ -714,7 +726,25 @@ def execute_uart_capture(
     data_captured = bool(capture_execution.stdout.strip())
     output_lines = {line.strip() for line in capture_execution.stdout.splitlines()}
     boot_marker_present = expected_boot_message in capture_execution.stdout
-    tick_present = expected_tick_message.strip() in output_lines
+    if expected_tick_prefix is not None:
+        tick_present = any(
+            line.startswith(expected_tick_prefix)
+            for line in capture_execution.stdout.splitlines()
+        )
+    else:
+        tick_present = (
+            expected_tick_message is not None
+            and expected_tick_message.strip() in output_lines
+        )
+        if (
+            not tick_present
+            and expected_tick_message is not None
+            and expected_tick_message.strip() == "tick"
+        ):
+            tick_present = any(
+                line.startswith("[tick=")
+                for line in capture_execution.stdout.splitlines()
+            )
     secure_boot_marker_present = (
         None
         if expected_secure_boot_message is None
@@ -748,6 +778,7 @@ def execute_uart_capture(
         requested_duration_seconds=duration_seconds,
         expected_boot_message=expected_boot_message,
         expected_tick_message=expected_tick_message,
+        expected_tick_prefix=expected_tick_prefix,
         expected_secure_boot_message=expected_secure_boot_message,
         boot_marker_present=boot_marker_present,
         tick_present=tick_present,
@@ -776,6 +807,7 @@ def execute_uart_capture(
                 "requested_duration_seconds": duration_seconds,
                 "expected_boot_message": expected_boot_message,
                 "expected_tick_message": expected_tick_message,
+                "expected_tick_prefix": expected_tick_prefix,
                 "expected_secure_boot_message": expected_secure_boot_message,
                 "boot_marker_present": boot_marker_present,
                 "tick_present": tick_present,

@@ -34,6 +34,7 @@
 #include "pqc_wolfssl_transport.h"
 #endif
 #include "pqc_wolfmqtt_build_only.h"
+#include "pqc_mqtt_application.h"
 #include "w6x_api.h"
 #include "spi_iface.h"
 #include "logging.h"
@@ -121,41 +122,276 @@ void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapsho
   taskEXIT_CRITICAL();
 }
 
-static void APP_UART_WriteString(const char *text)
-{
-  uint16_t length = 0U;
+#ifndef PQC_UART_LOG_LEVEL
+#define PQC_UART_LOG_LEVEL 1
+#endif
 
-  while (text[length] != '\0')
+#define APP_UART_LOG_LEVEL_ERROR 0
+#define APP_UART_LOG_LEVEL_INFO  1
+#define APP_UART_LOG_LEVEL_DEBUG 2
+#define APP_UART_LINE_BUFFER_SIZE 2048U
+
+static char app_uart_line_buffer[APP_UART_LINE_BUFFER_SIZE];
+static uint32_t app_uart_line_length = 0U;
+
+static bool APP_UART_LineContains(const char *line, const char *needle)
+{
+  uint32_t line_index;
+  uint32_t needle_index;
+
+  if ((line == NULL) || (needle == NULL) || (needle[0] == '\0'))
   {
-    length++;
+    return false;
   }
 
-  HAL_UART_Transmit(&hlpuart1, (uint8_t *)text, length, HAL_MAX_DELAY);
+  for (line_index = 0U; line[line_index] != '\0'; line_index++)
+  {
+    for (needle_index = 0U;
+         (needle[needle_index] != '\0') &&
+         (line[line_index + needle_index] != '\0') &&
+         (line[line_index + needle_index] == needle[needle_index]);
+         needle_index++)
+    {
+    }
+    if (needle[needle_index] == '\0')
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
-static void APP_UART_WriteUint32(uint32_t value)
+static bool APP_UART_LineStartsWith(const char *line, const char *prefix)
 {
-  char digits[10];
-  uint32_t count = 0U;
+  uint32_t index = 0U;
 
-  if (value == 0U)
+  while (prefix[index] != '\0')
   {
-    APP_UART_WriteString("0");
-    return;
+    if (line[index] != prefix[index])
+    {
+      return false;
+    }
+    index++;
+  }
+  return true;
+}
+
+static bool APP_UART_LineIsWhitespaceOnly(const char *line)
+{
+  uint32_t index = 0U;
+
+  while (line[index] != '\0')
+  {
+    if ((line[index] != ' ') && (line[index] != '\t'))
+    {
+      return false;
+    }
+    index++;
+  }
+  return true;
+}
+
+static bool APP_UART_ShouldEmitLine(const char *line)
+{
+#if PQC_UART_LOG_LEVEL >= APP_UART_LOG_LEVEL_DEBUG
+  (void)line;
+  return true;
+#else
+  static const char *const debug_prefixes[] = {
+      "lwIP runtime smoke: context=pre_scheduler",
+      "lwIP network interface:",
+      "FreeRTOS defaultTask created:",
+      "FreeRTOS networkTask created:",
+      "FreeRTOS scheduler starting:",
+      "FreeRTOS defaultTask started:",
+      "FreeRTOS networkTask started:",
+      "ST67 SPI bring-up pins:",
+      "ST67 Wi-Fi scan: begin",
+      "ST67 Wi-Fi scan result:",
+      "ST67 Wi-Fi event:",
+      "ST67 Wi-Fi connect options:",
+      "ST67 Wi-Fi association: begin",
+      "ST67 Wi-Fi association poll:",
+      "ST67 DHCP poll:",
+      "ST67 DNS: required=false",
+      "ST67 DNS lookup: result=not_required",
+      "wolfMQTT transport: stage=close",
+      "application memory checkpoint: stage=pre_scheduler",
+      "application memory checkpoint: stage=default_task_runtime",
+      "application task stack: stage=default_task_runtime",
+      "--------------- ST67W6X info",
+      "ST67W6X MW Version:",
+      "AT Version:",
+      "SDK Version:",
+      "Wi-Fi MAC Version:",
+      "BT Controller Version:",
+      "BT Stack Version:",
+      "Build Date:",
+      "Module ID:",
+      "BOM ID:",
+      "Manufacturing Year:",
+      "Manufacturing Week:",
+      "Battery Voltage:",
+      "Trim Wi-Fi hp:",
+      "Trim Wi-Fi lp:",
+      "Trim BLE:",
+      "Trim XTAL:",
+      "MAC Address:",
+      "Anti-rollback Bootloader:",
+      "Anti-rollback App:",
+      "-----------------------------------------",
+      "Netif : Link is up",
+      "STA IP :",
+      "IP :",
+      "Gateway :",
+      "Netmask :"
+  };
+  uint32_t index;
+
+  if ((line[0] == '\0') || APP_UART_LineIsWhitespaceOnly(line))
+  {
+    return false;
   }
 
-  while ((value > 0U) && (count < sizeof(digits)))
+  if (APP_UART_LineContains(line, "failed") ||
+      APP_UART_LineContains(line, "error") ||
+      APP_UART_LineContains(line, "status_ok=0") ||
+      APP_UART_LineContains(line, "result=timeout") ||
+      APP_UART_LineContains(line, "result=connect_failed"))
   {
-    digits[count] = (char)('0' + (value % 10U));
-    value /= 10U;
-    count++;
+    return true;
+  }
+
+#if PQC_UART_LOG_LEVEL <= APP_UART_LOG_LEVEL_ERROR
+  return false;
+#else
+  if (APP_UART_LineStartsWith(line, "ST67 SPI bring-up: W6X_RegisterAppCb result=0") ||
+      APP_UART_LineStartsWith(line, "ST67 SPI bring-up: W6X_Init begin") ||
+      APP_UART_LineStartsWith(line, "ST67 SPI bring-up: W6X_Init result=0") ||
+      APP_UART_LineStartsWith(line, "ST67 Wi-Fi association: connect_call_status=0") ||
+      APP_UART_LineStartsWith(line, "wolfMQTT TLS: stage=tcp_connect result=0"))
+  {
+    return false;
+  }
+
+  for (index = 0U; index < (sizeof(debug_prefixes) / sizeof(debug_prefixes[0])); index++)
+  {
+    if (APP_UART_LineStartsWith(line, debug_prefixes[index]))
+    {
+      return false;
+    }
+  }
+  return true;
+#endif
+#endif
+}
+
+static void APP_UART_WriteRaw(const char *text, uint16_t length)
+{
+  if (length > 0U)
+  {
+    HAL_UART_Transmit(&hlpuart1, (uint8_t *)text, length, HAL_MAX_DELAY);
+  }
+}
+
+static void APP_UART_WriteTickPrefix(void)
+{
+  char prefix[24];
+  char digits[10];
+  uint32_t tick = HAL_GetTick();
+  uint32_t count = 0U;
+  uint32_t digit_count;
+  uint32_t index = 0U;
+
+  prefix[index++] = '[';
+  prefix[index++] = 't';
+  prefix[index++] = 'i';
+  prefix[index++] = 'c';
+  prefix[index++] = 'k';
+  prefix[index++] = '=';
+
+  do
+  {
+    digits[count++] = (char)('0' + (tick % 10U));
+    tick /= 10U;
+  } while ((tick > 0U) && (count < sizeof(digits)));
+
+  digit_count = count;
+  while (digit_count < 10U)
+  {
+    prefix[index++] = '0';
+    digit_count++;
   }
 
   while (count > 0U)
   {
-    count--;
-    HAL_UART_Transmit(&hlpuart1, (uint8_t *)&digits[count], 1U, HAL_MAX_DELAY);
+    prefix[index++] = digits[--count];
   }
+  prefix[index++] = ']';
+  prefix[index++] = ' ';
+  APP_UART_WriteRaw(prefix, (uint16_t)index);
+}
+
+static void APP_UART_FlushLine(void)
+{
+  app_uart_line_buffer[app_uart_line_length] = '\0';
+  if (APP_UART_ShouldEmitLine(app_uart_line_buffer))
+  {
+    APP_UART_WriteTickPrefix();
+    APP_UART_WriteRaw(app_uart_line_buffer, (uint16_t)app_uart_line_length);
+    APP_UART_WriteRaw("\r\n", 2U);
+  }
+  app_uart_line_length = 0U;
+}
+
+static void APP_UART_WriteString(const char *text)
+{
+  uint32_t index = 0U;
+
+  if (text == NULL)
+  {
+    return;
+  }
+
+  while (text[index] != '\0')
+  {
+    char character = text[index++];
+    if (character == '\r')
+    {
+      continue;
+    }
+    if (character == '\n')
+    {
+      APP_UART_FlushLine();
+      continue;
+    }
+    if (app_uart_line_length < (APP_UART_LINE_BUFFER_SIZE - 1U))
+    {
+      app_uart_line_buffer[app_uart_line_length++] = character;
+    }
+  }
+}
+
+static void APP_UART_WriteUint32(uint32_t value)
+{
+  char reversed_digits[10];
+  char output[11];
+  uint32_t count = 0U;
+  uint32_t index = 0U;
+
+  do
+  {
+    reversed_digits[count++] = (char)('0' + (value % 10U));
+    value /= 10U;
+  } while ((value > 0U) && (count < sizeof(reversed_digits)));
+
+  while (count > 0U)
+  {
+    output[index++] = reversed_digits[count - 1U];
+    count--;
+  }
+  output[index] = '\0';
+  APP_UART_WriteString(output);
 }
 
 
@@ -1216,13 +1452,13 @@ int main(void)
   APP_PrintWolfBootVerificationTiming();
 
   const char secure_boot_msg[] = "stm32-basic_hal1 secure-boot app v0.1.0\r\n";
-  HAL_UART_Transmit(&hlpuart1, (uint8_t *)secure_boot_msg, sizeof(secure_boot_msg) - 1, HAL_MAX_DELAY);
+  APP_UART_WriteString(secure_boot_msg);
 
   const char boot_msg[] = "stm32-basic_hal1 boot v0.1.0\r\n";
 #else
   const char boot_msg[] = "\r\nstm32-basic_hal1 boot v0.1.0\r\n";
 #endif
-  HAL_UART_Transmit(&hlpuart1, (uint8_t *)boot_msg, sizeof(boot_msg) - 1, HAL_MAX_DELAY);
+  APP_UART_WriteString(boot_msg);
   APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);
   APP_PrintNetworkInterfaceStatus();
 #if PQC_TLS_COMPILED
@@ -1795,22 +2031,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  const char task_started_msg[] = "FreeRTOS defaultTask started: heartbeat active\r\n";
-  const char tick_msg[] = "tick\r\n";
   BaseType_t runtime_checkpoint_reported = pdFALSE;
-  uint32_t heartbeat_seconds = 0U;
 
-  HAL_UART_Transmit(&hlpuart1, (uint8_t *)task_started_msg, sizeof(task_started_msg) - 1, HAL_MAX_DELAY);
+  APP_UART_WriteString("FreeRTOS defaultTask started\r\n");
 
-  /* Keep the liveness marker independent of Wi-Fi and protocol initialization. */
   for(;;)
   {
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
-    if ((!app_experiment_complete) && ((heartbeat_seconds % 5U) == 0U))
-    {
-      HAL_UART_Transmit(&hlpuart1, (uint8_t *)tick_msg, sizeof(tick_msg) - 1, HAL_MAX_DELAY);
-    }
-    heartbeat_seconds++;
     osDelay(1000);
 
     if (runtime_checkpoint_reported == pdFALSE)
@@ -1829,29 +2056,50 @@ void StartDefaultTask(void *argument)
   * @retval None
   */
 /* USER CODE END Header_StartNetworkTask */
-void StartNetworkTask(void *argument)
+static bool APP_IsNetworkReady(void)
 {
-  bool network_ready;
-  APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
-  APP_RunST67SPIBringup();
-  network_ready = app_st67_network_ready;
+  return app_st67_network_ready;
+}
+
+static void APP_PrintLwIPRuntimeFixture(void)
+{
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
+}
+
+static void APP_PrintWolfSSLRuntimeFixture(void)
+{
 #if PQC_TLS_COMPILED
   APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
 #endif
-  if (network_ready)
-  {
-    APP_PrintWolfMQTTRuntimeStatus();
-  }
-  else
-  {
-    APP_UART_WriteString("wolfMQTT runtime: result=skipped reason=network_not_ready end_to_end=failed\r\n");
-  }
-  APP_PrintApplicationClockConfiguration();
-  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
-  app_experiment_complete = true;
-  APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done\r\n");
+}
 
+static void APP_PrintNetworkTaskMemoryCheckpoint(void)
+{
+  APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
+}
+
+static void APP_MarkExperimentComplete(void)
+{
+  app_experiment_complete = true;
+}
+
+void StartNetworkTask(void *argument)
+{
+  const PQC_MQTTApplicationFixture fixture = {
+    .uart_write = APP_UART_WriteString,
+    .run_network_bringup = APP_RunST67SPIBringup,
+    .is_network_ready = APP_IsNetworkReady,
+    .print_lwip_runtime = APP_PrintLwIPRuntimeFixture,
+    .print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture,
+    .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
+    .print_clock_configuration = APP_PrintApplicationClockConfiguration,
+    .print_memory_checkpoint = APP_PrintNetworkTaskMemoryCheckpoint,
+    .mark_complete = APP_MarkExperimentComplete,
+  };
+
+  (void)argument;
+  APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
+  PQC_MQTT_ApplicationRun(&fixture);
   osThreadExit();
 }
 

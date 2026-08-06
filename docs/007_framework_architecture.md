@@ -760,3 +760,55 @@ The maintained STM32 MQTT/TLS matrix contains server-authentication and mutual-a
 Prime-curve TLS selection keeps the negotiated key-exchange curve independent from the minimum ECC size accepted for certificate parsing and signature verification. `PQC_TLS_ECC_BITS` identifies the selected prime-curve key-exchange size, while generated `PQC_TLS_ECC_MIN_BITS` records the lowest ECC size required across the selected key exchange and certificate chain. The classical step-ca hierarchy currently requires P-256 certificate support, so P-384, P-521, and `SecP384r1MLKEM1024` builds retain a 256-bit certificate floor while enabling only the selected larger key-exchange curve and its wolfSSL SP implementation. This prevents `ECC_MIN_KEY_SZ` from rejecting the shared P-256 trust chain without advertising additional TLS groups.
 
 The framework does not infer stack or heap sufficiency from firmware size. Each hardware run must retain task stack high-water and heap-boundary markers. `SecP384r1MLKEM1024` is expected to be the highest-pressure profile, but any memory increase requires recorded evidence; this expectation is not itself runtime evidence.
+
+
+## Selectable STM32 MQTT application fixture
+
+STM32 MQTT experiment profiles may select `firmware.application`. The current
+registered application is `mqtt_validation`; omitted values resolve to that
+application for compatibility with existing profiles. The selector changes only
+the MQTT workload source compiled into the firmware. FreeRTOS, lwIP, ST67 Wi-Fi,
+wolfMQTT/wolfSSL, broker orchestration, packet capture, flashing, and result
+evidence remain shared framework fixtures.
+
+The build writes `build/<preset>/pqc_generated/pqc_application_selection.cmake`
+before CMake configure. CMake maps the registered identifier to one application
+source and fails on unknown identifiers. The selected application is recorded in
+build and generated-state evidence. `mqtt_validation` preserves the existing
+bounded smoke-test and command/response behaviour through the shared
+`PQC_MQTTApplicationFixture` callback interface. Future MQTT workloads must add a
+registered source implementation and application-specific runtime evidence; they
+must not bypass the shared network or orchestration fixtures.
+
+### STM32 UART logging contract
+
+STM32 application output is line-oriented. Every firmware-generated UART line is
+prefixed with a zero-padded HAL millisecond tick since application startup:
+
+```text
+[tick=000000123] message
+```
+
+The tick is application-relative timing evidence and is not wall-clock time or
+wolfBoot verification timing. Experiment profiles select `firmware.uart_log_level`
+with `error`, `info`, or `debug`; the default is `info`. INFO retains outcome and
+measurement evidence while suppressing successful polling, middleware banners,
+and other diagnostic detail. DEBUG retains the detailed diagnostic stream. The
+selected level is generated into `pqc_application_selection.cmake` and therefore
+participates in the compiled firmware configuration.
+
+
+### Structured UART tick evidence
+
+STM32 application UART lines may use the structured prefix
+`[tick=NNNNNNNNNN]`, where the value is the `HAL_GetTick()` millisecond count
+since application startup. Experiment profiles using this logger declare
+`uart.expected_tick_prefix: "[tick="` rather than requiring a standalone
+heartbeat line. Legacy profiles may continue to use `uart.expected_tick_message`
+when the heartbeat itself is part of the evidence contract.
+
+UART numeric formatting must use a non-overlapping source and destination
+buffer. In-place reversal is prohibited because it can corrupt clock, memory,
+IPv4, and other recorded evidence. INFO logging suppresses whitespace-only
+records and the complete ST67 informational banner; DEBUG retains diagnostic
+detail.
