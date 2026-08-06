@@ -786,6 +786,20 @@ static void APP_PrintST67PinState(const char *stage)
 
 static bool app_st67_network_ready = false;
 
+static void APP_EnableST67EXTIInterrupt(void)
+{
+  /*
+   * SPI_RDY (line 13) and USER_BUTTON (line 15) share EXTI15_10_IRQn.
+   * Keep the shared IRQ disabled until the FreeRTOS scheduler is running so
+   * an early SPI_RDY edge cannot call a FromISR API before the Cortex-M port
+   * has initialized its interrupt-priority validation state.
+   */
+  __HAL_GPIO_EXTI_CLEAR_IT(SPI_RDY_Pin);
+  __HAL_GPIO_EXTI_CLEAR_IT(USER_BUTTON_Pin);
+  HAL_NVIC_ClearPendingIRQ(EXTI15_10_IRQn);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
+
 static void APP_RunST67SPIBringup(void)
 {
   W6X_Status_t status;
@@ -839,6 +853,7 @@ static void APP_RunST67SPIBringup(void)
     return;
   }
 
+  APP_EnableST67EXTIInterrupt();
   APP_UART_WriteString("ST67 SPI bring-up: W6X_Init begin\r\n");
   status = W6X_Init();
 
@@ -1722,9 +1737,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /* EXTI interrupt init*/
+  /* EXTI interrupt init. Enable from the running network task. */
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+  HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -1738,8 +1753,18 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   if (GPIO_Pin == SPI_RDY_Pin)
   {
     GPIO_PinState ready_level = HAL_GPIO_ReadPin(SPI_RDY_GPIO_Port, SPI_RDY_Pin);
-    uint32_t tick = (uint32_t)xTaskGetTickCountFromISR();
+    uint32_t tick;
 
+    /*
+     * The shared EXTI line can become pending while GPIO is initialized.
+     * Do not call FreeRTOS FromISR APIs until the scheduler has started.
+     */
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+    {
+      return;
+    }
+
+    tick = (uint32_t)xTaskGetTickCountFromISR();
     app_st67_ready_diagnostic.irq_count++;
     app_st67_ready_diagnostic.last_level = (ready_level == GPIO_PIN_SET) ? 1U : 0U;
 

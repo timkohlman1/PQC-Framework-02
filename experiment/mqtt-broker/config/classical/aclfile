@@ -1,4 +1,5 @@
-# Client certificate CN becomes the MQTT username through use_identity_as_username.
-user stm32-mqtt-client
+# Shared experiment namespace for both listeners.
+# Port 1883 permits anonymous plaintext clients.
+# Port 8883 still requires a trusted client certificate through mosquitto.conf.
 topic readwrite pqc/#
 topic read $SYS/#

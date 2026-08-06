@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_pqc_profile_selects_hybrid_tls13_server_auth():
-    config = Path("configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "evidence_class: stm32_st67_pqc_hybrid_tls_e2e" in config
     assert "broker_profile: oqs" in config
     assert "mode: pqc_hybrid_tls_server_auth" in config
@@ -25,7 +25,15 @@ def test_stm32_wolfssl_enables_tls13_mlkem768_and_strict_group_check():
     ):
         assert source_file in cmake
     assert "wolfcrypt/src/wc_mlkem_asm.S" not in cmake
-    for marker in ("wolfTLSv1_3_client_method", "WOLFSSL_SECP256R1MLKEM768", "wolfSSL_CTX_set_groups", "wolfSSL_get_curve_name", 'strstr(curve_name, "MLKEM768")', "pqc_group=%s"):
+    for marker in (
+        "wolfTLSv1_3_client_method",
+        "PQC_TLS_GROUP_ID",
+        "PQC_TLS_GROUP_NAME",
+        "wolfSSL_CTX_set_groups",
+        "wolfSSL_get_curve_name",
+        "PQC_WolfMQTT_TLSGroupNamesMatch",
+        "configured_group=%s negotiated_group=%s key_exchange_group=%s",
+    ):
         assert marker in source
 
 
@@ -40,7 +48,15 @@ def test_oqs_broker_is_server_auth_and_healthcheck_uses_hybrid_group():
     acl = Path("experiment/mqtt-broker/config/oqs/aclfile").read_text(encoding="utf-8")
     assert "topic readwrite pqc/#" in acl
     assert "user pqc-mqtt-client" not in acl
-    assert "Groups = SecP256r1MLKEM768" in openssl_config
+    configured_groups = {
+        group
+        for line in openssl_config.splitlines()
+        if line.strip().startswith("Groups =")
+        for group in line.split("=", 1)[1].strip().split(":")
+    }
+    assert "SecP256r1MLKEM768" in configured_groups
+    assert "X25519MLKEM768" in configured_groups
+    assert "SecP384r1MLKEM1024" in configured_groups
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
@@ -57,7 +73,7 @@ def test_config_schema_accepts_pqc_evidence_and_mode():
 
 
 def test_pqc_profile_uses_extended_uart_hard_limit():
-    config = Path("configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
     assert "hard_limit_seconds: 180" in config
 
 
@@ -101,7 +117,7 @@ def test_tls_handshake_boundary_instrumentation_is_wired():
 def test_mlkem_client_key_share_uses_bounded_stack_and_scratch_memory():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     experiment = Path(
-        "configs/experiments/mqtt_tls_pqc_hybrid_server_auth_st67_e2e.yaml"
+        "configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
     ).read_text(encoding="utf-8")
 
     assert "#define WOLFSSL_SMALL_STACK" in settings

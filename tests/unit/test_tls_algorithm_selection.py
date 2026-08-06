@@ -1,5 +1,6 @@
 from pathlib import Path
 import pytest
+from scripts.framework.build import _certificate_requires_ecc
 from scripts.framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 
 
@@ -38,7 +39,7 @@ def test_mode_and_group_family_must_match():
 
 def test_settings_expose_independent_group_capability_guards():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
-    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024"):
+    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ECC_MIN_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024"):
         assert marker in settings
     assert "WOLFSSL_NO_ML_KEM_768" in settings
     assert "WOLFSSL_NO_ML_KEM_1024" in settings
@@ -48,3 +49,27 @@ def test_settings_disable_tls12_for_tls13_only_group_pruning():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
     assert "#define WOLFSSL_TLS13" in settings
     assert "#define WOLFSSL_NO_TLS12" in settings
+
+
+def test_stepca_classical_requires_certificate_ecc_independently_of_x25519_kex():
+    bundle = _bundle("pqc_hybrid_tls_mutual", "X25519MLKEM768")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["ecc"] is False
+    assert selected["curve25519"] is True
+    assert _certificate_requires_ecc(bundle) is True
+
+
+def test_plaintext_does_not_enable_certificate_ecc():
+    bundle = _bundle("plaintext", "none")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
+    assert _certificate_requires_ecc(bundle) is False
+
+
+def test_settings_keep_certificate_curve_floor_separate_from_kex_curve():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
+    assert "#define ECC_MIN_KEY_SZ PQC_TLS_ECC_MIN_BITS" in settings
+    assert "#define ECC_USER_CURVES" in settings
+    assert "PQC_TLS_ENABLE_CERT_ECC || PQC_TLS_ECC_BITS == 256" in settings
+    assert "#define WOLFSSL_SP_384" in settings
+    assert "#define WOLFSSL_SP_521" in settings

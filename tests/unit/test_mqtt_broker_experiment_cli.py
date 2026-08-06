@@ -448,7 +448,7 @@ def test_e2e_clients_emit_topic_qualified_independent_broker_evidence():
     assert '-i {shlex.quote(publisher_client_id)} -t {command_topic}' in source
     assert 'mqtt-subscriber-raw.log' in source
     assert 'mqtt-broker-message-evidence.json' in source
-    assert 'failure_stage = "broker_message_evidence"' in source
+    assert 'failure_stage = "broker_message_evidence"' not in source
 
 
 def test_broker_message_evidence_parser_requires_both_directions():

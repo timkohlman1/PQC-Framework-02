@@ -40,8 +40,6 @@ services:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
-      - ./data/classical:/mosquitto/data
-      - ./log/classical:/mosquitto/log
     healthcheck:
       test:
         [

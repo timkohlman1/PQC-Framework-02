@@ -284,9 +284,35 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 
 
+def _certificate_requires_ecc(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether the selected certificate profile needs wolfSSL ECC support.
+
+    This is independent of the negotiated TLS key-exchange group. The
+    stepca-classical certificate material contains EC keys/signatures and must
+    remain parseable for X25519-only key-exchange profiles.
+    """
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    mode = str(tls.get("mode", "plaintext")).strip()
+    certificate_profile = str(tls.get("certificate_profile", "")).strip()
+    if mode == "plaintext":
+        return False
+    return certificate_profile in {"stepca-classical"}
+
+
 def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release") -> tuple[Path, dict[str, Any]]:
     """Write the resolved profile-specific CMake algorithm selection."""
-    selected = resolve_tls_algorithm_set(bundle)
+    selected = dict(resolve_tls_algorithm_set(bundle))
+    selected["certificate_ecc"] = _certificate_requires_ecc(bundle)
+    enabled_ecc_sizes = []
+    if selected["ecc"]:
+        enabled_ecc_sizes.append(int(selected["ecc_bits"]))
+    if selected["certificate_ecc"]:
+        # stepca-classical currently uses a P-256 EC CA/signature chain. Keep
+        # certificate acceptance independent from the selected TLS KEX curve.
+        enabled_ecc_sizes.append(256)
+    selected["ecc_min_bits"] = min(enabled_ecc_sizes, default=256)
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_tls_algorithm_selection.cmake"
@@ -295,7 +321,9 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ENABLE_RSA {cmake_boolean(selected["rsa"])})\n'
         f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
         f'set(PQC_TLS_ENABLE_ECC {cmake_boolean(selected["ecc"])})\n'
+        f'set(PQC_TLS_ENABLE_CERT_ECC {cmake_boolean(selected["certificate_ecc"])})\n'
         f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
+        f'set(PQC_TLS_ECC_MIN_BITS {selected["ecc_min_bits"]})\n'
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'

@@ -63,8 +63,9 @@ def test_profile_resolves_only_selected_group(group, auth):
 
 def test_cmake_conditionally_includes_algorithm_sources():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-    assert "if(PQC_TLS_ENABLE_ECC)" in cmake
+    assert "if(PQC_TLS_ENABLE_ECC OR PQC_TLS_ENABLE_CERT_ECC)" in cmake
     assert "wolfcrypt/src/ecc.c" in cmake
+    assert "PQC_TLS_ENABLE_CERT_ECC" in cmake
     assert "if(PQC_TLS_ENABLE_CURVE25519)" in cmake
     assert "wolfcrypt/src/curve25519.c" in cmake
     assert "wolfcrypt/src/fe_low_mem.c" in cmake
@@ -75,7 +76,8 @@ def test_cmake_conditionally_includes_algorithm_sources():
 def test_runtime_forces_and_verifies_selected_group():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     assert "int groups[] = { PQC_TLS_GROUP_ID };" in source
-    assert "strcmp(curve_name, PQC_TLS_GROUP_NAME) == 0" in source
+    assert "PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name)" in source
+    assert "configured_group=%s negotiated_group=%s key_exchange_group=%s" in source
 
 
 def test_tls_profiles_use_single_line_scalar_descriptions():
@@ -89,3 +91,26 @@ def test_tls_profiles_use_single_line_scalar_descriptions():
                 f"{path} contains a wrapped top-level description that the minimal "
                 "YAML loader interprets as an invalid mapping line"
             )
+
+
+def test_generated_tls_selection_records_independent_ecc_minimum_bits(tmp_path):
+    from scripts.framework.build import _write_tls_algorithm_selection
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "tls": {
+                    "mode": "classical_tls_server_auth",
+                    "key_exchange_group": "secp521r1",
+                    "server_signature_algorithm": "classical",
+                    "certificate_profile": "stepca-classical",
+                }
+            }
+        }
+    }
+    path, selected = _write_tls_algorithm_selection(bundle, tmp_path)
+    generated = path.read_text(encoding="utf-8")
+    assert selected["ecc_bits"] == 521
+    assert selected["ecc_min_bits"] == 256
+    assert "set(PQC_TLS_ECC_BITS 521)" in generated
+    assert "set(PQC_TLS_ECC_MIN_BITS 256)" in generated

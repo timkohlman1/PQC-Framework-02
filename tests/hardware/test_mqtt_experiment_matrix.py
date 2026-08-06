@@ -170,11 +170,46 @@ def test_all_mqtt_profiles_end_to_end(
         capture_output=True,
         check=False,
     )
-    assert completed.returncode == 0, (
-        f"command failed for {case.experiment}\n"
-        f"stdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
-    )
+    if completed.returncode != 0:
+        created = _manifest_paths() - before
+        result_details = ""
+        if len(created) == 1:
+            failed_result_dir = next(iter(created)).parent
+            manifest_path = failed_result_dir / "manifest.json"
+            uart_path = failed_result_dir / "uart.log"
+            manifest_summary = "unavailable"
+            uart_tail = "unavailable"
+            if manifest_path.is_file():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    mqtt_e2e = manifest.get("mqtt_e2e", {})
+                    manifest_summary = json.dumps(
+                        {
+                            "result": manifest.get("result"),
+                            "return_code": mqtt_e2e.get("return_code"),
+                            "failure_stage": mqtt_e2e.get("failure_stage"),
+                            "missing_uart_markers": mqtt_e2e.get("missing_uart_markers"),
+                        },
+                        sort_keys=True,
+                    )
+                except (OSError, ValueError, TypeError):
+                    manifest_summary = "unreadable"
+            if uart_path.is_file():
+                uart_lines = uart_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                uart_tail = "\n".join(uart_lines[-60:])
+            result_details = (
+                f"\nresult_dir: {failed_result_dir}"
+                f"\nmanifest_summary: {manifest_summary}"
+                f"\nuart_tail:\n{uart_tail}\n"
+            )
+        pytest.fail(
+            f"command failed for {case.experiment}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+            f"{result_details}"
+        )
 
     result_dir = _new_result_dir(before)
     manifest_path = result_dir / "manifest.json"

@@ -117,8 +117,8 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     assert "/mosquitto/config/mosquitto.conf" in classical_mount_targets
     assert "/mosquitto/config/aclfile.source" in classical_mount_targets
     assert "/mosquitto/config/certs" in classical_mount_targets
-    assert "/mosquitto/data" in classical_mount_targets
-    assert "/mosquitto/log" in classical_mount_targets
+    assert "/mosquitto/data" not in classical_mount_targets
+    assert "/mosquitto/log" not in classical_mount_targets
 
     assert "/mosquitto/config/mosquitto.conf" in oqs_mount_targets
     assert "/mosquitto/config/openssl.cnf" in oqs_mount_targets

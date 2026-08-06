@@ -183,6 +183,25 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "APP_ST67ReadyDiagnosticSnapshotGet" in main_h
     assert "static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;" in main_c
     assert "xTaskGetTickCountFromISR()" in main_c
+    assert "HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);" in main_c
+    assert "static void APP_EnableST67EXTIInterrupt(void)" in main_c
+    assert "__HAL_GPIO_EXTI_CLEAR_IT(SPI_RDY_Pin);" in main_c
+    assert "__HAL_GPIO_EXTI_CLEAR_IT(USER_BUTTON_Pin);" in main_c
+    assert "HAL_NVIC_ClearPendingIRQ(EXTI15_10_IRQn);" in main_c
+    assert "HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);" in main_c
+    assert "xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED" in main_c
+    gpio_init_start = main_c.index("static void MX_GPIO_Init(void)\n{")
+    gpio_init_end = main_c.index("/* USER CODE BEGIN 4 */", gpio_init_start)
+    gpio_init_body = main_c[gpio_init_start:gpio_init_end]
+    assert "HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);" not in gpio_init_body
+    bringup_start = main_c.index("static void APP_RunST67SPIBringup(void)\n{")
+    bringup_end = main_c.index("static void APP_PrintLwIPRuntimeSmoke", bringup_start)
+    bringup_body = main_c[bringup_start:bringup_end]
+    assert bringup_body.index("APP_EnableST67EXTIInterrupt();") < bringup_body.index("status = W6X_Init();")
+    spi_port_c = _read("ST67W6X/Target/spi_port.c")
+    assert "static uint32_t spi_port_tick_from_isr(void)" in spi_port_c
+    assert "return HAL_GetTick();" in spi_port_c
+    assert "spi_port_diag.completed_tick = spi_port_tick_from_isr();" in spi_port_c
     assert "app_st67_ready_diagnostic.irq_count++;" in main_c
     assert "app_st67_ready_diagnostic.rising_count++;" in main_c
     assert "app_st67_ready_diagnostic.falling_count++;" in main_c
@@ -395,20 +414,19 @@ def test_st67_spi_transaction_ready_wait_is_level_aware_and_race_safe() -> None:
         "static int32_t spi_txrx(",
     )
 
-    assert helper.count("spi_port_is_ready() == 1") == 2
-    assert (
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-        in helper
+    ready_checks = [
+        index
+        for index in range(len(helper))
+        if helper.startswith("spi_port_is_ready() == 1", index)
+    ]
+    assert len(ready_checks) >= 2
+    wait_index = helper.index(
+        "xEventGroupWaitBits(engine->event, SPI_EVT_TXN_RDY,"
     )
-    assert helper.index("spi_port_is_ready() == 1") < helper.index(
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-    )
-    assert helper.rindex("spi_port_is_ready() == 1") > helper.index(
-        "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS)"
-    )
-    assert helper.count(
-        "spi_clear_event(engine, SPI_EVT_TXN_RDY)"
-    ) == 2
+    assert "pdTRUE, pdFALSE, remaining" in helper
+    assert helper.index("spi_port_is_ready() == 1") < wait_index
+    assert ready_checks[-1] > wait_index
+    assert "spi_clear_event(engine, SPI_EVT_TXN_RDY)" in helper
     assert "(spi_wait_txn_ready(engine) == 0)" in source
     assert (
         "spi_wait_event(engine, SPI_EVT_TXN_RDY, SPI_WAIT_TXN_TIMEOUT_MS) == 0"
