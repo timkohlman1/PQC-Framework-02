@@ -96,3 +96,8 @@ def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
     assert 'docker compose --project-name' in source
     assert 'exec -T' in source
     assert 'test -s /mosquitto/keylog/' in source
+
+
+def test_broker_start_waits_for_healthy_container():
+    source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
+    assert '["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"]' in source

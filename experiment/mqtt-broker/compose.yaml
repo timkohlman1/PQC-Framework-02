@@ -89,10 +89,12 @@ services:
     volumes:
       - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
-      - ./data/classical-server-auth:/mosquitto/data
-      - ./log/classical-server-auth:/mosquitto/log
     healthcheck:
-      test: ["CMD-SHELL", "test -r /tmp/mosquitto-certs/ca.crt && test -r /tmp/mosquitto-certs/server.crt && test -r /tmp/mosquitto-certs/server.key"]
+      test:
+        [
+          "CMD-SHELL",
+          "mosquitto_sub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --tls-version tlsv1.3 -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -138,7 +140,7 @@ services:
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
       timeout: 12s
       retries: 3
@@ -158,6 +160,8 @@ services:
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
         cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
+        cp /mosquitto/config/certs/healthcheck.crt /tmp/mosquitto-certs/healthcheck.crt
+        cp /mosquitto/config/certs/healthcheck.key /tmp/mosquitto-certs/healthcheck.key
         if id nobody >/dev/null 2>&1; then
           runtime_user="$(id -u nobody)"
           runtime_group="$(id -g nobody)"
@@ -166,8 +170,8 @@ services:
           runtime_group=0
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
-        chmod 0640 /tmp/mosquitto-certs/server.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
+        chmod 0640 /tmp/mosquitto-certs/server.key /tmp/mosquitto-certs/healthcheck.key
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt /tmp/mosquitto-certs/healthcheck.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
@@ -184,7 +188,7 @@ services:
       - ./config/oqs-mtls/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --cert /mosquitto/config/certs/client.crt --key /mosquitto/config/certs/client.key --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --cert /tmp/mosquitto-certs/healthcheck.crt --key /tmp/mosquitto-certs/healthcheck.key --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
       timeout: 12s
       retries: 3

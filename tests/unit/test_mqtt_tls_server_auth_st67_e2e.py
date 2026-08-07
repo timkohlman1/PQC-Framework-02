@@ -218,7 +218,7 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 2 if reconnect_attempts > 0 else 1' in source
+    assert 'expected_response_count = 7 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
     assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source
@@ -228,11 +228,15 @@ def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
 
 def test_gateway_reconnect_orchestration_keeps_publishing_until_all_responses_arrive():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    subscriber = source.index("mqtt_sub =")
-    subscriber_command = source.index("f'{mqtt_sub} -h {client_host}", subscriber)
-    publisher_loop = source.index('while kill -0 "$capture_pid"', subscriber_command)
-    response_validation = source.index('response_count=$(grep -c .', publisher_loop)
-    assert subscriber < publisher_loop < response_validation
+    capture = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
+    subscriber = capture.index("mqtt_sub =")
+    subscriber_command = capture.index("f'{mqtt_sub} -h {client_host}", subscriber)
+    common_suffix = capture.index("common_suffix =", subscriber_command)
+    response_validation = capture.index('response_count=$(grep -c .', common_suffix)
+    legacy_branch = capture.index("    else:\n        script = (", response_validation)
+    publisher_loop = capture.index('while kill -0 "$capture_pid"', legacy_branch)
+    suffix_use = capture.index("+ common_suffix", publisher_loop)
+    assert subscriber < subscriber_command < common_suffix < response_validation < legacy_branch < publisher_loop < suffix_use
 
 
 def test_firmware_reports_attempted_reconnect_failure_as_failed_not_not_run():

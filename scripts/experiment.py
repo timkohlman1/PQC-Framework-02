@@ -49,6 +49,7 @@ import inspect
 import hashlib
 import ipaddress
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -137,6 +138,103 @@ def _mqtt_completion_marker(bundle: dict[str, dict[str, Any]]) -> str:
     if not mode:
         mode = "plaintext"
     return f"{MQTT_COMPLETION_MARKER_PREFIX}{mode} status=done"
+
+
+def _mqtt_application(bundle: dict[str, dict[str, Any]]) -> str:
+    """Return the selected STM32 MQTT application profile."""
+
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    if not isinstance(firmware, dict):
+        return "mqtt_validation"
+    application = str(firmware.get("application", "mqtt_validation")).strip()
+    return application or "mqtt_validation"
+
+
+def _is_mqtt_ready_metrics_application(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether the selected firmware workload is ready/timing/metrics."""
+
+    return _mqtt_application(bundle) == "mqtt_ready_metrics"
+
+
+def _parse_ready_metrics_subscriber_output(
+    output: str, *, response_topic: str
+) -> dict[str, Any]:
+    """Validate topic-qualified ready, timing, and memory-metrics messages."""
+
+    payloads: list[str] = []
+    prefix = response_topic + " "
+    malformed_topic_lines = 0
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not line.startswith(prefix):
+            malformed_topic_lines += 1
+            continue
+        payloads.append(line[len(prefix):])
+
+    ready_count = sum(payload == "ready" for payload in payloads)
+    timing_messages: list[dict[str, Any]] = []
+    metrics_messages: list[dict[str, Any]] = []
+    invalid_json_count = 0
+    for payload in payloads:
+        if payload == "ready":
+            continue
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            invalid_json_count += 1
+            continue
+        if not isinstance(decoded, dict):
+            invalid_json_count += 1
+            continue
+        if decoded.get("type") == "connect_timing":
+            timing_messages.append(decoded)
+        elif decoded.get("type") == "memory_metrics":
+            metrics_messages.append(decoded)
+
+    timing_valid = (
+        len(timing_messages) == 1
+        and isinstance(timing_messages[0].get("milliseconds"), int)
+        and timing_messages[0]["milliseconds"] >= 0
+        and isinstance(timing_messages[0].get("tls_mode"), str)
+        and bool(timing_messages[0]["tls_mode"])
+    )
+    metric_sequences = [item.get("sequence") for item in metrics_messages]
+    required_sequences = list(range(1, 6))
+    metrics_valid = (
+        len(metrics_messages) >= 5
+        and metric_sequences[:5] == required_sequences
+        and all(
+            isinstance(item.get("stack_high_water_words"), int)
+            and item["stack_high_water_words"] >= 0
+            and isinstance(item.get("heap_free_bytes"), int)
+            and item["heap_free_bytes"] >= 0
+            and isinstance(item.get("heap_min_ever_bytes"), int)
+            and item["heap_min_ever_bytes"] >= 0
+            for item in metrics_messages[:5]
+        )
+    )
+    passed = (
+        len(payloads) >= 7
+        and ready_count == 1
+        and timing_valid
+        and metrics_valid
+        and invalid_json_count == 0
+        and malformed_topic_lines == 0
+    )
+    return {
+        "passed": passed,
+        "message_count": len(payloads),
+        "ready_count": ready_count,
+        "timing_count": len(timing_messages),
+        "timing_valid": timing_valid,
+        "metrics_count": len(metrics_messages),
+        "metrics_valid": metrics_valid,
+        "metric_sequences": metric_sequences,
+        "invalid_json_count": invalid_json_count,
+        "malformed_topic_lines": malformed_topic_lines,
+    }
 
 
 def _warning_count_from_build_result(build_result: Any) -> int | None:
@@ -469,7 +567,7 @@ def _wait_for_plaintext_mqtt_broker(
             f'-t {topic} -m {message} -r >"$publisher_file" 2>&1; pub_rc=$?; '
             'wait "$sub_pid"; sub_rc=$?; '
             'response=$(paste -sd, "$response_file"); '
-        'echo "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN" 1>&2; cat "$response_file" 1>&2; echo "PQC_MQTT_SUBSCRIBER_OUTPUT_END" 1>&2; '
+        "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
             f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] '
             f'&& [ "$response" = {message} ]; then '
             f'{mqtt_pub} -h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; ' + 'rm -f "$response_file" "$publisher_file"; '
@@ -634,7 +732,7 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
             continue
         key, value = token.split("=", 1)
         values[key] = value
-    for key in ("subscriber_rc", "publish_attempts", "response_count", "expected_response_count"):
+    for key in ("subscriber_rc", "publish_attempts", "response_count", "expected_response_count", "ready_count", "timing_count", "metrics_count"):
         if key in values:
             try:
                 values[key] = int(values[key])
@@ -644,20 +742,32 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
 
 
 
-def _extract_marked_text(text: str, begin_marker: str, end_marker: str) -> str:
-    """Return text captured between exact marker lines."""
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
-    collecting = False
-    lines: list[str] = []
-    for line in text.splitlines():
-        if line.strip() == begin_marker:
-            collecting = True
-            continue
-        if collecting and line.strip() == end_marker:
-            break
-        if collecting:
-            lines.append(line)
-    return "\n".join(lines).rstrip() + ("\n" if lines else "")
+
+def _extract_marked_text(text: str, begin_marker: str, end_marker: str) -> str:
+    """Return text between ordered markers after removing terminal escapes.
+
+    Markers may be prefixed by terminal output when the preceding process does
+    not terminate its final line. Missing or reversed markers return an empty
+    result so evidence-integrity validation can fail explicitly.
+    """
+
+    cleaned = _ANSI_ESCAPE_RE.sub("", text)
+    begin_index = cleaned.find(begin_marker)
+    if begin_index < 0:
+        return ""
+    content_start = begin_index + len(begin_marker)
+    if content_start < len(cleaned) and cleaned[content_start] == "\r":
+        content_start += 1
+    if content_start < len(cleaned) and cleaned[content_start] == "\n":
+        content_start += 1
+    end_index = cleaned.find(end_marker, content_start)
+    if end_index < 0:
+        return ""
+    content = cleaned[content_start:end_index]
+    content = content.lstrip("\r\n").rstrip("\r\n")
+    return content + ("\n" if content else "")
 
 
 def _parse_mqtt_broker_message_evidence(
@@ -668,6 +778,7 @@ def _parse_mqtt_broker_message_evidence(
     subscriber_client_id: str,
     command_topic: str,
     response_topic: str,
+    device_initiated: bool = False,
 ) -> dict[str, Any]:
     """Parse independent Mosquitto packet-routing evidence for one E2E run."""
 
@@ -678,14 +789,47 @@ def _parse_mqtt_broker_message_evidence(
 
     checks = {
         "stm32_connected": has_line("New client connected", f" as {stm32_client_id} "),
-        "stm32_subscribe_received": has_line(f"Received SUBSCRIBE from {stm32_client_id}"),
-        "stm32_suback_sent": has_line(f"Sending SUBACK to {stm32_client_id}"),
-        "command_publish_received": has_line(f"Received PUBLISH from {publisher_client_id}", command_topic),
-        "command_publish_delivered": has_line(f"Sending PUBLISH to {stm32_client_id}", command_topic),
         "response_publish_received": has_line(f"Received PUBLISH from {stm32_client_id}", response_topic),
         "response_publish_delivered": has_line(f"Sending PUBLISH to {subscriber_client_id}", response_topic),
     }
+    if not device_initiated:
+        checks.update({
+            "stm32_subscribe_received": has_line(f"Received SUBSCRIBE from {stm32_client_id}"),
+            "stm32_suback_sent": has_line(f"Sending SUBACK to {stm32_client_id}"),
+            "command_publish_received": has_line(f"Received PUBLISH from {publisher_client_id}", command_topic),
+            "command_publish_delivered": has_line(f"Sending PUBLISH to {stm32_client_id}", command_topic),
+        })
     return {**checks, "passed": all(checks.values())}
+
+
+BROKER_FATAL_LOG_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("broker_log_write_failure", "unable to open log file"),
+    ("unexpected_broker_tls_error", "ssl/tls alert bad certificate"),
+    ("unexpected_broker_tls_error", "certificate verify failed"),
+    ("unexpected_broker_tls_error", "tls error"),
+    ("broker_startup_error", "address already in use"),
+    ("broker_startup_error", "permission denied"),
+    ("broker_startup_error", "error loading"),
+    ("broker_startup_error", "unable to load"),
+)
+
+
+def _scan_mqtt_broker_fatal_evidence(log_text: str) -> dict[str, Any]:
+    """Return fatal broker-log findings that invalidate an E2E result."""
+
+    matches: list[dict[str, str]] = []
+    for line in log_text.splitlines():
+        normalized = line.casefold()
+        for reason, pattern in BROKER_FATAL_LOG_PATTERNS:
+            if pattern in normalized:
+                matches.append({"reason": reason, "pattern": pattern, "line": line.strip()})
+                break
+    return {
+        "passed": not matches,
+        "match_count": len(matches),
+        "matches": matches,
+        "failure_reason": None if not matches else matches[0]["reason"],
+    }
 
 def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
     for line in stderr.splitlines():
@@ -709,6 +853,32 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
 
 def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    if _is_mqtt_ready_metrics_application(bundle):
+        markers = [
+            "ST67 DHCP: result=passed",
+            "MQTT application: profile=mqtt_ready_metrics state=workload_start",
+            "PQC_APP_CONNECT timing=start boundary=before_tcp_connect",
+            "PQC_APP_PUBLISH sequence=1 type=ready result=0",
+            "PQC_APP_PUBLISH sequence=2 type=connect_timing",
+            "PQC_APP_METRICS_TASK state=started interval_ms=5000 completion_after=5",
+            "PQC_APP_METRICS sequence=1",
+            "PQC_APP_METRICS sequence=2",
+            "PQC_APP_METRICS sequence=3",
+            "PQC_APP_METRICS sequence=4",
+            "PQC_APP_METRICS sequence=5",
+            "PQC_APP_METRICS completion_threshold=5 status=reached task=continuing",
+            _mqtt_completion_marker(bundle),
+        ]
+        if isinstance(mqtt, dict):
+            broker = mqtt.get("broker", {})
+            if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
+                markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
+            if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
+                markers.extend(("wolfMQTT TLS: stage=handshake result=1 error=0", "wolfMQTT TLS: handshake passed"))
+            if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
+                markers.extend(("key_exchange_group=passed",))
+        return tuple(markers)
+
     markers = [
         "ST67 DHCP: result=passed", "mqtt_connect=passed",
         "mqtt_subscribe=passed", "mqtt_receive=passed",
@@ -839,9 +1009,10 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     topics = mqtt["topics"]
     orchestration = mqtt.get("orchestration", {})
     command_payload = str(mqtt.get("command_payload", "run"))
+    ready_metrics_application = _is_mqtt_ready_metrics_application(bundle)
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 2 if reconnect_attempts > 0 else 1
+    expected_response_count = 7 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
@@ -906,56 +1077,98 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     response_file = "/tmp/pqc-mqtt-e2e-response.$$"
     uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
 
-    script = (
+    subscriber_command = (
+        f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} '
+        f'-i {shlex.quote(subscriber_client_id)} -v -t {response_topic} '
+        f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" '
+        '& subscriber_pid=$!; '
+    )
+    common_prefix = (
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
         f"timeout 0.2s cat {device} >/dev/null 2>&1 || true; "
-        f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(subscriber_client_id)} -v -t {response_topic} -C {expected_response_count} -W {hard_limit_seconds} >"$response_file" & subscriber_pid=$!; '
-        f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
-        f"{restart_command} 1>&2; reset_rc=$?; attempts=0; publish_failures=0; publish_rc=0; "
-        f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
-        f'completion_marker={shlex.quote(_mqtt_completion_marker(bundle))}; completion_seen=0; '
-        f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
-        'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-        'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
-        f"sleep {publish_interval}; "
-        'if [ "$boot_seen" -eq 0 ]; then continue; fi; '
-        'attempts=$((attempts + 1)); '
-        f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(publisher_client_id)} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
-        'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
+        + subscriber_command
+        + f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
+        + f"{restart_command} 1>&2; reset_rc=$?; "
+        + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
+        + f'completion_marker={shlex.quote(_mqtt_completion_marker(bundle))}; completion_seen=0; '
+    )
+    subscriber_cleanup = (
+        f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
+        if pqc_hybrid
+        else ''
+    )
+    common_suffix = (
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
-        + (
-            f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
-            if pqc_hybrid
-            else ''
-        )
+        + subscriber_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
-        'wait "$capture_pid"; capture_rc=$?; '
-        'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
-        'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
-        'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
-        'cat "$uart_file"; '
-        f'expected={shlex.quote(expected_response)}; expected_line={shlex.quote(str(topics["response"]) + " " + expected_response)}; expected_count={expected_response_count}; '
-        'response_count=$(grep -c . "$response_file" || true); ' 
-        'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true); ' 
-        'matched=0; [ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
-        'response=$(paste -sd, "$response_file"); '
-        'echo "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN" 1>&2; cat "$response_file" 1>&2; echo "PQC_MQTT_SUBSCRIBER_OUTPUT_END" 1>&2; '
-        f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
-        'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
-        f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
-        'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
-        'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
+        + 'wait "$capture_pid"; capture_rc=$?; '
+        + 'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
+        + 'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
+        + 'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
+        + 'cat "$uart_file"; '
+        + 'response_count=$(grep -c . "$response_file" || true); response=$(paste -sd, "$response_file"); '
+        + "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
     )
+    if ready_metrics_application:
+        script = (
+            common_prefix
+            + 'while kill -0 "$capture_pid" 2>/dev/null; do '
+            + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
+            + 'if [ "$boot_seen" -eq 1 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
+            + 'sleep 1; done; '
+            + common_suffix
+            + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + 'rm -f "$response_file" "$uart_file"; '
+            + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
+        )
+    else:
+        script = (
+            common_prefix
+            + 'attempts=0; publish_failures=0; publish_rc=0; '
+            + f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
+            + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
+            + 'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
+            + f"sleep {publish_interval}; "
+            + 'if [ "$boot_seen" -eq 0 ]; then continue; fi; attempts=$((attempts + 1)); '
+            + f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(publisher_client_id)} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
+            + 'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
+            + common_suffix
+            + f'expected_line={shlex.quote(str(topics["response"]) + " " + expected_response)}; expected_count={expected_response_count}; '
+            + 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true); matched=0; '
+            + '[ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
+            + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
+            + 'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
+            + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
+        )
     ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
 
     def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
         start = time.perf_counter()
         completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
-        (result_dir / "mqtt-publisher.log").write_text(f"Publisher client ID: {publisher_client_id}\nCommand topic: {topics['command']}\nCommand payload: {command_payload}\nPublish interval seconds: {publish_interval}\nMaximum attempts: {max_attempts}\nExpected response count: {expected_response_count}\n{completed.stderr}", encoding="utf-8")
+        publisher_description = (
+            "Publisher disabled: mqtt_ready_metrics is device-initiated.\n"
+            if ready_metrics_application
+            else (
+                f"Publisher client ID: {publisher_client_id}\n"
+                f"Command topic: {topics['command']}\n"
+                f"Command payload: {command_payload}\n"
+                f"Publish interval seconds: {publish_interval}\n"
+                f"Maximum attempts: {max_attempts}\n"
+            )
+        )
+        (result_dir / "mqtt-publisher.log").write_text(
+            publisher_description
+            + f"Expected response count: {expected_response_count}\n"
+            + completed.stderr,
+            encoding="utf-8",
+        )
         marker = _parse_mqtt_e2e_marker(completed.stderr)
         subscriber_output = _extract_marked_text(completed.stderr, "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN", "PQC_MQTT_SUBSCRIBER_OUTPUT_END")
         (result_dir / "mqtt-subscriber-raw.log").write_text(subscriber_output, encoding="utf-8")
@@ -967,6 +1180,8 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     capture_marker: dict[str, Any] = {"marker_present": False}
     missing_uart_markers = list(_mqtt_e2e_required_uart_markers(bundle))
     broker_response_passed = False
+    ready_metrics_evidence: dict[str, Any] = {"passed": False}
+    subscriber_evidence_integrity: dict[str, Any] = {"passed": False}
     passed = False
     failure_stage = "uart"
     broker_log_rc = 1
@@ -977,22 +1192,74 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         "required_for_pass": False,
     }
     try:
-        emit_progress("mqtt", "Starting MQTT command/response validation", detail=f"Subscriber topic: {topics['response']}; publisher topic: {topics['command']}; expected responses: {expected_response_count}.")
+        if ready_metrics_application:
+            emit_progress(
+                "mqtt",
+                "Starting MQTT ready/timing/metrics validation",
+                detail=(
+                    f"Subscriber topic: {topics['response']}; expected messages: "
+                    "1 ready, 1 connect timing, and 5 memory metrics."
+                ),
+            )
+        else:
+            emit_progress("mqtt", "Starting MQTT command/response validation", detail=f"Subscriber topic: {topics['response']}; publisher topic: {topics['command']}; expected responses: {expected_response_count}.")
         uart_result = execute_uart_capture(bundle=bundle, repo_root=repo_root, result_dir=result_dir, runner=runner, duration_seconds=hard_limit_seconds, restart_command=restart_command)
         marker = _parse_mqtt_e2e_marker(uart_result.capture.stderr)
         capture_marker = _parse_mqtt_uart_capture_marker(uart_result.capture.stderr)
         missing_uart_markers = [item for item in _mqtt_e2e_required_uart_markers(bundle) if item not in uart_result.capture.stdout]
-        broker_response_passed = (
-            marker.get("subscriber_rc") == 0
-            and marker.get("response_matched") == "1"
-            and marker.get("response_count") == expected_response_count
-            and marker.get("expected_response_count") == expected_response_count
+        authoritative_subscriber_output = _extract_marked_text(
+            uart_result.capture.stderr,
+            "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN",
+            "PQC_MQTT_SUBSCRIBER_OUTPUT_END",
         )
+        subscriber_raw_path = result_dir / "mqtt-subscriber-raw.log"
+        subscriber_raw_path.write_text(authoritative_subscriber_output, encoding="utf-8")
+        persisted_subscriber_output = subscriber_raw_path.read_text(encoding="utf-8", errors="replace")
+        subscriber_evidence_integrity = {
+            "markers_present": bool(authoritative_subscriber_output.strip()),
+            "artifact_nonempty": bool(persisted_subscriber_output.strip()),
+            "artifact_matches_capture": persisted_subscriber_output == authoritative_subscriber_output,
+        }
+        subscriber_evidence_integrity["passed"] = all(subscriber_evidence_integrity.values())
+        if ready_metrics_application:
+            ready_metrics_evidence = _parse_ready_metrics_subscriber_output(
+                persisted_subscriber_output, response_topic=str(topics["response"])
+            )
+            broker_response_passed = (
+                marker.get("subscriber_rc") == 0
+                and marker.get("response_count") == expected_response_count
+                and marker.get("expected_response_count") == expected_response_count
+                and bool(ready_metrics_evidence.get("passed"))
+                and bool(subscriber_evidence_integrity.get("passed"))
+            )
+        else:
+            broker_response_passed = (
+                marker.get("subscriber_rc") == 0
+                and marker.get("response_matched") == "1"
+                and marker.get("response_count") == expected_response_count
+                and marker.get("expected_response_count") == expected_response_count
+                and bool(subscriber_evidence_integrity.get("passed"))
+            )
         passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
-        emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
+        if ready_metrics_application:
+            emit_progress(
+                "mqtt",
+                "MQTT ready/timing/metrics validation complete" if passed else "MQTT ready/timing/metrics validation incomplete",
+                detail=(
+                    f"Messages: {ready_metrics_evidence.get('message_count')}/{expected_response_count}; "
+                    f"ready: {ready_metrics_evidence.get('ready_count')}; "
+                    f"timing: {ready_metrics_evidence.get('timing_count')}; "
+                    f"metrics: {ready_metrics_evidence.get('metrics_count')}; "
+                    f"missing UART markers: {len(missing_uart_markers)}."
+                ),
+            )
+        else:
+            emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
         failure_stage = "none"
         if uart_result.return_code != 0:
             failure_stage = "uart"
+        elif not subscriber_evidence_integrity.get("passed", False):
+            failure_stage = "subscriber_evidence_integrity"
         elif not broker_response_passed:
             failure_stage = "broker_response"
         elif missing_uart_markers:
@@ -1040,11 +1307,18 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         )
         broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     broker_log_path = result_dir / "mqtt-broker-log.log"
+    broker_log_integrity: dict[str, Any] = {
+        "passed": False,
+        "failure_reason": "broker_log_unavailable",
+        "match_count": 0,
+        "matches": [],
+    }
     if broker_log_rc == 0 and broker_log_path.exists():
         broker_log_text = broker_log_path.read_text(
             encoding="utf-8",
             errors="replace",
         )
+        broker_log_integrity = _scan_mqtt_broker_fatal_evidence(broker_log_text)
         broker_message_evidence = {
             **_parse_mqtt_broker_message_evidence(
                 broker_log_text,
@@ -1053,33 +1327,28 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 subscriber_client_id=subscriber_client_id,
                 command_topic=str(topics["command"]),
                 response_topic=str(topics["response"]),
+                device_initiated=ready_metrics_application,
             ),
             "available": bool(broker_log_text.strip()),
-            "required_for_pass": False,
+            "required_for_pass": True,
         }
     if passed and packet_capture_result.return_code != 0:
         passed = False
         failure_stage = "gateway_packet_capture"
-    # Live subscriber matching plus the required UART markers are the
-    # authoritative MQTT E2E result. Broker log collection and packet-routing
-    # parsing are supplemental evidence: log output can be unavailable after a
-    # successful run because the managed broker container has already stopped
-    # or emitted no retrievable tail. Do not convert a proven live pass into a
-    # false negative solely because supplemental broker evidence is absent.
     broker_message_evidence["collection_return_code"] = broker_log_rc
-    broker_message_evidence["supplemental_warning"] = (
-        "broker_log_collection_failed"
-        if broker_log_rc != 0
-        else (
-            "broker_log_empty"
-            if not broker_message_evidence.get("available", False)
-            else (
-                "broker_message_evidence_incomplete"
-                if not broker_message_evidence.get("passed", False)
-                else "none"
-            )
-        )
-    )
+    broker_message_evidence["supplemental_warning"] = "none"
+    if passed and broker_log_rc != 0:
+        passed = False
+        failure_stage = "broker_log_collection"
+    elif passed and not broker_message_evidence.get("available", False):
+        passed = False
+        failure_stage = "broker_log_unavailable"
+    elif passed and not broker_log_integrity.get("passed", False):
+        passed = False
+        failure_stage = str(broker_log_integrity.get("failure_reason") or "broker_log_integrity")
+    elif passed and not broker_message_evidence.get("passed", False):
+        passed = False
+        failure_stage = "broker_message_evidence"
     (result_dir / "mqtt-broker-message-evidence.json").write_text(
         json.dumps(broker_message_evidence, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1091,6 +1360,12 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         "mqtt_e2e": {
             "return_code": 0 if passed else MQTT_E2E_FAILURE_RETURN_CODE,
             "failure_stage": failure_stage,
+            "application": _mqtt_application(bundle),
+            "validation_contract": (
+                "ready_connect_timing_five_memory_metrics"
+                if ready_metrics_application
+                else "command_response_correlation"
+            ),
             "command_topic": topics["command"],
             "response_topic": topics["response"],
             "command_payload": command_payload,
@@ -1099,11 +1374,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "publisher_client_id": publisher_client_id,
             "subscriber_client_id": subscriber_client_id,
             "broker_response_passed": broker_response_passed,
+            "ready_metrics_evidence": ready_metrics_evidence if ready_metrics_application else None,
             "publish_attempts": marker.get("publish_attempts"),
             "missing_uart_markers": missing_uart_markers,
             "publisher_log": "mqtt-publisher.log",
             "subscriber_log": "mqtt-subscriber.log",
             "subscriber_raw_log": "mqtt-subscriber-raw.log",
+            "subscriber_evidence_integrity": subscriber_evidence_integrity,
+            "broker_log_integrity": broker_log_integrity,
             "broker_message_evidence": broker_message_evidence,
             "broker_message_evidence_log": "mqtt-broker-message-evidence.json",
             "capture_termination_reason": capture_marker.get("termination_reason") if uart_result is not None else None,
@@ -2805,7 +3083,14 @@ def _compose_wolfboot_run_bundle(
         **original_experiment,
         "boot": secure_experiment["boot"],
         "boot_crypto": secure_experiment["boot_crypto"],
-        "firmware": dict(secure_experiment["firmware"]),
+        "firmware": {
+            **secure_experiment["firmware"],
+            **{
+                key: value
+                for key, value in original_experiment.get("firmware", {}).items()
+                if key in {"application", "uart_log_level"}
+            },
+        },
         "secure_boot_benchmark_profile": dict(
             secure_experiment["secure_boot_benchmark_profile"]
         ),

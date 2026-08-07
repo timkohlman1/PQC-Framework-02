@@ -112,7 +112,7 @@ def test_lwip_options_use_cmsis_rtos_v2_os_port_without_runtime_startup() -> Non
 def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     main_h = _read("Core/Inc/main.h")
     main_c = _read("Core/Src/main.c")
-    application = _read("Core/App/mqtt_validation/pqc_mqtt_validation_application.c")
+    application = _read("Core/Src/pqc_mqtt_application_mqtt_validation.c")
     it_c = _read("Core/Src/stm32l4xx_it.c")
     freertos_config = _read("Core/Inc/FreeRTOSConfig.h")
 
@@ -165,7 +165,7 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert ".run_network_bringup = APP_RunST67SPIBringup" in main_c
     assert "PQC_MQTT_ApplicationRun(&fixture);" in main_c
     assert "fixture->run_network_bringup();" in application
-    assert "network_ready = fixture->is_network_ready();" in application
+    assert "if (!fixture->is_network_ready())" in application
     assert "void StartNetworkTask(void *argument)" in main_c
     assert "networkTaskHandle = osThreadNew(StartNetworkTask" in main_c
     assert "PQC_WIFI_SSID[0] == '\\0'" in main_c
@@ -209,11 +209,15 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     assert "app_st67_ready_diagnostic.rising_count++;" in main_c
     assert "app_st67_ready_diagnostic.falling_count++;" in main_c
     network_task_definition = main_c.rindex("void StartNetworkTask(void *argument)")
-    assert main_c.index("APP_RunST67SPIBringup();", network_task_definition) > network_task_definition
+    network_task_body = main_c[network_task_definition:]
+    assert "PQC_MQTT_ApplicationRun(&fixture);" in network_task_body
+    assert "APP_RunST67SPIBringup();" not in network_task_body
     default_task_definition = main_c.rindex("void StartDefaultTask(void *argument)")
     default_task_body = main_c[default_task_definition:network_task_definition]
     assert "APP_RunST67SPIBringup();" not in default_task_body
-    assert 'const char tick_msg[] = "tick\\r\\n";' in default_task_body
+    assert 'APP_UART_WriteString("FreeRTOS defaultTask started\\r\\n");' in default_task_body
+    assert "HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);" in default_task_body
+    assert "osDelay(1000);" in default_task_body
     assert "evidence=stm32-st67-gpio-spi-bringup-only" in main_c
     assert "wifi_association=not-attempted" in main_c
     assert "end_to_end=unavailable" in main_c

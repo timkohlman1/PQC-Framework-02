@@ -41,6 +41,7 @@ def test_oqs_broker_is_server_auth_and_healthcheck_uses_hybrid_group():
     config = Path("experiment/mqtt-broker/config/oqs/mosquitto.conf").read_text(encoding="utf-8")
     openssl_config = Path("experiment/mqtt-broker/config/oqs/openssl.cnf").read_text(encoding="utf-8")
     compose = Path("experiment/mqtt-broker/compose.yaml").read_text(encoding="utf-8")
+    oqs_service = compose[compose.index("  mqtt-oqs:"):compose.index("  mqtt-oqs-mtls:")]
     assert "tls_version tlsv1.3" in config
     assert "require_certificate false" in config
     assert "use_identity_as_username false" in config
@@ -59,10 +60,10 @@ def test_oqs_broker_is_server_auth_and_healthcheck_uses_hybrid_group():
     assert "SecP384r1MLKEM1024" in configured_groups
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
-    assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
-    assert "--tls-version tlsv1.3" in compose
-    assert "healthcheck.crt" not in compose
-    assert "healthcheck.key" not in compose
+    assert "mosquitto_pub -h 127.0.0.1 -p 8883" in oqs_service
+    assert "--tls-version tlsv1.3" in oqs_service
+    assert "healthcheck.crt" not in oqs_service
+    assert "healthcheck.key" not in oqs_service
 
 
 def test_config_schema_accepts_pqc_evidence_and_mode():

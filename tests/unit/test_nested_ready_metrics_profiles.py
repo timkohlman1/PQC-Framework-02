@@ -43,3 +43,22 @@ def test_nested_profile_is_included_in_build_fingerprint_inputs():
     from framework.fingerprint import _experiment_profile_input
     profile = ROOT / "ready_metrics_mqtt_plaintext_st67_e2e.yaml"
     assert _experiment_profile_input(Path.cwd(), "ready_metrics_mqtt_plaintext_st67_e2e") == profile.as_posix()
+
+
+def test_wolfboot_composition_preserves_ready_metrics_application():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("experiment_cli", Path("scripts/experiment.py"))
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    profile = ROOT / "ready_metrics_mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml"
+    bundle = module._compose_wolfboot_run_bundle(
+        experiment_path=profile,
+        boot_algorithm="integrity_sha256",
+        target_profile=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
+    )
+
+    assert bundle["experiment"]["firmware"]["application"] == "mqtt_ready_metrics"
+    assert bundle["experiment"]["firmware"]["mode"] == "wolfboot_integrity"

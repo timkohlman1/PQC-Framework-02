@@ -126,11 +126,12 @@ def test_default_task_retains_liveness_without_standalone_tick_uart_chatter():
 def test_phase_m6_5_task_context_smoke_is_delegated_through_application_fixture():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     application = Path(
-        "Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
+        "Core/Src/pqc_mqtt_application_mqtt_validation.c"
     ).read_text(encoding="utf-8")
     default_start = main_c.rindex("void StartDefaultTask(void *argument)")
+    default_end = main_c.index("/* USER CODE END 5 */", default_start)
     network_start = main_c.rindex("void StartNetworkTask(void *argument)")
-    default_body = main_c[default_start:network_start]
+    default_body = main_c[default_start:default_end]
     network_body = main_c[network_start:]
 
     assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
@@ -144,11 +145,12 @@ def test_phase_m6_5_task_context_smoke_is_delegated_through_application_fixture(
     assert ".print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus" in network_body
     assert "PQC_MQTT_ApplicationRun(&fixture);" in network_body
 
-    selected_index = application.index("PQC_APPLICATION_SELECTED application=")
+    selected_index = application.index("MQTT application: profile=mqtt_validation state=starting")
     bringup_index = application.index("fixture->run_network_bringup();")
+    ready_index = application.index("fixture->is_network_ready()")
     lwip_index = application.index("fixture->print_lwip_runtime();")
     wolfssl_index = application.index("fixture->print_wolfssl_runtime();")
     mqtt_index = application.index("fixture->print_wolfmqtt_runtime();")
-    completion_index = application.index("PQC_EXPERIMENT_COMPLETE experiment=")
-    assert selected_index < bringup_index < lwip_index < wolfssl_index < mqtt_index < completion_index
+    completion_index = application.index("fixture->mark_complete();")
+    assert selected_index < bringup_index < ready_index < lwip_index < wolfssl_index < mqtt_index < completion_index
 
