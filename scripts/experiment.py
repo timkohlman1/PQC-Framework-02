@@ -99,6 +99,12 @@ from framework.packet_capture import (
     start_gateway_packet_capture,
     stop_and_collect_gateway_packet_capture,
 )
+from framework.network_degradation import (
+    apply_gateway_network_degradation,
+    degradation_manifest,
+    network_degradation_config,
+    remove_gateway_network_degradation,
+)
 from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
@@ -1003,6 +1009,32 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         ),
     )
 
+    network_degradation = None
+    degradation_apply = None
+    try:
+        network_degradation, degradation_apply = apply_gateway_network_degradation(
+            bundle=bundle, repo_root=repo_root, result_dir=result_dir
+        )
+    except ValueError as exc:
+        update_manifest(result_dir / "manifest.json", {"network_degradation": {"enabled": True, "status": "invalid", "failure_reason": str(exc)}})
+        stop_and_collect_gateway_packet_capture(capture=packet_capture, repo_root=repo_root, result_dir=result_dir)
+        _collect_and_stop_managed_mqtt_broker(
+            bundle=bundle, repo_root=repo_root, result_dir=result_dir
+        )
+        return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "network_degradation_config"
+    if degradation_apply is not None:
+        if network_degradation is None:
+            update_manifest(result_dir / "manifest.json", {"network_degradation": {"enabled": True, "status": "apply_failed", "apply_return_code": degradation_apply.return_code, "log": "gateway-network-degradation.log"}})
+            stop_and_collect_gateway_packet_capture(capture=packet_capture, repo_root=repo_root, result_dir=result_dir)
+            _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir
+            )
+            return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "network_degradation_apply"
+        degradation_evidence = degradation_manifest(network_degradation.config)
+        degradation_evidence.update({"status": "applied", "apply_return_code": degradation_apply.return_code, "original_mtu": network_degradation.original_mtu, "log": network_degradation.log_path.name})
+        update_manifest(result_dir / "manifest.json", {"network_degradation": degradation_evidence})
+        emit_progress("network", "Controlled network degradation applied", detail=(f"Rate: {network_degradation.config.rate_kbit} kbit/s symmetric; RTT: {network_degradation.config.rtt_ms} ms; loss: {network_degradation.config.loss_percent:g}% independently per direction; MTU: {network_degradation.config.mtu}."))
+
     experiment = bundle["experiment"]
     mqtt = experiment["mqtt"]
     broker = mqtt["broker"]
@@ -1265,6 +1297,21 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         elif missing_uart_markers:
             failure_stage = "mqtt_uart_markers"
     finally:
+        degradation_cleanup_result = None
+        if network_degradation is not None:
+            degradation_cleanup_result = remove_gateway_network_degradation(
+                degradation=network_degradation, repo_root=repo_root
+            )
+            degradation_evidence = degradation_manifest(network_degradation.config)
+            degradation_evidence.update({
+                "status": "removed" if degradation_cleanup_result.return_code == 0 else "cleanup_failed",
+                "apply_return_code": network_degradation.apply.return_code,
+                "cleanup_return_code": degradation_cleanup_result.return_code,
+                "original_mtu": network_degradation.original_mtu,
+                "log": degradation_cleanup_result.log_path.name,
+                "failure_reason": degradation_cleanup_result.failure_reason,
+            })
+            update_manifest(result_dir / "manifest.json", {"network_degradation": degradation_evidence})
         packet_capture_result = stop_and_collect_gateway_packet_capture(
             capture=packet_capture,
             repo_root=repo_root,
@@ -1332,6 +1379,9 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "available": bool(broker_log_text.strip()),
             "required_for_pass": True,
         }
+    if passed and degradation_cleanup_result is not None and degradation_cleanup_result.return_code != 0:
+        passed = False
+        failure_stage = "network_degradation_cleanup"
     if passed and packet_capture_result.return_code != 0:
         passed = False
         failure_stage = "gateway_packet_capture"
@@ -1747,6 +1797,11 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         if "/" in certificate_profile or "\\" in certificate_profile or certificate_profile in {".", ".."}:
             raise ConfigError("mqtt.tls.certificate_profile must be an identifier, not a path")
 
+    try:
+        network_degradation_config({"experiment": config})
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
     orchestration = mqtt_config.get("orchestration", {})
     if orchestration and not isinstance(orchestration, dict):
         raise ConfigError("experiment config mqtt.orchestration field must be a mapping")
@@ -2123,13 +2178,22 @@ def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
         (parent for parent in resolved_path.parents if parent.name == "experiments"),
         None,
     )
-    if experiments_root is None or experiments_root.parent.name != "configs":
-        raise ConfigError(
-            "Experiment config must live under configs/experiments/ (including "
-            "nested subfolders) for automatic board and host resolution"
-        )
+    if experiments_root is not None and experiments_root.parent.name == "configs":
+        return experiments_root.parent
 
-    return experiments_root.parent
+    generated_state_root = next(
+        (parent for parent in resolved_path.parents if parent.name == ".pqc-generated-state"),
+        None,
+    )
+    if generated_state_root is not None:
+        configs_root = generated_state_root.parent / "configs"
+        if (configs_root / "experiments").is_dir():
+            return configs_root
+
+    raise ConfigError(
+        "Experiment config must live under configs/experiments/ or the repository-owned "
+        ".pqc-generated-state/ network-grid path for automatic board and host resolution"
+    )
 
 
 def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:
@@ -3466,6 +3530,122 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
     return final_return_code
 
 
+def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
+    """Run one measurement against firmware already prepared and flashed.
+
+    The referenced preparation result owns build, flash, prerequisite, and smoke-test
+    evidence. This result owns only the independent runtime measurement evidence.
+    """
+
+    from time import perf_counter
+
+    if args.profile_preparation_manifest is None:
+        print("Error: --runtime-only requires --profile-preparation-manifest.", file=sys.stderr)
+        return 2
+    reference_path = Path(args.profile_preparation_manifest)
+    if not reference_path.is_absolute():
+        reference_path = Path.cwd() / reference_path
+    reference_path = reference_path.resolve()
+    if not reference_path.is_file():
+        print(f"Error: profile preparation manifest not found: {reference_path}", file=sys.stderr)
+        return 2
+    try:
+        preparation_manifest = json.loads(reference_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error: invalid profile preparation manifest: {exc}", file=sys.stderr)
+        return 2
+    preparation_run = preparation_manifest.get("run", {})
+    if not isinstance(preparation_run, dict) or preparation_run.get("return_code") != 0:
+        print("Error: referenced profile preparation did not complete successfully.", file=sys.stderr)
+        return 2
+    preparation_firmware = preparation_manifest.get("firmware", {})
+    firmware_sha256 = (
+        preparation_firmware.get("sha256")
+        if isinstance(preparation_firmware, dict)
+        else None
+    )
+    if not isinstance(firmware_sha256, str) or not firmware_sha256.strip():
+        print("Error: referenced profile preparation has no firmware SHA-256 evidence.", file=sys.stderr)
+        return 2
+
+    bundle = load_experiment_bundle(args.experiment)
+    if not _is_st67_mqtt_e2e(bundle):
+        print("Error: --runtime-only is limited to STM32/ST67 MQTT end-to-end experiments.", file=sys.stderr)
+        return 2
+    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    _report_experiment_start(bundle, manifest["run_id"])
+    repo_root = repo_root_from_experiment_path(args.experiment)
+    start = perf_counter()
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "profile_preparation_reference": {
+                "manifest": str(reference_path),
+                "run_id": preparation_manifest.get("run_id"),
+                "result": preparation_manifest.get("result"),
+                "firmware_sha256": firmware_sha256,
+                "build_and_flash_reused": True,
+                "external_dependencies_reused": True,
+                "smoke_test_reused": True,
+            },
+            "firmware": {
+                "sha256": firmware_sha256,
+                "result_artifact": None,
+                "result_artifact_path": None,
+            },
+            "measurement": {
+                "runtime_only": True,
+                "build_performed": False,
+                "flash_performed": False,
+                "prerequisite_provisioning_performed": False,
+            },
+        },
+    )
+    emit_progress(
+        "measure",
+        "Running measurement against prepared firmware",
+        detail=f"Preparation: {reference_path}; firmware SHA-256: {firmware_sha256}.",
+    )
+    uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
+        bundle=bundle,
+        repo_root=repo_root,
+        result_dir=result_dir,
+        duration_seconds=args.uart_duration_seconds,
+        restart_command=_monitor_restart_command(bundle, None),
+    )
+    _record_run_summary(
+        result_dir=result_dir,
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        build_return_code=None,
+        artifact_copy_return_code=None,
+        flash_return_code=None,
+        uart_return_code=None if uart_result is None else uart_result.return_code,
+        copied_artifact_path=None,
+        duration_seconds=perf_counter() - start,
+        referenced_build_artifact_sha256=firmware_sha256,
+    )
+    update_manifest(
+        result_dir / "manifest.json",
+        {
+            "result": (
+                "network_measurement_passed"
+                if final_return_code == 0
+                else "network_measurement_failed"
+            ),
+        },
+    )
+    _report_run_result(
+        passed_label="Network-degradation measurement passed",
+        final_return_code=final_return_code,
+        failure_stage=failure_stage,
+        run_id=manifest["run_id"],
+        result_dir=result_dir,
+        uart_log=None if uart_result is None else uart_result.log_path,
+    )
+    return final_return_code
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
@@ -3475,6 +3655,12 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     """
 
     from time import perf_counter
+
+    if getattr(args, "runtime_only", False):
+        if getattr(args, "build_number", None) is not None:
+            print("Error: --runtime-only cannot be combined with --build-number.", file=sys.stderr)
+            return 2
+        return _run_runtime_only_measurement(args)
 
     explicit_boot_mode = getattr(args, "boot_mode", None)
     explicit_boot_algorithm = getattr(args, "boot_algorithm", None)
@@ -5075,6 +5261,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
         type=Path,
         help="Canonical secure-boot target profile used by the inferred or explicit wolfBoot workflow.",
+    )
+    run_parser.add_argument(
+        "--runtime-only",
+        action="store_true",
+        help="Run only the independent runtime measurement against firmware already built, flashed, and smoke-tested.",
+    )
+    run_parser.add_argument(
+        "--profile-preparation-manifest",
+        type=Path,
+        default=None,
+        help="Successful profile-preparation manifest required by --runtime-only.",
     )
     run_parser.set_defaults(func=run_full_baseline_command)
 
