@@ -441,6 +441,7 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
     assert "--tls-version tlsv1.3" in compose
     assert "--cafile /tmp/mosquitto-certs/ca.crt" in compose
+    assert "--insecure" in compose
     assert "oqsprovider" not in openssl_config
 
 def test_mqtt_control_script_has_provision_and_validation_subcommands():
@@ -731,10 +732,22 @@ def test_classical_server_auth_mqtt_validation_omits_client_identity(tmp_path, m
 
 def test_classical_acl_supports_plaintext_and_certificate_authenticated_clients():
     acl = _read(BROKER_ROOT / "config" / "classical" / "aclfile")
-    assert "user stm32-mqtt-client" not in acl
-    assert "user pqc-mqtt-client" not in acl
-    assert "topic readwrite pqc/#" in acl
-    assert "topic read $SYS/#" in acl
+    lines = [
+        line.strip()
+        for line in acl.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+    assert lines[:2] == [
+        "topic readwrite pqc/#",
+        "topic read $SYS/#",
+    ]
+    assert lines[2:] == [
+        "user stm32-mqtt-client",
+        "topic readwrite pqc/#",
+        "topic read $SYS/#",
+    ]
+    assert "user pqc-mqtt-client" not in lines
 
 
 def test_mqtt_validator_reports_subscriber_failure_without_blank_polling():
@@ -790,3 +803,33 @@ def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
         }
         assert configured_groups == expected_groups
         assert "oqsprovider" not in config
+
+
+def test_classical_server_auth_uses_stdout_only_and_real_tls_healthcheck():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    config = _read(BROKER_ROOT / "config" / "classical-server-auth" / "mosquitto.conf")
+    service = compose[compose.index("  mqtt-classical-server-auth:"):compose.index("  mqtt-oqs:")]
+
+    assert "log_dest stdout" in config
+    assert "log_dest file" not in config
+    assert "persistence false" in config
+    assert "./log/classical-server-auth:/mosquitto/log" not in service
+    assert "./data/classical-server-auth:/mosquitto/data" not in service
+    assert "mosquitto_sub -h 127.0.0.1 -p 8883" in service
+    assert "--cafile /tmp/mosquitto-certs/ca.crt" in service
+    assert "--tls-version tlsv1.3" in service
+    assert "--insecure" in service
+    assert "--cert" not in service
+
+
+def test_oqs_mtls_healthcheck_uses_staged_dedicated_credentials():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    service = compose[compose.index("  mqtt-oqs-mtls:"):]
+
+    assert "cp /mosquitto/config/certs/healthcheck.crt /tmp/mosquitto-certs/healthcheck.crt" in service
+    assert "cp /mosquitto/config/certs/healthcheck.key /tmp/mosquitto-certs/healthcheck.key" in service
+    assert "--cert /tmp/mosquitto-certs/healthcheck.crt" in service
+    assert "--key /tmp/mosquitto-certs/healthcheck.key" in service
+    assert "--insecure" in service
+    assert "--cert /mosquitto/config/certs/client.crt" not in service
+    assert "--key /mosquitto/config/certs/client.key" not in service

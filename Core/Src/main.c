@@ -2078,9 +2078,18 @@ static void APP_PrintNetworkTaskMemoryCheckpoint(void)
   APP_PrintApplicationMemoryCheckpoint("network_task_complete", pdTRUE, pdTRUE);
 }
 
+static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
+{
+  return PQC_WolfMQTT_RunReadyMetricsApplication(mark_complete);
+}
+
 static void APP_MarkExperimentComplete(void)
 {
-  app_experiment_complete = true;
+  if (!app_experiment_complete)
+  {
+    APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done\r\n");
+    app_experiment_complete = true;
+  }
 }
 
 void StartNetworkTask(void *argument)
@@ -2092,6 +2101,7 @@ void StartNetworkTask(void *argument)
     .print_lwip_runtime = APP_PrintLwIPRuntimeFixture,
     .print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture,
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
+    .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
     .print_memory_checkpoint = APP_PrintNetworkTaskMemoryCheckpoint,
     .mark_complete = APP_MarkExperimentComplete,

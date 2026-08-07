@@ -112,39 +112,17 @@ This long matrix covers direct-flash and wolfBoot execution for plaintext and cl
 
 Each TLS group has server-authentication and mutual-authentication profiles. The selected group controls wolfSSL source inclusion and named-group advertisement; unrelated ECC, X25519, and ML-KEM implementations are excluded from that firmware build.
 
+Profiles are named `mqtt_tls_<group>_<server_auth|mutual_auth>_st67_e2e.yaml` under `configs/experiments/`, with groups `x25519`, `secp256r1`, `secp384r1`, `secp521r1`, `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024`. Run any profile with:
+
 ```powershell
 .\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_x25519_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_x25519_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp384r1_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp384r1_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp521r1_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_secp521r1_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_X25519MLKEM768_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_SecP384r1MLKEM1024_server_auth_st67_e2e.yaml
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_SecP384r1MLKEM1024_mutual_auth_st67_e2e.yaml
+    --experiment configs/experiments/<profile>.yaml
 ```
 
 The same experiment profiles support `--boot-mode wolfboot --boot-algorithm <algorithm>`. Secure-boot selection is independent of the MQTT TLS key-exchange group.
 
 Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expectations alone. Compare retained UART heap-boundary and task stack high-water markers for each group, especially `SecP384r1MLKEM1024`; increase memory only when recorded minimum headroom violates the project threshold or allocation failures occur.
+
+### Ready-metrics MQTT application profiles
+
+The original profiles retain `mqtt_validation`. Matching persistent ready/timing/memory profiles are under `configs/experiments/applications/ready_metrics/`, prefixed with `ready_metrics_`; they preserve the corresponding transport, group, and authentication mode while selecting `mqtt_ready_metrics`.

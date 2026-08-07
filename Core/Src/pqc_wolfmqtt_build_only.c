@@ -963,6 +963,103 @@ cleanup:
 
 int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status) { return PQC_WolfMQTT_RunExchangeCycle(status,0U); }
 
+
+static int PQC_WolfMQTT_PublishText(MqttClient *client, const char *payload, word16 packet_id)
+{
+    MqttPublish publish;
+    if ((client == NULL) || (payload == NULL)) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(&publish, 0, sizeof(publish));
+    publish.topic_name = PQC_MQTT_RESPONSE_TOPIC;
+    publish.qos = MQTT_QOS_0;
+    publish.packet_id = packet_id;
+    publish.buffer = (byte *)payload;
+    publish.total_len = (word32)strlen(payload);
+    return MqttClient_Publish(client, &publish);
+}
+
+int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
+{
+    MqttClient client; MqttNet network; MqttConnect connect;
+    PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
+    byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
+    char payload[224]; char marker[256];
+    TickType_t connect_started, connect_finished, last_wake;
+    unsigned int metrics_count = 0U; int result;
+
+    memset(&client, 0, sizeof(client)); memset(&network, 0, sizeof(network));
+    memset(&socket_context, 0, sizeof(socket_context)); memset(&message_context, 0, sizeof(message_context));
+    socket_context.socket_fd = -1; socket_context.tls_requested = PQC_WolfMQTT_TLSRequested();
+    network.context = &socket_context; network.connect = PQC_WolfMQTT_LwIPConnect;
+    network.read = PQC_WolfMQTT_LwIPRead; network.write = PQC_WolfMQTT_LwIPWrite;
+    network.disconnect = PQC_WolfMQTT_LwIPDisconnect;
+
+#if PQC_TLS_COMPILED
+    if (socket_context.tls_requested && (wolfSSL_Init() != WOLFSSL_SUCCESS)) return MQTT_CODE_ERROR_TLS_CONNECT;
+#endif
+    result = MqttClient_Init(&client, &network, PQC_WolfMQTT_MessageCallback,
+        tx, sizeof(tx), rx, sizeof(rx), PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_tls;
+    client.ctx = &message_context;
+
+    connect_started = xTaskGetTickCount();
+    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_CONNECT timing=start boundary=before_tcp_connect\r\n");
+    result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST, (word16)PQC_MQTT_BROKER_PORT,
+        PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_client;
+    memset(&connect, 0, sizeof(connect)); connect.keep_alive_sec = PQC_WOLFMQTT_KEEPALIVE_SECONDS;
+    connect.clean_session = 1; connect.client_id = PQC_MQTT_CLIENT_ID;
+    result = MqttClient_Connect(&client, &connect);
+    connect_finished = xTaskGetTickCount();
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_network;
+
+    result = PQC_WolfMQTT_PublishText(&client, "ready", 2U);
+    (void)snprintf(marker, sizeof(marker), "PQC_APP_PUBLISH sequence=1 type=ready result=%d\r\n", result);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+    (void)snprintf(payload, sizeof(payload),
+        "{\"type\":\"connect_timing\",\"milliseconds\":%lu,\"tls_mode\":\"%s\"}",
+        (unsigned long)((connect_finished - connect_started) * portTICK_PERIOD_MS), PQC_MQTT_TLS_MODE);
+    result = PQC_WolfMQTT_PublishText(&client, payload, 3U);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_APP_PUBLISH sequence=2 type=connect_timing duration_ms=%lu result=%d\r\n",
+        (unsigned long)((connect_finished - connect_started) * portTICK_PERIOD_MS), result);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS_TASK state=started interval_ms=5000 completion_after=5\r\n");
+    last_wake = xTaskGetTickCount();
+    for (;;) {
+        UBaseType_t stack_words; size_t heap_free, heap_min;
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(5000U));
+        metrics_count++; stack_words = uxTaskGetStackHighWaterMark(NULL);
+        heap_free = xPortGetFreeHeapSize(); heap_min = xPortGetMinimumEverFreeHeapSize();
+        (void)snprintf(payload, sizeof(payload),
+            "{\"type\":\"memory_metrics\",\"sequence\":%u,\"stack_high_water_words\":%lu,\"heap_free_bytes\":%lu,\"heap_min_ever_bytes\":%lu}",
+            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free, (unsigned long)heap_min);
+        result = PQC_WolfMQTT_PublishText(&client, payload, (word16)(3U + metrics_count));
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_APP_METRICS sequence=%u stack_high_water_words=%lu heap_free_bytes=%lu heap_min_ever_bytes=%lu publish_result=%d\r\n",
+            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free, (unsigned long)heap_min, result);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+        if ((metrics_count == 5U) && (mark_complete != NULL)) {
+            PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS completion_threshold=5 status=reached task=continuing\r\n");
+            mark_complete();
+        }
+    }
+cleanup_mqtt:
+    (void)MqttClient_Disconnect(&client);
+cleanup_network:
+    (void)MqttClient_NetDisconnect(&client);
+cleanup_client:
+    MqttClient_DeInit(&client);
+cleanup_tls:
+#if PQC_TLS_COMPILED
+    if (socket_context.tls_requested) (void)wolfSSL_Cleanup();
+#endif
+    return result;
+}
+
 bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context,bool scheduler_running)
 {
     PQC_WolfMQTTBuildOnlyStatus first; int result; int written;

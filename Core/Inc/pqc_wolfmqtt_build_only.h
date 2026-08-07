@@ -50,6 +50,8 @@ void PQC_WolfMQTT_DiagnosticMarker(const char *marker);
 
 int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status);
 
+int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void));
+
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend);
 
 bool PQC_WolfMQTT_RuntimeStatusLine(

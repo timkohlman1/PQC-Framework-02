@@ -1,0 +1,43 @@
+id: ready_metrics_mqtt_plaintext_st67_e2e
+description: Ready/connection-timing/periodic-memory application profile using Plaintext MQTT end-to-end exchange between the STM32 ST67/lwIP client and the gateway Mosquitto broker.
+board: board_a
+host: gateway
+boot: direct_flash
+firmware:
+  application: mqtt_ready_metrics
+  uart_log_level: info
+  mode: direct_flash
+  artifact: build/Release/stm32_basic_hal1.elf
+network:
+  wifi:
+    ssid: pqc
+    psk: lukeisadog
+  ipv4:
+    mode: dhcp
+  packet_capture:
+    enabled: true
+    interface: any
+mqtt:
+  schema_version: 1
+  enabled: true
+  evidence_class: stm32_st67_plaintext_e2e
+  transport_backend: st67w61m1_lwip_sockets
+  broker:
+    host: 10.1.1.18
+    port: 1883
+  client_id: pqc-stm32-e2e
+  topics:
+    command: pqc/experiments/stm32/command
+    response: pqc/experiments/stm32/response
+  correlation_payload: pqc-stm32-e2e-ok
+  tls:
+    mode: plaintext
+  result_schema:
+    unavailable_metrics:
+      tls_handshake: Plaintext MQTT does not perform a TLS handshake.
+      mqtt_reconnect: Reconnect behaviour is outside this initial exchange.
+      latency_ms: No synchronized end-to-end latency metric is recorded yet.
+      throughput_bytes_per_second: A single control exchange does not establish throughput.
+uart:
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_prefix: "[tick="

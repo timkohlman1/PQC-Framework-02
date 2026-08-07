@@ -375,13 +375,15 @@ def test_pqc_command_publisher_failures_are_retained():
 def test_mqtt_uart_completion_is_observed_only_after_boot_and_publish():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
-    boot_check = capture_block.index('grep -Fq "$boot_marker" "$uart_file"')
-    completion_check = capture_block.index('grep -Fq "$completion_marker" "$uart_file"')
-    publish = capture_block.index('attempts=$((attempts + 1))')
-    subscriber_wait = capture_block.index('wait "$subscriber_pid"; subscriber_rc=$?;')
-    assert boot_check < completion_check < subscriber_wait
-    assert publish < subscriber_wait
-    assert '[ "$attempts" -gt 0 ]' in capture_block[completion_check - 100:completion_check]
+    legacy_branch = capture_block[capture_block.index("    else:\n        script = ("):]
+
+    boot_check = legacy_branch.index('grep -Fq "$boot_marker" "$uart_file"')
+    completion_check = legacy_branch.index('grep -Fq "$completion_marker" "$uart_file"')
+    publish = legacy_branch.index('attempts=$((attempts + 1))')
+    common_suffix = legacy_branch.index("+ common_suffix")
+
+    assert boot_check < completion_check < publish < common_suffix
+    assert '[ "$attempts" -gt 0 ]' in legacy_branch[completion_check - 120:completion_check]
     assert "duration_seconds=hard_limit_seconds" in capture_block
 
 
@@ -448,7 +450,7 @@ def test_e2e_clients_emit_topic_qualified_independent_broker_evidence():
     assert '-i {shlex.quote(publisher_client_id)} -t {command_topic}' in source
     assert 'mqtt-subscriber-raw.log' in source
     assert 'mqtt-broker-message-evidence.json' in source
-    assert 'failure_stage = "broker_message_evidence"' not in source
+    assert 'failure_stage = "broker_message_evidence"' in source
 
 
 def test_broker_message_evidence_parser_requires_both_directions():
@@ -492,3 +494,62 @@ def test_managed_tls_experiments_collect_broker_keylog_into_result_directory():
     assert 'subcommand="collect-tls-keylog"' in source
     assert '"sha256": hashlib.sha256(data).hexdigest()' in source
     assert '"tls_keylog": keylog_evidence' in source
+
+
+def test_broker_evidence_is_mandatory_and_fatal_errors_fail_the_run():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'BROKER_FATAL_LOG_PATTERNS' in source
+    assert '"broker_log_write_failure", "unable to open log file"' in source
+    assert '"unexpected_broker_tls_error", "ssl/tls alert bad certificate"' in source
+    assert '"required_for_pass": True' in source
+    assert 'failure_stage = "broker_log_unavailable"' in source
+    assert 'failure_stage = "broker_message_evidence"' in source
+    assert '"broker_log_integrity": broker_log_integrity' in source
+
+
+def test_subscriber_artifact_is_rebuilt_from_completed_capture_and_verified():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+    assert 'authoritative_subscriber_output = _extract_marked_text(' in source
+    assert 'uart_result.capture.stderr' in source
+    assert 'subscriber_raw_path.write_text(authoritative_subscriber_output' in source
+    assert '"artifact_matches_capture": persisted_subscriber_output == authoritative_subscriber_output' in source
+    assert 'failure_stage = "subscriber_evidence_integrity"' in source
+
+
+def test_subscriber_marker_extraction_accepts_ansi_prefixed_begin_marker():
+    experiment_cli = load_experiment_module()
+    stderr = (
+        "\x1b[39;49m\x1b[0mSoftware reset is performed"
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\n"
+        "topic/response ready\n"
+        "topic/response {\"type\":\"connect_timing\",\"milliseconds\":123}\n"
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_END\n"
+    )
+
+    extracted = experiment_cli._extract_marked_text(
+        stderr,
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN",
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_END",
+    )
+
+    assert extracted == (
+        "topic/response ready\n"
+        "topic/response {\"type\":\"connect_timing\",\"milliseconds\":123}\n"
+    )
+
+
+def test_subscriber_marker_extraction_fails_when_marker_pair_is_incomplete():
+    experiment_cli = load_experiment_module()
+
+    assert experiment_cli._extract_marked_text(
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\ntopic/response ready\n",
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN",
+        "PQC_MQTT_SUBSCRIBER_OUTPUT_END",
+    ) == ""
+
+
+def test_uart_capture_forces_marker_onto_a_new_line():
+    source = Path("scripts/experiment.py").read_text(encoding="utf-8")
+
+    assert "printf '\\\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\\\n'" in source
+    assert "printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\\\n'" in source

@@ -455,7 +455,10 @@ def compose_remote(args: argparse.Namespace, compose_args: list[str]) -> None:
 
 
 def start(args: argparse.Namespace) -> None:
-    compose_remote(args, ["--profile", args.profile, "up", "-d"])
+    compose_remote(
+        args,
+        ["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"],
+    )
 
 
 def stop(args: argparse.Namespace) -> None:

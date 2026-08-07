@@ -1,5 +1,9 @@
-# Shared experiment namespace for both listeners.
-# Port 1883 permits anonymous plaintext clients.
-# Port 8883 still requires a trusted client certificate through mosquitto.conf.
+# Anonymous plaintext clients on listener 1883.
+topic readwrite pqc/#
+topic read $SYS/#
+
+# Certificate identity used by STM32 and gateway-side mTLS orchestration on
+# listener 8883 when use_identity_as_username is enabled.
+user stm32-mqtt-client
 topic readwrite pqc/#
 topic read $SYS/#

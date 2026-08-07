@@ -218,30 +218,11 @@ target_link_libraries(LwIP PUBLIC stm32cubemx)
 # Add STM32CubeMX generated application sources to the project
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MX_Application_Src})
 
-# The experiment build writes this file before CMake configure. It selects only
-# the MQTT workload implementation; FreeRTOS, lwIP, ST67, wolfMQTT/wolfSSL and
-# the board fixture remain shared by every STM32 application.
-set(PQC_APPLICATION_SELECTION_FILE
-    "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake"
-)
-if(NOT EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
-    message(FATAL_ERROR
-        "Missing generated STM32 MQTT application selection: ${PQC_APPLICATION_SELECTION_FILE}"
-    )
-endif()
-include("${PQC_APPLICATION_SELECTION_FILE}")
+# The root CMakeLists.txt owns STM32 MQTT workload selection and adds exactly
+# one application implementation to the executable. This CubeMX integration
+# layer must not register an application entry point independently, otherwise
+# legacy and selected workloads can both define PQC_MQTT_ApplicationRun().
 
-if(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_validation")
-    set(PQC_STM32_MQTT_APPLICATION_SOURCE
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
-    )
-else()
-    message(FATAL_ERROR
-        "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}"
-    )
-endif()
-
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${PQC_STM32_MQTT_APPLICATION_SOURCE})
 if(PQC_UART_LOG_LEVEL STREQUAL "error")
     set(PQC_UART_LOG_LEVEL_VALUE 0)
 elseif(PQC_UART_LOG_LEVEL STREQUAL "info")

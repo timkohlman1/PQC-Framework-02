@@ -63,16 +63,23 @@ def test_real_mqtt_exchange_performs_bounded_mqtt_operations():
     assert "status->message_received = true;" in source
     assert "status->publish_complete = true;" in source
 
-def test_phase_m8_invokes_fake_no_network_initialization_from_freertos_task():
+def test_phase_m8_invokes_mqtt_runtime_through_selected_application_fixture():
     header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    application = Path(
+        "Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
+    ).read_text(encoding="utf-8")
 
     assert "PQC_WolfMQTT_RuntimeStatusLine" in header
     assert "PQC_WolfMQTT_RuntimeStatusLine" in source
     assert "PQC_WOLFMQTT_BACKEND_FAKE_NO_NETWORK" in source
-    assert "APP_PrintWolfMQTTRuntimeStatus();" in main_c
-    assert main_c.index("FreeRTOS defaultTask started:") < main_c.index("APP_PrintWolfMQTTRuntimeStatus();")
+    assert ".print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus" in main_c
+    assert "PQC_MQTT_ApplicationRun(&fixture);" in main_c
+    assert "fixture->print_wolfmqtt_runtime();" in application
+    assert application.index("fixture->run_network_bringup();") < application.index(
+        "fixture->print_wolfmqtt_runtime();"
+    )
 
 
 def test_phase_m8_uart_marker_is_initialization_only_and_explicitly_unavailable():

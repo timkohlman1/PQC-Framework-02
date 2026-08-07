@@ -86,6 +86,21 @@ message("TLS key-exchange ECC/Curve25519: " ${PQC_TLS_ENABLE_ECC} "/" ${PQC_TLS_
 message("TLS certificate ECC/minimum bits: " ${PQC_TLS_ENABLE_CERT_ECC} "/" ${PQC_TLS_ECC_MIN_BITS})
 message("TLS ML-KEM-768/1024: " ${PQC_TLS_ENABLE_MLKEM_768} "/" ${PQC_TLS_ENABLE_MLKEM_1024})
 
+set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
+set(PQC_UART_LOG_LEVEL "info")
+set(PQC_APPLICATION_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake")
+if(EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
+    include("${PQC_APPLICATION_SELECTION_FILE}")
+endif()
+if(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_validation")
+    set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_mqtt_validation.c)
+elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_ready_metrics")
+    set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_ready_metrics.c)
+else()
+    message(FATAL_ERROR "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}")
+endif()
+message("STM32 MQTT application: " ${PQC_STM32_MQTT_APPLICATION})
+
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -259,6 +274,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfmqtt_build_only.c
+    ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
 )
 
