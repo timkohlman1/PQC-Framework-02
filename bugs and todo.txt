@@ -206,3 +206,18 @@ git -C tools/wolfboot clean -fdx
 git status
 git -C tools/wolfboot status --short
 
+
+
+
+.\scripts\dev.ps1 python-gateway scripts/network_degradation_grid.py `
+    --interface enp0s31f6 `
+    --profile secp256r1_server_auth `
+    --rate-kbit 40 `
+    --rtt-ms 200 `
+    --loss-percent 0 `
+    --loss-percent 1 `
+    --loss-percent 5 `
+    --loss-percent 10 `
+    --mtu 1280
+
+

@@ -7,20 +7,18 @@ profiles:
   secp256r1mlkem768_mutual_auth: configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml
 dimensions:
   rate_kbit:
+    rate_1000: 1000
     rate_250: 250
-    rate_40: 40
-    rate_5: 5
+    rate_100: 100
   rtt_ms:
     rtt_50: 50
+    rtt_100: 100
     rtt_200: 200
-    rtt_1000: 1000
   loss_percent:
     loss_0: 0
-    loss_1: 1
     loss_5: 5
     loss_10: 10
   mtu:
-    mtu_1280: 1280
     mtu_1500: 1500
 measurement:
   workload: mqtt_ready_metrics

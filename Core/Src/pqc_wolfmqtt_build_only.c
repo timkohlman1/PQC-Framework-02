@@ -48,7 +48,9 @@
 #endif
 
 #define PQC_WOLFMQTT_BUFFER_SIZE 512
-#define PQC_WOLFMQTT_COMMAND_TIMEOUT_MS 5000
+#ifndef PQC_WOLFMQTT_COMMAND_TIMEOUT_MS
+#define PQC_WOLFMQTT_COMMAND_TIMEOUT_MS 30000
+#endif
 #define PQC_WOLFMQTT_KEEPALIVE_SECONDS 30
 #define PQC_WOLFMQTT_PACKET_ID_SUBSCRIBE 1
 #define PQC_WOLFMQTT_PACKET_ID_PUBLISH 2
@@ -813,8 +815,18 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     socket_context->tls_connect_result = result;
     if (result != WOLFSSL_SUCCESS) {
         int error = wolfSSL_get_error(socket_context->tls, result);
+        char marker[224];
         socket_context->tls_error = error;
         PQC_WolfMQTT_DiagnosticCode("handshake", result, error);
+        (void)snprintf(marker, sizeof(marker),
+            "wolfMQTT TLS handshake failure: wolfssl_error=%d io_errno=%d "
+            "recv_calls=%u send_calls=%u recv_bytes=%u send_bytes=%u "
+            "command_timeout_ms=%u\r\n",
+            error, socket_context->tls_io_error,
+            socket_context->tls_recv_calls, socket_context->tls_send_calls,
+            socket_context->tls_recv_bytes, socket_context->tls_send_bytes,
+            (unsigned int)PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
         PQC_WolfMQTT_CloseTransport(socket_context);
         return error == 0 ? -1 : -error;
     }
@@ -1005,13 +1017,25 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
     PQC_WolfMQTT_DiagnosticMarker("PQC_APP_CONNECT timing=start boundary=before_tcp_connect\r\n");
     result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST, (word16)PQC_MQTT_BROKER_PORT,
         PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_APP_CONNECT stage=network result=%d timeout_ms=%u\r\n",
+        result, (unsigned int)PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_client;
     memset(&connect, 0, sizeof(connect)); connect.keep_alive_sec = PQC_WOLFMQTT_KEEPALIVE_SECONDS;
     connect.clean_session = 1; connect.client_id = PQC_MQTT_CLIENT_ID;
     result = MqttClient_Connect(&client, &connect);
     connect_finished = xTaskGetTickCount();
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_APP_CONNECT stage=mqtt result=%d duration_ms=%lu timeout_ms=%u\r\n",
+        result,
+        (unsigned long)((connect_finished - connect_started) * portTICK_PERIOD_MS),
+        (unsigned int)PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_network;
 
+    PQC_WolfMQTT_DiagnosticMarker(
+        "PQC_APP_PUBLISH sequence=1 type=ready state=begin\r\n");
     result = PQC_WolfMQTT_PublishText(&client, "ready", 2U);
     (void)snprintf(marker, sizeof(marker), "PQC_APP_PUBLISH sequence=1 type=ready result=%d\r\n", result);
     PQC_WolfMQTT_DiagnosticMarker(marker);
