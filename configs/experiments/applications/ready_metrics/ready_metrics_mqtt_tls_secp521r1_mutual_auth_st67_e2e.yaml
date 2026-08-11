@@ -15,7 +15,7 @@ network:
     mode: dhcp
   packet_capture:
     enabled: true
-    interface: any
+    interface: enp0s31f6
 mqtt:
   schema_version: 1
   enabled: true

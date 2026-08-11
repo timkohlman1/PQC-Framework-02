@@ -126,3 +126,39 @@ Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expecta
 ### Ready-metrics MQTT application profiles
 
 The original profiles retain `mqtt_validation`. Matching persistent ready/timing/memory profiles are under `configs/experiments/applications/ready_metrics/`, prefixed with `ready_metrics_`; they preserve the corresponding transport, group, and authentication mode while selecting `mqtt_ready_metrics`.
+
+### Controlled network-degradation grid
+
+Preview the 288-run TLS handshake/first-telemetry matrix without accessing hardware:
+
+```powershell
+.\scripts\dev.ps1 python scripts/network_degradation_grid.py `
+    --interface <DEDICATED_EXPERIMENT_INTERFACE> `
+    --plan-only
+```
+
+Execute one repetition through the gateway:
+
+```powershell
+.\scripts\dev.ps1 python-gateway scripts/network_degradation_grid.py `
+    --interface <DEDICATED_EXPERIMENT_INTERFACE>
+```
+
+The interface must be the dedicated STM32 experiment-facing interface and must not carry SSH or VPN management traffic. The runner groups selected cases by crypto profile. Each selected profile performs one normal build, flash, and smoke-test run; subsequent degradation cases use `--runtime-only`, reset the already-flashed STM32, and collect independent UART, packet-capture, MQTT broker-log, impairment, and timing evidence without rebuilding, reflashing, reprovisioning certificates, or copying firmware artifacts into every measurement result. Each measurement manifest references the successful profile-preparation manifest and firmware SHA-256.
+
+Select subsets without editing the canonical grid. Selectors may be repeated:
+
+```powershell
+.\scripts\dev.ps1 python-gateway scripts/network_degradation_grid.py `
+    --interface <DEDICATED_EXPERIMENT_INTERFACE> `
+    --profile secp256r1_server_auth `
+    --rate-kbit 40 `
+    --rtt-ms 200 `
+    --loss-percent 0 `
+    --loss-percent 1 `
+    --loss-percent 5 `
+    --loss-percent 10 `
+    --mtu 1280
+```
+
+`--case-offset` and `--case-limit` provide additional bounded chunking after filtering. The command writes its expanded plan under `.pqc-generated-state/network-degradation-grid/`.

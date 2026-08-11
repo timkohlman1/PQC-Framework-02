@@ -9,11 +9,11 @@ def test_ready_metrics_application_is_profile_selected_and_persistent():
     assert 'before_tcp_connect' in source
     assert '"ready"' in source
     assert 'connect_timing' in source
-    assert 'vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(5000U))' in source
+    assert 'vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U))' in source
     assert 'uxTaskGetStackHighWaterMark(NULL)' in source
     assert 'xPortGetFreeHeapSize()' in source
     assert 'xPortGetMinimumEverFreeHeapSize()' in source
-    assert 'metrics_count == 5U' in source
+    assert 'metrics_count == 2U' in source
     assert 'for (;;) {' in source
 
 
@@ -54,7 +54,7 @@ def test_ready_metrics_subscriber_contract_accepts_expected_messages():
         f'{topic} {{"type":"memory_metrics","sequence":{sequence},'
         f'"stack_high_water_words":926,"heap_free_bytes":8640,'
         f'"heap_min_ever_bytes":5280}}'
-        for sequence in range(1, 6)
+        for sequence in range(1, 3)
     )
 
     evidence = cli._parse_ready_metrics_subscriber_output(
@@ -62,11 +62,11 @@ def test_ready_metrics_subscriber_contract_accepts_expected_messages():
     )
 
     assert evidence["passed"] is True
-    assert evidence["message_count"] == 7
+    assert evidence["message_count"] == 4
     assert evidence["ready_count"] == 1
     assert evidence["timing_count"] == 1
-    assert evidence["metrics_count"] == 5
-    assert evidence["metric_sequences"] == [1, 2, 3, 4, 5]
+    assert evidence["metrics_count"] == 2
+    assert evidence["metric_sequences"] == [1, 2]
 
 
 def test_ready_metrics_subscriber_contract_rejects_missing_metric():
@@ -80,7 +80,7 @@ def test_ready_metrics_subscriber_contract_rejects_missing_metric():
                 f'{topic} {{"type":"memory_metrics","sequence":{sequence},'
                 f'"stack_high_water_words":1,"heap_free_bytes":2,'
                 f'"heap_min_ever_bytes":2}}'
-                for sequence in range(1, 5)
+                for sequence in range(1, 2)
             ],
         ]
     )
@@ -90,15 +90,15 @@ def test_ready_metrics_subscriber_contract_rejects_missing_metric():
     )
 
     assert evidence["passed"] is False
-    assert evidence["metrics_count"] == 4
+    assert evidence["metrics_count"] == 1
     assert evidence["metrics_valid"] is False
 
 
 def test_ready_metrics_host_validator_is_device_initiated():
     cli_source = Path("scripts/experiment.py").read_text(encoding="utf-8")
 
-    assert 'expected_response_count = 7 if ready_metrics_application' in cli_source
+    assert 'expected_response_count = 4 if ready_metrics_application' in cli_source
     assert 'Publisher disabled: mqtt_ready_metrics is device-initiated.' in cli_source
     assert 'Starting MQTT ready/timing/metrics validation' in cli_source
-    assert 'ready_connect_timing_five_memory_metrics' in cli_source
-    assert 'PQC_APP_METRICS sequence=5' in cli_source
+    assert 'ready_connect_timing_two_memory_metrics' in cli_source
+    assert 'PQC_APP_METRICS sequence=2' in cli_source

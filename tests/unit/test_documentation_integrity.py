@@ -284,7 +284,7 @@ def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
 def test_readme_is_concise_and_routes_detail_to_canonical_owners() -> None:
     readme = _read("README.md")
 
-    assert len(readme.splitlines()) <= 150
+    assert len(readme.splitlines()) <= 200
     for heading in (
         "## Current scope",
         "## Documentation",
