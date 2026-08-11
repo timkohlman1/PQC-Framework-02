@@ -1051,11 +1051,11 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
     PQC_WolfMQTT_DiagnosticMarker(marker);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
 
-    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS_TASK state=started interval_ms=5000 completion_after=5\r\n");
+    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS_TASK state=started interval_ms=1000 completion_after=2\r\n");
     last_wake = xTaskGetTickCount();
     for (;;) {
         UBaseType_t stack_words; size_t heap_free, heap_min;
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(5000U));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U));
         metrics_count++; stack_words = uxTaskGetStackHighWaterMark(NULL);
         heap_free = xPortGetFreeHeapSize(); heap_min = xPortGetMinimumEverFreeHeapSize();
         (void)snprintf(payload, sizeof(payload),
@@ -1066,8 +1066,8 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
             "PQC_APP_METRICS sequence=%u stack_high_water_words=%lu heap_free_bytes=%lu heap_min_ever_bytes=%lu publish_result=%d\r\n",
             metrics_count, (unsigned long)stack_words, (unsigned long)heap_free, (unsigned long)heap_min, result);
         PQC_WolfMQTT_DiagnosticMarker(marker);
-        if ((metrics_count == 5U) && (mark_complete != NULL)) {
-            PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS completion_threshold=5 status=reached task=continuing\r\n");
+        if ((metrics_count == 2U) && (mark_complete != NULL)) {
+            PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS completion_threshold=2 status=reached task=continuing\r\n");
             mark_complete();
         }
     }

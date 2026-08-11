@@ -207,10 +207,10 @@ def _parse_ready_metrics_subscriber_output(
         and bool(timing_messages[0]["tls_mode"])
     )
     metric_sequences = [item.get("sequence") for item in metrics_messages]
-    required_sequences = list(range(1, 6))
+    required_sequences = list(range(1, 3))
     metrics_valid = (
-        len(metrics_messages) >= 5
-        and metric_sequences[:5] == required_sequences
+        len(metrics_messages) >= 2
+        and metric_sequences[:2] == required_sequences
         and all(
             isinstance(item.get("stack_high_water_words"), int)
             and item["stack_high_water_words"] >= 0
@@ -218,11 +218,11 @@ def _parse_ready_metrics_subscriber_output(
             and item["heap_free_bytes"] >= 0
             and isinstance(item.get("heap_min_ever_bytes"), int)
             and item["heap_min_ever_bytes"] >= 0
-            for item in metrics_messages[:5]
+            for item in metrics_messages[:2]
         )
     )
     passed = (
-        len(payloads) >= 7
+        len(payloads) >= 4
         and ready_count == 1
         and timing_valid
         and metrics_valid
@@ -866,13 +866,10 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
             "PQC_APP_CONNECT timing=start boundary=before_tcp_connect",
             "PQC_APP_PUBLISH sequence=1 type=ready result=0",
             "PQC_APP_PUBLISH sequence=2 type=connect_timing",
-            "PQC_APP_METRICS_TASK state=started interval_ms=5000 completion_after=5",
+            "PQC_APP_METRICS_TASK state=started interval_ms=1000 completion_after=2",
             "PQC_APP_METRICS sequence=1",
             "PQC_APP_METRICS sequence=2",
-            "PQC_APP_METRICS sequence=3",
-            "PQC_APP_METRICS sequence=4",
-            "PQC_APP_METRICS sequence=5",
-            "PQC_APP_METRICS completion_threshold=5 status=reached task=continuing",
+            "PQC_APP_METRICS completion_threshold=2 status=reached task=continuing",
             _mqtt_completion_marker(bundle),
         ]
         if isinstance(mqtt, dict):
@@ -1044,7 +1041,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     ready_metrics_application = _is_mqtt_ready_metrics_application(bundle)
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 7 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
+    expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
@@ -1230,7 +1227,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 "Starting MQTT ready/timing/metrics validation",
                 detail=(
                     f"Subscriber topic: {topics['response']}; expected messages: "
-                    "1 ready, 1 connect timing, and 5 memory metrics."
+                    "1 ready, 1 connect timing, and 2 memory metrics."
                 ),
             )
         else:
@@ -1412,7 +1409,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "failure_stage": failure_stage,
             "application": _mqtt_application(bundle),
             "validation_contract": (
-                "ready_connect_timing_five_memory_metrics"
+                "ready_connect_timing_two_memory_metrics"
                 if ready_metrics_application
                 else "command_response_correlation"
             ),

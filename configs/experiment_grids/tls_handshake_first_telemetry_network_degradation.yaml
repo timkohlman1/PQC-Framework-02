@@ -8,16 +8,18 @@ profiles:
 dimensions:
   rate_kbit:
     rate_1000: 1000
+    rate_500: 500
     rate_250: 250
-    rate_100: 100
   rtt_ms:
-    rtt_50: 50
     rtt_100: 100
     rtt_200: 200
+    rtt_300: 300
+    rtt_400: 400
   loss_percent:
     loss_0: 0
     loss_5: 5
     loss_10: 10
+    loss_15: 15
   mtu:
     mtu_1500: 1500
 measurement:
