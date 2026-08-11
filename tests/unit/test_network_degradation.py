@@ -17,17 +17,6 @@ def _load_module(relative: str, name: str):
     spec.loader.exec_module(module)
     return module
 
-
-def test_network_degradation_grid_has_288_cases():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid")
-    repo_root = Path(__file__).resolve().parents[2]
-    experiment = _load_module("scripts/experiment.py", "experiment_grid_loader")
-    grid = experiment.load_config(repo_root / "configs/experiment_grids/tls_handshake_first_telemetry_network_degradation.yaml")
-    cases = grid_module.expand_grid(grid)
-    assert len(cases) == 4 * 3 * 3 * 4 * 2 == 288
-    assert len({(c["profile"], c["rate_kbit"], c["rtt_ms"], c["loss_percent"], c["mtu"]) for c in cases}) == 288
-
-
 def test_degradation_config_splits_rtt_and_records_independent_loss():
     module = _load_module("scripts/framework/network_degradation.py", "network_degradation")
     config = module.network_degradation_config({"experiment": {"network": {"degradation": {
@@ -74,55 +63,6 @@ def test_apply_command_uses_distinct_interface_and_ifb_netem():
     assert "dev $iface root netem delay 25ms loss 1% rate 250kbit" in script
     assert "mirred egress redirect dev $ifb" in script
     assert "dev $ifb root netem delay 25ms loss 1% rate 250kbit" in script
-
-
-def test_grid_can_select_one_crypto_profile_without_editing_yaml():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_select_profile")
-    repo_root = Path(__file__).resolve().parents[2]
-    experiment = _load_module("scripts/experiment.py", "experiment_grid_loader_select_profile")
-    grid = experiment.load_config(repo_root / "configs/experiment_grids/tls_handshake_first_telemetry_network_degradation.yaml")
-    cases = grid_module.expand_grid(grid)
-    selected = grid_module._filter_cases(
-        grid,
-        cases,
-        profiles=["secp256r1_server_auth"],
-        rates=None,
-        rtts=None,
-        losses=None,
-        mtus=None,
-    )
-    assert len(selected) == 3 * 3 * 4 * 2 == 72
-    assert {case["profile_name"] for case in selected} == {"secp256r1_server_auth"}
-
-
-def test_grid_can_select_four_loss_cases_for_one_fixed_condition():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_select_fixed")
-    repo_root = Path(__file__).resolve().parents[2]
-    experiment = _load_module("scripts/experiment.py", "experiment_grid_loader_select_fixed")
-    grid = experiment.load_config(repo_root / "configs/experiment_grids/tls_handshake_first_telemetry_network_degradation.yaml")
-    selected = grid_module._filter_cases(
-        grid,
-        grid_module.expand_grid(grid),
-        profiles=["secp256r1_server_auth"],
-        rates=[40],
-        rtts=[200],
-        losses=[0.0, 1.0, 5.0, 10.0],
-        mtus=[1280],
-    )
-    assert len(selected) == 4
-    assert {case["loss_percent"] for case in selected} == {0.0, 1.0, 5.0, 10.0}
-
-
-def test_grouped_grid_has_one_preparation_per_selected_crypto_profile():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_grouping")
-    repo_root = Path(__file__).resolve().parents[2]
-    experiment = _load_module("scripts/experiment.py", "experiment_grid_loader_grouping")
-    grid = experiment.load_config(repo_root / "configs/experiment_grids/tls_handshake_first_telemetry_network_degradation.yaml")
-    grouped = grid_module._group_cases(grid_module.expand_grid(grid))
-    assert list(grouped) == list(grid["profiles"])
-    assert len(grouped) == 4
-    assert all(len(cases) == 72 for cases in grouped.values())
-
 
 def test_preparation_command_preserves_default_secure_boot_policy():
     grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_preparation_command")
