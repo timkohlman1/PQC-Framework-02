@@ -562,7 +562,7 @@ def test_architecture_has_one_structured_deferred_test_register() -> None:
     assert "#### Deferred test coverage" not in architecture
 
     rows = re.findall(r"(?m)^\| (DTR-\d{3}) \|.*\|$", architecture)
-    assert rows == [f"DTR-{index:03d}" for index in range(1, 10)]
+    assert rows == [f"DTR-{index:03d}" for index in range(1, 11)]
 
 
 def test_deferred_register_rows_have_all_required_values() -> None:

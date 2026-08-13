@@ -22,7 +22,7 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
     selected = {
         "schema_version": 3, "mode": mode, "rsa": False, "rsa_pss": False,
         "ecc": False, "ecc_bits": 0, "curve25519": False,
-        "mlkem_768": False, "mlkem_1024": False, "hybrid": False,
+        "mlkem_768": False, "mlkem_1024": False, "mldsa_65": False, "mldsa_65_sign": False, "hybrid": False,
         "signature_schemes": [], "key_exchange_groups": [],
         "group_name": "none", "group_token": "0",
     }
@@ -37,10 +37,19 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
     mode_is_hybrid = mode.startswith("pqc_hybrid_")
     if mode_is_hybrid != bool(capabilities.get("hybrid", False)):
         raise ValueError(f"MQTT TLS mode '{mode}' is incompatible with key-exchange group '{group}'")
-    if mode_is_hybrid and server_signature not in {"", "classical", "rsa", "rsa_pss_rsae_sha256"}:
-        raise ValueError("Unsupported TLS server signature algorithm: " + server_signature + ". Hybrid MQTT TLS uses classical RSA server authentication.")
+    mutual_auth = mode.endswith("_mutual") or str(tls.get("authentication", "")).strip().lower() == "mutual"
+    if server_signature in {"", "classical", "rsa", "rsa_pss_rsae_sha256"}:
+        signature = {"rsa": True, "rsa_pss": True, "mldsa_65": False, "mldsa_65_sign": False, "signature_schemes": ["rsa_pss_rsae_sha256"]}
+    elif server_signature in {"mldsa65", "ml-dsa-65"}:
+        signature = {"rsa": False, "rsa_pss": False, "mldsa_65": True, "mldsa_65_sign": mutual_auth, "signature_schemes": ["mldsa65"]}
+    else:
+        raise ValueError(
+            "Unsupported TLS server signature algorithm: " + server_signature
+            + ". Supported algorithms: classical, mldsa65."
+        )
     selected.update(capabilities)
-    selected.update(rsa=True, rsa_pss=True, signature_schemes=["rsa_pss_rsae_sha256"], key_exchange_groups=[group], group_name=group, group_token=capabilities["token"] )
+    selected.update(signature)
+    selected.update(key_exchange_groups=[group], group_name=group, group_token=capabilities["token"] )
     return selected
 
 def cmake_boolean(value: bool) -> str:

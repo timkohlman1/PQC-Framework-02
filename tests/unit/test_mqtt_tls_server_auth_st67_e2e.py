@@ -47,7 +47,7 @@ def test_generated_header_keeps_client_credentials_mutual_tls_only():
 
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
-    assert "Provision the classical broker certificates before building" in source
+    assert "Provision the selected broker certificates before building" in source
     assert 'authentication = str(tls.get("authentication", "server"))' in source
     assert 'mutual_tls = authentication == "mutual"' in source
     assert "if mutual_tls:" in source
@@ -182,7 +182,7 @@ def test_stepca_sync_does_not_generate_server_certificate_sans_locally():
         "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
     ).read_text(encoding="utf-8")
 
-    assert 'provision-certs", help="synchronize classical MQTT TLS material from framework/certs"' in source
+    assert 'provision-certs", help="synchronize selected MQTT TLS material from framework/certs"' in source
     assert "server-openssl.cnf" not in source
     assert "DNS.1" not in source
     assert "IP.1" not in source
@@ -218,7 +218,7 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 7 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
+    assert 'expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
     assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source

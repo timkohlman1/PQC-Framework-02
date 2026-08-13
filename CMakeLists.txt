@@ -65,6 +65,8 @@ set(PQC_TLS_ECC_BITS 256 CACHE STRING "Selected prime-curve size")
 set(PQC_TLS_ENABLE_CURVE25519 0 CACHE BOOL "Compile X25519 key exchange")
 set(PQC_TLS_ENABLE_MLKEM_768 0 CACHE BOOL "Compile ML-KEM-768 hybrid key exchange")
 set(PQC_TLS_ENABLE_MLKEM_1024 0 CACHE BOOL "Compile ML-KEM-1024 hybrid key exchange")
+set(PQC_TLS_ENABLE_MLDSA_65 0 CACHE BOOL "Compile ML-DSA-65 certificate verification")
+set(PQC_TLS_ENABLE_MLDSA_65_SIGN 0 CACHE BOOL "Compile ML-DSA-65 client CertificateVerify signing")
 set(PQC_TLS_GROUP_ID WOLFSSL_ECC_SECP256R1 CACHE STRING "wolfSSL named-group token")
 set(PQC_TLS_GROUP_NAME secp256r1 CACHE STRING "TLS named-group display name")
 set(PQC_TLS_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_tls_algorithm_selection.cmake")
@@ -85,6 +87,7 @@ message("TLS group: " ${PQC_TLS_GROUP_NAME} " (" ${PQC_TLS_GROUP_ID} ")")
 message("TLS key-exchange ECC/Curve25519: " ${PQC_TLS_ENABLE_ECC} "/" ${PQC_TLS_ENABLE_CURVE25519})
 message("TLS certificate ECC/minimum bits: " ${PQC_TLS_ENABLE_CERT_ECC} "/" ${PQC_TLS_ECC_MIN_BITS})
 message("TLS ML-KEM-768/1024: " ${PQC_TLS_ENABLE_MLKEM_768} "/" ${PQC_TLS_ENABLE_MLKEM_1024})
+message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${PQC_TLS_ENABLE_MLDSA_65_SIGN})
 
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
 set(PQC_UART_LOG_LEVEL "info")
@@ -164,7 +167,7 @@ if(PQC_TLS_COMPILED)
         )
     endif()
 
-    if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024)
+    if(PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024 OR PQC_TLS_ENABLE_MLDSA_65)
         list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
             "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha3.c"
         )
@@ -174,6 +177,12 @@ if(PQC_TLS_COMPILED)
         list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
             "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem.c"
             "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mlkem_poly.c"
+        )
+    endif()
+
+    if(PQC_TLS_ENABLE_MLDSA_65)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/wc_mldsa.c"
         )
     endif()
 
@@ -209,6 +218,8 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
         PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
         PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+        PQC_TLS_ENABLE_MLDSA_65=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65}>
+        PQC_TLS_ENABLE_MLDSA_65_SIGN=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65_SIGN}>
         PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
         PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
     )
@@ -322,6 +333,8 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
         PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
         PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
+        PQC_TLS_ENABLE_MLDSA_65=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65}>
+        PQC_TLS_ENABLE_MLDSA_65_SIGN=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65_SIGN}>
         PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
         PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
     )
