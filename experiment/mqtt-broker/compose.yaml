@@ -12,7 +12,8 @@ services:
         mkdir -p /tmp/mosquitto-certs
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
         cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt
-        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt
+        cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         if id mosquitto >/dev/null 2>&1; then
           runtime_user="$(id -u mosquitto)"
@@ -26,7 +27,7 @@ services:
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
@@ -63,7 +64,8 @@ services:
         rm -rf /tmp/mosquitto-certs
         mkdir -p /tmp/mosquitto-certs
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
-        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt
+        cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         if id mosquitto >/dev/null 2>&1; then
           runtime_user="$(id -u mosquitto)"
@@ -77,7 +79,7 @@ services:
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
@@ -112,7 +114,8 @@ services:
         rm -rf /tmp/mosquitto-certs
         mkdir -p /tmp/mosquitto-certs
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
-        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt
+        cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         if id nobody >/dev/null 2>&1; then
           runtime_user="$(id -u nobody)"
@@ -123,7 +126,7 @@ services:
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
@@ -158,7 +161,8 @@ services:
         rm -rf /tmp/mosquitto-certs
         mkdir -p /tmp/mosquitto-certs
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
-        cp /mosquitto/config/certs/server.crt /tmp/mosquitto-certs/server.crt
+        cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt
+        cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
         cp /mosquitto/config/certs/healthcheck.crt /tmp/mosquitto-certs/healthcheck.crt
         cp /mosquitto/config/certs/healthcheck.key /tmp/mosquitto-certs/healthcheck.key
@@ -171,7 +175,7 @@ services:
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key /tmp/mosquitto-certs/healthcheck.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/server.crt /tmp/mosquitto-certs/healthcheck.crt
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt /tmp/mosquitto-certs/healthcheck.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
