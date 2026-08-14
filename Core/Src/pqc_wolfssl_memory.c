@@ -61,17 +61,17 @@ static size_t s_mldsa_workspace_peak_request_bytes;
 
 static bool s_configured;
 static int s_configure_result;
+
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
 static size_t s_allocation_failures;
 static size_t s_last_failed_request_bytes;
 static size_t s_failure_free_heap_bytes;
 static size_t s_failure_minimum_ever_free_heap_bytes;
 static size_t s_failure_largest_free_block_bytes;
 static size_t s_failure_free_block_count;
-
 static volatile bool s_allocation_active;
 static volatile size_t s_pending_request_bytes;
 static volatile size_t s_pending_total_bytes;
-#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
 static PQC_WolfSSLMemoryDiagnosticWriter s_diagnostic_writer;
 #endif
 
@@ -108,6 +108,17 @@ static void *PQC_WolfSSL_ClaimMlDsaWorkspace(size_t size)
 #if PQC_TLS_ENABLE_MLDSA_65
     bool claimed = false;
 
+    /*
+     * Record the largest capacity wolfSSL requested even when the request
+     * exceeds the configured workspace. This makes the end-of-experiment
+     * high-watermark useful for sizing and catches insufficient headroom.
+     */
+    taskENTER_CRITICAL();
+    if (size > s_mldsa_workspace_peak_request_bytes) {
+        s_mldsa_workspace_peak_request_bytes = size;
+    }
+    taskEXIT_CRITICAL();
+
     if (size > sizeof(s_mldsa_workspace)) {
         return NULL;
     }
@@ -116,9 +127,6 @@ static void *PQC_WolfSSL_ClaimMlDsaWorkspace(size_t size)
     if (!s_mldsa_workspace_in_use) {
         s_mldsa_workspace_in_use = true;
         s_mldsa_workspace_request_bytes = size;
-        if (size > s_mldsa_workspace_peak_request_bytes) {
-            s_mldsa_workspace_peak_request_bytes = size;
-        }
         claimed = true;
     }
     taskEXIT_CRITICAL();
@@ -378,8 +386,8 @@ void *PQC_WolfSSL_TrackedMalloc(
     }
 
     header->metadata.allocation_size = size;
-    header->metadata.allocation_type = type;
 #if PQC_WOLFSSL_ALLOCATION_PROVENANCE
+    header->metadata.allocation_type = type;
     header->metadata.allocation_line = line;
     header->metadata.allocation_file = file;
     header->metadata.allocation_function = function;

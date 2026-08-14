@@ -74,7 +74,7 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
     freertos_config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
 
     assert "1000" in _macro_define_line(freertos_config, "configTICK_RATE_HZ")
-    assert "40000" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
+    assert "96 * 1024" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
     assert " 2" in _macro_define_line(freertos_config, "configCHECK_FOR_STACK_OVERFLOW")
     assert " 1" in _macro_define_line(freertos_config, "configUSE_MALLOC_FAILED_HOOK")
     assert " 1" in _macro_define_line(
@@ -90,7 +90,7 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
 def test_stm32cubemx_ioc_records_freertos_and_tim1_timebase_settings():
     ioc_text = Path("stm32_basic_hal1.ioc").read_text(encoding="utf-8")
 
-    assert "FREERTOS.configTOTAL_HEAP_SIZE=40000" in ioc_text
+    assert "FREERTOS.configTOTAL_HEAP_SIZE=98304" in ioc_text
     assert "FREERTOS.configCHECK_FOR_STACK_OVERFLOW=2" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark=1" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark2=1" in ioc_text

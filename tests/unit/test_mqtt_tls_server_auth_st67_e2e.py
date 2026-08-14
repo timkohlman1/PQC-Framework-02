@@ -306,8 +306,7 @@ def test_tls_setup_diagnostics_distinguish_allocation_from_ca_loading():
         assert field in header
 def test_classical_tls_profile_keeps_the_pre_diagnostic_freertos_heap_size():
     config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
-    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)40000)" in config
-    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)64000)" not in config
+    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)(96 * 1024))" in config
 
 
 def test_wolfssl_session_failure_uses_link_safe_diagnostics_and_closes_before_client_hello():

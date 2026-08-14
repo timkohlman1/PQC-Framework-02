@@ -18,6 +18,9 @@
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
 #endif
+#ifndef PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+#define PQC_WOLFSSL_MEMORY_DIAGNOSTICS 0
+#endif
 
 #include "wolfmqtt/mqtt_client.h"
 
@@ -187,6 +190,7 @@ static void PQC_WolfMQTT_DiagnosticWolfSSLState(const char *stage)
     }
 }
 
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
 static void PQC_WolfMQTT_DiagnosticHeapBoundary(const char *stage)
 {
     char marker[192];
@@ -202,6 +206,7 @@ static void PQC_WolfMQTT_DiagnosticHeapBoundary(const char *stage)
         PQC_WolfMQTT_DiagnosticMarker(marker);
     }
 }
+#endif
 
 #endif
 

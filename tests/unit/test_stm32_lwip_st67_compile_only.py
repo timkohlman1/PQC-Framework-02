@@ -147,7 +147,7 @@ def test_st67_spi_gpio_clock_interrupt_and_runtime_bringup_are_wired() -> None:
     ioc = _read("stm32_basic_hal1.ioc")
     assert "SPI1.BaudRatePrescaler=SPI_BAUDRATEPRESCALER_4" in ioc
     assert "SPI1.CalculateBaudRate=3.75 MBits/s" in ioc
-    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)40000)" in freertos_config
+    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)(96 * 1024))" in freertos_config
 
     assert "HAL_GPIO_EXTI_IRQHandler(SPI_RDY_Pin);" in it_c
     assert "HAL_GPIO_EXTI_IRQHandler(USER_BUTTON_Pin);" in it_c

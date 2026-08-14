@@ -1315,9 +1315,9 @@ static void APP_PrintApplicationClock(const char *name, uint32_t value)
 static void APP_PrintApplicationClockConfiguration(void)
 {
   APP_PrintApplicationClock("sysclk_hz", HAL_RCC_GetSysClockFreq());
-  APP_PrintApplicationClock("hclk_hz", HAL_RCC_GetHCLKFreq());
-  APP_PrintApplicationClock("pclk1_hz", HAL_RCC_GetPCLK1Freq());
-  APP_PrintApplicationClock("pclk2_hz", HAL_RCC_GetPCLK2Freq());
+  //APP_PrintApplicationClock("hclk_hz", HAL_RCC_GetHCLKFreq());
+  //APP_PrintApplicationClock("pclk1_hz", HAL_RCC_GetPCLK1Freq());
+  //APP_PrintApplicationClock("pclk2_hz", HAL_RCC_GetPCLK2Freq());
 }
 
 #ifdef SECURE_BOOT_APPLICATION
@@ -1360,9 +1360,9 @@ static void APP_PrintWolfBootVerificationTiming(void)
     APP_UART_WriteString(" cycles\r\n");
 
     APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
-    APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
-    APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
-    APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
+    //APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
+    //APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
+    //APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
 
     APP_UART_WriteString("wolfBoot verification result: ");
     APP_UART_WriteUint32(mailbox->verification_result);
@@ -2036,6 +2036,16 @@ static void APP_PrintLwIPRuntimeFixture(void)
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
 }
 
+/*
+ * Keep the application fixture ABI intact after removing the obsolete
+ * wolfSSL runtime smoke test. Some application implementations still invoke
+ * this callback unconditionally. A no-op avoids a NULL indirect call without
+ * reintroducing smoke-test UART output or timing overhead.
+ */
+static void APP_WolfSSLRuntimeFixtureNoOp(void)
+{
+}
+
 
 static void APP_PrintNetworkTaskMemoryCheckpoint(void)
 {
@@ -2047,10 +2057,75 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
   return PQC_WolfMQTT_RunReadyMetricsApplication(mark_complete);
 }
 
+static void APP_PrintMemoryHighWatermark(void)
+{
+  const size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
+  const size_t heap_final_free_bytes = xPortGetFreeHeapSize();
+  const size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
+  const size_t heap_peak_used_bytes =
+      (heap_min_free_bytes <= heap_total_bytes)
+          ? (heap_total_bytes - heap_min_free_bytes)
+          : 0U;
+  size_t workspace_total_bytes = 0U;
+  size_t workspace_peak_used_bytes = 0U;
+  size_t workspace_headroom_bytes = 0U;
+  bool workspace_in_use = false;
+  bool workspace_capacity_exceeded = false;
+
+#if PQC_TLS_COMPILED
+  {
+    PQC_WolfSSLMemorySnapshot snapshot;
+    PQC_WolfSSL_MemorySnapshotGet(&snapshot);
+    workspace_total_bytes = snapshot.mldsa_workspace_size_bytes;
+    workspace_peak_used_bytes = snapshot.mldsa_workspace_peak_request_bytes;
+    workspace_in_use = snapshot.mldsa_workspace_in_use;
+
+    if (workspace_peak_used_bytes <= workspace_total_bytes)
+    {
+      workspace_headroom_bytes =
+          workspace_total_bytes - workspace_peak_used_bytes;
+    }
+    else
+    {
+      workspace_capacity_exceeded = true;
+    }
+  }
+#endif
+
+  /*
+   * This is emitted only from the completion callback, after the measured
+   * workload has finished and immediately before PQC_EXPERIMENT_COMPLETE.
+   * RAM3 peak-used means the maximum workspace capacity loaned/requested by
+   * wolfSSL, which is the authoritative sizing requirement for the fixed
+   * workspace.
+   */
+  APP_UART_WriteString(
+      "PQC_MEMORY_HIGH_WATERMARK freertos_heap_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_total_bytes);
+  APP_UART_WriteString(" freertos_heap_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_peak_used_bytes);
+  APP_UART_WriteString(" freertos_heap_min_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_min_free_bytes);
+  APP_UART_WriteString(" freertos_heap_final_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_final_free_bytes);
+  APP_UART_WriteString(" mldsa_workspace_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_total_bytes);
+  APP_UART_WriteString(" mldsa_workspace_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_peak_used_bytes);
+  APP_UART_WriteString(" mldsa_workspace_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_headroom_bytes);
+  APP_UART_WriteString(" mldsa_workspace_capacity_exceeded=");
+  APP_UART_WriteUint32(workspace_capacity_exceeded ? 1U : 0U);
+  APP_UART_WriteString(" mldsa_workspace_in_use=");
+  APP_UART_WriteUint32(workspace_in_use ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+}
+
 static void APP_MarkExperimentComplete(void)
 {
   if (!app_experiment_complete)
   {
+    APP_PrintMemoryHighWatermark();
     APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done\r\n");
     app_experiment_complete = true;
   }
@@ -2063,6 +2138,7 @@ void StartNetworkTask(void *argument)
     .run_network_bringup = APP_RunST67SPIBringup,
     .is_network_ready = APP_IsNetworkReady,
     .print_lwip_runtime = APP_PrintLwIPRuntimeFixture,
+    .print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp,
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
     .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
