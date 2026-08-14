@@ -47,3 +47,9 @@ def test_mldsa65_pki_is_separate_from_stepca_classical():
     assert "signing tuple is partial; refusing silent reconstruction" in script
     assert "MLDSA_RESET_PKI" in script
     assert "stepca-data" not in script
+
+
+
+def test_mldsa65_mutual_tls_does_not_retain_temporary_no_identity_profile():
+    diagnostic = ROOT / "ready_metrics_mqtt_tls_SecP256r1MLKEM768_mldsa65_mutual_auth_no_client_identity_st67_e2e.yaml"
+    assert not diagnostic.exists()

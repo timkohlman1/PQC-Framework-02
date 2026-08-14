@@ -874,11 +874,82 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         ]
         if isinstance(mqtt, dict):
             broker = mqtt.get("broker", {})
-            if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
+            evidence_class = mqtt.get("evidence_class")
+            tls = mqtt.get("tls", {}) if isinstance(mqtt.get("tls", {}), dict) else {}
+            is_tls = evidence_class in {
+                "stm32_st67_classical_tls_e2e",
+                "stm32_st67_pqc_hybrid_tls_e2e",
+            }
+            # Plaintext runs retain explicit DNS UART evidence. TLS runs suppress
+            # successful DNS diagnostics so formatting/UART cannot perturb the
+            # pre-handshake path; successful TCP/TLS/MQTT evidence proves the
+            # hostname was resolved sufficiently for the connection.
+            if (isinstance(broker, dict) and bool(broker.get("dns_required", False))
+                    and not is_tls):
                 markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
-            if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
-                markers.extend(("wolfMQTT TLS: stage=handshake result=1 error=0", "wolfMQTT TLS: handshake passed"))
-            if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
+            if is_tls:
+                markers.extend((
+                    "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1",
+                    "PQC_TLS_HANDSHAKE_MEMORY",
+                    "PQC_TLS_PHASE name=server_hello",
+                    "PQC_TLS_PHASE name=certificate",
+                    "PQC_TLS_PHASE name=certificate_verify",
+                    "PQC_TLS_PHASE name=finished",
+                    "PQC_TLS_PRIMITIVE name=sha256",
+                    "PQC_TLS_PRIMITIVE name=hkdf_extract",
+                    "PQC_TLS_PRIMITIVE name=hkdf_expand",
+                    "PQC_TLS_PRIMITIVE name=x509_verify",
+                    "wolfMQTT TLS: stage=handshake result=1 error=0",
+                    "wolfMQTT TLS: handshake passed",
+                ))
+
+                group = str(tls.get("key_exchange_group", "")).lower()
+                if "secp256r1" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=p256_keygen",
+                        "PQC_TLS_PRIMITIVE name=p256_shared_secret",
+                    ))
+                elif "secp384r1" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=p384_keygen",
+                        "PQC_TLS_PRIMITIVE name=p384_shared_secret",
+                    ))
+                elif "secp521r1" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=p521_keygen",
+                        "PQC_TLS_PRIMITIVE name=p521_shared_secret",
+                    ))
+                elif "x25519" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=x25519_keygen",
+                        "PQC_TLS_PRIMITIVE name=x25519_shared_secret",
+                    ))
+
+                if "mlkem768" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=mlkem768_keygen",
+                        "PQC_TLS_PRIMITIVE name=mlkem768_decapsulate",
+                    ))
+                if "mlkem1024" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=mlkem1024_keygen",
+                        "PQC_TLS_PRIMITIVE name=mlkem1024_decapsulate",
+                    ))
+
+                server_signature = str(tls.get("server_signature_algorithm", "classical")).lower()
+                authentication = str(tls.get("authentication", "server")).lower()
+                if server_signature == "mldsa65":
+                    markers.append("PQC_TLS_PRIMITIVE name=mldsa65_verify")
+                else:
+                    markers.append("PQC_TLS_PRIMITIVE name=rsa_verify")
+
+                if authentication == "mutual":
+                    if server_signature == "mldsa65":
+                        markers.append("PQC_TLS_PRIMITIVE name=mldsa65_sign")
+                    else:
+                        markers.append("PQC_TLS_PRIMITIVE name=rsa_sign")
+
+            if evidence_class == "stm32_st67_pqc_hybrid_tls_e2e":
                 markers.extend(("key_exchange_group=passed",))
         return tuple(markers)
 

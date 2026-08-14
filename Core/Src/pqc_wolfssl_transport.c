@@ -6,7 +6,9 @@
 #include <stdio.h>
 
 /*
- * Phase M6.3 project-owned wolfSSL transport boundary.
+ * Legacy project-owned wolfSSL transport-boundary self-test.
+ * The live MQTT/TLS path uses the ST67/lwIP socket callbacks in
+ * pqc_wolfmqtt_build_only.c; this module must not describe runtime capability.
  *
  * These wrappers and callback-shaped functions deliberately perform no socket
  * I/O. They consume the Phase M6.2 network-interface status only to preserve a
@@ -133,36 +135,12 @@ int PQC_WolfSSL_Transport_SendCallback(
 
 const char *PQC_WolfSSL_Transport_EvidenceLabel(void)
 {
-  return "STM32 wolfSSL unavailable-transport evidence only";
+  return "STM32 wolfSSL legacy transport-boundary self-test";
 }
 
 const char *PQC_WolfSSL_Transport_UnavailableReason(void)
 {
-  return "lwIP/ST67W61M1 transport backend and socket I/O are unavailable";
+  return "runtime capability is established by the live MQTT/TLS socket path";
 }
 
-bool PQC_WolfSSL_Transport_StatusLine(char *buffer, uint32_t buffer_length)
-{
-  const PQC_WolfSSLTransportStatus status = PQC_WolfSSL_Transport_GetStatus();
 
-  if ((buffer == NULL) || (buffer_length == 0U))
-  {
-    return false;
-  }
-
-  const int written = snprintf(
-      buffer,
-      (size_t)buffer_length,
-      "wolfSSL transport boundary: evidence=unavailable-transport-only boundary=%s callbacks=%s network_boundary=%s connect=unavailable read=unavailable write=unavailable socket_io=not-performed tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable st67w61m1=unavailable end_to_end=unavailable\r\n",
-      status.boundary_present ? "present" : "absent",
-      status.callbacks_present ? "present" : "absent",
-      status.network_boundary_present ? "present" : "absent");
-
-  if ((written < 0) || ((uint32_t)written >= buffer_length))
-  {
-    buffer[0] = '\0';
-    return false;
-  }
-
-  return true;
-}

@@ -54,6 +54,61 @@
 #endif
 #define WOLFSSL_SMALL_STACK
 
+
+#ifndef PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+#define PQC_WOLFSSL_MEMORY_DIAGNOSTICS 0
+#endif
+#ifndef PQC_WOLFSSL_ALLOCATION_PROVENANCE
+#define PQC_WOLFSSL_ALLOCATION_PROVENANCE 0
+#endif
+#ifndef PQC_MLDSA_WORKSPACE_SIZE_BYTES
+#define PQC_MLDSA_WORKSPACE_SIZE_BYTES (64U * 1024U)
+#endif
+
+
+
+/*
+ * Diagnostic allocator override.
+ *
+ * wolfSSL's wolfcrypt/types.h honors XMALLOC_OVERRIDE by leaving XMALLOC,
+ * XREALLOC and XFREE under application control. Preserve the native wolfSSL
+ * heap/type arguments and attach the original source call site while routing
+ * the actual allocation through the project FreeRTOS heap_4 allocator.
+ */
+#include <stddef.h>
+
+void *PQC_WolfSSL_TrackedMalloc(
+    size_t size, void *heap, int type,
+    const char *function, const char *file, unsigned int line);
+void *PQC_WolfSSL_TrackedRealloc(
+    void *pointer, size_t size, void *heap, int type,
+    const char *function, const char *file, unsigned int line);
+void PQC_WolfSSL_TrackedFree(
+    void *pointer, void *heap, int type,
+    const char *function, const char *file, unsigned int line);
+
+#define XMALLOC_OVERRIDE
+#if PQC_WOLFSSL_ALLOCATION_PROVENANCE
+#define XMALLOC(size, heap, type) \
+    PQC_WolfSSL_TrackedMalloc( \
+        (size), (heap), (type), __func__, __FILE__, __LINE__)
+#define XREALLOC(pointer, size, heap, type) \
+    PQC_WolfSSL_TrackedRealloc( \
+        (pointer), (size), (heap), (type), __func__, __FILE__, __LINE__)
+#define XFREE(pointer, heap, type) \
+    PQC_WolfSSL_TrackedFree( \
+        (pointer), (heap), (type), __func__, __FILE__, __LINE__)
+#else
+#define XMALLOC(size, heap, type) \
+    PQC_WolfSSL_TrackedMalloc((size), (heap), (type), NULL, NULL, 0U)
+#define XREALLOC(pointer, size, heap, type) \
+    PQC_WolfSSL_TrackedRealloc( \
+        (pointer), (size), (heap), (type), NULL, NULL, 0U)
+#define XFREE(pointer, heap, type) \
+    PQC_WolfSSL_TrackedFree((pointer), (heap), (type), NULL, NULL, 0U)
+#endif
+
+
 #if PQC_TLS_ENABLE_MLKEM_768 || PQC_TLS_ENABLE_MLKEM_1024 || PQC_TLS_ENABLE_MLDSA_65
 #define WOLFSSL_EXPERIMENTAL_SETTINGS
 #define WOLFSSL_SHA3

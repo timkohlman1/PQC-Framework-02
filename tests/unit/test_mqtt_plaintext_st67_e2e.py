@@ -160,6 +160,8 @@ def test_plaintext_wolfmqtt_transport_compiles_without_wolfssl_headers_or_calls(
     assert "#if PQC_TLS_COMPILED\n    if ((c != NULL) && (c->tls != NULL))" in source
 
 
+
+
 def test_plaintext_wolfmqtt_shared_network_helpers_are_not_tls_guarded():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
@@ -176,10 +178,10 @@ def test_plaintext_wolfmqtt_shared_network_helpers_are_not_tls_guarded():
         in source
     )
 
-
 def test_plaintext_main_omits_tls_smoke_and_transport_diagnostics():
     source = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
-    assert "#if PQC_TLS_COMPILED\n#include \"pqc_wolfssl_build_only.h\"" in source
-    assert '#if PQC_TLS_COMPILED\n  APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in source
-    assert '#if PQC_TLS_COMPILED\n  APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in source
+    assert "APP_PrintWolfSSLRuntimeSmoke" not in source
+    assert "APP_PrintWolfSSLTransportStatus" not in source
+    assert "wolfSSL TLS startup self-test:" not in source
+    assert "wolfSSL transport startup self-test:" not in source

@@ -20,7 +20,7 @@ mx.scratch/
 !.settings
 
 # Experiment outputs
-results/*
+results*
 !results/.gitkeep
 .build_number
 .last_successful_build.json

@@ -106,8 +106,9 @@ def test_tls_build_exposes_profile_selective_mldsa65_verification_support():
 
 def test_tls_handshake_boundary_instrumentation_is_wired():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("before_connect"' in source
-    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("after_connect"' in source
+    assert "PQC_TLS_InstrumentationHandshakeBegin();" in source
+    assert "PQC_TLS_InstrumentationHandshakeEnd(result);" in source
+    assert "PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);" in source
     assert "uxTaskGetStackHighWaterMark(NULL)" in source
     assert "xPortGetFreeHeapSize()" in source
     assert "xPortGetMinimumEverFreeHeapSize()" in source

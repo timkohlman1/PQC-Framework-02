@@ -32,6 +32,7 @@
 #if PQC_TLS_COMPILED
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
+#include "pqc_wolfssl_memory.h"
 #endif
 #include "pqc_wolfmqtt_build_only.h"
 #include "pqc_mqtt_application.h"
@@ -1187,23 +1188,6 @@ static void APP_PrintNetworkInterfaceStatus(void)
   }
 }
 
-#if PQC_TLS_COMPILED
-static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_running)
-{
-  static char smoke_line[640];
-
-  if (PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
-          smoke_line, (uint32_t)sizeof(smoke_line), context, scheduler_running))
-  {
-    APP_UART_WriteString(smoke_line);
-  }
-  else
-  {
-    APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
-  }
-}
-
-#endif
 
 void PQC_WolfMQTT_DiagnosticMarker(const char *marker)
 {
@@ -1225,24 +1209,6 @@ static void APP_PrintWolfMQTTRuntimeStatus(void)
   }
 }
 
-#if PQC_TLS_COMPILED
-static void APP_PrintWolfSSLTransportStatus(void)
-{
-  char status_line[384];
-
-  PQC_WolfSSL_Transport_Init();
-
-  if (PQC_WolfSSL_Transport_StatusLine(status_line, (uint32_t)sizeof(status_line)))
-  {
-    APP_UART_WriteString(status_line);
-  }
-  else
-  {
-    APP_UART_WriteString("wolfSSL transport boundary: evidence=unavailable-transport-only boundary=present callbacks=present network_boundary=present connect=unavailable read=unavailable write=unavailable socket_io=not-performed tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable st67w61m1=unavailable end_to_end=unavailable reason=format_failed\r\n");
-  }
-}
-
-#endif
 
 static void APP_PrintFreeRTOSSchedulerStarting(void)
 {
@@ -1462,8 +1428,12 @@ int main(void)
   APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);
   APP_PrintNetworkInterfaceStatus();
 #if PQC_TLS_COMPILED
-  APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);
-  APP_PrintWolfSSLTransportStatus();
+  PQC_WolfSSL_MemorySetDiagnosticWriter(APP_UART_WriteString);
+  if (PQC_WolfSSL_MemoryConfigure() != 0)
+  {
+    APP_UART_WriteString("PQC_WOLFSSL_MEMORY allocator configuration failed\r\n");
+    Error_Handler();
+  }
 #endif
 
   /* USER CODE END 2 */
@@ -2066,12 +2036,6 @@ static void APP_PrintLwIPRuntimeFixture(void)
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
 }
 
-static void APP_PrintWolfSSLRuntimeFixture(void)
-{
-#if PQC_TLS_COMPILED
-  APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
-#endif
-}
 
 static void APP_PrintNetworkTaskMemoryCheckpoint(void)
 {
@@ -2099,7 +2063,6 @@ void StartNetworkTask(void *argument)
     .run_network_bringup = APP_RunST67SPIBringup,
     .is_network_ready = APP_IsNetworkReady,
     .print_lwip_runtime = APP_PrintLwIPRuntimeFixture,
-    .print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture,
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
     .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
@@ -2113,6 +2076,72 @@ void StartNetworkTask(void *argument)
   osThreadExit();
 }
 
+
+
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+static char *APP_UART_AppendLiteral(char *cursor, char *end, const char *text)
+{
+  while ((cursor < end) && (*text != '\0'))
+  {
+    *cursor++ = *text++;
+  }
+  return cursor;
+}
+
+static char *APP_UART_AppendSize(char *cursor, char *end, size_t value)
+{
+  char digits[3U * sizeof(size_t)];
+  size_t count = 0U;
+
+  do
+  {
+    digits[count++] = (char)('0' + (value % 10U));
+    value /= 10U;
+  } while ((value != 0U) && (count < sizeof(digits)));
+
+  while ((count != 0U) && (cursor < end))
+  {
+    *cursor++ = digits[--count];
+  }
+  return cursor;
+}
+
+static void APP_UART_WriteMallocFailureDiagnostic(void)
+{
+  PQC_WolfSSLMemorySnapshot snapshot;
+  char line[384];
+  char *cursor = line;
+  char *end = line + sizeof(line) - 3U;
+
+  PQC_WolfSSL_MemorySnapshotGet(&snapshot);
+
+  cursor = APP_UART_AppendLiteral(
+      cursor, end, "PQC_FREERTOS_ALLOC_FAIL wolfssl_allocation_active=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.allocation_active ? 1U : 0U);
+  cursor = APP_UART_AppendLiteral(cursor, end, " wolfssl_requested_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.pending_request_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " wolfssl_total_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.pending_total_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " free_heap_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.free_heap_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " minimum_ever_free_heap_bytes=");
+  cursor = APP_UART_AppendSize(
+      cursor, end, snapshot.minimum_ever_free_heap_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " largest_free_block_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.largest_free_block_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " free_block_count=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.free_block_count);
+  cursor = APP_UART_AppendLiteral(cursor, end, "\r\n");
+  *cursor = '\0';
+
+  /*
+   * APP_UART_WriteString ultimately uses HAL_UART_Transmit(..., HAL_MAX_DELAY).
+   * No dynamic allocation is performed by this formatting path.
+   */
+  APP_UART_WriteString(line);
+}
+
+#endif
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {
@@ -2128,6 +2157,14 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 void vApplicationMallocFailedHook(void)
 {
+  /*
+   * Report while interrupts are still enabled. APP_UART_WriteString() reaches
+   * the blocking HAL_UART_Transmit() path, so the complete diagnostic is sent
+   * before the firmware deliberately halts.
+   */
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+  APP_UART_WriteMallocFailureDiagnostic();
+#endif
   APP_UART_WriteString("FATAL: FreeRTOS allocation failed\r\n");
   taskDISABLE_INTERRUPTS();
   for (;;)

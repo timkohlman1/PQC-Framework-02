@@ -26,6 +26,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
+
+
+option(PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+    "Enable wolfSSL heap/failure UART diagnostics (changes timing)" OFF)
+option(PQC_WOLFSSL_ALLOCATION_PROVENANCE
+    "Enable wolfSSL allocation source/type UART tracing (changes timing)" OFF)
+set(PQC_MLDSA_WORKSPACE_SIZE_BYTES "65536" CACHE STRING
+    "Dedicated RAM3 ML-DSA scratch workspace size in bytes")
+
+if(PQC_WOLFSSL_ALLOCATION_PROVENANCE)
+    set(PQC_WOLFSSL_MEMORY_DIAGNOSTICS ON CACHE BOOL
+        "Enable wolfSSL heap/failure UART diagnostics (changes timing)" FORCE)
+endif()
+
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Select the linker script and vector-table offset for the requested build profile.
@@ -111,18 +125,18 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
-# Phase M6.1 wolfSSL TLS-context lifecycle source integration.
+# STM32 wolfSSL TLS 1.3 runtime source integration.
 #
 # Reuse the wolfSSL source tree carried by the wolfBoot submodule. The selected
-# source set is limited to wolfSSL client-context and supporting wolfCrypt code
-# needed to initialize wolfSSL, create/free a TLS 1.2 client WOLFSSL_CTX, and
-# clean up global state. No transport, certificate loading, handshake, MQTT,
-# Wi-Fi, or ST67W61M1 backend is enabled by this target.
+# source set provides the profile-selected TLS 1.3 client, certificate
+# verification, key exchange, and wolfCrypt primitives used by the project-owned
+# lwIP/ST67 transport and wolfMQTT runtime path. TLS capabilities remain
+# profile-selected through the generated algorithm configuration below.
 if(PQC_TLS_COMPILED)
     set(PQC_WOLFSSL_SOURCE_DIR
         "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
         CACHE PATH
-        "Repository-local wolfSSL source directory used for Phase M6.1 STM32 TLS-context smoke coverage"
+        "Repository-local wolfSSL source directory used for STM32 TLS 1.3 runtime"
     )
 
     set(PQC_WOLFSSL_TLS_CONTEXT_SOURCES
@@ -190,7 +204,7 @@ if(PQC_TLS_COMPILED)
     foreach(PQC_WOLFSSL_SOURCE IN LISTS PQC_WOLFSSL_TLS_CONTEXT_SOURCES)
         if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
             message(FATAL_ERROR
-                "Phase M6.1 wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
+                "wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
                 "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
             )
         endif()
@@ -222,21 +236,25 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_ENABLE_MLDSA_65_SIGN=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65_SIGN}>
         PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
         PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
+        PQC_TLS_INSTRUMENTATION=1
+        PQC_WOLFSSL_MEMORY_DIAGNOSTICS=$<BOOL:${PQC_WOLFSSL_MEMORY_DIAGNOSTICS}>
+        PQC_WOLFSSL_ALLOCATION_PROVENANCE=$<BOOL:${PQC_WOLFSSL_ALLOCATION_PROVENANCE}>
+        PQC_MLDSA_WORKSPACE_SIZE_BYTES=${PQC_MLDSA_WORKSPACE_SIZE_BYTES}
     )
 endif()
 
 
 
-# Phase M7 wolfMQTT build-only source integration.
+# STM32 wolfMQTT core source integration.
 #
 # wolfMQTT is maintained as its own pinned repository submodule. The project
-# builds the core MQTT client, packet, and socket callback layers only. TLS is
-# intentionally disabled here; the existing project-owned wolfSSL transport
-# boundary remains unavailable until a later network-backed phase.
+# builds the core MQTT client, packet, and socket callback layers while the
+# project-owned network wrapper supplies the lwIP/ST67 transport and, for TLS
+# profiles, the wolfSSL TLS 1.3 session used beneath wolfMQTT.
 set(PQC_WOLFMQTT_SOURCE_DIR
     "${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfMQTT"
     CACHE PATH
-    "Repository-local wolfMQTT source directory used for Phase M7 STM32 build-only coverage"
+    "Repository-local wolfMQTT source directory used by the STM32 MQTT runtime"
 )
 
 set(PQC_WOLFMQTT_BUILD_ONLY_SOURCES
@@ -248,7 +266,7 @@ set(PQC_WOLFMQTT_BUILD_ONLY_SOURCES
 foreach(PQC_WOLFMQTT_SOURCE IN LISTS PQC_WOLFMQTT_BUILD_ONLY_SOURCES)
     if(NOT EXISTS "${PQC_WOLFMQTT_SOURCE}")
         message(FATAL_ERROR
-            "Phase M7 wolfMQTT source file not found: ${PQC_WOLFMQTT_SOURCE}. "
+            "wolfMQTT source file not found: ${PQC_WOLFMQTT_SOURCE}. "
             "Initialise the Middlewares/Third_Party/wolfMQTT submodule."
         )
     endif()
@@ -285,6 +303,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_lwip_build_only.c
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfmqtt_build_only.c
+    Core/Src/pqc_tls_instrumentation.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
 )
@@ -293,7 +312,14 @@ if(PQC_TLS_COMPILED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/pqc_wolfssl_build_only.c
         Core/Src/pqc_wolfssl_transport.c
+        Core/Src/pqc_wolfssl_memory.c
     )
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    PQC_WOLFSSL_MEMORY_DIAGNOSTICS=$<BOOL:${PQC_WOLFSSL_MEMORY_DIAGNOSTICS}>
+    PQC_WOLFSSL_ALLOCATION_PROVENANCE=$<BOOL:${PQC_WOLFSSL_ALLOCATION_PROVENANCE}>
+    PQC_MLDSA_WORKSPACE_SIZE_BYTES=${PQC_MLDSA_WORKSPACE_SIZE_BYTES}
+)
 endif()
 
 # Add include paths

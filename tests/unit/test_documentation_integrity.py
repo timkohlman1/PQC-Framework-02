@@ -274,11 +274,11 @@ def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
 
     assert "STM32 wolfMQTT integration | Supported" in architecture
     assert "stm32-fake-no-network-initialization-only" in architecture
-    assert "unavailable-transport-only" in architecture
+    assert "legacy transport-boundary self-test" in architecture
     assert "ST67W61M1 hardware-backed network backend | Driver and interface sources build in direct and relocated profiles | Association and DHCP-supported runtime" in architecture
     assert "stm32-st67-wifi-association-dhcp" in architecture
     assert "Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address." in architecture
-    assert "Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented" in architecture
+    assert "Real classical STM32 MQTT-over-TLS | Implemented | ST67/lwIP/wolfSSL/wolfMQTT runtime path implemented" in architecture
     assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
 
 def test_readme_is_concise_and_routes_detail_to_canonical_owners() -> None:

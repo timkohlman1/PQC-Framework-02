@@ -234,6 +234,21 @@ SECTIONS
   PROVIDE( __bss_start = __tbss_start );
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
+
+/*
+ * Dedicated wolfSSL/wolfCrypt ML-DSA scratch workspace.
+ * NOLOAD prevents image bytes being stored in flash; the backing array is
+ * explicitly placed here and reused serially by the custom allocator.
+ */
+.pqc_mldsa_workspace (NOLOAD) :
+{
+  . = ALIGN(8);
+  __pqc_mldsa_workspace_start__ = .;
+  KEEP(*(.pqc_mldsa_workspace))
+  . = ALIGN(8);
+  __pqc_mldsa_workspace_end__ = .;
+} >RAM3
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {
