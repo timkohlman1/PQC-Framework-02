@@ -794,3 +794,24 @@ def test_st67_transport_documentation_matches_vendor_aligned_runtime_baseline() 
     assert "vendor `spi_iface.c` implementation" in combined
     assert "each segment in a chained lwIP `pbuf`" in combined
     assert "30-second" in combined
+
+def test_wolfssl_dependency_ownership_is_explicit_and_consistent() -> None:
+    guide = _read("AI_BUILD_GUIDE.md")
+    architecture = _read("docs/007_framework_architecture.md")
+    readme = _read("README.md")
+
+    for document in (guide, architecture, readme):
+        assert "Middlewares/Third_Party/wolfSSL" in document
+        assert "tools/wolfboot/lib/wolfssl" in document
+
+    assert "Application TLS/wolfCrypt source of truth" in architecture
+    assert "wolfBoot-owned nested wolfSSL dependency" in architecture
+    assert "PQC_WOLFSSL_SOURCE_DIR" in architecture
+    assert "commit and push the wolfSSL source change" in architecture
+
+    assert "Application TLS/wolfCrypt changes must target `Middlewares/Third_Party/wolfSSL`" in guide
+    assert "Do not modify `tools/wolfboot/lib/wolfssl` for application TLS functionality" in guide
+    assert "parent-repository commit alone does not preserve dirty wolfSSL working-tree changes" in guide
+
+    assert "Application TLS/wolfCrypt builds use the top-level `Middlewares/Third_Party/wolfSSL` submodule" in readme
+

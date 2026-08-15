@@ -53,6 +53,12 @@ python -m pytest tests/integration/test_local_build.py -m integration --pqc-requ
 
 SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough.
 
+## Dependency ownership
+
+Application TLS/wolfCrypt builds use the top-level `Middlewares/Third_Party/wolfSSL` submodule. `tools/wolfboot/lib/wolfssl` is wolfBoot's own nested dependency and must not be used as the source of application TLS changes.
+
+When wolfSSL application sources change, commit and push the change inside `Middlewares/Third_Party/wolfSSL` first, then commit the updated submodule SHA in this repository. Detailed dependency ownership is documented in `docs/007_framework_architecture.md`.
+
 ## Secure-boot example
 
 When no secure-boot algorithm is specified, the framework uses wolfBoot with `integrity_sha256`. This verifies the application SHA-256 digest but performs no signature or signing-key authentication. It therefore does not require or resolve a signing tuple.

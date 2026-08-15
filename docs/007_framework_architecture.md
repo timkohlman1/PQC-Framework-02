@@ -37,6 +37,30 @@ The repository now contains a real STM32/ST67 MQTT/TLS runtime path: ST67W61M1 a
 
 The architecture is organized by stable capability and evidence ownership rather than implementation chronology. Roadmap sequencing and phase status belong to `docs/non_hardware_mqtt_tls_development_plan.md`; historical framework sequencing belongs to `docs/pqc_iot_experiment_framework_plan.md`. This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
 
+### External dependency ownership
+
+The STM32 application and wolfBoot intentionally use separate wolfSSL checkouts with different ownership:
+
+```text
+Middlewares/Third_Party/wolfSSL
+    Application TLS/wolfCrypt source of truth.
+    Top-level Git submodule backed by the project-controlled wolfssl-embedded repository.
+    CMake application TLS builds, application-side wolfSSL instrumentation, and application TLS fixes belong here.
+
+tools/wolfboot
+    Upstream wolfBoot submodule pinned by the parent repository.
+
+tools/wolfboot/lib/wolfssl
+    wolfBoot-owned nested wolfSSL dependency.
+    It follows the wolfBoot revision and is not the source of truth for STM32 application TLS changes.
+```
+
+Application work must not patch `tools/wolfboot/lib/wolfssl` merely because the same upstream wolfSSL files also exist there. The application build resolves `PQC_WOLFSSL_SOURCE_DIR` to `Middlewares/Third_Party/wolfSSL`.
+
+Because `Middlewares/Third_Party/wolfSSL` is a Git submodule, durable source changes use a two-repository workflow: commit and push the wolfSSL source change in the wolfSSL submodule first, then commit the updated wolfSSL gitlink/SHA in `PQC-Framework-02`. A parent commit cannot preserve uncommitted source edits inside the submodule.
+
+wolfBoot-specific temporary source adjustments remain owned by `scripts/framework/wolfboot_build.py` where implemented. Those build-time patches do not make wolfBoot's nested wolfSSL checkout the application dependency.
+
 ## Canonical current capability matrix
 
 This matrix is the canonical detailed implementation-status reference. A supported cell identifies the strongest evidence currently represented by inspected repository sources, configs, and tests; it does not promote that evidence into another layer.
@@ -74,6 +98,9 @@ STM32L4R5XX_FLASH_RELOCATED.ld              Secure-boot relocated linker script
 Core/                                       CubeMX HAL/FreeRTOS application source
 Drivers/                                    CubeMX HAL/CMSIS drivers
 Middlewares/Third_Party/FreeRTOS/           CubeMX-generated FreeRTOS middleware
+Middlewares/Third_Party/wolfSSL/            Project-controlled application TLS/wolfCrypt submodule
+Middlewares/Third_Party/wolfMQTT/           Project-controlled/pinned MQTT client submodule
+tools/wolfboot/                              Upstream wolfBoot submodule; owns its nested lib/wolfssl dependency
 configs/boards/board_a.yaml                 Board metadata
 configs/hosts/gateway.yaml                  Gateway, flash helper, UART path
 configs/boot/direct_flash.yaml              Direct-flash boot profile
