@@ -17,7 +17,8 @@ def load_utility_module():
 def test_host_wolfmqtt_build_uses_pinned_sources_and_wolfssl():
     text = CMAKE_FILE.read_text(encoding="utf-8")
     assert "Middlewares/Third_Party/wolfMQTT" in text
-    assert "Middlewares/Third_Party/wolfSSL" in text
+    assert "tools/wolfboot/lib/wolfssl" in text
+    assert "Middlewares/Third_Party/wolfSSL" not in text
     assert "ENABLE_MQTT_TLS" in text
     assert "wolfssl::wolfssl" in text
     assert "pqc_host_wolfmqtt_client" in text

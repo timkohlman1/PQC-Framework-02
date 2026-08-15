@@ -9,7 +9,8 @@ def test_stm32_wolfssl_tls_context_sources_are_wired_into_firmware():
     root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "PQC_WOLFSSL_SOURCE_DIR" in root_cmake
-    assert "tools/wolfboot/lib/wolfssl" in root_cmake
+    assert "Middlewares/Third_Party/wolfSSL" in root_cmake
+    assert "tools/wolfboot/lib/wolfssl" not in root_cmake
     for source in (
         "src/internal.c",
         "src/keys.c",

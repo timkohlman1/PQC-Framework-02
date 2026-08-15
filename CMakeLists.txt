@@ -29,9 +29,9 @@ project(${CMAKE_PROJECT_NAME})
 
 
 option(PQC_WOLFSSL_MEMORY_DIAGNOSTICS
-    "Enable wolfSSL heap/failure UART diagnostics (changes timing)" ON)
+    "Enable wolfSSL heap/failure UART diagnostics (changes timing)" OFF)
 option(PQC_WOLFSSL_ALLOCATION_PROVENANCE
-    "Enable wolfSSL allocation source/type UART tracing (changes timing)" ON)
+    "Enable wolfSSL allocation source/type UART tracing (changes timing)" OFF)
 set(PQC_MLDSA_WORKSPACE_SIZE_BYTES "98304" CACHE STRING
     "Dedicated RAM3 ML-DSA scratch workspace size in bytes")
 
