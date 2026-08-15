@@ -41,6 +41,7 @@
 #include "logging.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "pqc_ram_accounting.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -1388,6 +1389,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  /* Paint unused MSP reservation before HAL/application initialization. */
+  PQC_RAM_InitializeMSPHighWatermark();
 
   /* USER CODE END 1 */
 
@@ -2059,6 +2062,39 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
 
 static void APP_PrintMemoryHighWatermark(void)
 {
+  extern uint8_t __ram_region_start__;
+  extern uint8_t __ram_region_end__;
+  extern uint8_t __ram2_region_start__;
+  extern uint8_t __ram2_region_end__;
+  extern uint8_t __ram3_region_start__;
+  extern uint8_t __ram3_region_end__;
+  extern uint8_t _sdata;
+  extern uint8_t _edata;
+  extern uint8_t _sbss;
+  extern uint8_t _ebss;
+  extern uint8_t _end;
+  extern uint8_t __user_heap_stack_end__;
+  extern uint32_t _Min_Heap_Size;
+  const size_t ram_total_bytes = (size_t)(
+      (uintptr_t)&__ram_region_end__ - (uintptr_t)&__ram_region_start__);
+  const size_t ram2_total_bytes = (size_t)(
+      (uintptr_t)&__ram2_region_end__ - (uintptr_t)&__ram2_region_start__);
+  const size_t ram3_total_bytes = (size_t)(
+      (uintptr_t)&__ram3_region_end__ - (uintptr_t)&__ram3_region_start__);
+  const size_t data_bytes =
+      (size_t)((uintptr_t)&_edata - (uintptr_t)&_sdata);
+  const size_t bss_bytes =
+      (size_t)((uintptr_t)&_ebss - (uintptr_t)&_sbss);
+  const size_t ram_static_base_bytes = (size_t)(
+      (uintptr_t)&_end - (uintptr_t)&__ram_region_start__);
+  const size_t linker_min_heap_bytes = (size_t)(uintptr_t)&_Min_Heap_Size;
+  const size_t ram_linker_reserved_bytes = (size_t)(
+      (uintptr_t)&__user_heap_stack_end__ -
+      (uintptr_t)&__ram_region_start__);
+  const size_t ram_linker_unreserved_bytes =
+      (ram_linker_reserved_bytes <= ram_total_bytes)
+          ? (ram_total_bytes - ram_linker_reserved_bytes)
+          : 0U;
   const size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
   const size_t heap_final_free_bytes = xPortGetFreeHeapSize();
   const size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
@@ -2071,6 +2107,19 @@ static void APP_PrintMemoryHighWatermark(void)
   size_t workspace_headroom_bytes = 0U;
   bool workspace_in_use = false;
   bool workspace_capacity_exceeded = false;
+  PQC_RAMRuntimeSnapshot ram_runtime = {0};
+  size_t ram_observed_required_bytes = 0U;
+  size_t ram_observed_headroom_bytes = 0U;
+  bool ram_observed_required_is_lower_bound = false;
+
+  PQC_RAM_RuntimeSnapshotGet(&ram_runtime);
+  ram_observed_required_bytes = ram_static_base_bytes +
+      ram_runtime.sbrk_peak_used_bytes + ram_runtime.msp_peak_used_bytes;
+  ram_observed_required_is_lower_bound = ram_runtime.msp_measurement_saturated;
+  if (ram_observed_required_bytes <= ram_total_bytes)
+  {
+    ram_observed_headroom_bytes = ram_total_bytes - ram_observed_required_bytes;
+  }
 
 #if PQC_TLS_COMPILED
   {
@@ -2099,6 +2148,40 @@ static void APP_PrintMemoryHighWatermark(void)
    * wolfSSL, which is the authoritative sizing requirement for the fixed
    * workspace.
    */
+  APP_UART_WriteString("PQC_RAM_LINKER_ACCOUNTING ram_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_total_bytes);
+  APP_UART_WriteString(" ram2_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram2_total_bytes);
+  APP_UART_WriteString(" ram3_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram3_total_bytes);
+  APP_UART_WriteString(" data_bytes=");
+  APP_UART_WriteUint32((uint32_t)data_bytes);
+  APP_UART_WriteString(" bss_bytes=");
+  APP_UART_WriteUint32((uint32_t)bss_bytes);
+  APP_UART_WriteString(" ram_static_base_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_static_base_bytes);
+  APP_UART_WriteString(" linker_min_heap_bytes=");
+  APP_UART_WriteUint32((uint32_t)linker_min_heap_bytes);
+  APP_UART_WriteString(" linker_min_msp_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_reserved_bytes);
+  APP_UART_WriteString(" ram_linker_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_linker_reserved_bytes);
+  APP_UART_WriteString(" ram_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_linker_unreserved_bytes);
+  APP_UART_WriteString(" ram2_linker_used_bytes=0");
+  APP_UART_WriteString(" ram2_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram2_total_bytes);
+  APP_UART_WriteString(" ram3_workspace_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_total_bytes);
+  APP_UART_WriteString(" ram3_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)((workspace_total_bytes <= ram3_total_bytes)
+      ? (ram3_total_bytes - workspace_total_bytes) : 0U));
+  APP_UART_WriteString(" device_linker_ram_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_total_bytes + ram2_total_bytes + ram3_total_bytes));
+  APP_UART_WriteString(" device_linker_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_linker_reserved_bytes + workspace_total_bytes));
+  APP_UART_WriteString("\r\n");
+
   APP_UART_WriteString(
       "PQC_MEMORY_HIGH_WATERMARK freertos_heap_total_bytes=");
   APP_UART_WriteUint32((uint32_t)heap_total_bytes);
@@ -2118,6 +2201,38 @@ static void APP_PrintMemoryHighWatermark(void)
   APP_UART_WriteUint32(workspace_capacity_exceeded ? 1U : 0U);
   APP_UART_WriteString(" mldsa_workspace_in_use=");
   APP_UART_WriteUint32(workspace_in_use ? 1U : 0U);
+  APP_UART_WriteString(" sbrk_capacity_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_capacity_bytes);
+  APP_UART_WriteString(" sbrk_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_peak_used_bytes);
+  APP_UART_WriteString(" sbrk_final_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_current_used_bytes);
+  APP_UART_WriteString(" sbrk_ever_called=");
+  APP_UART_WriteUint32(ram_runtime.sbrk_ever_called ? 1U : 0U);
+  APP_UART_WriteString(" msp_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_reserved_bytes);
+  APP_UART_WriteString(" msp_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_peak_used_bytes);
+  APP_UART_WriteString(" msp_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_headroom_bytes);
+  APP_UART_WriteString(" msp_excess_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_excess_bytes);
+  APP_UART_WriteString(" msp_measurement_window_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_measurement_window_bytes);
+  APP_UART_WriteString(" msp_reservation_exceeded=");
+  APP_UART_WriteUint32(ram_runtime.msp_reservation_exceeded ? 1U : 0U);
+  APP_UART_WriteString(" msp_measurement_saturated=");
+  APP_UART_WriteUint32(ram_runtime.msp_measurement_saturated ? 1U : 0U);
+  APP_UART_WriteString(" ram_observed_required_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_observed_required_bytes);
+  APP_UART_WriteString(" ram_observed_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_observed_headroom_bytes);
+  APP_UART_WriteString(" ram_observed_required_is_lower_bound=");
+  APP_UART_WriteUint32(ram_observed_required_is_lower_bound ? 1U : 0U);
+  APP_UART_WriteString(" device_observed_workload_required_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_observed_required_bytes + workspace_peak_used_bytes));
+  APP_UART_WriteString(" device_observed_workload_required_is_lower_bound=");
+  APP_UART_WriteUint32(ram_observed_required_is_lower_bound ? 1U : 0U);
   APP_UART_WriteString("\r\n");
 }
 

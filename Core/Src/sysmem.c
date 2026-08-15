@@ -25,10 +25,24 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "pqc_ram_accounting.h"
+
 /**
  * Pointer to the current high watermark of the heap usage
  */
 static uint8_t *__sbrk_heap_end = NULL;
+static uint8_t *__sbrk_heap_peak = NULL;
+static bool __sbrk_ever_called = false;
+
+#define PQC_MSP_WATERMARK_PATTERN 0xA5A5A5A5UL
+static bool s_msp_watermark_initialized = false;
+
+static uintptr_t PQC_RAM_ReadMSP(void)
+{
+  uintptr_t value;
+  __asm volatile ("mrs %0, msp" : "=r" (value));
+  return value;
+}
 
 /**
  * @brief _sbrk() allocates memory to the newlib heap and is used by malloc
@@ -60,11 +74,13 @@ void *_sbrk(ptrdiff_t incr)
   const uint8_t *max_heap = (uint8_t *)stack_limit;
   uint8_t *prev_heap_end;
 
-  /* Initialize heap end at first call */
+  /* Initialize heap end at first call. */
   if (NULL == __sbrk_heap_end)
   {
     __sbrk_heap_end = &_end;
+    __sbrk_heap_peak = &_end;
   }
+  __sbrk_ever_called = true;
 
   /* Protect heap from growing into the reserved MSP stack */
   if (__sbrk_heap_end + incr > max_heap)
@@ -75,8 +91,165 @@ void *_sbrk(ptrdiff_t incr)
 
   prev_heap_end = __sbrk_heap_end;
   __sbrk_heap_end += incr;
+  if (__sbrk_heap_end > __sbrk_heap_peak)
+  {
+    __sbrk_heap_peak = __sbrk_heap_end;
+  }
 
   return (void *)prev_heap_end;
+}
+
+void PQC_RAM_InitializeMSPHighWatermark(void)
+{
+  extern uint8_t _end;
+  extern uint8_t _estack;
+  uintptr_t paint_start_address = (uintptr_t)&_end;
+  const uintptr_t stack_top = (uintptr_t)&_estack;
+  uintptr_t current_msp = PQC_RAM_ReadMSP();
+  volatile uint32_t *cursor;
+  volatile uint32_t *paint_end;
+  uint32_t primask;
+
+  if (s_msp_watermark_initialized)
+  {
+    return;
+  }
+
+  if (__sbrk_heap_peak != NULL &&
+      (uintptr_t)__sbrk_heap_peak > paint_start_address)
+  {
+    /* Preserve any libc allocation that occurred before main(). */
+    paint_start_address = (uintptr_t)__sbrk_heap_peak;
+  }
+  paint_start_address = (paint_start_address + 3U) & ~(uintptr_t)0x3U;
+
+  if (current_msp > stack_top)
+  {
+    current_msp = stack_top;
+  }
+  if (current_msp <= paint_start_address)
+  {
+    s_msp_watermark_initialized = true;
+    return;
+  }
+
+  /*
+   * Avoid an interrupt temporarily using the area while it is being painted.
+   * Restore the caller's interrupt-enable state exactly as it was on entry.
+   */
+  __asm volatile ("mrs %0, primask" : "=r" (primask));
+  __asm volatile ("cpsid i" ::: "memory");
+
+  cursor = (volatile uint32_t *)paint_start_address;
+  paint_end = (volatile uint32_t *)(current_msp & ~(uintptr_t)0x3U);
+  while (cursor < paint_end)
+  {
+    *cursor = (uint32_t)PQC_MSP_WATERMARK_PATTERN;
+    cursor++;
+  }
+
+  __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+  s_msp_watermark_initialized = true;
+}
+
+void PQC_RAM_RuntimeSnapshotGet(PQC_RAMRuntimeSnapshot *snapshot)
+{
+  extern uint8_t _end;
+  extern uint8_t _estack;
+  extern uint32_t _Min_Stack_Size;
+  const uintptr_t heap_start = (uintptr_t)&_end;
+  const uintptr_t stack_top = (uintptr_t)&_estack;
+  const size_t msp_reserved_bytes = (size_t)(uintptr_t)&_Min_Stack_Size;
+  const uintptr_t sbrk_limit = stack_top - msp_reserved_bytes;
+  uintptr_t scan_start;
+  uintptr_t msp_lowest_observed = stack_top;
+  volatile const uint32_t *cursor;
+  volatile const uint32_t *scan_end;
+
+  if (snapshot == NULL)
+  {
+    return;
+  }
+
+  snapshot->sbrk_capacity_bytes =
+      (sbrk_limit >= heap_start) ? (size_t)(sbrk_limit - heap_start) : 0U;
+  snapshot->sbrk_current_used_bytes =
+      (__sbrk_heap_end != NULL && (uintptr_t)__sbrk_heap_end >= heap_start)
+          ? (size_t)((uintptr_t)__sbrk_heap_end - heap_start)
+          : 0U;
+  snapshot->sbrk_peak_used_bytes =
+      (__sbrk_heap_peak != NULL && (uintptr_t)__sbrk_heap_peak >= heap_start)
+          ? (size_t)((uintptr_t)__sbrk_heap_peak - heap_start)
+          : 0U;
+  snapshot->sbrk_ever_called = __sbrk_ever_called;
+
+  snapshot->msp_reserved_bytes = msp_reserved_bytes;
+  snapshot->msp_peak_used_bytes = 0U;
+  snapshot->msp_headroom_bytes = msp_reserved_bytes;
+  snapshot->msp_excess_bytes = 0U;
+  snapshot->msp_measurement_window_bytes = 0U;
+  snapshot->msp_reservation_exceeded = false;
+  snapshot->msp_measurement_saturated = false;
+
+  if (!s_msp_watermark_initialized)
+  {
+    return;
+  }
+
+  /*
+   * _sbrk may overwrite the low end of the painted interval. Exclude every
+   * byte ever loaned to newlib, then scan the remaining sentinel area. This
+   * keeps heap activity from masquerading as MSP usage.
+   */
+  scan_start = heap_start;
+  if (__sbrk_heap_peak != NULL && (uintptr_t)__sbrk_heap_peak > scan_start)
+  {
+    scan_start = (uintptr_t)__sbrk_heap_peak;
+  }
+  scan_start = (scan_start + 3U) & ~(uintptr_t)0x3U;
+
+  if (scan_start >= stack_top)
+  {
+    snapshot->msp_measurement_saturated = true;
+    return;
+  }
+
+  snapshot->msp_measurement_window_bytes = (size_t)(stack_top - scan_start);
+  cursor = (volatile const uint32_t *)scan_start;
+  scan_end = (volatile const uint32_t *)(stack_top & ~(uintptr_t)0x3U);
+  while ((cursor < scan_end) &&
+         (*cursor == (uint32_t)PQC_MSP_WATERMARK_PATTERN))
+  {
+    cursor++;
+  }
+
+  msp_lowest_observed = (uintptr_t)cursor;
+  if (msp_lowest_observed <= scan_start)
+  {
+    /* The stack reached the bottom of the observable window: report a lower
+     * bound and mark saturation instead of pretending this is the exact peak.
+     */
+    snapshot->msp_peak_used_bytes = snapshot->msp_measurement_window_bytes;
+    snapshot->msp_measurement_saturated = true;
+  }
+  else if (msp_lowest_observed < stack_top)
+  {
+    snapshot->msp_peak_used_bytes = (size_t)(stack_top - msp_lowest_observed);
+  }
+
+  if (snapshot->msp_peak_used_bytes >= msp_reserved_bytes)
+  {
+    snapshot->msp_headroom_bytes = 0U;
+    snapshot->msp_excess_bytes =
+        snapshot->msp_peak_used_bytes - msp_reserved_bytes;
+    snapshot->msp_reservation_exceeded =
+        snapshot->msp_peak_used_bytes > msp_reserved_bytes;
+  }
+  else
+  {
+    snapshot->msp_headroom_bytes =
+        msp_reserved_bytes - snapshot->msp_peak_used_bytes;
+  }
 }
 
 #if defined(__PICOLIBC__)

@@ -9,7 +9,7 @@ def test_stm32_wolfssl_tls_context_sources_are_wired_into_firmware():
     root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "PQC_WOLFSSL_SOURCE_DIR" in root_cmake
-    assert "Middlewares/Third_Party/wolfSSL" in root_cmake
+    assert "tools/wolfboot/lib/wolfssl" in root_cmake
     for source in (
         "src/internal.c",
         "src/keys.c",
@@ -276,3 +276,51 @@ def test_wolfssl_allocator_reports_failed_request_and_heap4_fragmentation_state(
         '"handshake_failure"',
     ):
         assert f"PQC_WolfMQTT_DiagnosticMemory({stage})" in mqtt
+
+
+def test_final_ram_accounting_covers_msp_sbrk_and_all_linker_ram_regions():
+    main_source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    sysmem_source = Path("Core/Src/sysmem.c").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_ram_accounting.h").read_text(encoding="utf-8")
+    linker = Path("STM32L4R5XX_FLASH_RELOCATED.ld").read_text(encoding="utf-8")
+    direct_linker = Path("STM32L4R5XX_FLASH.ld").read_text(encoding="utf-8")
+
+    assert "PQC_RAM_InitializeMSPHighWatermark();" in main_source
+    assert main_source.index("PQC_RAM_InitializeMSPHighWatermark();") < main_source.index("HAL_Init();")
+    assert "PQC_RAM_LINKER_ACCOUNTING" in main_source
+    assert "sbrk_peak_used_bytes=" in main_source
+    assert "msp_peak_used_bytes=" in main_source
+    assert "msp_excess_bytes=" in main_source
+    assert "msp_measurement_window_bytes=" in main_source
+    assert "msp_measurement_saturated=" in main_source
+    assert "ram_observed_required_bytes=" in main_source
+    assert "ram_observed_required_is_lower_bound=" in main_source
+    assert "device_observed_workload_required_bytes=" in main_source
+    assert "device_observed_workload_required_is_lower_bound=" in main_source
+
+    assert "__sbrk_heap_peak" in sysmem_source
+    assert "PQC_MSP_WATERMARK_PATTERN" in sysmem_source
+    assert "paint_start_address = (uintptr_t)&_end" in sysmem_source
+    assert "__sbrk_heap_peak" in sysmem_source
+    assert 'cpsid i' in sysmem_source
+    assert "msp_measurement_window_bytes" in sysmem_source
+    assert "msp_measurement_saturated" in sysmem_source
+    assert "PQC_RAM_RuntimeSnapshotGet" in sysmem_source
+    assert "PQC_RAM_InitializeMSPHighWatermark" in header
+
+    for script in (linker, direct_linker):
+        assert "__ram_region_start__ = ORIGIN(RAM);" in script
+        assert "__ram2_region_start__ = ORIGIN(RAM2);" in script
+        assert "__ram3_region_start__ = ORIGIN(RAM3);" in script
+        assert "__user_heap_stack_end__ = .;" in script
+        assert ".pqc_mldsa_workspace (NOLOAD)" in script
+        assert "} >RAM3" in script
+
+
+def test_final_ram_accounting_is_independent_of_verbose_wolfssl_provenance_flag():
+    main_source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    sysmem_source = Path("Core/Src/sysmem.c").read_text(encoding="utf-8")
+
+    accounting = main_source[main_source.index("static void APP_PrintMemoryHighWatermark") :]
+    assert "PQC_WOLFSSL_ALLOCATION_PROVENANCE" not in accounting
+    assert "PQC_WOLFSSL_ALLOCATION_PROVENANCE" not in sysmem_source

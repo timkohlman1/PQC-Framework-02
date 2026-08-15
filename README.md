@@ -128,6 +128,7 @@ Profiles are named `mqtt_tls_<group>_<server_auth|mutual_auth>_st67_e2e.yaml` un
 The same experiment profiles support `--boot-mode wolfboot --boot-algorithm <algorithm>`. Secure-boot selection is independent of the MQTT TLS key-exchange group.
 
 Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expectations alone. Compare retained UART heap-boundary and task stack high-water markers for each group, especially `SecP384r1MLKEM1024`; increase memory only when recorded minimum headroom violates the project threshold or allocation failures occur.
+Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RAM_LINKER_ACCOUNTING` reports static/linker-region capacity and reservation, while `PQC_MEMORY_HIGH_WATERMARK` reports FreeRTOS heap, ML-DSA RAM3 workspace, newlib `_sbrk`, and application MSP high-water values. Treat statically backed heap/workspace reservations and their runtime peaks as two views of the same RAM rather than additive usage. MSP watermarking begins at early `main()` and paints the otherwise-unused primary-RAM interval above the static image, excluding any range already or subsequently used by `_sbrk`; this allows measured MSP demand to exceed the linker's `_Min_Stack_Size` reservation. The marker reports excess beyond that reservation and whether the observable watermark window saturated; when saturated, the derived observed-RAM requirement is explicitly a lower bound. Pre-`main()` startup stack depth remains outside this measurement.
 
 ### Ready-metrics MQTT application profiles
 

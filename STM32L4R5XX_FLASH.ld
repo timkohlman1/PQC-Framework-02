@@ -61,6 +61,14 @@ RAM3 (xrw)      : ORIGIN = 0x20040000, LENGTH = 384K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
 }
 
+/* Project-owned RAM accounting symbols. */
+__ram_region_start__ = ORIGIN(RAM);
+__ram_region_end__ = ORIGIN(RAM) + LENGTH(RAM);
+__ram2_region_start__ = ORIGIN(RAM2);
+__ram2_region_end__ = ORIGIN(RAM2) + LENGTH(RAM2);
+__ram3_region_start__ = ORIGIN(RAM3);
+__ram3_region_end__ = ORIGIN(RAM3) + LENGTH(RAM3);
+
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
 /* Generate a link error if heap and stack don't fit into RAM */
@@ -228,6 +236,16 @@ SECTIONS
   PROVIDE( __bss_start = __tbss_start );
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
+  /* Dedicated wolfSSL/wolfCrypt ML-DSA scratch workspace. */
+  .pqc_mldsa_workspace (NOLOAD) :
+  {
+    . = ALIGN(8);
+    __pqc_mldsa_workspace_start__ = .;
+    KEEP(*(.pqc_mldsa_workspace))
+    . = ALIGN(8);
+    __pqc_mldsa_workspace_end__ = .;
+  } >RAM3
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {
@@ -237,6 +255,7 @@ SECTIONS
     . = . + _Min_Heap_Size;
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
+    __user_heap_stack_end__ = .;
   } >RAM
 
 
