@@ -107,3 +107,23 @@ def test_settings_expose_profile_selective_mldsa65_verification_support():
         "wolfcrypt/src/wc_mldsa.c",
     ):
         assert marker in settings + cmake
+
+def test_x25519_mldsa65_build_guards_cover_certificate_verify_and_pk_oid():
+    tls13 = Path("tools/wolfboot/lib/wolfssl/src/tls13.c").read_text(encoding="utf-8")
+    internal_h = Path("tools/wolfboot/lib/wolfssl/wolfssl/internal.h").read_text(
+        encoding="utf-8"
+    )
+
+    dcv_guard_start = tls13.index(
+        "#if !defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519)"
+    )
+    dcv_type = tls13.index("typedef struct Dcv13Args", dcv_guard_start)
+    dcv_guard = tls13[dcv_guard_start:dcv_type]
+    assert "defined(WOLFSSL_HAVE_MLDSA)" in dcv_guard
+
+    ssl_struct_start = internal_h.index("word16          certHashSigAlgoSz")
+    pk_curve = internal_h.index("word32          pkCurveOID;", ssl_struct_start)
+    guard_start = internal_h.rfind("#if ", ssl_struct_start, pk_curve)
+    guard = internal_h[guard_start:pk_curve]
+    assert "defined(WOLFSSL_HAVE_MLDSA)" in guard
+

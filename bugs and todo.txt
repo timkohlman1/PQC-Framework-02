@@ -221,3 +221,76 @@ git -C tools/wolfboot status --short
     --mtu 1280
 
 
+
+full ready metrics grid
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_plaintext_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp256r1_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp384r1_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp384r1_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp521r1_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_secp521r1_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_x25519_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_x25519_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP256r1MLKEM768_mldsa65_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP256r1MLKEM768_mldsa65_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP384r1MLKEM1024_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP384r1MLKEM1024_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP384r1MLKEM1024_mldsa65_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_SecP384r1MLKEM1024_mldsa65_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_X25519MLKEM768_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_X25519MLKEM768_mutual_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_X25519MLKEM768_mldsa65_server_auth_st67_e2e.yaml
+
+.\scripts\dev.ps1 experiment-gateway run `
+    --experiment configs/experiments/applications/ready_metrics/ready_metrics_mqtt_tls_X25519MLKEM768_mldsa65_mutual_auth_st67_e2e.yaml
+
+
+
+
+
+
+
+

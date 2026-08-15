@@ -232,7 +232,7 @@ def test_obsolete_wolfssl_smoke_runtime_is_removed():
         assert fragment not in source
         assert fragment not in main_c
 
-    assert ".print_wolfssl_runtime" not in main_c
+    assert ".print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp" in main_c
     assert "fixture->print_wolfssl_runtime" not in application
     assert "#define SINGLE_THREADED" in settings
 

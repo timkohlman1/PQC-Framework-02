@@ -134,7 +134,7 @@ def test_runtime_validation_is_delegated_to_live_application_workflow():
 
     assert "APP_PrintWolfSSLRuntimeSmoke" not in main_c
     assert "APP_PrintWolfSSLTransportStatus" not in main_c
-    assert ".print_wolfssl_runtime" not in network_body
+    assert ".print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp" in network_body
     assert "fixture->print_wolfssl_runtime" not in application
     assert ".print_lwip_runtime = APP_PrintLwIPRuntimeFixture" in network_body
     assert ".print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus" in network_body

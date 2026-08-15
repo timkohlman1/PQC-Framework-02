@@ -66,6 +66,41 @@ def test_crypto_hooks_cover_selected_tls_primitives():
     assert "PQC_TLS_PRIMITIVE_SHA256" in sha
 
 
+
+def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
+    internal = read("tools/wolfboot/lib/wolfssl/src/internal.c")
+
+    verify_rsa_sign_start = internal.index("int VerifyRsaSign(")
+    verify_rsa_sign_end = internal.index("/* Handle async pending response */", verify_rsa_sign_start)
+    verify_rsa_sign = internal[verify_rsa_sign_start:verify_rsa_sign_end]
+
+    pss_call = "wc_RsaPSS_VerifyInline(verifySig, sigSz, &out, hashType, mgf,"
+    pkcs1_call = "wc_RsaSSL_VerifyInline(verifySig, sigSz, &out, key);"
+
+    assert pss_call in verify_rsa_sign
+    assert pkcs1_call in verify_rsa_sign
+    assert verify_rsa_sign.count(
+        "PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+    ) >= 2
+    assert verify_rsa_sign.count(
+        "PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+    ) >= 2
+
+    rsa_verify_start = internal.index("int RsaVerify(")
+    rsa_verify_end = internal.index("int VerifyRsaSign(", rsa_verify_start)
+    rsa_verify = internal[rsa_verify_start:rsa_verify_end]
+
+    assert "wc_RsaSSL_VerifyInline(in, inSz, out, key);" in rsa_verify
+    assert (
+        "PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        in rsa_verify
+    )
+    assert (
+        "PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        in rsa_verify
+    )
+
+
 def test_instrumentation_report_is_post_handshake_only():
     source = read("Core/Src/pqc_tls_instrumentation.c")
 
