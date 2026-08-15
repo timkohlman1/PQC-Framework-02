@@ -36,7 +36,7 @@ def test_stack_and_heap_measurements_bracket_but_do_not_enter_handshake():
 
 
 def test_tls13_phase_hooks_cover_requested_receive_transitions():
-    source = read("tools/wolfboot/lib/wolfssl/src/tls13.c")
+    source = read("Middlewares/Third_Party/wolfSSL/src/tls13.c")
 
     for phase in (
         "PQC_TLS_PHASE_SERVER_HELLO",
@@ -50,10 +50,10 @@ def test_tls13_phase_hooks_cover_requested_receive_transitions():
 
 
 def test_crypto_hooks_cover_selected_tls_primitives():
-    internal = read("tools/wolfboot/lib/wolfssl/src/internal.c")
-    tls = read("tools/wolfboot/lib/wolfssl/src/tls.c")
-    kdf = read("tools/wolfboot/lib/wolfssl/wolfcrypt/src/kdf.c")
-    sha = read("tools/wolfboot/lib/wolfssl/wolfcrypt/src/sha256.c")
+    internal = read("Middlewares/Third_Party/wolfSSL/src/internal.c")
+    tls = read("Middlewares/Third_Party/wolfSSL/src/tls.c")
+    kdf = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/kdf.c")
+    sha = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha256.c")
 
     assert "PQC_TLS_PRIMITIVE_P256_KEYGEN" in internal
     assert "PQC_TLS_PRIMITIVE_P256_SHARED_SECRET" in internal
@@ -68,7 +68,7 @@ def test_crypto_hooks_cover_selected_tls_primitives():
 
 
 def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
-    internal = read("tools/wolfboot/lib/wolfssl/src/internal.c")
+    internal = read("Middlewares/Third_Party/wolfSSL/src/internal.c")
 
     verify_rsa_sign_start = internal.index("int VerifyRsaSign(")
     verify_rsa_sign_end = internal.index("/* Handle async pending response */", verify_rsa_sign_start)
@@ -179,10 +179,10 @@ def test_legacy_wolfssl_startup_smokes_are_removed():
     assert "runtime_validation=live_mqtt_tls_workflow" in build_only
 
 def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
-    internal = read("tools/wolfboot/lib/wolfssl/src/internal.c")
-    tls = read("tools/wolfboot/lib/wolfssl/src/tls.c")
-    tls13 = read("tools/wolfboot/lib/wolfssl/src/tls13.c")
-    asn = read("tools/wolfboot/lib/wolfssl/wolfcrypt/src/asn.c")
+    internal = read("Middlewares/Third_Party/wolfSSL/src/internal.c")
+    tls = read("Middlewares/Third_Party/wolfSSL/src/tls.c")
+    tls13 = read("Middlewares/Third_Party/wolfSSL/src/tls13.c")
+    asn = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/asn.c")
     report = read("Core/Src/pqc_tls_instrumentation.c")
 
     for primitive in (

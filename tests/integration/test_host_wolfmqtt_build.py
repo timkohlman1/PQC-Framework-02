@@ -12,7 +12,7 @@ UTILITY = ROOT / "experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py"
 def test_host_wolfmqtt_client_builds(tmp_path):
     required = (
         ROOT / "Middlewares/Third_Party/wolfMQTT/src/mqtt_client.c",
-        ROOT / "tools/wolfboot/lib/wolfssl/CMakeLists.txt",
+        ROOT / "Middlewares/Third_Party/wolfSSL/CMakeLists.txt",
     )
     if shutil.which("cmake") is None or shutil.which("ninja") is None:
         pytest.skip("cmake and ninja are required for the host wolfMQTT build")

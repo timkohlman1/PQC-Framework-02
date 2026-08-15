@@ -89,7 +89,7 @@ def _normalise_cmake_source_token(token: str) -> str | None:
     replacements = {
         "${CMAKE_CURRENT_SOURCE_DIR}/../../": "",
         "${CMAKE_SOURCE_DIR}/": "",
-        "${PQC_WOLFSSL_SOURCE_DIR}/": "tools/wolfboot/lib/wolfssl/",
+        "${PQC_WOLFSSL_SOURCE_DIR}/": "Middlewares/Third_Party/wolfSSL/",
         "${PQC_WOLFMQTT_SOURCE_DIR}/": "Middlewares/Third_Party/wolfMQTT/",
     }
     value = token

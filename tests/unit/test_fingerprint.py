@@ -24,7 +24,7 @@ def write_required_inputs(repo_root: Path) -> None:
         "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
         "configs/boards/board_a.yaml": "id: board_a\n",
         "configs/hosts/gateway.yaml": "id: gateway\n",
-        "CMakeLists.txt": """cmake_minimum_required(VERSION 3.22)\nset(PQC_WOLFSSL_SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl)\ntarget_sources(app PRIVATE Core/Src/main.c)\n""",
+        "CMakeLists.txt": """cmake_minimum_required(VERSION 3.22)\nset(PQC_WOLFSSL_SOURCE_DIR ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfSSL)\ntarget_sources(app PRIVATE Core/Src/main.c)\n""",
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
         "startup_stm32l4r5xx.s": "startup assembly\n",

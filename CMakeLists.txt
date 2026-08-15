@@ -127,14 +127,14 @@ add_subdirectory(cmake/stm32cubemx)
 
 # STM32 wolfSSL TLS 1.3 runtime source integration.
 #
-# Reuse the wolfSSL source tree carried by the wolfBoot submodule. The selected
+# Use the project-controlled top-level wolfSSL submodule. The selected
 # source set provides the profile-selected TLS 1.3 client, certificate
 # verification, key exchange, and wolfCrypt primitives used by the project-owned
 # lwIP/ST67 transport and wolfMQTT runtime path. TLS capabilities remain
 # profile-selected through the generated algorithm configuration below.
 if(PQC_TLS_COMPILED)
     set(PQC_WOLFSSL_SOURCE_DIR
-        "${CMAKE_SOURCE_DIR}/tools/wolfboot/lib/wolfssl"
+        "${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfSSL"
         CACHE PATH
         "Repository-local wolfSSL source directory used for STM32 TLS 1.3 runtime"
     )
@@ -205,7 +205,7 @@ if(PQC_TLS_COMPILED)
         if(NOT EXISTS "${PQC_WOLFSSL_SOURCE}")
             message(FATAL_ERROR
                 "wolfSSL source file not found: ${PQC_WOLFSSL_SOURCE}. "
-                "Initialise or update the wolfBoot submodule so tools/wolfboot/lib/wolfssl is available."
+                "Initialise or update the Middlewares/Third_Party/wolfSSL submodule."
             )
         endif()
     endforeach()

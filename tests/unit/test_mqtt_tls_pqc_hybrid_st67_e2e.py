@@ -80,7 +80,7 @@ def test_pqc_profile_uses_extended_uart_hard_limit():
 
 def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
-    api = Path("tools/wolfboot/lib/wolfssl/src/ssl_api_ext.c").read_text(encoding="utf-8")
+    api = Path("Middlewares/Third_Party/wolfSSL/src/ssl_api_ext.c").read_text(encoding="utf-8")
     assert "#define WOLFSSL_HAVE_MLKEM" in settings
     assert "#define WOLFSSL_PQC_HYBRIDS" in settings
     hybrid_case = "case WOLFSSL_SECP256R1MLKEM768:"
