@@ -15,9 +15,7 @@ def test_mldsa65_ready_metrics_matrix_is_additive_and_complete():
             text = pqc_auth.read_text(encoding="utf-8")
             assert f"key_exchange_group: {group}" in text
             assert "server_signature_algorithm: mldsa65" in text
-            assert "certificate_profile: mldsa65-pqc" in text
-            assert "certificate_authority_algorithm: mldsa65-x509" in text
-            assert "server_certificate_algorithm: mldsa65" in text
+            assert "certificate_profile: mldsa65" in text
             if auth == "mutual_auth":
                 assert "authentication: mutual" in text
                 assert "broker_profile: oqs-mtls" in text
@@ -25,29 +23,18 @@ def test_mldsa65_ready_metrics_matrix_is_additive_and_complete():
                 assert "broker_profile: oqs" in text
 
 
-def test_classical_ready_metrics_profiles_remain_classical():
+def test_classical_ready_metrics_profiles_use_explicit_rsa3072_certificate_profile():
     for group in GROUPS:
         for auth in ("server_auth", "mutual_auth"):
             text = (ROOT / f"ready_metrics_mqtt_tls_{group}_{auth}_st67_e2e.yaml").read_text(encoding="utf-8")
-            assert "server_signature_algorithm: classical" in text
-            assert "certificate_profile: stepca-classical" in text
-            assert "certificate_authority_algorithm: classical-x509" in text
-            assert "server_certificate_algorithm: classical" in text
+            assert "certificate_profile: rsa3072" in text
 
 
-def test_mldsa65_pki_is_separate_from_stepca_classical():
-    compose = Path("framework/certs/compose.certs.yml").read_text(encoding="utf-8")
-    script = Path("framework/certs/services/mldsa-pki/provision.sh").read_text(encoding="utf-8")
-    assert "mldsa65_pki:" in compose
-    assert "secrets/private/mldsa65:/private" in compose
-    assert "secrets/runtime/mldsa65/mqtt-broker" in compose
-    assert "secrets/runtime/mldsa65/stm32" in compose
-    assert "VAULT_PKI_PATH" not in compose[compose.index("  mldsa65_pki:"):]
-    assert "ML-DSA-65" in script
-    assert "signing tuple is partial; refusing silent reconstruction" in script
-    assert "MLDSA_RESET_PKI" in script
-    assert "stepca-data" not in script
-
+def test_mldsa65_certificate_profile_is_config_driven():
+    profile = Path("configs/certificate_profile/mldsa65.yaml").read_text(encoding="utf-8")
+    assert "id: mldsa65" in profile
+    assert "openssl_algorithm: ML-DSA-65" in profile
+    assert "tls_signature_scheme: mldsa65" in profile
 
 
 def test_mldsa65_mutual_tls_does_not_retain_temporary_no_identity_profile():

@@ -351,7 +351,7 @@ def _mqtt_remote_certificate_dir(bundle: dict[str, dict[str, Any]]) -> str:
     """Return the repository-level certificate profile path on the gateway."""
 
     return (
-        "$HOME/pqc-framework-02/secrets/mqtt/"
+        "$HOME/pqc-framework-02/secrets/certificates/"
         f"{_mqtt_certificate_profile(bundle)}"
     )
 

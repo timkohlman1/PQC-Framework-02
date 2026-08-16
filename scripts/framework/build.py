@@ -292,20 +292,22 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 
 def _certificate_requires_ecc(bundle: dict[str, dict[str, Any]]) -> bool:
-    """Return whether the selected certificate profile needs wolfSSL ECC support.
-
-    This is independent of the negotiated TLS key-exchange group. The
-    stepca-classical certificate material contains EC keys/signatures and must
-    remain parseable for X25519-only key-exchange profiles.
-    """
+    """Return whether the selected certificate profile needs wolfSSL ECC support."""
     experiment = bundle.get("experiment", {})
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     mode = str(tls.get("mode", "plaintext")).strip()
-    certificate_profile = str(tls.get("certificate_profile", "")).strip()
+    certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
     if mode == "plaintext":
         return False
-    return certificate_profile in {"stepca-classical"}
+    return certificate_profile in {"ecdsa-p256", "ecdsa-p384"}
+
+
+def _certificate_ecc_bits(bundle: dict[str, dict[str, Any]]) -> int | None:
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    return {"ecdsa-p256": 256, "ecdsa-p384": 384}.get(str(tls.get("certificate_profile", "")).strip().lower())
 
 
 def _resolved_firmware_application(bundle: dict[str, dict[str, Any]]) -> str:
@@ -356,10 +358,9 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     enabled_ecc_sizes = []
     if selected["ecc"]:
         enabled_ecc_sizes.append(int(selected["ecc_bits"]))
-    if selected["certificate_ecc"]:
-        # stepca-classical currently uses a P-256 EC CA/signature chain. Keep
-        # certificate acceptance independent from the selected TLS KEX curve.
-        enabled_ecc_sizes.append(256)
+    certificate_ecc_bits = _certificate_ecc_bits(bundle)
+    if selected["certificate_ecc"] and certificate_ecc_bits is not None:
+        enabled_ecc_sizes.append(certificate_ecc_bits)
     selected["ecc_min_bits"] = min(enabled_ecc_sizes, default=256)
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)

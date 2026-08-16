@@ -62,11 +62,11 @@ def _copy_broker_project(source: Path, destination: Path) -> None:
 
 
 def _require_staged_stepca_material() -> Path:
-    cert_dir = REPO_ROOT / "secrets" / "mqtt" / "stepca-classical"
+    cert_dir = REPO_ROOT / "secrets" / "certificates" / "rsa3072"
     required = ("ca.crt", "ca-chain.crt", "server.crt", "server.key", "client.crt", "client.key")
     missing = [name for name in required if not (cert_dir / name).is_file()]
     if missing:
-        pytest.skip("staged step-ca MQTT material is unavailable: " + ", ".join(missing))
+        pytest.skip("pre-provisioned RSA-3072 MQTT material is unavailable: " + ", ".join(missing))
     return cert_dir
 
 

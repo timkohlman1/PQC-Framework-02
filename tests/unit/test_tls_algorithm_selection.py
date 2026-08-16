@@ -46,12 +46,6 @@ def test_hybrid_mutual_profile_enables_mldsa65_signing_for_client_certificate_ve
     assert selected["signature_schemes"] == ["mldsa65"]
 
 
-@pytest.mark.parametrize("signature", ["falcon512", "unsupported-pqc-signature"])
-def test_hybrid_profile_rejects_unknown_server_signatures(signature):
-    with pytest.raises(ValueError, match="Supported algorithms: classical, mldsa65"):
-        resolve_tls_algorithm_set(_bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", signature))
-
-
 def test_mode_and_group_family_must_match():
     with pytest.raises(ValueError, match="incompatible"):
         resolve_tls_algorithm_set(_bundle("classical_tls_server_auth", "X25519MLKEM768"))
@@ -71,19 +65,8 @@ def test_settings_disable_tls12_for_tls13_only_group_pruning():
     assert "#define WOLFSSL_NO_TLS12" in settings
 
 
-def test_stepca_classical_requires_certificate_ecc_independently_of_x25519_kex():
-    bundle = _bundle("pqc_hybrid_tls_mutual", "X25519MLKEM768")
-    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
-    selected = resolve_tls_algorithm_set(bundle)
-    assert selected["ecc"] is False
-    assert selected["curve25519"] is True
-    assert _certificate_requires_ecc(bundle) is True
 
 
-def test_plaintext_does_not_enable_certificate_ecc():
-    bundle = _bundle("plaintext", "none")
-    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
-    assert _certificate_requires_ecc(bundle) is False
 
 
 def test_settings_keep_certificate_curve_floor_separate_from_kex_curve():
@@ -127,3 +110,32 @@ def test_x25519_mldsa65_build_guards_cover_certificate_verify_and_pk_oid():
     guard = internal_h[guard_start:pk_curve]
     assert "defined(WOLFSSL_HAVE_MLDSA)" in guard
 
+
+
+def test_ecdsa_p256_profile_enables_certificate_ecc_independently_of_x25519_kex():
+    bundle = _bundle("classical_tls_server_auth", "x25519", "ecdsa_secp256r1_sha256")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p256"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["curve25519"] is True
+    assert selected["signature_schemes"] == ["ecdsa_secp256r1_sha256"]
+    assert _certificate_requires_ecc(bundle) is True
+
+
+def test_certificate_profile_can_supply_default_signature_scheme():
+    bundle = _bundle("classical_tls_server_auth", "secp384r1", "")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p384"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["signature_schemes"] == ["ecdsa_secp384r1_sha384"]
+
+
+def test_ed25519_profile_fails_explicitly_until_target_build_support_exists():
+    bundle = _bundle("classical_tls_server_auth", "x25519", "")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ed25519"
+    with pytest.raises(ValueError, match="Ed25519 certificate profiles can be provisioned"):
+        resolve_tls_algorithm_set(bundle)
+
+
+@pytest.mark.parametrize("signature", ["falcon512", "unsupported-pqc-signature"])
+def test_unknown_signature_is_rejected(signature):
+    with pytest.raises(ValueError, match="Unsupported or missing TLS server signature algorithm"):
+        resolve_tls_algorithm_set(_bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", signature))

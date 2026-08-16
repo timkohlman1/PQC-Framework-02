@@ -145,15 +145,15 @@ must not copy secret material or mutate the referenced record.
 
 ## Cryptographic prerequisite ownership
 
-The repository-local, ignored `secrets/` hierarchy is the single source of truth for MQTT TLS and wolfBoot signing material. Experiment YAML declares profile identifiers, not certificate or private-key paths. The experiment runner resolves and prepares the declared profile before fingerprinting, build generation, broker deployment, signing, or execution.
+The repository-local ignored generated-state hierarchy remains authoritative for cryptographic inputs, but MQTT X.509 and wolfBoot signing material have distinct owners. `secrets/certificates/` is authoritative for generated MQTT X.509 profiles, while `secrets/wolfboot/` remains authoritative for wolfBoot signing tuples. Experiment YAML declares profile identifiers, not certificate or private-key paths. The experiment runner resolves and prepares the declared profile before build generation, broker deployment, signing, or execution.
 
-Runtime, build, broker-compose, and result directories are not authoritative key stores. Result directories contain bounded reproduction copies, but no workflow may select future inputs by discovering whichever file happens to be present there. Partial tuples and public/provenance hash mismatches fail closed. Manifests identify the canonical profile and the result-relative material inventory.
+`secrets/certificates/<certificate-profile>/` is both the authoritative generated X.509 profile and the broker/STM32 input. There is no secondary MQTT certificate staging tree. Runtime, build, broker-compose, and result directories are not authoritative key stores. Result directories contain bounded reproduction copies, but no workflow may select future inputs by discovering whichever file happens to be present there. Public/provenance hash mismatches fail closed. Manifests identify the selected family and the result-relative material inventory.
 
-## Certificate-service and wolfBoot key separation
+## Certificate provisioning and wolfBoot key separation
 
-`framework/certs` is the authoritative owner of the classical X.509 root, intermediate, MQTT broker identity, and future STM32 mTLS identity. MQTT orchestration may materialise current runtime copies but must not generate a replacement CA when material is absent.
+`scripts/provision_certificates.py` owns offline X.509 generation. Profile definitions live under `configs/certificate_profile/`; the provisioner reads those YAML files and writes each generated profile directly under ignored `secrets/certificates/<profile-id>/`. Experiments never generate, renew, or stage certificates. If the selected profile is absent or incomplete, prerequisite preparation fails and instructs the user to run the one-time provisioning command. No online CA, Vault, KMS, ACME, OCSP, or continuously running certificate service is required.
 
-wolfBoot signing keys are not X.509 identities and must not be issued by step-ca. The wolfBoot tooling remains responsible for algorithm-compatible generation and public-key export. Vault may store authoritative wolfBoot private signing material under a policy and AppRole separate from certificate materialisation. LocalStack KMS remains suitable for the experiment Vault auto-unseal role; it must not be described as a non-exportable PQC firmware signer unless the selected algorithm and signing interface are explicitly implemented and tested.
+wolfBoot signing keys are not X.509 identities and must not be issued by the X.509 provisioner. The wolfBoot tooling remains responsible for algorithm-compatible generation and public-key export. The historical `framework/certs` Step CA/Vault/KMS/ML-DSA provisioning subsystem has been removed. wolfBoot signing state remains independent of X.509 certificate profiles.
 
 
 TLS key logs retained as `mqtt-broker-tls-keylog.log` are experiment-only secret material because they permit decryption of the associated packet capture. They belong only in ignored result directories, must be inventoried by SHA-256 in the result manifest, and must not be committed or copied into AI context or replacement archives.

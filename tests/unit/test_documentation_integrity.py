@@ -205,17 +205,14 @@ def test_powershell_wolfmqtt_examples_use_named_client_argument_boundary() -> No
     assert "pass the selected upstream wolfmqtt client arguments after `--`" not in combined
 
 
-def test_gateway_and_localhost_certificate_examples_are_distinct() -> None:
-    gateway_command = (
-        "provision-certs --server-name pqc-gateway1 "
-        "--host-config configs/hosts/gateway.yaml"
-    )
-    localhost_command = "provision-certs --server-name localhost"
-
+def test_certificate_provisioning_docs_use_config_driven_one_time_workflow() -> None:
     broker_readme = _read("experiment/mqtt-broker/README.md")
-    assert gateway_command in broker_readme
-    assert localhost_command in broker_readme
-    assert "localhost-only" in broker_readme.lower()
+
+    assert "python scripts/provision_certificates.py" in broker_readme
+    assert "configs/certificate_profile/" in broker_readme
+    assert "secrets/certificates/<profile-id>/" in broker_readme
+    assert "experiment execution never generates or renews certificates" in broker_readme
+    assert "provision-certs --server-name" not in broker_readme
 
     for path in ("README.md", "AI_BUILD_GUIDE.md"):
         assert "experiment/mqtt-broker/README.md" in _read(path)

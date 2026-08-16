@@ -41,9 +41,7 @@ def test_profile_resolves_only_selected_group(group, auth):
             "tls": {
                 "mode": _scalar(text, "mode"),
                 "key_exchange_group": _scalar(text, "key_exchange_group"),
-                "server_signature_algorithm": _scalar(
-                    text, "server_certificate_algorithm"
-                ),
+                "certificate_profile": _scalar(text, "certificate_profile"),
             }
         }
     }
@@ -102,8 +100,8 @@ def test_generated_tls_selection_records_independent_ecc_minimum_bits(tmp_path):
                 "tls": {
                     "mode": "classical_tls_server_auth",
                     "key_exchange_group": "secp521r1",
-                    "server_signature_algorithm": "classical",
-                    "certificate_profile": "stepca-classical",
+                    "server_signature_algorithm": "ecdsa_secp256r1_sha256",
+                    "certificate_profile": "ecdsa-p256",
                 }
             }
         }

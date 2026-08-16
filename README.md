@@ -92,6 +92,14 @@ Detailed commands and signing-tuple rules are owned by `docs/005_remote_flash_wo
 
 The repository includes plaintext, classical TLS, and hybrid PQC MQTT experiment profiles. Use `experiment/mqtt-broker/README.md` for certificate provisioning, deployment, broker lifecycle, and host-side validation.
 
+Provision all configured X.509 research profiles once before running TLS experiments:
+
+```powershell
+.\scripts\dev.ps1 python scripts/provision_certificates.py
+```
+
+Profiles are declared under `configs/certificate_profile/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
+
 Networked profiles can retain `gateway-network-capture.pcap` and `gateway-network-capture.log`. Packet capture is supporting evidence only; correlate it with UART, broker, subscriber, and manifest evidence. Setup and inspection details are in `docs/002_host_gateway_setup.md` and `docs/005_remote_flash_workflow.md`.
 
 ## Safety and evidence

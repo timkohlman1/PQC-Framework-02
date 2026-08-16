@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,14 +19,14 @@ DEFAULT_REMOTE_DIR = "~/pqc-framework-02/experiment/mqtt-broker"
 DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
 DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
 DEFAULT_SERVER_ALIAS = "pqc-gateway1"
-DEFAULT_CLIENT_NAME = "pqc-mqtt-client"
+DEFAULT_CLIENT_NAME = "stm32-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
 MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
 CLASSICAL_IMAGE = MOSQUITTO_IMAGE
 OQS_IMAGE = MOSQUITTO_IMAGE
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
-CLASSICAL_CERTIFICATE_PROFILE = "stepca-classical"
-MLDSA65_CERTIFICATE_PROFILE = "mldsa65-pqc"
+CLASSICAL_CERTIFICATE_PROFILE = "rsa3072"
+MLDSA65_CERTIFICATE_PROFILE = "mldsa65"
 BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
     "classical-server-auth": "mqtt-classical-server-auth",
@@ -66,7 +67,7 @@ def display_path(path: Path) -> str:
 
 
 def certificate_profile_dir(profile_id: str) -> Path:
-    return repo_root() / "secrets" / "mqtt" / profile_id
+    return repo_root() / "secrets" / "certificates" / profile_id
 
 
 def _sha256(path: Path) -> str:
@@ -176,306 +177,6 @@ def remote_shell_path(path: str) -> str:
 
 
 
-def _certificate_valid_for(path: Path, *, renewal_days: int) -> bool:
-    """Return True when an X.509 certificate is valid beyond the renewal window."""
-    if not path.is_file():
-        return False
-    completed = subprocess.run(
-        ["openssl", "x509", "-checkend", str(max(0, renewal_days) * 86400), "-noout", "-in", str(path)],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
-    return completed.returncode == 0
-
-
-def _run_local_compose(
-    certs_root: Path, arguments: list[str], *, certificate_days: int | None = None
-) -> subprocess.CompletedProcess[str]:
-    environment = os.environ.copy()
-    if certificate_days is not None:
-        environment["CERT_NOT_AFTER"] = f"{max(1, certificate_days) * 24}h"
-    return subprocess.run(
-        ["docker", "compose", *arguments],
-        cwd=certs_root,
-        env=environment,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
-
-
-def _remove_generated_pki(certs_root: Path) -> None:
-    for relative in (
-        "secrets/public/ca",
-        "secrets/runtime/mqtt-broker",
-        "secrets/runtime/stm32",
-        "secrets/runtime/localstack",
-    ):
-        directory = certs_root / relative
-        if not directory.exists():
-            continue
-        for path in directory.iterdir():
-            if path.is_file() or path.is_symlink():
-                path.unlink()
-            elif path.is_dir():
-                shutil.rmtree(path)
-
-
-def ensure_framework_certificates(args: argparse.Namespace, source_root: Path) -> bool:
-    """Ensure finite, fresh framework/certs outputs and always stop local infrastructure."""
-    public_ca = source_root / "secrets" / "public" / "ca"
-    broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
-    client_identity = source_root / "secrets" / "runtime" / "stm32"
-    required = [
-        public_ca / "root-ca.crt",
-        public_ca / "intermediate-ca.crt",
-        public_ca / "ca-chain.crt",
-        broker_identity / "tls.crt",
-        broker_identity / "tls.key",
-        client_identity / "client.crt",
-        client_identity / "client.key",
-    ]
-    fresh = (
-        not args.reset_pki
-        and all(path.is_file() for path in required)
-        and _certificate_valid_for(broker_identity / "tls.crt", renewal_days=args.renew_before_days)
-        and _certificate_valid_for(client_identity / "client.crt", renewal_days=args.renew_before_days)
-    )
-    if fresh:
-        return False
-    if args.dry_run:
-        print("docker compose certificate infrastructure would be started, provisioned, and stopped")
-        return True
-
-    lifecycle_log: list[str] = []
-    try:
-        if args.reset_pki:
-            down = _run_local_compose(source_root, ["down", "--volumes", "--remove-orphans"])
-            lifecycle_log.append(f"reset down rc={down.returncode}\n{down.stdout}{down.stderr}")
-            _remove_generated_pki(source_root)
-        start = _run_local_compose(
-            source_root, ["up", "-d", "--build", "stepca_secure_root"], certificate_days=args.days
-        )
-        lifecycle_log.append(f"start rc={start.returncode}\n{start.stdout}{start.stderr}")
-        if start.returncode != 0:
-            details = (start.stderr or start.stdout).strip()
-            message = "failed to start local CA/Vault certificate infrastructure"
-            if details:
-                message += f": {details}"
-            raise SystemExit(message)
-        ready = _run_local_compose(source_root, ["wait", "stepca_secure_root"])
-        lifecycle_log.append(f"stepca_secure_root wait rc={ready.returncode}\n{ready.stdout}{ready.stderr}")
-        if ready.returncode != 0:
-            raise SystemExit("local CA/Vault initialization failed")
-        policy = _run_local_compose(
-            source_root, ["run", "--rm", "--no-deps", "stepca_policy"], certificate_days=args.days
-        )
-        lifecycle_log.append(f"stepca_policy rc={policy.returncode}\n{policy.stdout}{policy.stderr}")
-        if policy.returncode != 0:
-            raise SystemExit("step-ca certificate lifetime policy update failed")
-        restarted = _run_local_compose(
-            source_root, ["restart", "stepca"], certificate_days=args.days
-        )
-        lifecycle_log.append(
-            f"stepca process restart rc={restarted.returncode}\n{restarted.stdout}{restarted.stderr}"
-        )
-        if restarted.returncode != 0:
-            raise SystemExit("step-ca process restart failed after policy update")
-        healthy = _run_local_compose(
-            source_root, ["up", "-d", "--wait", "stepca"], certificate_days=args.days
-        )
-        lifecycle_log.append(
-            f"stepca post-restart health rc={healthy.returncode}\n{healthy.stdout}{healthy.stderr}"
-        )
-        if healthy.returncode != 0:
-            raise SystemExit("step-ca did not become healthy after policy update")
-        for service in ("mqtt-broker_cert", "stm32_client_cert"):
-            issued = _run_local_compose(
-                source_root, ["run", "--rm", "--no-deps", service], certificate_days=args.days
-            )
-            lifecycle_log.append(f"{service} rc={issued.returncode}\n{issued.stdout}{issued.stderr}")
-            if issued.returncode != 0:
-                raise SystemExit(f"certificate issuance job failed: {service}")
-    finally:
-        stopped = _run_local_compose(source_root, ["down", "--remove-orphans"])
-        lifecycle_log.append(f"stop rc={stopped.returncode}\n{stopped.stdout}{stopped.stderr}")
-        (source_root / "certificate-lifecycle.log").write_text("\n\n".join(lifecycle_log) + "\n", encoding="utf-8")
-    return True
-
-def _run_mldsa65_provisioner(
-    certs_root: Path, *, certificate_days: int, renewal_days: int, reset_pki: bool
-) -> subprocess.CompletedProcess[str]:
-    """Run the finite ML-DSA-65 OpenSSL provisioner in the current execution environment."""
-    script = certs_root / "services" / "mldsa-pki" / "provision.sh"
-    if not script.is_file():
-        raise SystemExit(f"ML-DSA-65 provisioning script is missing: {script}")
-
-    signing_tuple = certs_root / "secrets" / "private" / "mldsa65"
-    broker_identity = certs_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
-    client_identity = certs_root / "secrets" / "runtime" / "mldsa65" / "stm32"
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "CERT_DAYS": str(max(1, certificate_days)),
-            "RENEW_BEFORE_DAYS": str(max(0, renewal_days)),
-            "MLDSA_RESET_PKI": "1" if reset_pki else "0",
-            "PRIVATE_DIR": str(signing_tuple),
-            "BROKER_DIR": str(broker_identity),
-            "CLIENT_DIR": str(client_identity),
-        }
-    )
-    try:
-        return subprocess.run(
-            ["sh", str(script)],
-            cwd=certs_root,
-            env=environment,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit(
-            "ML-DSA-65 provisioning requires /bin/sh and OpenSSL in the current execution environment"
-        ) from exc
-
-
-def ensure_framework_mldsa65_certificates(args: argparse.Namespace, source_root: Path) -> bool:
-    """Run the finite ML-DSA-65 PKI job without mutating the classical step-ca state."""
-    signing_tuple = source_root / "secrets" / "private" / "mldsa65"
-    broker_identity = source_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
-    client_identity = source_root / "secrets" / "runtime" / "mldsa65" / "stm32"
-    required = [
-        signing_tuple / "root-ca.crt",
-        signing_tuple / "intermediate-ca.crt",
-        signing_tuple / "ca-chain.crt",
-        broker_identity / "tls.crt",
-        broker_identity / "tls.key",
-        client_identity / "client.crt",
-        client_identity / "client.key",
-    ]
-    fresh = (
-        not args.reset_pki
-        and all(path.is_file() for path in required)
-        and _certificate_valid_for(broker_identity / "tls.crt", renewal_days=args.renew_before_days)
-        and _certificate_valid_for(client_identity / "client.crt", renewal_days=args.renew_before_days)
-    )
-    if fresh:
-        return False
-    if args.dry_run:
-        print("local ML-DSA-65 OpenSSL certificate provisioning job would be run")
-        return True
-
-    issued = _run_mldsa65_provisioner(
-        source_root,
-        certificate_days=args.days,
-        renewal_days=args.renew_before_days,
-        reset_pki=args.reset_pki,
-    )
-    (source_root / "certificate-lifecycle.log").write_text(
-        f"mldsa65_pki rc={issued.returncode}\n{issued.stdout}{issued.stderr}\n",
-        encoding="utf-8",
-    )
-    if issued.returncode != 0:
-        details = (issued.stderr or issued.stdout).strip()
-        message = "ML-DSA-65 certificate provisioning failed"
-        if details:
-            message += f": {details}"
-        raise SystemExit(message)
-
-    missing = [str(path) for path in required if not path.is_file()]
-    if missing:
-        raise SystemExit("ML-DSA-65 provisioning completed without required material: " + ", ".join(missing))
-    return True
-
-
-def sync_stepca_certs(args: argparse.Namespace) -> None:
-    """Stage the selected authoritative MQTT TLS certificate family."""
-    source_root = repo_root() / "framework" / "certs"
-    if args.certificate_profile == CLASSICAL_CERTIFICATE_PROFILE:
-        infrastructure_started = ensure_framework_certificates(args, source_root)
-        public_ca = source_root / "secrets" / "public" / "ca"
-        broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
-        client_identity = source_root / "secrets" / "runtime" / "stm32"
-        profile_kind = "stepca-classical"
-        ca_algorithm = "classical-x509"
-        leaf_algorithm = "classical"
-    elif args.certificate_profile == MLDSA65_CERTIFICATE_PROFILE:
-        infrastructure_started = ensure_framework_mldsa65_certificates(args, source_root)
-        public_ca = source_root / "secrets" / "private" / "mldsa65"
-        broker_identity = source_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
-        client_identity = source_root / "secrets" / "runtime" / "mldsa65" / "stm32"
-        profile_kind = "mldsa65-pqc"
-        ca_algorithm = "mldsa65-x509"
-        leaf_algorithm = "mldsa65"
-    else:
-        raise SystemExit(
-            "unsupported certificate profile: " + args.certificate_profile
-            + "; supported profiles: "
-            + ", ".join((CLASSICAL_CERTIFICATE_PROFILE, MLDSA65_CERTIFICATE_PROFILE))
-        )
-
-    required = {
-        "ca.crt": public_ca / "root-ca.crt",
-        "root-ca.crt": public_ca / "root-ca.crt",
-        "intermediate-ca.crt": public_ca / "intermediate-ca.crt",
-        "ca-chain.crt": public_ca / "ca-chain.crt",
-        "server.crt": broker_identity / "tls.crt",
-        "server.key": broker_identity / "tls.key",
-    }
-    optional = {
-        "client.crt": client_identity / "client.crt",
-        "client.key": client_identity / "client.key",
-        "healthcheck.crt": client_identity / "client.crt",
-        "healthcheck.key": client_identity / "client.key",
-    }
-    missing = [str(path) for path in required.values() if not path.is_file()]
-    if missing:
-        raise SystemExit(
-            "authoritative certificate material is unavailable. Missing: " + ", ".join(missing)
-        )
-    cert_dir = certificate_profile_dir(args.certificate_profile)
-    if args.dry_run:
-        print(f"sync {display_path(source_root)} -> {display_path(cert_dir)}")
-        return
-    cert_dir.mkdir(parents=True, exist_ok=True)
-    copied = {}
-    for name, source in {**required, **optional}.items():
-        if source.is_file():
-            destination = cert_dir / name
-            shutil.copy2(source, destination)
-            copied[name] = _sha256(destination)
-            if destination.suffix == ".key":
-                destination.chmod(0o600)
-    provenance = {
-        "schema_version": 3,
-        "profile_id": args.certificate_profile,
-        "profile_kind": profile_kind,
-        "source": "framework/certs",
-        "ca_algorithm": ca_algorithm,
-        "leaf_algorithm": leaf_algorithm,
-        "ca_sha256": copied["ca.crt"],
-        "root_ca_sha256": copied["root-ca.crt"],
-        "intermediate_ca_sha256": copied["intermediate-ca.crt"],
-        "ca_chain_sha256": copied["ca-chain.crt"],
-        "server_certificate_sha256": copied["server.crt"],
-        "certificate_validity_days": args.days,
-        "renew_before_days": args.renew_before_days,
-        "local_ca_infrastructure_started": infrastructure_started,
-        "local_ca_infrastructure_stopped": True,
-        "files": copied,
-    }
-    (cert_dir / "certificate-provenance.json").write_text(
-        json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    print(f"Synchronized authoritative MQTT TLS material under {display_path(cert_dir)}")
-
 def remote_repo_root(remote_dir: str) -> str:
     normalized = remote_dir.rstrip("/")
     suffix = "/experiment/mqtt-broker"
@@ -501,7 +202,7 @@ def deploy(args: argparse.Namespace) -> None:
     ]
     # TLS profiles consume repository-root certificate-profile staging directories.
     # The gateway copy is deployment state only and is never authoritative.
-    secrets_mqtt_dir = repo_root() / "secrets" / "mqtt"
+    secrets_mqtt_dir = repo_root() / "secrets" / "certificates"
     remote_root = remote_repo_root(remote_dir)
     if secrets_mqtt_dir.exists():
         directory_copies.append((secrets_mqtt_dir, f"{remote_root}/secrets/"))
@@ -515,7 +216,7 @@ def deploy(args: argparse.Namespace) -> None:
             f"{remote_shell_path(remote_dir + '/scripts')} "
             f"{remote_shell_path(remote_dir + '/runtime')} "
             f"{remote_shell_path(remote_root + '/secrets')} "
-            f"{remote_shell_path(remote_root + '/secrets/mqtt')}"
+            f"{remote_shell_path(remote_root + '/secrets/certificates')}"
         ),
     ], dry_run=args.dry_run)
     for source_path, remote_target_dir in file_copies:
@@ -525,7 +226,7 @@ def deploy(args: argparse.Namespace) -> None:
 
     permission_targets = [f"{remote_dir}/config"]
     if secrets_mqtt_dir.exists():
-        permission_targets.append(f"{remote_root}/secrets/mqtt")
+        permission_targets.append(f"{remote_root}/secrets/certificates")
     run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
 
 
@@ -640,7 +341,7 @@ def collect_tls_keylog(args: argparse.Namespace) -> None:
 def validate_oqs_tls(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/mqtt/{args.certificate_profile}"
+    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/certificates/{args.certificate_profile}"
     port = str(args.oqs_port or 8884)
     validation_script = "\n".join([
         "set -eu",
@@ -705,7 +406,7 @@ def validate_mqtt_pubsub(
 ) -> None:
     host = load_host_config(repo_root() / args.host_config)
     target = ssh_target(host)
-    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/mqtt/{certificate_profile}"
+    cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/certificates/{certificate_profile}"
     topic = args.topic
     message = args.message
     subscriber_name = docker_safe_name(f"{args.project_name}-{profile}-sub")[:63]
@@ -779,7 +480,7 @@ def validate_classical_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="classical",
-        certificate_profile=args.certificate_profile or "stepca-classical",
+        certificate_profile=args.certificate_profile or "rsa3072",
         port=args.classical_port or 8883,
         image=args.image,
         mutual_tls=True,
@@ -791,7 +492,7 @@ def validate_classical_server_auth_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="classical-server-auth",
-        certificate_profile=args.certificate_profile or "stepca-classical",
+        certificate_profile=args.certificate_profile or "rsa3072",
         port=args.classical_port or 8883,
         image=args.image,
         mutual_tls=False,
@@ -803,7 +504,7 @@ def validate_oqs_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="oqs",
-        certificate_profile=args.certificate_profile or "stepca-classical",
+        certificate_profile=args.certificate_profile or "rsa3072",
         port=args.oqs_port or 8884,
         image=args.image,
         mutual_tls=False,
@@ -815,7 +516,7 @@ def validate_oqs_mtls_mqtt(args: argparse.Namespace) -> None:
     validate_mqtt_pubsub(
         args,
         profile="oqs-mtls",
-        certificate_profile=args.certificate_profile or "stepca-classical",
+        certificate_profile=args.certificate_profile or "rsa3072",
         port=args.oqs_port or 8885,
         image=args.image,
         mutual_tls=True,
@@ -824,7 +525,7 @@ def validate_oqs_mtls_mqtt(args: argparse.Namespace) -> None:
 
 
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/mqtt")
+    parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/certificates")
     parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME, help="Docker Compose project name")
@@ -839,31 +540,6 @@ def add_port_options(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage the PQC Framework MQTT broker compose project")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    provision = sub.add_parser("provision-certs", help="synchronize selected MQTT TLS material from framework/certs")
-    provision.add_argument("--certificate-profile", default="stepca-classical")
-    provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
-    provision.add_argument("--extra-dns-name", action="append")
-    provision.add_argument("--extra-ip-address", action="append")
-    provision.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="include host-config network.address as an IP SAN when present")
-    provision.add_argument("--client-name", default=DEFAULT_CLIENT_NAME)
-    provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
-    provision.add_argument("--days", type=int, default=365)
-    provision.add_argument("--renew-before-days", type=int, default=30)
-    provision.add_argument("--reset-pki", action="store_true", help="reset only the selected certificate family's persistent and generated material before provisioning")
-    provision.add_argument("--dry-run", action="store_true")
-    provision.set_defaults(func=sync_stepca_certs)
-
-    oqs_provision = sub.add_parser(
-        "provision-oqs-certs",
-        help="deprecated alias for provision-certs; synchronizes the selected certificate profile",
-    )
-    oqs_provision.add_argument("--certificate-profile", default="stepca-classical")
-    oqs_provision.add_argument("--days", type=int, default=365)
-    oqs_provision.add_argument("--renew-before-days", type=int, default=30)
-    oqs_provision.add_argument("--reset-pki", action="store_true")
-    oqs_provision.add_argument("--dry-run", action="store_true")
-    oqs_provision.set_defaults(func=sync_stepca_certs)
 
     deploy_parser = sub.add_parser("deploy", help="copy compose project and generated runtime material to the gateway")
     add_common_remote_options(deploy_parser)
@@ -901,7 +577,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_oqs = sub.add_parser("validate-oqs-tls", help="validate remote OQS server-authenticated hybrid TLS handshake using an OQS-enabled OpenSSL client container")
     add_common_remote_options(validate_oqs)
     add_port_options(validate_oqs)
-    validate_oqs.set_defaults(certificate_profile="stepca-classical")
+    validate_oqs.set_defaults(certificate_profile="rsa3072")
     validate_oqs.add_argument("--oqs-group", default=OQS_KEM_GROUP)
     validate_oqs.add_argument("--image", default=OQS_IMAGE)
     validate_oqs.set_defaults(func=validate_oqs_tls)
@@ -913,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_classical_server_auth_parser)
     add_port_options(validate_classical_server_auth_parser)
-    validate_classical_server_auth_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_classical_server_auth_parser.set_defaults(certificate_profile="rsa3072")
     validate_classical_server_auth_parser.add_argument("--image", default=CLASSICAL_IMAGE)
     validate_classical_server_auth_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_classical_server_auth_parser.add_argument("--message", default="pqc-classical-server-auth-mqtt-e2e")
@@ -925,7 +601,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_classical_mqtt_parser)
     add_port_options(validate_classical_mqtt_parser)
-    validate_classical_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_classical_mqtt_parser.set_defaults(certificate_profile="rsa3072")
     validate_classical_mqtt_parser.add_argument("--image", default=CLASSICAL_IMAGE)
     validate_classical_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_classical_mqtt_parser.add_argument("--message", default="pqc-classical-mqtt-e2e")
@@ -937,7 +613,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_oqs_mqtt_parser)
     add_port_options(validate_oqs_mqtt_parser)
-    validate_oqs_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_oqs_mqtt_parser.set_defaults(certificate_profile="rsa3072")
     validate_oqs_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
     validate_oqs_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_oqs_mqtt_parser.add_argument("--message", default="pqc-oqs-mqtt-e2e")
@@ -949,7 +625,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_remote_options(validate_oqs_mtls_mqtt_parser)
     add_port_options(validate_oqs_mtls_mqtt_parser)
-    validate_oqs_mtls_mqtt_parser.set_defaults(certificate_profile="stepca-classical")
+    validate_oqs_mtls_mqtt_parser.set_defaults(certificate_profile="rsa3072")
     validate_oqs_mtls_mqtt_parser.add_argument("--image", default=OQS_IMAGE)
     validate_oqs_mtls_mqtt_parser.add_argument("--topic", default="pqc/test/e2e")
     validate_oqs_mtls_mqtt_parser.add_argument("--message", default="pqc-oqs-mtls-mqtt-e2e")

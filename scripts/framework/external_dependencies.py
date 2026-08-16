@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -111,20 +109,8 @@ def _require_below(path: Path, root: Path, label: str) -> Path:
     return resolved
 
 
-def _run_logged(command: list[str], repo_root: Path, log_path: Path) -> None:
-    completed = subprocess.run(command, cwd=repo_root, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
-    log_path.write_text(
-        "Command: " + " ".join(command) + "\n"
-        + f"Return code: {completed.returncode}\n\nstdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}",
-        encoding="utf-8",
-    )
-    if completed.returncode != 0:
-        raise ExternalDependencyError(
-            f"certificate prerequisite command failed with return code {completed.returncode}; see {log_path.name}"
-        )
-
-
 def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> ResolvedMqttTlsContext | None:
+    """Resolve pre-provisioned MQTT TLS material without generating or staging it."""
     mqtt = bundle.get("experiment", {}).get("mqtt")
     if not isinstance(mqtt, dict):
         return None
@@ -136,77 +122,48 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     profile_id = str(tls.get("certificate_profile", "")).strip()
     if not profile_id:
         raise ExternalDependencyError("TLS experiment must declare mqtt.tls.certificate_profile")
-    ca_algorithm = str(tls.get("certificate_authority_algorithm", "")).strip()
-    leaf_algorithm = str(tls.get("server_certificate_algorithm", "")).strip()
-    supported_profiles = {
-        "stepca-classical": ("stepca-classical", "classical-x509", "classical", {"", "classical", "rsa", "rsa_pss_rsae_sha256"}),
-        "mldsa65-pqc": ("mldsa65-pqc", "mldsa65-x509", "mldsa65", {"mldsa65", "ml-dsa-65"}),
-    }
-    expected = supported_profiles.get(profile_id)
-    if expected is None:
-        raise ExternalDependencyError(
-            "Unsupported MQTT TLS certificate profile: " + profile_id
-            + ". Supported profiles: " + ", ".join(sorted(supported_profiles))
-        )
-    profile_kind, expected_ca_algorithm, expected_leaf_algorithm, expected_signatures = expected
-    if ca_algorithm != expected_ca_algorithm or leaf_algorithm != expected_leaf_algorithm:
-        raise ExternalDependencyError(
-            f"MQTT TLS profile {profile_id} requires certificate_authority_algorithm="
-            f"{expected_ca_algorithm} and server_certificate_algorithm={expected_leaf_algorithm}"
-        )
-    signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
-    if signature_algorithm not in expected_signatures:
-        raise ExternalDependencyError(
-            f"MQTT TLS profile {profile_id} is incompatible with server_signature_algorithm="
-            f"{signature_algorithm or '<missing>'}"
-        )
-    canonical_dir = _require_below(repo_root / "secrets" / "mqtt" / profile_id, repo_root / "secrets", "MQTT TLS profile")
-    ctl = repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
-    command = [sys.executable, str(ctl), "provision-certs", "--certificate-profile", profile_id]
-    _run_logged(command, repo_root, result_dir / "certificate-prerequisite.log")
-    ca_path = canonical_dir / "ca.crt"
-    provenance_path = canonical_dir / "certificate-provenance.json"
+
+    canonical_dir = _require_below(repo_root / "secrets" / "certificates" / profile_id, repo_root / "secrets", "MQTT TLS certificate profile")
+    manifest_path = canonical_dir / "manifest.json"
     mutual_tls = str(tls.get("authentication", "")).strip().lower() == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
+    ca_path = canonical_dir / "ca.crt"
     client_certificate = canonical_dir / "client.crt" if mutual_tls else None
     client_private_key = canonical_dir / "client.key" if mutual_tls else None
-    required = [ca_path, canonical_dir / "intermediate-ca.crt", canonical_dir / "ca-chain.crt", canonical_dir / "server.crt", canonical_dir / "server.key", provenance_path]
+    required = [manifest_path, ca_path, canonical_dir / "ca-chain.crt", canonical_dir / "server.crt", canonical_dir / "server.key", canonical_dir / "healthcheck.crt", canonical_dir / "healthcheck.key"]
     if mutual_tls:
         required.extend([client_certificate, client_private_key])
     missing = [str(path) for path in required if path is not None and not path.is_file()]
     if missing:
-        raise ExternalDependencyError("certificate synchronization completed without required material: " + ", ".join(missing))
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    actual = _sha256(ca_path)
-    if str(provenance.get("ca_sha256", "")) != actual:
-        raise ExternalDependencyError("MQTT TLS root CA hash does not match certificate provenance")
-    if str(provenance.get("source", "")) != "framework/certs":
-        raise ExternalDependencyError("MQTT TLS material was not sourced from framework/certs")
-    provenance_expectations = {
-        "profile_id": profile_id,
-        "profile_kind": profile_kind,
-        "ca_algorithm": expected_ca_algorithm,
-        "leaf_algorithm": expected_leaf_algorithm,
-    }
-    for key, expected_value in provenance_expectations.items():
-        if str(provenance.get(key, "")) != expected_value:
-            raise ExternalDependencyError(
-                f"MQTT TLS certificate provenance {key} does not match selected profile {profile_id}"
-            )
+        raise ExternalDependencyError(
+            "MQTT TLS certificate profile is not provisioned or is incomplete: " + profile_id
+            + ". Missing: " + ", ".join(missing)
+            + ". Run: .\\scripts\\dev.ps1 python scripts/provision_certificates.py"
+        )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if str(manifest.get("profile_id", "")) != profile_id:
+        raise ExternalDependencyError(f"MQTT TLS certificate manifest profile_id does not match selected profile {profile_id}")
+    manifest_files = manifest.get("files")
+    if not isinstance(manifest_files, dict):
+        raise ExternalDependencyError(f"MQTT TLS certificate manifest for {profile_id} has no file inventory")
+    for relative_name, expected_hash in manifest_files.items():
+        material_path = canonical_dir / str(relative_name)
+        if not material_path.is_file() or _sha256(material_path) != str(expected_hash):
+            raise ExternalDependencyError(f"MQTT TLS certificate profile {profile_id} failed manifest integrity validation: {relative_name}")
+
     materials = copy_material_directory_to_result(
         canonical_dir, result_dir, f"cryptographic-material/mqtt/{profile_id}",
         role_prefix="mqtt_tls_material",
-        private_names={"server.key", "client.key", "ca.key", "intermediate-ca.key"},
+        private_names={"server.key", "client.key", "healthcheck.key", "private-key.pem"},
         required_for=["broker_installation", "client_installation", "manual_experiment_orchestration"],
     )
     write_material_inventory(result_dir, materials)
     return ResolvedMqttTlsContext(
-        profile_id, profile_kind, ca_algorithm, leaf_algorithm,
-        canonical_dir, ca_path, provenance_path,
-        client_certificate, client_private_key,
-        actual,
+        profile_id, profile_id, profile_id, profile_id, canonical_dir, ca_path, manifest_path,
+        client_certificate, client_private_key, _sha256(ca_path),
         _sha256(client_certificate) if client_certificate is not None else None,
         _sha256(client_private_key) if client_private_key is not None else None,
-        _sha256(provenance_path), True
+        _sha256(manifest_path), False,
     )
 
 

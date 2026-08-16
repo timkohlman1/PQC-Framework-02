@@ -1,6 +1,6 @@
 # OQS Mosquitto profile
 
-The `mqtt-oqs` Compose profile uses `openquantumsafe/mosquitto:latest` for post-quantum TLS evaluation.
+The `mqtt-oqs` Compose profile uses the maintained Eclipse Mosquitto image with the host OpenSSL configuration for the supported hybrid TLS groups.
 
 This profile implements server-authenticated TLS 1.3 without mutual TLS. The STM32 client validates the broker certificate, but the broker does not request or require a client certificate.
 
@@ -23,27 +23,13 @@ topic read $SYS/#
 
 The OQS-specific OpenSSL configuration sets `SecP256r1MLKEM768` as the default TLS group for the Mosquitto process. Provider availability alone is not sufficient; the server must also select a compatible TLS group.
 
-Certificate provisioning is performed from the development host with:
+Certificate material is provisioned once from the repository root using the shared config-driven provisioner:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs `
-    --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 python scripts/provision_certificates.py
 ```
 
-Generated broker certificate material is written on the gateway under:
-
-```text
-~/pqc-framework-02/experiment/mqtt-broker/secrets/mqtt/server-mldsa65/
-```
-
-Private keys remain on the gateway. Only the public CA certificate and non-secret certificate provenance are copied back to the development repository at:
-
-```text
-secrets/mqtt/server-mldsa65/ca.crt
-secrets/mqtt/server-mldsa65/certificate-provenance.txt
-```
-
-Generated certificate-profile material remains ignored generated dependency state and must not be committed.
+This profile uses the certificate profile selected by the experiment, for example `mldsa65`. Generated material is authoritative under `secrets/certificates/<profile-id>/` and is never generated or synchronized by broker control commands. Missing certificate material is a prerequisite failure.
 
 Validate the broker-side TLS handshake with:
 

@@ -44,9 +44,7 @@ mqtt:
     authentication: mutual
     key_exchange_group: SecP384r1MLKEM1024
     server_signature_algorithm: classical
-    certificate_profile: stepca-classical
-    certificate_authority_algorithm: classical-x509
-    server_certificate_algorithm: classical
+    certificate_profile: rsa3072
   result_schema:
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
