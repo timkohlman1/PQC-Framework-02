@@ -904,3 +904,38 @@ def test_execute_uart_capture_legacy_tick_marker_accepts_structured_prefix(tmp_p
 
     assert result.return_code == 0
     assert result.tick_present is True
+
+
+def test_parse_final_ram_accounting_markers():
+    uart = load_uart_module()
+    output = (
+        "[tick=10] PQC_RAM_LINKER_ACCOUNTING ram_total_bytes=196608 ram2_total_bytes=65536 "
+        "ram3_total_bytes=393216 data_bytes=2048 bss_bytes=120000 ram_static_base_bytes=122048 "
+        "linker_min_heap_bytes=512 linker_min_msp_bytes=1024 ram_linker_reserved_bytes=123584 "
+        "ram_linker_unreserved_bytes=73024 ram3_workspace_reserved_bytes=98304 device_linker_ram_total_bytes=655360\n"
+        "[tick=11] PQC_MEMORY_HIGH_WATERMARK freertos_heap_total_bytes=98304 "
+        "freertos_heap_peak_used_bytes=86952 freertos_heap_min_free_bytes=11352 freertos_heap_final_free_bytes=44184 "
+        "mldsa_workspace_total_bytes=98304 mldsa_workspace_peak_used_bytes=77824 "
+        "mldsa_workspace_headroom_bytes=20480 mldsa_workspace_capacity_exceeded=0 mldsa_workspace_in_use=0 "
+        "sbrk_capacity_bytes=73536 sbrk_peak_used_bytes=0 sbrk_final_used_bytes=0 sbrk_ever_called=0 "
+        "msp_reserved_bytes=1024 msp_peak_used_bytes=1840 msp_headroom_bytes=0 msp_excess_bytes=816 "
+        "msp_measurement_window_bytes=73536 msp_reservation_exceeded=1 msp_measurement_saturated=0 "
+        "ram_observed_required_bytes=123888 ram_observed_headroom_bytes=72720 ram_observed_required_is_lower_bound=0 "
+        "device_observed_workload_required_bytes=201712 device_observed_workload_required_is_lower_bound=0\n"
+    )
+
+    accounting = uart.parse_ram_accounting(output)
+    assert accounting["linker"]["device_linker_ram_total_bytes"] == 655360
+    assert accounting["linker"]["ram3_workspace_reserved_bytes"] == 98304
+    assert accounting["runtime"]["sbrk_peak_used_bytes"] == 0
+    assert accounting["runtime"]["msp_peak_used_bytes"] == 1840
+    assert accounting["runtime"]["msp_excess_bytes"] == 816
+    assert accounting["runtime"]["msp_measurement_saturated"] == 0
+    assert accounting["runtime"]["ram_observed_required_bytes"] == 123888
+    assert accounting["runtime"]["ram_observed_required_is_lower_bound"] == 0
+    assert accounting["runtime"]["device_observed_workload_required_is_lower_bound"] == 0
+
+    evidence = uart._runtime_memory_evidence(output)
+    assert evidence["heap_used_bytes"] == 86952
+    assert evidence["ram_accounting"] == accounting
+    assert "does not reconstruct stack depth used before main()" in evidence["limitations"]

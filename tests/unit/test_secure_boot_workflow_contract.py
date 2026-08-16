@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 
@@ -51,8 +52,14 @@ def test_hardware_failure_context_reads_newest_matching_log(tmp_path):
     newer.parent.mkdir()
     older.write_text("older failure", encoding="utf-8")
     newer.write_text("newer failure", encoding="utf-8")
-    older.touch()
-    newer.touch()
+
+    # Assign deliberately distinct mtimes so the test validates the
+    # implementation's newest-by-mtime contract without depending on the
+    # timestamp resolution or scheduling behaviour of the host filesystem.
+    older_mtime_ns = 1_700_000_000_000_000_000
+    newer_mtime_ns = older_mtime_ns + 1_000_000_000
+    os.utime(older, ns=(older_mtime_ns, older_mtime_ns))
+    os.utime(newer, ns=(newer_mtime_ns, newer_mtime_ns))
 
     context = module._result_log_context(
         tmp_path,

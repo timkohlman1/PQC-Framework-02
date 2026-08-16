@@ -70,6 +70,12 @@ results/                          generated evidence; not source
 
 Use `docs/007_framework_architecture.md` for the maintained detailed source/configuration map. Use `docs/README.md` to locate project-owned documentation.
 
+### wolfSSL source ownership
+
+Application TLS/wolfCrypt changes must target `Middlewares/Third_Party/wolfSSL`, the project-controlled wolfSSL submodule. Do not modify `tools/wolfboot/lib/wolfssl` for application TLS functionality; that path is wolfBoot's upstream-owned nested dependency.
+
+When a change modifies files under `Middlewares/Third_Party/wolfSSL`, commit and push the wolfSSL change in that submodule repository first, then commit the resulting submodule SHA update in this parent repository. A parent-repository commit alone does not preserve dirty wolfSSL working-tree changes. The canonical dependency model and source-of-truth paths are documented in `docs/007_framework_architecture.md`.
+
 ## 5. Default workflow model
 
 The project default is Docker-hosted Linux execution for framework commands, firmware builds, wolfBoot builds, application signing, pytest, gateway checks, and gateway-mediated hardware experiments.

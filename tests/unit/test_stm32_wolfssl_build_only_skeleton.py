@@ -9,7 +9,8 @@ def test_stm32_wolfssl_tls_context_sources_are_wired_into_firmware():
     root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "PQC_WOLFSSL_SOURCE_DIR" in root_cmake
-    assert "tools/wolfboot/lib/wolfssl" in root_cmake
+    assert "Middlewares/Third_Party/wolfSSL" in root_cmake
+    assert "tools/wolfboot/lib/wolfssl" not in root_cmake
     for source in (
         "src/internal.c",
         "src/keys.c",
@@ -94,35 +95,21 @@ def test_stm32_wolfssl_user_settings_enable_context_but_not_network_runtime():
     assert '#include "pqc_wolfssl_user_settings.h"' in wrapper
 
 
-def test_stm32_wolfssl_boundary_runs_sha256_and_tls_context_lifecycle_only():
+
+def test_stm32_wolfssl_build_boundary_is_compile_only_and_runtime_uses_live_workflow():
     header = Path("Core/Inc/pqc_wolfssl_build_only.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfssl_build_only.c").read_text(encoding="utf-8")
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
 
-    assert "tls_context_lifecycle_available" in header
-    assert "tls_context_lifecycle_passed" in header
-    assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke" in header
-    assert '#include "wolfssl/options.h"' not in source
-    assert '#include "wolfssl/ssl.h"' in source
-    assert "wolfSSL_Init()" in source
-    assert "wolfTLSv1_3_client_method()" in source
-    assert "wolfSSL_CTX_new(" in source
-    assert "wolfSSL_CTX_free(" in source
-    assert "wolfSSL_Cleanup()" in source
-    assert "wc_InitSha256" in source
-    assert EXPECTED_SHA256_HEX[:16] not in source
-    assert "STM32 wolfSSL TLS context lifecycle evidence only" in source
-    assert "wolfSSL TLS context smoke:" in source
-    assert "evidence=tls-context-lifecycle-only" in source
-    assert "tls_handshake=unavailable" in source
-    assert "certs=not-loaded" in source
-    assert "transport=unavailable" in source
-    assert "mqtt=unavailable" in source
-    assert "wifi=unavailable" in source
-    assert "st67w61m1=unavailable" in source
-    assert '#include "pqc_wolfssl_build_only.h"' in main_c
-    assert "PQC_WolfSSL_BuildOnly_RuntimeSmokeLine" in main_c
-
+    assert "PQC_WolfSSL_BuildOnly_GetStatus" in header
+    assert "PQC_WolfSSL_BuildOnly_BuildInfoLine" in header
+    assert "runtime_validation=live_mqtt_tls_workflow" in source
+    assert "PQC_WolfSSL_BuildOnly_RunSourceSmoke" not in header
+    assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke" not in header
+    assert "wolfSSL_Init()" not in source
+    assert "wolfSSL_CTX_new(" not in source
+    assert "wc_InitSha256" not in source
+    assert "APP_PrintWolfSSLRuntimeSmoke" not in main_c
 
 def test_stm32_wolfssl_context_smoke_does_not_handshake_load_certs_or_use_network():
     paths = (
@@ -174,7 +161,8 @@ def test_stm32_wolfssl_source_smoke_does_not_embed_secret_material():
         assert fragment not in combined
 
 
-def test_stm32_wolfssl_unavailable_transport_boundary_is_wired_and_evidence_bound():
+
+def test_stm32_wolfssl_transport_boundary_remains_wired_without_startup_smoke():
     root_cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
     header = Path("Core/Inc/pqc_wolfssl_transport.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfssl_transport.c").read_text(encoding="utf-8")
@@ -189,23 +177,9 @@ def test_stm32_wolfssl_unavailable_transport_boundary_is_wired_and_evidence_boun
     assert '#include "pqc_network_interface.h"' in source
     assert "PQC_NetworkInterface_GetStatus" in source
     assert "PQC_WOLFSSL_TRANSPORT_RESULT_UNAVAILABLE" in source
-    assert "STM32 wolfSSL unavailable-transport evidence only" in source
-    assert "wolfSSL transport boundary:" in source
-    assert "evidence=unavailable-transport-only" in source
-    assert "connect=unavailable" in source
-    assert "read=unavailable" in source
-    assert "write=unavailable" in source
-    assert "socket_io=not-performed" in source
-    assert "tls_handshake=unavailable" in source
-    assert "mqtt_connect=unavailable" in source
-    assert "mqtt_publish=unavailable" in source
-    assert "reconnect=unavailable" in source
-    assert "wifi=unavailable" in source
-    assert "st67w61m1=unavailable" in source
-    assert "end_to_end=unavailable" in source
-    assert '#include "pqc_wolfssl_transport.h"' in main_c
-    assert "PQC_WolfSSL_Transport_StatusLine" in main_c
-
+    assert "PQC_WolfSSL_Transport_StatusLine" not in header
+    assert "wolfSSL transport startup self-test:" not in source
+    assert "APP_PrintWolfSSLTransportStatus" not in main_c
 
 def test_stm32_wolfssl_transport_boundary_performs_no_network_tls_or_mqtt_work():
     source = Path("Core/Src/pqc_wolfssl_transport.c").read_text(encoding="utf-8")
@@ -237,37 +211,117 @@ def test_stm32_wolfssl_transport_boundary_performs_no_network_tls_or_mqtt_work()
         assert fragment not in source
 
 
-def test_phase_m6_5_wolfssl_smoke_runs_serialized_in_freertos_task_without_threading_support():
+
+def test_obsolete_wolfssl_smoke_runtime_is_removed():
     header = Path("Core/Inc/pqc_wolfssl_build_only.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfssl_build_only.c").read_text(encoding="utf-8")
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
-
-    assert "PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext" in header
-    assert "context=%s scheduler=%s" in source
-    assert "PQC_WolfSSL_BuildOnly_RunSourceSmoke();" in source
-    assert "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke();" in source
-    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c
-    assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' in main_c
     application = Path(
         "Core/App/mqtt_validation/pqc_mqtt_validation_application.c"
     ).read_text(encoding="utf-8")
-    network_start = main_c.rindex("void StartNetworkTask(void *argument)")
-    network_body = main_c[network_start:]
-    assert ".print_lwip_runtime = APP_PrintLwIPRuntimeFixture" in network_body
-    assert ".print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture" in network_body
-    assert application.index("fixture->print_lwip_runtime();") < application.index(
-        "fixture->print_wolfssl_runtime();"
-    )
-    assert "WOLFSSL_FREERTOS" not in settings
-    assert "WOLFSSL_CMSIS_RTOS" not in settings
-    assert "#define SINGLE_THREADED" in settings
+
     for fragment in (
-        "tls_handshake=unavailable", "certs=not-loaded",
-        "transport=unavailable", "mqtt_connect=unavailable",
-        "mqtt_publish=unavailable", "reconnect=unavailable",
-        "wifi=unavailable", "link=unavailable", "ip=unavailable",
-        "tcp=unavailable", "st67w61m1=unavailable",
-        "end_to_end=unavailable",
+        "PQC_WolfSSL_BuildOnly_RuntimeSmokeLine",
+        "PQC_WolfSSL_BuildOnly_RunSourceSmoke",
+        "PQC_WolfSSL_BuildOnly_RunTLSContextLifecycleSmoke",
+        "wolfSSL TLS startup self-test:",
+        "APP_PrintWolfSSLRuntimeSmoke",
+        "APP_PrintWolfSSLTransportStatus",
+    ):
+        assert fragment not in header
+        assert fragment not in source
+        assert fragment not in main_c
+
+    assert ".print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp" in main_c
+    assert "fixture->print_wolfssl_runtime" not in application
+    assert "#define SINGLE_THREADED" in settings
+
+
+def test_wolfssl_runtime_uses_heap4_plus_dedicated_ram3_mldsa_workspace():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    source = Path("Core/Src/pqc_wolfssl_memory.c").read_text(encoding="utf-8")
+    linker = Path("STM32L4R5XX_FLASH_RELOCATED.ld").read_text(encoding="utf-8")
+
+    assert "PQC_WolfSSL_MemoryConfigure()" in main_c
+    assert "pvPortMalloc(total_bytes)" in source
+    assert 'section(".pqc_mldsa_workspace")' in source
+    assert "PQC_MLDSA_WORKSPACE_SIZE_BYTES" in source
+    assert "DYNAMIC_TYPE_MLDSA" in source
+    assert "PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES" in source
+    assert ".pqc_mldsa_workspace (NOLOAD)" in linker
+    assert "} >RAM3" in linker
+    assert "PQC_WOLFSSL_MEMORY_DIAGNOSTICS" in cmake
+    assert "PQC_WOLFSSL_ALLOCATION_PROVENANCE" in cmake
+
+def test_wolfssl_allocator_reports_failed_request_and_heap4_fragmentation_state():
+    source = Path("Core/Src/pqc_wolfssl_memory.c").read_text(encoding="utf-8")
+    mqtt = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+
+    for fragment in (
+        "last_failed_request_bytes",
+        "xPortGetFreeHeapSize()",
+        "xPortGetMinimumEverFreeHeapSize()",
+        "vPortGetHeapStats(&stats)",
+        "xSizeOfLargestFreeBlockInBytes",
+        "xNumberOfFreeBlocks",
+        "PQC_WOLFSSL_MEMORY stage=%s allocator=freertos_heap4",
     ):
         assert fragment in source
+
+    for stage in (
+        '"client_certificate_load"',
+        '"client_private_key_load"',
+        '"session_create"',
+        '"handshake_failure"',
+    ):
+        assert f"PQC_WolfMQTT_DiagnosticMemory({stage})" in mqtt
+
+
+def test_final_ram_accounting_covers_msp_sbrk_and_all_linker_ram_regions():
+    main_source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    sysmem_source = Path("Core/Src/sysmem.c").read_text(encoding="utf-8")
+    header = Path("Core/Inc/pqc_ram_accounting.h").read_text(encoding="utf-8")
+    linker = Path("STM32L4R5XX_FLASH_RELOCATED.ld").read_text(encoding="utf-8")
+    direct_linker = Path("STM32L4R5XX_FLASH.ld").read_text(encoding="utf-8")
+
+    assert "PQC_RAM_InitializeMSPHighWatermark();" in main_source
+    assert main_source.index("PQC_RAM_InitializeMSPHighWatermark();") < main_source.index("HAL_Init();")
+    assert "PQC_RAM_LINKER_ACCOUNTING" in main_source
+    assert "sbrk_peak_used_bytes=" in main_source
+    assert "msp_peak_used_bytes=" in main_source
+    assert "msp_excess_bytes=" in main_source
+    assert "msp_measurement_window_bytes=" in main_source
+    assert "msp_measurement_saturated=" in main_source
+    assert "ram_observed_required_bytes=" in main_source
+    assert "ram_observed_required_is_lower_bound=" in main_source
+    assert "device_observed_workload_required_bytes=" in main_source
+    assert "device_observed_workload_required_is_lower_bound=" in main_source
+
+    assert "__sbrk_heap_peak" in sysmem_source
+    assert "PQC_MSP_WATERMARK_PATTERN" in sysmem_source
+    assert "paint_start_address = (uintptr_t)&_end" in sysmem_source
+    assert "__sbrk_heap_peak" in sysmem_source
+    assert 'cpsid i' in sysmem_source
+    assert "msp_measurement_window_bytes" in sysmem_source
+    assert "msp_measurement_saturated" in sysmem_source
+    assert "PQC_RAM_RuntimeSnapshotGet" in sysmem_source
+    assert "PQC_RAM_InitializeMSPHighWatermark" in header
+
+    for script in (linker, direct_linker):
+        assert "__ram_region_start__ = ORIGIN(RAM);" in script
+        assert "__ram2_region_start__ = ORIGIN(RAM2);" in script
+        assert "__ram3_region_start__ = ORIGIN(RAM3);" in script
+        assert "__user_heap_stack_end__ = .;" in script
+        assert ".pqc_mldsa_workspace (NOLOAD)" in script
+        assert "} >RAM3" in script
+
+
+def test_final_ram_accounting_is_independent_of_verbose_wolfssl_provenance_flag():
+    main_source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    sysmem_source = Path("Core/Src/sysmem.c").read_text(encoding="utf-8")
+
+    accounting = main_source[main_source.index("static void APP_PrintMemoryHighWatermark") :]
+    assert "PQC_WOLFSSL_ALLOCATION_PROVENANCE" not in accounting
+    assert "PQC_WOLFSSL_ALLOCATION_PROVENANCE" not in sysmem_source

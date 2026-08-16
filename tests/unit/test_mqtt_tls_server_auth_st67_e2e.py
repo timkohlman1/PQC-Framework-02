@@ -47,7 +47,7 @@ def test_generated_header_keeps_client_credentials_mutual_tls_only():
 
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
-    assert "Provision the classical broker certificates before building" in source
+    assert "Provision the selected broker certificates before building" in source
     assert 'authentication = str(tls.get("authentication", "server"))' in source
     assert 'mutual_tls = authentication == "mutual"' in source
     assert "if mutual_tls:" in source
@@ -94,7 +94,7 @@ def test_tls_diagnostics_distinguish_tcp_tls_and_mqtt_state():
         "WOLFSSL_CBIO_ERR_WANT_READ",
         "WOLFSSL_CBIO_ERR_WANT_WRITE",
         'PQC_WolfMQTT_DiagnosticCode("ca_load"',
-        'PQC_WolfMQTT_DiagnosticCode("peer_ip_check"',
+        'PQC_WolfMQTT_DiagnosticCode("peer_identity_check"',
         'PQC_WolfMQTT_DiagnosticCode("handshake"',
         "tls_connect_result=",
         "tls_error=",
@@ -113,9 +113,11 @@ def test_tls_peer_ip_setup_precedes_ca_load_and_cannot_report_mqtt_success_on_fa
     peer_ip = source.index("wolfSSL_check_ip_address")
     ca_load = source.index("wolfSSL_CTX_load_verify_buffer")
     assert peer_ip < ca_load
-    assert 'PQC_WolfMQTT_DiagnosticCode("peer_ip_check"' in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("peer_identity_check"' in source
     assert 'return MQTT_CODE_ERROR_TLS_CONNECT;' in source
-    assert 'result = MQTT_CODE_SUCCESS;\n    PQC_WolfMQTT_DiagnosticCode("tcp_connect"' in source
+    assert "result = MQTT_CODE_SUCCESS;" in source
+    assert 'if (!socket_context->tls_requested) {' in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("tcp_connect", result, 0);' in source
     assert 'wolfSSL_check_domain_name(socket_context->tls, PQC_MQTT_TLS_SERVER_NAME)' in source
     assert 'PQC_WolfMQTT_CloseTransport(socket_context); return result;' not in source
 
@@ -182,7 +184,7 @@ def test_stepca_sync_does_not_generate_server_certificate_sans_locally():
         "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
     ).read_text(encoding="utf-8")
 
-    assert 'provision-certs", help="synchronize classical MQTT TLS material from framework/certs"' in source
+    assert 'provision-certs", help="synchronize selected MQTT TLS material from framework/certs"' in source
     assert "server-openssl.cnf" not in source
     assert "DNS.1" not in source
     assert "IP.1" not in source
@@ -218,7 +220,7 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 7 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
+    assert 'expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
     assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source
@@ -286,14 +288,12 @@ def test_tls_setup_diagnostics_distinguish_allocation_from_ca_loading():
     header = Path("Core/Inc/pqc_wolfmqtt_build_only.h").read_text(encoding="utf-8")
 
     for marker in (
-        'PQC_WolfMQTT_DiagnosticHeapBoundary("before_context_create")',
-        'PQC_WolfMQTT_DiagnosticHeapBoundary("after_context_create")',
-        'PQC_WolfMQTT_DiagnosticHeapBoundary("before_session_create")',
-        'PQC_WolfMQTT_DiagnosticHeapBoundary("after_session_create")',
         "tls_context=%s",
         "tls_session=%s",
         "tls_peer_identity=%s",
         'first.ca_load_attempted?(first.ca_loaded?"passed":"failed"):"not_run"',
+        "PQC_TLS_InstrumentationSetPreMemory(",
+        "PQC_TLS_InstrumentationSetPostMemory(",
     ):
         assert marker in source
 
@@ -306,8 +306,7 @@ def test_tls_setup_diagnostics_distinguish_allocation_from_ca_loading():
         assert field in header
 def test_classical_tls_profile_keeps_the_pre_diagnostic_freertos_heap_size():
     config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
-    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)40000)" in config
-    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)64000)" not in config
+    assert "#define configTOTAL_HEAP_SIZE                    ((size_t)(96 * 1024))" in config
 
 
 def test_wolfssl_session_failure_uses_link_safe_diagnostics_and_closes_before_client_hello():
@@ -323,16 +322,15 @@ def test_wolfssl_session_failure_uses_link_safe_diagnostics_and_closes_before_cl
     assert "return MQTT_CODE_ERROR_MEMORY;" not in source
 
 
-def test_wolfssl_session_creation_logs_method_context_and_session_pointers_directly():
+def test_wolfssl_session_creation_uses_link_safe_failure_diagnostics():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
     assert "WOLFSSL_METHOD *tls_method;" in source
     assert "tls_method = wolfTLSv1_3_client_method();" in source
-    assert '"wolfMQTT TLS: stage=method_create method=%p errno=%d' in source
-    assert '"wolfMQTT TLS: stage=session_create operation=begin' in source
-    assert '"wolfMQTT TLS: stage=session_create operation=end session=%p context=%p method=%p errno=%d' in source
-    assert '"wolfMQTT TLS: stage=session_create result=null tcp_close_before_clienthello=true' in source
     assert "socket_context->tls = wolfSSL_new(socket_context->tls_ctx);" in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("session_create", -1, errno);' in source
+    assert 'PQC_WolfMQTT_DiagnosticWolfSSLState("session_create");' in source
+    assert '"wolfMQTT TLS: stage=session_create result=null tcp_close_before_clienthello=true' in source
 
 
 def test_all_tls_profiles_validate_the_configured_group_before_session_creation():
@@ -340,7 +338,7 @@ def test_all_tls_profiles_validate_the_configured_group_before_session_creation(
 
     assert 'if (socket_context->tls_requested) {' in source
     group_start = source.index('if (socket_context->tls_requested) {')
-    session_start = source.index('stage=session_create operation=begin', group_start)
+    session_start = source.index("socket_context->tls = wolfSSL_new(socket_context->tls_ctx);", group_start)
     group_block = source[group_start:session_start]
 
     assert 'int groups[] = { PQC_TLS_GROUP_ID };' in group_block
@@ -352,6 +350,35 @@ def test_all_tls_profiles_validate_the_configured_group_before_session_creation(
 def test_tls_context_and_transport_close_are_reported_directly():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
 
-    assert '"wolfMQTT TLS: stage=context_create context=%p method=%p errno=%d' in source
+    assert 'PQC_WolfMQTT_DiagnosticCode("context_create", -1, errno);' in source
     assert '"wolfMQTT TLS: stage=context_create result=null tcp_close_before_clienthello=true' in source
     assert '"wolfMQTT transport: stage=close socket_fd=%d tcp_connected=%d tls_context=%p tls_session=%p' in source
+
+
+
+
+
+def test_dns_server_diagnostic_does_not_issue_a_second_dns_query():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    diagnostic_start = source.index("static void PQC_WolfMQTT_DiagnosticDnsServer")
+    resolve_start = source.index("static int PQC_WolfMQTT_ResolveBroker")
+    diagnostic_body = source[diagnostic_start:resolve_start]
+
+    assert "dns_getserver(0)" in diagnostic_body
+    assert "lwip_getaddrinfo(" not in diagnostic_body
+    assert source.count("lwip_getaddrinfo(host") == 1
+
+def test_mldsa_mutual_tls_credentials_are_session_scoped_while_classical_remains_context_scoped():
+    source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
+    session_create = source.index("socket_context->tls = wolfSSL_new(socket_context->tls_ctx);")
+    ctx_certificate = source.index("wolfSSL_CTX_use_certificate_buffer")
+    ctx_private_key = source.index("wolfSSL_CTX_use_PrivateKey_buffer")
+    session_certificate = source.index("wolfSSL_use_certificate_buffer")
+    session_private_key = source.index("wolfSSL_use_PrivateKey_buffer")
+
+    assert "#if !PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
+    assert "#if PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
+    assert ctx_certificate < session_create
+    assert ctx_private_key < session_create
+    assert session_create < session_certificate
+    assert session_create < session_private_key

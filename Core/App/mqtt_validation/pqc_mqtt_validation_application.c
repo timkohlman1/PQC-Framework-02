@@ -24,10 +24,6 @@ void PQC_MQTT_ApplicationRun(const PQC_MQTTApplicationFixture *fixture)
   {
     fixture->print_lwip_runtime();
   }
-  if (fixture->print_wolfssl_runtime != 0)
-  {
-    fixture->print_wolfssl_runtime();
-  }
   if (network_ready && (fixture->print_wolfmqtt_runtime != 0))
   {
     fixture->print_wolfmqtt_runtime();

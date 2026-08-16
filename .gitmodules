@@ -4,3 +4,7 @@
 [submodule "Middlewares/Third_Party/wolfMQTT"]
 	path = Middlewares/Third_Party/wolfMQTT
 	url = https://github.com/wolfSSL/wolfMQTT.git
+[submodule "Middlewares/Third_Party/wolfSSL"]
+	path = Middlewares/Third_Party/wolfSSL
+	url = https://github.com/timkohlman1/wolfssl-embedded.git
+	branch = pqc-signing-tls-wolfssl

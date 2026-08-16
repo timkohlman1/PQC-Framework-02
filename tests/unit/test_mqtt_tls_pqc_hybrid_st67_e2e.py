@@ -80,7 +80,7 @@ def test_pqc_profile_uses_extended_uart_hard_limit():
 
 def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
-    api = Path("tools/wolfboot/lib/wolfssl/src/ssl_api_ext.c").read_text(encoding="utf-8")
+    api = Path("Middlewares/Third_Party/wolfSSL/src/ssl_api_ext.c").read_text(encoding="utf-8")
     assert "#define WOLFSSL_HAVE_MLKEM" in settings
     assert "#define WOLFSSL_PQC_HYBRIDS" in settings
     hybrid_case = "case WOLFSSL_SECP256R1MLKEM768:"
@@ -88,7 +88,7 @@ def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
     assert api.index("#ifdef WOLFSSL_PQC_HYBRIDS") < api.index(hybrid_case)
 
 
-def test_tls_build_excludes_mldsa_verification_support():
+def test_tls_build_exposes_profile_selective_mldsa65_verification_support():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -99,15 +99,16 @@ def test_tls_build_excludes_mldsa_verification_support():
         "WOLFSSL_NO_ML_DSA_44",
         "WOLFSSL_NO_ML_DSA_87",
         "wolfcrypt/src/wc_mldsa.c",
-        "wolfcrypt/src/wc_mldsa_asm.S",
     ):
-        assert marker not in settings + cmake
+        assert marker in settings + cmake
+    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
 
 
 def test_tls_handshake_boundary_instrumentation_is_wired():
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("before_connect"' in source
-    assert 'PQC_WolfMQTT_DiagnosticHandshakeBoundary("after_connect"' in source
+    assert "PQC_TLS_InstrumentationHandshakeBegin();" in source
+    assert "PQC_TLS_InstrumentationHandshakeEnd(result);" in source
+    assert "PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);" in source
     assert "uxTaskGetStackHighWaterMark(NULL)" in source
     assert "xPortGetFreeHeapSize()" in source
     assert "xPortGetMinimumEverFreeHeapSize()" in source

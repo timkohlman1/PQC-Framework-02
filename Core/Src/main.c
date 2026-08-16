@@ -32,6 +32,7 @@
 #if PQC_TLS_COMPILED
 #include "pqc_wolfssl_build_only.h"
 #include "pqc_wolfssl_transport.h"
+#include "pqc_wolfssl_memory.h"
 #endif
 #include "pqc_wolfmqtt_build_only.h"
 #include "pqc_mqtt_application.h"
@@ -40,6 +41,7 @@
 #include "logging.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "pqc_ram_accounting.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -1187,23 +1189,6 @@ static void APP_PrintNetworkInterfaceStatus(void)
   }
 }
 
-#if PQC_TLS_COMPILED
-static void APP_PrintWolfSSLRuntimeSmoke(const char *context, bool scheduler_running)
-{
-  static char smoke_line[640];
-
-  if (PQC_WolfSSL_BuildOnly_RuntimeSmokeLineForContext(
-          smoke_line, (uint32_t)sizeof(smoke_line), context, scheduler_running))
-  {
-    APP_UART_WriteString(smoke_line);
-  }
-  else
-  {
-    APP_UART_WriteString("wolfSSL TLS context smoke: context=unavailable scheduler=unavailable evidence=tls-context-lifecycle-only unavailable reason=format_failed tls_handshake=unavailable certs=not-loaded transport=unavailable mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable link=unavailable ip=unavailable tcp=unavailable st67w61m1=unavailable end_to_end=unavailable secrets=not-compiled-in\r\n");
-  }
-}
-
-#endif
 
 void PQC_WolfMQTT_DiagnosticMarker(const char *marker)
 {
@@ -1225,24 +1210,6 @@ static void APP_PrintWolfMQTTRuntimeStatus(void)
   }
 }
 
-#if PQC_TLS_COMPILED
-static void APP_PrintWolfSSLTransportStatus(void)
-{
-  char status_line[384];
-
-  PQC_WolfSSL_Transport_Init();
-
-  if (PQC_WolfSSL_Transport_StatusLine(status_line, (uint32_t)sizeof(status_line)))
-  {
-    APP_UART_WriteString(status_line);
-  }
-  else
-  {
-    APP_UART_WriteString("wolfSSL transport boundary: evidence=unavailable-transport-only boundary=present callbacks=present network_boundary=present connect=unavailable read=unavailable write=unavailable socket_io=not-performed tls_handshake=unavailable certs=not-loaded mqtt_connect=unavailable mqtt_publish=unavailable reconnect=unavailable wifi=unavailable st67w61m1=unavailable end_to_end=unavailable reason=format_failed\r\n");
-  }
-}
-
-#endif
 
 static void APP_PrintFreeRTOSSchedulerStarting(void)
 {
@@ -1349,9 +1316,9 @@ static void APP_PrintApplicationClock(const char *name, uint32_t value)
 static void APP_PrintApplicationClockConfiguration(void)
 {
   APP_PrintApplicationClock("sysclk_hz", HAL_RCC_GetSysClockFreq());
-  APP_PrintApplicationClock("hclk_hz", HAL_RCC_GetHCLKFreq());
-  APP_PrintApplicationClock("pclk1_hz", HAL_RCC_GetPCLK1Freq());
-  APP_PrintApplicationClock("pclk2_hz", HAL_RCC_GetPCLK2Freq());
+  //APP_PrintApplicationClock("hclk_hz", HAL_RCC_GetHCLKFreq());
+  //APP_PrintApplicationClock("pclk1_hz", HAL_RCC_GetPCLK1Freq());
+  //APP_PrintApplicationClock("pclk2_hz", HAL_RCC_GetPCLK2Freq());
 }
 
 #ifdef SECURE_BOOT_APPLICATION
@@ -1394,9 +1361,9 @@ static void APP_PrintWolfBootVerificationTiming(void)
     APP_UART_WriteString(" cycles\r\n");
 
     APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
-    APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
-    APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
-    APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
+    //APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
+    //APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
+    //APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
 
     APP_UART_WriteString("wolfBoot verification result: ");
     APP_UART_WriteUint32(mailbox->verification_result);
@@ -1422,6 +1389,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  /* Paint unused MSP reservation before HAL/application initialization. */
+  PQC_RAM_InitializeMSPHighWatermark();
 
   /* USER CODE END 1 */
 
@@ -1462,8 +1431,12 @@ int main(void)
   APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);
   APP_PrintNetworkInterfaceStatus();
 #if PQC_TLS_COMPILED
-  APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);
-  APP_PrintWolfSSLTransportStatus();
+  PQC_WolfSSL_MemorySetDiagnosticWriter(APP_UART_WriteString);
+  if (PQC_WolfSSL_MemoryConfigure() != 0)
+  {
+    APP_UART_WriteString("PQC_WOLFSSL_MEMORY allocator configuration failed\r\n");
+    Error_Handler();
+  }
 #endif
 
   /* USER CODE END 2 */
@@ -2066,12 +2039,16 @@ static void APP_PrintLwIPRuntimeFixture(void)
   APP_PrintLwIPRuntimeSmoke("freertos_task", true);
 }
 
-static void APP_PrintWolfSSLRuntimeFixture(void)
+/*
+ * Keep the application fixture ABI intact after removing the obsolete
+ * wolfSSL runtime smoke test. Some application implementations still invoke
+ * this callback unconditionally. A no-op avoids a NULL indirect call without
+ * reintroducing smoke-test UART output or timing overhead.
+ */
+static void APP_WolfSSLRuntimeFixtureNoOp(void)
 {
-#if PQC_TLS_COMPILED
-  APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);
-#endif
 }
+
 
 static void APP_PrintNetworkTaskMemoryCheckpoint(void)
 {
@@ -2083,10 +2060,187 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
   return PQC_WolfMQTT_RunReadyMetricsApplication(mark_complete);
 }
 
+static void APP_PrintMemoryHighWatermark(void)
+{
+  extern uint8_t __ram_region_start__;
+  extern uint8_t __ram_region_end__;
+  extern uint8_t __ram2_region_start__;
+  extern uint8_t __ram2_region_end__;
+  extern uint8_t __ram3_region_start__;
+  extern uint8_t __ram3_region_end__;
+  extern uint8_t _sdata;
+  extern uint8_t _edata;
+  extern uint8_t _sbss;
+  extern uint8_t _ebss;
+  extern uint8_t _end;
+  extern uint8_t __user_heap_stack_end__;
+  extern uint32_t _Min_Heap_Size;
+  const size_t ram_total_bytes = (size_t)(
+      (uintptr_t)&__ram_region_end__ - (uintptr_t)&__ram_region_start__);
+  const size_t ram2_total_bytes = (size_t)(
+      (uintptr_t)&__ram2_region_end__ - (uintptr_t)&__ram2_region_start__);
+  const size_t ram3_total_bytes = (size_t)(
+      (uintptr_t)&__ram3_region_end__ - (uintptr_t)&__ram3_region_start__);
+  const size_t data_bytes =
+      (size_t)((uintptr_t)&_edata - (uintptr_t)&_sdata);
+  const size_t bss_bytes =
+      (size_t)((uintptr_t)&_ebss - (uintptr_t)&_sbss);
+  const size_t ram_static_base_bytes = (size_t)(
+      (uintptr_t)&_end - (uintptr_t)&__ram_region_start__);
+  const size_t linker_min_heap_bytes = (size_t)(uintptr_t)&_Min_Heap_Size;
+  const size_t ram_linker_reserved_bytes = (size_t)(
+      (uintptr_t)&__user_heap_stack_end__ -
+      (uintptr_t)&__ram_region_start__);
+  const size_t ram_linker_unreserved_bytes =
+      (ram_linker_reserved_bytes <= ram_total_bytes)
+          ? (ram_total_bytes - ram_linker_reserved_bytes)
+          : 0U;
+  const size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
+  const size_t heap_final_free_bytes = xPortGetFreeHeapSize();
+  const size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
+  const size_t heap_peak_used_bytes =
+      (heap_min_free_bytes <= heap_total_bytes)
+          ? (heap_total_bytes - heap_min_free_bytes)
+          : 0U;
+  size_t workspace_total_bytes = 0U;
+  size_t workspace_peak_used_bytes = 0U;
+  size_t workspace_headroom_bytes = 0U;
+  bool workspace_in_use = false;
+  bool workspace_capacity_exceeded = false;
+  PQC_RAMRuntimeSnapshot ram_runtime = {0};
+  size_t ram_observed_required_bytes = 0U;
+  size_t ram_observed_headroom_bytes = 0U;
+  bool ram_observed_required_is_lower_bound = false;
+
+  PQC_RAM_RuntimeSnapshotGet(&ram_runtime);
+  ram_observed_required_bytes = ram_static_base_bytes +
+      ram_runtime.sbrk_peak_used_bytes + ram_runtime.msp_peak_used_bytes;
+  ram_observed_required_is_lower_bound = ram_runtime.msp_measurement_saturated;
+  if (ram_observed_required_bytes <= ram_total_bytes)
+  {
+    ram_observed_headroom_bytes = ram_total_bytes - ram_observed_required_bytes;
+  }
+
+#if PQC_TLS_COMPILED
+  {
+    PQC_WolfSSLMemorySnapshot snapshot;
+    PQC_WolfSSL_MemorySnapshotGet(&snapshot);
+    workspace_total_bytes = snapshot.mldsa_workspace_size_bytes;
+    workspace_peak_used_bytes = snapshot.mldsa_workspace_peak_request_bytes;
+    workspace_in_use = snapshot.mldsa_workspace_in_use;
+
+    if (workspace_peak_used_bytes <= workspace_total_bytes)
+    {
+      workspace_headroom_bytes =
+          workspace_total_bytes - workspace_peak_used_bytes;
+    }
+    else
+    {
+      workspace_capacity_exceeded = true;
+    }
+  }
+#endif
+
+  /*
+   * This is emitted only from the completion callback, after the measured
+   * workload has finished and immediately before PQC_EXPERIMENT_COMPLETE.
+   * RAM3 peak-used means the maximum workspace capacity loaned/requested by
+   * wolfSSL, which is the authoritative sizing requirement for the fixed
+   * workspace.
+   */
+  APP_UART_WriteString("PQC_RAM_LINKER_ACCOUNTING ram_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_total_bytes);
+  APP_UART_WriteString(" ram2_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram2_total_bytes);
+  APP_UART_WriteString(" ram3_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram3_total_bytes);
+  APP_UART_WriteString(" data_bytes=");
+  APP_UART_WriteUint32((uint32_t)data_bytes);
+  APP_UART_WriteString(" bss_bytes=");
+  APP_UART_WriteUint32((uint32_t)bss_bytes);
+  APP_UART_WriteString(" ram_static_base_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_static_base_bytes);
+  APP_UART_WriteString(" linker_min_heap_bytes=");
+  APP_UART_WriteUint32((uint32_t)linker_min_heap_bytes);
+  APP_UART_WriteString(" linker_min_msp_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_reserved_bytes);
+  APP_UART_WriteString(" ram_linker_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_linker_reserved_bytes);
+  APP_UART_WriteString(" ram_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_linker_unreserved_bytes);
+  APP_UART_WriteString(" ram2_linker_used_bytes=0");
+  APP_UART_WriteString(" ram2_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram2_total_bytes);
+  APP_UART_WriteString(" ram3_workspace_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_total_bytes);
+  APP_UART_WriteString(" ram3_linker_unreserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)((workspace_total_bytes <= ram3_total_bytes)
+      ? (ram3_total_bytes - workspace_total_bytes) : 0U));
+  APP_UART_WriteString(" device_linker_ram_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_total_bytes + ram2_total_bytes + ram3_total_bytes));
+  APP_UART_WriteString(" device_linker_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_linker_reserved_bytes + workspace_total_bytes));
+  APP_UART_WriteString("\r\n");
+
+  APP_UART_WriteString(
+      "PQC_MEMORY_HIGH_WATERMARK freertos_heap_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_total_bytes);
+  APP_UART_WriteString(" freertos_heap_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_peak_used_bytes);
+  APP_UART_WriteString(" freertos_heap_min_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_min_free_bytes);
+  APP_UART_WriteString(" freertos_heap_final_free_bytes=");
+  APP_UART_WriteUint32((uint32_t)heap_final_free_bytes);
+  APP_UART_WriteString(" mldsa_workspace_total_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_total_bytes);
+  APP_UART_WriteString(" mldsa_workspace_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_peak_used_bytes);
+  APP_UART_WriteString(" mldsa_workspace_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)workspace_headroom_bytes);
+  APP_UART_WriteString(" mldsa_workspace_capacity_exceeded=");
+  APP_UART_WriteUint32(workspace_capacity_exceeded ? 1U : 0U);
+  APP_UART_WriteString(" mldsa_workspace_in_use=");
+  APP_UART_WriteUint32(workspace_in_use ? 1U : 0U);
+  APP_UART_WriteString(" sbrk_capacity_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_capacity_bytes);
+  APP_UART_WriteString(" sbrk_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_peak_used_bytes);
+  APP_UART_WriteString(" sbrk_final_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.sbrk_current_used_bytes);
+  APP_UART_WriteString(" sbrk_ever_called=");
+  APP_UART_WriteUint32(ram_runtime.sbrk_ever_called ? 1U : 0U);
+  APP_UART_WriteString(" msp_reserved_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_reserved_bytes);
+  APP_UART_WriteString(" msp_peak_used_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_peak_used_bytes);
+  APP_UART_WriteString(" msp_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_headroom_bytes);
+  APP_UART_WriteString(" msp_excess_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_excess_bytes);
+  APP_UART_WriteString(" msp_measurement_window_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_runtime.msp_measurement_window_bytes);
+  APP_UART_WriteString(" msp_reservation_exceeded=");
+  APP_UART_WriteUint32(ram_runtime.msp_reservation_exceeded ? 1U : 0U);
+  APP_UART_WriteString(" msp_measurement_saturated=");
+  APP_UART_WriteUint32(ram_runtime.msp_measurement_saturated ? 1U : 0U);
+  APP_UART_WriteString(" ram_observed_required_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_observed_required_bytes);
+  APP_UART_WriteString(" ram_observed_headroom_bytes=");
+  APP_UART_WriteUint32((uint32_t)ram_observed_headroom_bytes);
+  APP_UART_WriteString(" ram_observed_required_is_lower_bound=");
+  APP_UART_WriteUint32(ram_observed_required_is_lower_bound ? 1U : 0U);
+  APP_UART_WriteString(" device_observed_workload_required_bytes=");
+  APP_UART_WriteUint32((uint32_t)(ram_observed_required_bytes + workspace_peak_used_bytes));
+  APP_UART_WriteString(" device_observed_workload_required_is_lower_bound=");
+  APP_UART_WriteUint32(ram_observed_required_is_lower_bound ? 1U : 0U);
+  APP_UART_WriteString("\r\n");
+}
+
 static void APP_MarkExperimentComplete(void)
 {
   if (!app_experiment_complete)
   {
+    APP_PrintMemoryHighWatermark();
     APP_UART_WriteString("PQC_EXPERIMENT_COMPLETE experiment=" PQC_MQTT_TLS_MODE " status=done\r\n");
     app_experiment_complete = true;
   }
@@ -2099,7 +2253,7 @@ void StartNetworkTask(void *argument)
     .run_network_bringup = APP_RunST67SPIBringup,
     .is_network_ready = APP_IsNetworkReady,
     .print_lwip_runtime = APP_PrintLwIPRuntimeFixture,
-    .print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture,
+    .print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp,
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
     .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
@@ -2113,6 +2267,72 @@ void StartNetworkTask(void *argument)
   osThreadExit();
 }
 
+
+
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+static char *APP_UART_AppendLiteral(char *cursor, char *end, const char *text)
+{
+  while ((cursor < end) && (*text != '\0'))
+  {
+    *cursor++ = *text++;
+  }
+  return cursor;
+}
+
+static char *APP_UART_AppendSize(char *cursor, char *end, size_t value)
+{
+  char digits[3U * sizeof(size_t)];
+  size_t count = 0U;
+
+  do
+  {
+    digits[count++] = (char)('0' + (value % 10U));
+    value /= 10U;
+  } while ((value != 0U) && (count < sizeof(digits)));
+
+  while ((count != 0U) && (cursor < end))
+  {
+    *cursor++ = digits[--count];
+  }
+  return cursor;
+}
+
+static void APP_UART_WriteMallocFailureDiagnostic(void)
+{
+  PQC_WolfSSLMemorySnapshot snapshot;
+  char line[384];
+  char *cursor = line;
+  char *end = line + sizeof(line) - 3U;
+
+  PQC_WolfSSL_MemorySnapshotGet(&snapshot);
+
+  cursor = APP_UART_AppendLiteral(
+      cursor, end, "PQC_FREERTOS_ALLOC_FAIL wolfssl_allocation_active=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.allocation_active ? 1U : 0U);
+  cursor = APP_UART_AppendLiteral(cursor, end, " wolfssl_requested_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.pending_request_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " wolfssl_total_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.pending_total_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " free_heap_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.free_heap_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " minimum_ever_free_heap_bytes=");
+  cursor = APP_UART_AppendSize(
+      cursor, end, snapshot.minimum_ever_free_heap_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " largest_free_block_bytes=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.largest_free_block_bytes);
+  cursor = APP_UART_AppendLiteral(cursor, end, " free_block_count=");
+  cursor = APP_UART_AppendSize(cursor, end, snapshot.free_block_count);
+  cursor = APP_UART_AppendLiteral(cursor, end, "\r\n");
+  *cursor = '\0';
+
+  /*
+   * APP_UART_WriteString ultimately uses HAL_UART_Transmit(..., HAL_MAX_DELAY).
+   * No dynamic allocation is performed by this formatting path.
+   */
+  APP_UART_WriteString(line);
+}
+
+#endif
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {
@@ -2128,6 +2348,14 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 
 void vApplicationMallocFailedHook(void)
 {
+  /*
+   * Report while interrupts are still enabled. APP_UART_WriteString() reaches
+   * the blocking HAL_UART_Transmit() path, so the complete diagnostic is sent
+   * before the firmware deliberately halts.
+   */
+#if PQC_WOLFSSL_MEMORY_DIAGNOSTICS
+  APP_UART_WriteMallocFailureDiagnostic();
+#endif
   APP_UART_WriteString("FATAL: FreeRTOS allocation failed\r\n");
   taskDISABLE_INTERRUPTS();
   for (;;)

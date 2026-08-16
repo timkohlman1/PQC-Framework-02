@@ -26,9 +26,29 @@ def test_hybrid_profile_selects_only_requested_hybrid_group():
     assert selected["mlkem_768"] is False
 
 
+def test_hybrid_profile_selects_mldsa65_server_signature_without_rsa():
+    selected = resolve_tls_algorithm_set(
+        _bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", "mldsa65")
+    )
+    assert selected["mldsa_65"] is True
+    assert selected["mldsa_65_sign"] is False
+    assert selected["rsa"] is False
+    assert selected["rsa_pss"] is False
+    assert selected["signature_schemes"] == ["mldsa65"]
+
+
+def test_hybrid_mutual_profile_enables_mldsa65_signing_for_client_certificate_verify():
+    selected = resolve_tls_algorithm_set(
+        _bundle("pqc_hybrid_tls_mutual", "SecP256r1MLKEM768", "mldsa65")
+    )
+    assert selected["mldsa_65"] is True
+    assert selected["mldsa_65_sign"] is True
+    assert selected["signature_schemes"] == ["mldsa65"]
+
+
 @pytest.mark.parametrize("signature", ["falcon512", "unsupported-pqc-signature"])
-def test_hybrid_profile_rejects_nonclassical_server_signatures(signature):
-    with pytest.raises(ValueError, match="classical RSA server authentication"):
+def test_hybrid_profile_rejects_unknown_server_signatures(signature):
+    with pytest.raises(ValueError, match="Supported algorithms: classical, mldsa65"):
         resolve_tls_algorithm_set(_bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", signature))
 
 
@@ -73,3 +93,37 @@ def test_settings_keep_certificate_curve_floor_separate_from_kex_curve():
     assert "PQC_TLS_ENABLE_CERT_ECC || PQC_TLS_ECC_BITS == 256" in settings
     assert "#define WOLFSSL_SP_384" in settings
     assert "#define WOLFSSL_SP_521" in settings
+
+
+def test_settings_expose_profile_selective_mldsa65_verification_support():
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
+    cmake = Path("CMakeLists.txt").read_text()
+    for marker in (
+        "PQC_TLS_ENABLE_MLDSA_65",
+        "WOLFSSL_HAVE_MLDSA",
+        "WOLFSSL_MLDSA_VERIFY_ONLY",
+        "WOLFSSL_NO_ML_DSA_44",
+        "WOLFSSL_NO_ML_DSA_87",
+        "wolfcrypt/src/wc_mldsa.c",
+    ):
+        assert marker in settings + cmake
+
+def test_x25519_mldsa65_build_guards_cover_certificate_verify_and_pk_oid():
+    tls13 = Path("Middlewares/Third_Party/wolfSSL/src/tls13.c").read_text(encoding="utf-8")
+    internal_h = Path("Middlewares/Third_Party/wolfSSL/wolfssl/internal.h").read_text(
+        encoding="utf-8"
+    )
+
+    dcv_guard_start = tls13.index(
+        "#if !defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519)"
+    )
+    dcv_type = tls13.index("typedef struct Dcv13Args", dcv_guard_start)
+    dcv_guard = tls13[dcv_guard_start:dcv_type]
+    assert "defined(WOLFSSL_HAVE_MLDSA)" in dcv_guard
+
+    ssl_struct_start = internal_h.index("word16          certHashSigAlgoSz")
+    pk_curve = internal_h.index("word32          pkCurveOID;", ssl_struct_start)
+    guard_start = internal_h.rfind("#if ", ssl_struct_start, pk_curve)
+    guard = internal_h[guard_start:pk_curve]
+    assert "defined(WOLFSSL_HAVE_MLDSA)" in guard
+

@@ -55,7 +55,7 @@ def test_foreign_generated_build_state_detects_container_paths(tmp_path: Path, m
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     dep_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text("CMAKE_HOME_DIRECTORY:INTERNAL=/workspace", encoding="utf-8")
-    dep_path.write_text("asn.o: /workspace/tools/wolfboot/lib/wolfssl/wolfcrypt/src/asn.c", encoding="utf-8")
+    dep_path.write_text("asn.o: /workspace/Middlewares/Third_Party/wolfSSL/wolfcrypt/src/asn.c", encoding="utf-8")
 
     monkeypatch.setattr(conftest, "_running_in_container", lambda: False)
 

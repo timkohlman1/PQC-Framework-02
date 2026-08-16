@@ -138,8 +138,28 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         raise ExternalDependencyError("TLS experiment must declare mqtt.tls.certificate_profile")
     ca_algorithm = str(tls.get("certificate_authority_algorithm", "")).strip()
     leaf_algorithm = str(tls.get("server_certificate_algorithm", "")).strip()
-    if ca_algorithm != "classical-x509" or leaf_algorithm != "classical":
-        raise ExternalDependencyError("MQTT identities must use the classical step-ca X.509 hierarchy")
+    supported_profiles = {
+        "stepca-classical": ("stepca-classical", "classical-x509", "classical", {"", "classical", "rsa", "rsa_pss_rsae_sha256"}),
+        "mldsa65-pqc": ("mldsa65-pqc", "mldsa65-x509", "mldsa65", {"mldsa65", "ml-dsa-65"}),
+    }
+    expected = supported_profiles.get(profile_id)
+    if expected is None:
+        raise ExternalDependencyError(
+            "Unsupported MQTT TLS certificate profile: " + profile_id
+            + ". Supported profiles: " + ", ".join(sorted(supported_profiles))
+        )
+    profile_kind, expected_ca_algorithm, expected_leaf_algorithm, expected_signatures = expected
+    if ca_algorithm != expected_ca_algorithm or leaf_algorithm != expected_leaf_algorithm:
+        raise ExternalDependencyError(
+            f"MQTT TLS profile {profile_id} requires certificate_authority_algorithm="
+            f"{expected_ca_algorithm} and server_certificate_algorithm={expected_leaf_algorithm}"
+        )
+    signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
+    if signature_algorithm not in expected_signatures:
+        raise ExternalDependencyError(
+            f"MQTT TLS profile {profile_id} is incompatible with server_signature_algorithm="
+            f"{signature_algorithm or '<missing>'}"
+        )
     canonical_dir = _require_below(repo_root / "secrets" / "mqtt" / profile_id, repo_root / "secrets", "MQTT TLS profile")
     ctl = repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
     command = [sys.executable, str(ctl), "provision-certs", "--certificate-profile", profile_id]
@@ -154,13 +174,24 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         required.extend([client_certificate, client_private_key])
     missing = [str(path) for path in required if path is not None and not path.is_file()]
     if missing:
-        raise ExternalDependencyError("step-ca synchronization completed without required material: " + ", ".join(missing))
+        raise ExternalDependencyError("certificate synchronization completed without required material: " + ", ".join(missing))
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     actual = _sha256(ca_path)
     if str(provenance.get("ca_sha256", "")) != actual:
         raise ExternalDependencyError("MQTT TLS root CA hash does not match certificate provenance")
     if str(provenance.get("source", "")) != "framework/certs":
         raise ExternalDependencyError("MQTT TLS material was not sourced from framework/certs")
+    provenance_expectations = {
+        "profile_id": profile_id,
+        "profile_kind": profile_kind,
+        "ca_algorithm": expected_ca_algorithm,
+        "leaf_algorithm": expected_leaf_algorithm,
+    }
+    for key, expected_value in provenance_expectations.items():
+        if str(provenance.get(key, "")) != expected_value:
+            raise ExternalDependencyError(
+                f"MQTT TLS certificate provenance {key} does not match selected profile {profile_id}"
+            )
     materials = copy_material_directory_to_result(
         canonical_dir, result_dir, f"cryptographic-material/mqtt/{profile_id}",
         role_prefix="mqtt_tls_material",
@@ -169,7 +200,7 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
     )
     write_material_inventory(result_dir, materials)
     return ResolvedMqttTlsContext(
-        profile_id, "stepca-classical", ca_algorithm, leaf_algorithm,
+        profile_id, profile_kind, ca_algorithm, leaf_algorithm,
         canonical_dir, ca_path, provenance_path,
         client_certificate, client_private_key,
         actual,

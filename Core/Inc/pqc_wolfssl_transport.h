@@ -52,7 +52,6 @@ int PQC_WolfSSL_Transport_SendCallback(
     void *context);
 const char *PQC_WolfSSL_Transport_EvidenceLabel(void);
 const char *PQC_WolfSSL_Transport_UnavailableReason(void);
-bool PQC_WolfSSL_Transport_StatusLine(char *buffer, uint32_t buffer_length);
 
 #ifdef __cplusplus
 }

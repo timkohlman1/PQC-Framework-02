@@ -24,6 +24,7 @@ def _bundle(
     certificate_profile: str = "stepca-classical",
     ca_algorithm: str = "classical-x509",
     leaf_algorithm: str = "classical",
+    signature_algorithm: str = "classical",
 ) -> dict[str, dict[str, object]]:
     return {
         "experiment": {
@@ -34,6 +35,7 @@ def _bundle(
                     "certificate_profile": certificate_profile,
                     "certificate_authority_algorithm": ca_algorithm,
                     "server_certificate_algorithm": leaf_algorithm,
+                    "server_signature_algorithm": signature_algorithm,
                 }
             }
         }
@@ -188,25 +190,94 @@ def test_mqtt_tls_versions_other_than_tls13_are_rejected(
         )
 
 
-@pytest.mark.parametrize(
-    ("ca_algorithm", "leaf_algorithm"),
-    [
-        ("mldsa65", "mldsa65"),
-        ("classical-x509", "mldsa65"),
-        ("ecdsa-p256", "ecdsa-p256"),
-    ],
-)
-def test_non_classical_stepca_identity_algorithms_are_rejected(
-    tmp_path: Path, ca_algorithm: str, leaf_algorithm: str
+def test_mldsa65_material_is_synchronized_and_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result_dir = tmp_path / "results"
     result_dir.mkdir()
 
-    with pytest.raises(ExternalDependencyError, match="classical step-ca X.509 hierarchy"):
+    def fake_run(command: list[str], repo_root: Path, log_path: Path) -> None:
+        canonical = repo_root / "secrets" / "mqtt" / "mldsa65-pqc"
+        canonical.mkdir(parents=True, exist_ok=True)
+        files = {
+            "ca.crt": b"mldsa root\n",
+            "root-ca.crt": b"mldsa root\n",
+            "intermediate-ca.crt": b"mldsa intermediate\n",
+            "ca-chain.crt": b"mldsa chain\n",
+            "server.crt": b"mldsa server\n",
+            "server.key": b"mldsa server key\n",
+        }
+        hashes = {}
+        for name, content in files.items():
+            (canonical / name).write_bytes(content)
+            hashes[name] = hashlib.sha256(content).hexdigest()
+        (canonical / "certificate-provenance.json").write_text(
+            json.dumps({
+                "schema_version": 3,
+                "profile_id": "mldsa65-pqc",
+                "profile_kind": "mldsa65-pqc",
+                "source": "framework/certs",
+                "ca_algorithm": "mldsa65-x509",
+                "leaf_algorithm": "mldsa65",
+                "ca_sha256": hashes["ca.crt"],
+                "files": hashes,
+            }),
+            encoding="utf-8",
+        )
+        log_path.write_text("synchronized", encoding="utf-8")
+
+    monkeypatch.setattr("framework.external_dependencies._run_logged", fake_run)
+    resolved = prepare_mqtt_tls_material(
+        bundle=_bundle(
+            certificate_profile="mldsa65-pqc",
+            ca_algorithm="mldsa65-x509",
+            leaf_algorithm="mldsa65",
+            signature_algorithm="mldsa65",
+        ),
+        repo_root=tmp_path,
+        result_dir=result_dir,
+    )
+    assert resolved is not None
+    assert resolved.profile_kind == "mldsa65-pqc"
+    assert resolved.ca_algorithm == "mldsa65-x509"
+    assert resolved.leaf_algorithm == "mldsa65"
+
+
+@pytest.mark.parametrize(
+    ("certificate_profile", "ca_algorithm", "leaf_algorithm"),
+    [
+        ("stepca-classical", "mldsa65-x509", "mldsa65"),
+        ("mldsa65-pqc", "classical-x509", "classical"),
+        ("unknown-profile", "classical-x509", "classical"),
+    ],
+)
+def test_certificate_profile_algorithm_mismatches_are_rejected(
+    tmp_path: Path, certificate_profile: str, ca_algorithm: str, leaf_algorithm: str
+) -> None:
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    with pytest.raises(ExternalDependencyError):
         prepare_mqtt_tls_material(
             bundle=_bundle(
+                certificate_profile=certificate_profile,
                 ca_algorithm=ca_algorithm,
                 leaf_algorithm=leaf_algorithm,
+            ),
+            repo_root=tmp_path,
+            result_dir=result_dir,
+        )
+
+
+def test_mldsa65_certificate_profile_requires_mldsa65_tls_signature(tmp_path: Path) -> None:
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    with pytest.raises(ExternalDependencyError, match="incompatible with server_signature_algorithm"):
+        prepare_mqtt_tls_material(
+            bundle=_bundle(
+                certificate_profile="mldsa65-pqc",
+                ca_algorithm="mldsa65-x509",
+                leaf_algorithm="mldsa65",
+                signature_algorithm="classical",
             ),
             repo_root=tmp_path,
             result_dir=result_dir,

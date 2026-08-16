@@ -141,24 +141,23 @@ def test_mlkem_portable_implementation_sources_are_wired_without_arch_assembly()
 
 
 
-def test_mqtt_tls_build_excludes_mldsa_but_retains_pqc_group_status():
+def test_mqtt_tls_build_keeps_mldsa_profile_selective_and_retains_pqc_group_status():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-
-    for marker in (
-        "PQC_TLS_ENABLE_MLDSA_65",
-        "wolfcrypt/src/wc_mldsa.c",
-        "wolfcrypt/src/wc_mldsa_asm.S",
-    ):
-        assert marker not in cmake
-    assert "pqc_group_config=%s ca_load=%s pqc_group=%s" in source
+    assert "PQC_TLS_ENABLE_MLDSA_65" in cmake + settings
+    assert "wolfcrypt/src/wc_mldsa.c" in cmake
+    assert "wolfcrypt/src/wc_mldsa_asm.S" not in cmake
+    assert "WOLFSSL_MLDSA_VERIFY_ONLY" in settings
+    assert "PQC_TLS_GROUP_NAME" in source
 
 
 def test_handshake_instrumentation_does_not_change_network_task_size():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     assert ".stack_size = 2048 * 4" in main_c
-    assert "wolfMQTT TLS handshake boundary: stage=%s" in mqtt_source
+    assert "PQC_TLS_InstrumentationHandshakeBegin();" in mqtt_source
+    assert "PQC_TLS_InstrumentationHandshakeEnd(result);" in mqtt_source
 
 
 def test_mlkem_resource_controls_avoid_large_client_key_share_stack_object():

@@ -101,3 +101,69 @@ def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
 def test_broker_start_waits_for_healthy_container():
     source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
     assert '["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"]' in source
+
+
+def test_mldsa65_provisioner_runs_directly_without_nested_docker(tmp_path, monkeypatch):
+    module = load_module()
+    script = tmp_path / "services" / "mldsa-pki" / "provision.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return module.subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    completed = module._run_mldsa65_provisioner(
+        tmp_path,
+        certificate_days=365,
+        renewal_days=30,
+        reset_pki=True,
+    )
+
+    assert completed.returncode == 0
+    assert captured["command"] == ["sh", str(script)]
+    assert captured["command"][0] != "docker"
+    environment = captured["kwargs"]["env"]
+    assert environment["CERT_DAYS"] == "365"
+    assert environment["RENEW_BEFORE_DAYS"] == "30"
+    assert environment["MLDSA_RESET_PKI"] == "1"
+    assert environment["PRIVATE_DIR"] == str(tmp_path / "secrets" / "private" / "mldsa65")
+    assert environment["BROKER_DIR"] == str(
+        tmp_path / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
+    )
+    assert environment["CLIENT_DIR"] == str(
+        tmp_path / "secrets" / "runtime" / "mldsa65" / "stm32"
+    )
+
+
+def test_mldsa65_ensure_does_not_use_compose_cleanup(tmp_path, monkeypatch):
+    module = load_module()
+    args = module.build_parser().parse_args(
+        ["provision-certs", "--certificate-profile", "mldsa65-pqc"]
+    )
+
+    def fail_compose(*args, **kwargs):
+        raise AssertionError("ML-DSA-65 provisioning must not invoke nested docker compose")
+
+    def fake_provisioner(certs_root, *, certificate_days, renewal_days, reset_pki):
+        for relative in (
+            "secrets/private/mldsa65/root-ca.crt",
+            "secrets/private/mldsa65/intermediate-ca.crt",
+            "secrets/private/mldsa65/ca-chain.crt",
+            "secrets/runtime/mldsa65/mqtt-broker/tls.crt",
+            "secrets/runtime/mldsa65/mqtt-broker/tls.key",
+            "secrets/runtime/mldsa65/stm32/client.crt",
+            "secrets/runtime/mldsa65/stm32/client.key",
+        ):
+            path = certs_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("material", encoding="utf-8")
+        return module.subprocess.CompletedProcess(["sh", "provision.sh"], 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(module, "_run_local_compose", fail_compose)
+    monkeypatch.setattr(module, "_run_mldsa65_provisioner", fake_provisioner)
+    assert module.ensure_framework_mldsa65_certificates(args, tmp_path) is True
+    assert "mldsa65_pki rc=0" in (tmp_path / "certificate-lifecycle.log").read_text(encoding="utf-8")

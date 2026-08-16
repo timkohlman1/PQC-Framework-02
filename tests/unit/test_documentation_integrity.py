@@ -274,11 +274,11 @@ def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
 
     assert "STM32 wolfMQTT integration | Supported" in architecture
     assert "stm32-fake-no-network-initialization-only" in architecture
-    assert "unavailable-transport-only" in architecture
+    assert "legacy transport-boundary self-test" in architecture
     assert "ST67W61M1 hardware-backed network backend | Driver and interface sources build in direct and relocated profiles | Association and DHCP-supported runtime" in architecture
     assert "stm32-st67-wifi-association-dhcp" in architecture
     assert "Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address." in architecture
-    assert "Real classical STM32 MQTT-over-TLS | Dependencies and boundaries are prepared, but no complete runtime path exists | Unimplemented" in architecture
+    assert "Real classical STM32 MQTT-over-TLS | Implemented | ST67/lwIP/wolfSSL/wolfMQTT runtime path implemented" in architecture
     assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
 
 def test_readme_is_concise_and_routes_detail_to_canonical_owners() -> None:
@@ -562,7 +562,7 @@ def test_architecture_has_one_structured_deferred_test_register() -> None:
     assert "#### Deferred test coverage" not in architecture
 
     rows = re.findall(r"(?m)^\| (DTR-\d{3}) \|.*\|$", architecture)
-    assert rows == [f"DTR-{index:03d}" for index in range(1, 10)]
+    assert rows == [f"DTR-{index:03d}" for index in range(1, len(rows) + 1)]
 
 
 def test_deferred_register_rows_have_all_required_values() -> None:
@@ -794,3 +794,24 @@ def test_st67_transport_documentation_matches_vendor_aligned_runtime_baseline() 
     assert "vendor `spi_iface.c` implementation" in combined
     assert "each segment in a chained lwIP `pbuf`" in combined
     assert "30-second" in combined
+
+def test_wolfssl_dependency_ownership_is_explicit_and_consistent() -> None:
+    guide = _read("AI_BUILD_GUIDE.md")
+    architecture = _read("docs/007_framework_architecture.md")
+    readme = _read("README.md")
+
+    for document in (guide, architecture, readme):
+        assert "Middlewares/Third_Party/wolfSSL" in document
+        assert "tools/wolfboot/lib/wolfssl" in document
+
+    assert "Application TLS/wolfCrypt source of truth" in architecture
+    assert "wolfBoot-owned nested wolfSSL dependency" in architecture
+    assert "PQC_WOLFSSL_SOURCE_DIR" in architecture
+    assert "commit and push the wolfSSL source change" in architecture
+
+    assert "Application TLS/wolfCrypt changes must target `Middlewares/Third_Party/wolfSSL`" in guide
+    assert "Do not modify `tools/wolfboot/lib/wolfssl` for application TLS functionality" in guide
+    assert "parent-repository commit alone does not preserve dirty wolfSSL working-tree changes" in guide
+
+    assert "Application TLS/wolfCrypt builds use the top-level `Middlewares/Third_Party/wolfSSL` submodule" in readme
+

@@ -206,6 +206,22 @@ services:
       - ./secrets/runtime/localstack:/certs
       - ./secrets/public/ca:/trust:ro
 
+  mldsa65_pki:
+    build:
+      context: ./services/mldsa-pki
+    user: "0:0"
+    environment:
+      CERT_DAYS: ${MLDSA_CERT_DAYS:-365}
+      ROOT_DAYS: ${MLDSA_ROOT_DAYS:-3650}
+      INTERMEDIATE_DAYS: ${MLDSA_INTERMEDIATE_DAYS:-1825}
+      RENEW_BEFORE_DAYS: ${MLDSA_RENEW_BEFORE_DAYS:-30}
+      MLDSA_RESET_PKI: ${MLDSA_RESET_PKI:-0}
+    volumes:
+      - ./secrets/private/mldsa65:/private
+      - ./secrets/runtime/mldsa65/mqtt-broker:/broker
+      - ./secrets/runtime/mldsa65/stm32:/client
+    restart: "no"
+
 volumes:
   stepca-data:
   stepca-pkitrust:

@@ -58,3 +58,19 @@ python -m pytest -m integration tests/integration
 | MQTT broker identity | `secrets/runtime/mqtt-broker` |
 | STM32 mTLS identity | `secrets/runtime/stm32` |
 | LocalStack service identity | `secrets/runtime/localstack` |
+
+## ML-DSA-65 MQTT certificate hierarchy
+
+MQTT experiments may also select the independent `mldsa65-pqc` certificate profile. This profile does not replace or mutate the existing step-ca hierarchy.
+
+The ML-DSA-65 path uses OpenSSL with native ML-DSA support to create a persistent ML-DSA-65 root and intermediate hierarchy. The ML-DSA signing tuple is deliberately separate from the classical Step CA/Vault state and is retained as ignored local state under `secrets/private/mldsa65/`. Broker and STM32 mTLS leaf identities are published under `secrets/runtime/mldsa65/` and are renewed independently of the classical identities.
+
+Normal provisioning is owned by the MQTT experiment prerequisite path:
+
+```powershell
+.\scripts\dev.ps1 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --certificate-profile mldsa65-pqc
+```
+
+The MQTT controller runs `services/mldsa-pki/provision.sh` directly in the repository development container because the standard `dev.ps1`/`dev.sh` Python execution path does not expose a nested Docker daemon or Docker CLI. The provisioner fails closed if that environment does not expose native ML-DSA-65 through OpenSSL. The `mldsa65_pki` Compose service remains available for independent certificate-stack execution, but normal `provision-certs --certificate-profile mldsa65-pqc` does not require nested Docker. Generated private material remains ignored local state and must not be committed or included in replacement/context archives.
+
+The existing `stepca-classical` profile remains the default classical hierarchy and is intentionally unchanged.

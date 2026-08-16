@@ -11,7 +11,6 @@ void PQC_MQTT_ApplicationRun(const PQC_MQTTApplicationFixture *fixture)
         return;
     }
     fixture->print_lwip_runtime();
-    fixture->print_wolfssl_runtime();
     fixture->print_wolfmqtt_runtime();
     fixture->print_clock_configuration();
     fixture->print_memory_checkpoint();

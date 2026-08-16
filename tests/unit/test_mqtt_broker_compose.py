@@ -58,6 +58,8 @@ def test_mqtt_broker_compose_mounts_acl_files_directly_and_copies_private_keys()
     assert "aclfile.source" in compose
     assert "cp /mosquitto/config/aclfile.source /tmp/mosquitto-aclfile" not in compose
     assert "cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key" in compose
+    assert compose.count("cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt") == 4
+    assert compose.count("cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt") == 4
     assert "chmod 0640 /tmp/mosquitto-certs/server.key" in compose
     classical = _service_block(compose, "mqtt-classical")
     classical_server_auth = _service_block(compose, "mqtt-classical-server-auth")
@@ -78,7 +80,7 @@ def test_mqtt_broker_compose_mounts_acl_files_directly_and_copies_private_keys()
     assert compose.count("runtime_group=0") == 4
     assert "/tmp/mosquitto-aclfile" not in compose
     assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in compose
-    assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/server.crt" in compose
+    assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt" in compose
     assert "exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf" in compose
 
 

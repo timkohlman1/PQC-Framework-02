@@ -24,6 +24,8 @@ MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
 CLASSICAL_IMAGE = MOSQUITTO_IMAGE
 OQS_IMAGE = MOSQUITTO_IMAGE
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
+CLASSICAL_CERTIFICATE_PROFILE = "stepca-classical"
+MLDSA65_CERTIFICATE_PROFILE = "mldsa65-pqc"
 BROKER_PROFILE_SERVICES = {
     "classical": "mqtt-classical",
     "classical-server-auth": "mqtt-classical-server-auth",
@@ -208,7 +210,12 @@ def _run_local_compose(
 
 
 def _remove_generated_pki(certs_root: Path) -> None:
-    for relative in ("secrets/public/ca", "secrets/runtime/mqtt-broker", "secrets/runtime/stm32", "secrets/runtime/localstack"):
+    for relative in (
+        "secrets/public/ca",
+        "secrets/runtime/mqtt-broker",
+        "secrets/runtime/stm32",
+        "secrets/runtime/localstack",
+    ):
         directory = certs_root / relative
         if not directory.exists():
             continue
@@ -300,13 +307,120 @@ def ensure_framework_certificates(args: argparse.Namespace, source_root: Path) -
         (source_root / "certificate-lifecycle.log").write_text("\n\n".join(lifecycle_log) + "\n", encoding="utf-8")
     return True
 
+def _run_mldsa65_provisioner(
+    certs_root: Path, *, certificate_days: int, renewal_days: int, reset_pki: bool
+) -> subprocess.CompletedProcess[str]:
+    """Run the finite ML-DSA-65 OpenSSL provisioner in the current execution environment."""
+    script = certs_root / "services" / "mldsa-pki" / "provision.sh"
+    if not script.is_file():
+        raise SystemExit(f"ML-DSA-65 provisioning script is missing: {script}")
+
+    signing_tuple = certs_root / "secrets" / "private" / "mldsa65"
+    broker_identity = certs_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
+    client_identity = certs_root / "secrets" / "runtime" / "mldsa65" / "stm32"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CERT_DAYS": str(max(1, certificate_days)),
+            "RENEW_BEFORE_DAYS": str(max(0, renewal_days)),
+            "MLDSA_RESET_PKI": "1" if reset_pki else "0",
+            "PRIVATE_DIR": str(signing_tuple),
+            "BROKER_DIR": str(broker_identity),
+            "CLIENT_DIR": str(client_identity),
+        }
+    )
+    try:
+        return subprocess.run(
+            ["sh", str(script)],
+            cwd=certs_root,
+            env=environment,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "ML-DSA-65 provisioning requires /bin/sh and OpenSSL in the current execution environment"
+        ) from exc
+
+
+def ensure_framework_mldsa65_certificates(args: argparse.Namespace, source_root: Path) -> bool:
+    """Run the finite ML-DSA-65 PKI job without mutating the classical step-ca state."""
+    signing_tuple = source_root / "secrets" / "private" / "mldsa65"
+    broker_identity = source_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
+    client_identity = source_root / "secrets" / "runtime" / "mldsa65" / "stm32"
+    required = [
+        signing_tuple / "root-ca.crt",
+        signing_tuple / "intermediate-ca.crt",
+        signing_tuple / "ca-chain.crt",
+        broker_identity / "tls.crt",
+        broker_identity / "tls.key",
+        client_identity / "client.crt",
+        client_identity / "client.key",
+    ]
+    fresh = (
+        not args.reset_pki
+        and all(path.is_file() for path in required)
+        and _certificate_valid_for(broker_identity / "tls.crt", renewal_days=args.renew_before_days)
+        and _certificate_valid_for(client_identity / "client.crt", renewal_days=args.renew_before_days)
+    )
+    if fresh:
+        return False
+    if args.dry_run:
+        print("local ML-DSA-65 OpenSSL certificate provisioning job would be run")
+        return True
+
+    issued = _run_mldsa65_provisioner(
+        source_root,
+        certificate_days=args.days,
+        renewal_days=args.renew_before_days,
+        reset_pki=args.reset_pki,
+    )
+    (source_root / "certificate-lifecycle.log").write_text(
+        f"mldsa65_pki rc={issued.returncode}\n{issued.stdout}{issued.stderr}\n",
+        encoding="utf-8",
+    )
+    if issued.returncode != 0:
+        details = (issued.stderr or issued.stdout).strip()
+        message = "ML-DSA-65 certificate provisioning failed"
+        if details:
+            message += f": {details}"
+        raise SystemExit(message)
+
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise SystemExit("ML-DSA-65 provisioning completed without required material: " + ", ".join(missing))
+    return True
+
+
 def sync_stepca_certs(args: argparse.Namespace) -> None:
-    """Stage the authoritative classical step-ca material for broker workflows."""
+    """Stage the selected authoritative MQTT TLS certificate family."""
     source_root = repo_root() / "framework" / "certs"
-    infrastructure_started = ensure_framework_certificates(args, source_root)
-    public_ca = source_root / "secrets" / "public" / "ca"
-    broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
-    client_identity = source_root / "secrets" / "runtime" / "stm32"
+    if args.certificate_profile == CLASSICAL_CERTIFICATE_PROFILE:
+        infrastructure_started = ensure_framework_certificates(args, source_root)
+        public_ca = source_root / "secrets" / "public" / "ca"
+        broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
+        client_identity = source_root / "secrets" / "runtime" / "stm32"
+        profile_kind = "stepca-classical"
+        ca_algorithm = "classical-x509"
+        leaf_algorithm = "classical"
+    elif args.certificate_profile == MLDSA65_CERTIFICATE_PROFILE:
+        infrastructure_started = ensure_framework_mldsa65_certificates(args, source_root)
+        public_ca = source_root / "secrets" / "private" / "mldsa65"
+        broker_identity = source_root / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
+        client_identity = source_root / "secrets" / "runtime" / "mldsa65" / "stm32"
+        profile_kind = "mldsa65-pqc"
+        ca_algorithm = "mldsa65-x509"
+        leaf_algorithm = "mldsa65"
+    else:
+        raise SystemExit(
+            "unsupported certificate profile: " + args.certificate_profile
+            + "; supported profiles: "
+            + ", ".join((CLASSICAL_CERTIFICATE_PROFILE, MLDSA65_CERTIFICATE_PROFILE))
+        )
+
     required = {
         "ca.crt": public_ca / "root-ca.crt",
         "root-ca.crt": public_ca / "root-ca.crt",
@@ -324,8 +438,7 @@ def sync_stepca_certs(args: argparse.Namespace) -> None:
     missing = [str(path) for path in required.values() if not path.is_file()]
     if missing:
         raise SystemExit(
-            "authoritative step-ca material is unavailable; run framework/certs first. Missing: "
-            + ", ".join(missing)
+            "authoritative certificate material is unavailable. Missing: " + ", ".join(missing)
         )
     cert_dir = certificate_profile_dir(args.certificate_profile)
     if args.dry_run:
@@ -341,12 +454,12 @@ def sync_stepca_certs(args: argparse.Namespace) -> None:
             if destination.suffix == ".key":
                 destination.chmod(0o600)
     provenance = {
-        "schema_version": 2,
+        "schema_version": 3,
         "profile_id": args.certificate_profile,
-        "profile_kind": "stepca-classical",
+        "profile_kind": profile_kind,
         "source": "framework/certs",
-        "ca_algorithm": "classical-x509",
-        "leaf_algorithm": "classical",
+        "ca_algorithm": ca_algorithm,
+        "leaf_algorithm": leaf_algorithm,
         "ca_sha256": copied["ca.crt"],
         "root_ca_sha256": copied["root-ca.crt"],
         "intermediate_ca_sha256": copied["intermediate-ca.crt"],
@@ -361,7 +474,7 @@ def sync_stepca_certs(args: argparse.Namespace) -> None:
     (cert_dir / "certificate-provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    print(f"Synchronized authoritative step-ca MQTT TLS material under {display_path(cert_dir)}")
+    print(f"Synchronized authoritative MQTT TLS material under {display_path(cert_dir)}")
 
 def remote_repo_root(remote_dir: str) -> str:
     normalized = remote_dir.rstrip("/")
@@ -386,7 +499,7 @@ def deploy(args: argparse.Namespace) -> None:
     directory_copies = [
         (source_root / "config", f"{remote_dir}/"),
     ]
-    # Both TLS profiles consume the same repository-root step-ca staging area.
+    # TLS profiles consume repository-root certificate-profile staging directories.
     # The gateway copy is deployment state only and is never authoritative.
     secrets_mqtt_dir = repo_root() / "secrets" / "mqtt"
     remote_root = remote_repo_root(remote_dir)
@@ -727,7 +840,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage the PQC Framework MQTT broker compose project")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    provision = sub.add_parser("provision-certs", help="synchronize classical MQTT TLS material from framework/certs")
+    provision = sub.add_parser("provision-certs", help="synchronize selected MQTT TLS material from framework/certs")
     provision.add_argument("--certificate-profile", default="stepca-classical")
     provision.add_argument("--server-name", default=DEFAULT_SERVER_NAME)
     provision.add_argument("--extra-dns-name", action="append")
@@ -737,13 +850,13 @@ def build_parser() -> argparse.ArgumentParser:
     provision.add_argument("--healthcheck-name", default=DEFAULT_HEALTHCHECK_NAME)
     provision.add_argument("--days", type=int, default=365)
     provision.add_argument("--renew-before-days", type=int, default=30)
-    provision.add_argument("--reset-pki", action="store_true", help="delete local CA/Vault volumes and generated certificate material before provisioning")
+    provision.add_argument("--reset-pki", action="store_true", help="reset only the selected certificate family's persistent and generated material before provisioning")
     provision.add_argument("--dry-run", action="store_true")
     provision.set_defaults(func=sync_stepca_certs)
 
     oqs_provision = sub.add_parser(
         "provision-oqs-certs",
-        help="deprecated alias for provision-certs; synchronizes the same classical step-ca identity material",
+        help="deprecated alias for provision-certs; synchronizes the selected certificate profile",
     )
     oqs_provision.add_argument("--certificate-profile", default="stepca-classical")
     oqs_provision.add_argument("--days", type=int, default=365)

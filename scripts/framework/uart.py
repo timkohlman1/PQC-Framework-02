@@ -397,6 +397,29 @@ def parse_application_memory_checkpoints(uart_output: str) -> list[dict[str, Any
     return checkpoints
 
 
+
+_RAM_ACCOUNTING_LINE_PATTERNS = {
+    "linker": re.compile(r"^.*?PQC_RAM_LINKER_ACCOUNTING\s+(?P<fields>[^\r\n]+)$", re.MULTILINE),
+    "runtime": re.compile(r"^.*?PQC_MEMORY_HIGH_WATERMARK\s+(?P<fields>[^\r\n]+)$", re.MULTILINE),
+}
+_RAM_ACCOUNTING_FIELD_PATTERN = re.compile(r"(?P<key>[a-z0-9_]+)=(?P<value>\d+)", re.IGNORECASE)
+
+
+def parse_ram_accounting(uart_output: str) -> dict[str, dict[str, int]]:
+    """Parse explicit final linker-region and runtime RAM accounting markers."""
+
+    result: dict[str, dict[str, int]] = {"linker": {}, "runtime": {}}
+    for group, pattern in _RAM_ACCOUNTING_LINE_PATTERNS.items():
+        matches = list(pattern.finditer(uart_output))
+        if not matches:
+            continue
+        fields = matches[-1].group("fields")
+        result[group] = {
+            match.group("key").lower(): int(match.group("value"))
+            for match in _RAM_ACCOUNTING_FIELD_PATTERN.finditer(fields)
+        }
+    return result
+
 def parse_heap_used_bytes(uart_output: str) -> int | None:
     """Parse explicit firmware-side heap usage evidence from UART output."""
 
@@ -410,6 +433,10 @@ def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
         (checkpoint["heap_peak_used_bytes"] for checkpoint in checkpoints),
         default=None,
     )
+    ram_accounting = parse_ram_accounting(uart_output)
+    final_heap_peak = ram_accounting["runtime"].get("freertos_heap_peak_used_bytes")
+    if final_heap_peak is not None:
+        heap_used_bytes = max(heap_used_bytes or 0, final_heap_peak)
     return {
         "max_stack_used_bytes": max_stack_used_bytes,
         "stack_metric_source": DEFAULT_STACK_MEMORY_SOURCE
@@ -420,12 +447,18 @@ def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
         if heap_used_bytes is not None
         else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_SOURCE,
         "application_checkpoints": checkpoints,
+        "ram_accounting": ram_accounting,
         "limitations": (
             "wolfBoot maximum stack usage and application FreeRTOS memory checkpoints are separate UART evidence. "
             "Application heap values cover only the FreeRTOS heap implementation; task stack values are named, per-task "
-            "minimum-free and peak-used evidence for the application tasks reported at each checkpoint. They do not include interrupt-stack "
-            "usage or unreported middleware tasks. Host timing, linker output, and configured sizes alone are not runtime usage evidence."
-            if checkpoints or max_stack_used_bytes is not None
+            "minimum-free and peak-used evidence for the application tasks reported at each checkpoint. Final RAM accounting adds "
+            "FreeRTOS heap, dedicated ML-DSA workspace, newlib _sbrk high-water, MSP high-water since early main(), and linker-region "
+            "capacity/reservation evidence. MSP watermarking extends below the linker's minimum MSP reservation into otherwise-unused primary RAM, "
+            "excludes the maximum _sbrk range from the scan, and reports saturation/lower-bound status if the observable window is exhausted. "
+            "It does not reconstruct stack depth used before main(), and named task-stack "
+            "checkpoints do not cover unreported middleware tasks. Linker reservations and runtime peaks describe the same physical backing "
+            "where applicable and must not be added together."
+            if checkpoints or max_stack_used_bytes is not None or ram_accounting["runtime"] or ram_accounting["linker"]
             else DEFAULT_RUNTIME_MEMORY_UNAVAILABLE_LIMITATIONS
         ),
     }
@@ -544,6 +577,14 @@ def _write_uart_capture_log(
         f"heap_used_bytes: {runtime_memory['heap_used_bytes'] if runtime_memory['heap_used_bytes'] is not None else 'unavailable'}",
         f"heap_metric_source: {runtime_memory['heap_metric_source']}",
         f"runtime_memory_limitations: {runtime_memory['limitations']}",
+        "final_ram_linker_accounting: " + (
+            " ".join(f"{key}={value}" for key, value in runtime_memory["ram_accounting"]["linker"].items())
+            if runtime_memory["ram_accounting"]["linker"] else "unavailable"
+        ),
+        "final_ram_runtime_accounting: " + (
+            " ".join(f"{key}={value}" for key, value in runtime_memory["ram_accounting"]["runtime"].items())
+            if runtime_memory["ram_accounting"]["runtime"] else "unavailable"
+        ),
         "application_memory_checkpoints:",
         *[
             line

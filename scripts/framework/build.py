@@ -375,6 +375,8 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'
+        f'set(PQC_TLS_ENABLE_MLDSA_65 {cmake_boolean(selected["mldsa_65"])})\n'
+        f'set(PQC_TLS_ENABLE_MLDSA_65_SIGN {cmake_boolean(selected["mldsa_65_sign"])})\n'
         f'set(PQC_TLS_GROUP_ID {selected["group_token"]})\n'
         f'set(PQC_TLS_GROUP_NAME "{selected["group_name"]}")\n',
         encoding="utf-8",
@@ -405,9 +407,9 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         if not server_signature_algorithm:
             raise ValueError(
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
-                "The STM32 wolfSSL profile requires an explicit classical server-authentication algorithm."
+                "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
             )
-        supported_server_signature_algorithms = {"classical"}
+        supported_server_signature_algorithms = {"classical", "mldsa65"}
         if server_signature_algorithm not in supported_server_signature_algorithms:
             raise ValueError(
                 "MQTT TLS server signature algorithm " + server_signature_algorithm
@@ -420,7 +422,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         if not ca_path.is_file():
             raise ValueError(
                 "MQTT TLS CA certificate is unavailable: " + str(ca_path)
-                + ". Provision the classical broker certificates before building."
+                + ". Provision the selected broker certificates before building."
             )
         ca_pem = ca_path.read_text(encoding="utf-8")
         ca_sha256 = hashlib.sha256(ca_pem.encode("utf-8")).hexdigest()

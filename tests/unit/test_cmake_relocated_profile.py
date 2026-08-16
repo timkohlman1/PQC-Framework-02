@@ -74,7 +74,7 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
     freertos_config = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
 
     assert "1000" in _macro_define_line(freertos_config, "configTICK_RATE_HZ")
-    assert "40000" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
+    assert "96 * 1024" in _macro_define_line(freertos_config, "configTOTAL_HEAP_SIZE")
     assert " 2" in _macro_define_line(freertos_config, "configCHECK_FOR_STACK_OVERFLOW")
     assert " 1" in _macro_define_line(freertos_config, "configUSE_MALLOC_FAILED_HOOK")
     assert " 1" in _macro_define_line(
@@ -90,7 +90,7 @@ def test_freertos_config_preserves_expected_scheduler_baseline_settings():
 def test_stm32cubemx_ioc_records_freertos_and_tim1_timebase_settings():
     ioc_text = Path("stm32_basic_hal1.ioc").read_text(encoding="utf-8")
 
-    assert "FREERTOS.configTOTAL_HEAP_SIZE=40000" in ioc_text
+    assert "FREERTOS.configTOTAL_HEAP_SIZE=98304" in ioc_text
     assert "FREERTOS.configCHECK_FOR_STACK_OVERFLOW=2" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark=1" in ioc_text
     assert "FREERTOS.INCLUDE_uxTaskGetStackHighWaterMark2=1" in ioc_text
@@ -123,34 +123,26 @@ def test_default_task_retains_liveness_without_standalone_tick_uart_chatter():
     assert "HAL_Delay(1000);" not in task_body
 
 
-def test_phase_m6_5_task_context_smoke_is_delegated_through_application_fixture():
+
+def test_runtime_validation_is_delegated_to_live_application_workflow():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     application = Path(
         "Core/Src/pqc_mqtt_application_mqtt_validation.c"
     ).read_text(encoding="utf-8")
-    default_start = main_c.rindex("void StartDefaultTask(void *argument)")
-    default_end = main_c.index("/* USER CODE END 5 */", default_start)
     network_start = main_c.rindex("void StartNetworkTask(void *argument)")
-    default_body = main_c[default_start:default_end]
     network_body = main_c[network_start:]
 
-    assert 'APP_PrintLwIPRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
-    assert 'APP_PrintWolfSSLRuntimeSmoke("pre_scheduler", false);' in main_c[:default_start]
-    assert 'APP_PrintLwIPRuntimeSmoke("freertos_task", true);' not in default_body
-    assert 'APP_PrintWolfSSLRuntimeSmoke("freertos_task", true);' not in default_body
-    assert "tick_msg" not in default_body
-
+    assert "APP_PrintWolfSSLRuntimeSmoke" not in main_c
+    assert "APP_PrintWolfSSLTransportStatus" not in main_c
+    assert ".print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp" in network_body
+    assert "fixture->print_wolfssl_runtime" not in application
     assert ".print_lwip_runtime = APP_PrintLwIPRuntimeFixture" in network_body
-    assert ".print_wolfssl_runtime = APP_PrintWolfSSLRuntimeFixture" in network_body
     assert ".print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus" in network_body
     assert "PQC_MQTT_ApplicationRun(&fixture);" in network_body
 
-    selected_index = application.index("MQTT application: profile=mqtt_validation state=starting")
     bringup_index = application.index("fixture->run_network_bringup();")
     ready_index = application.index("fixture->is_network_ready()")
     lwip_index = application.index("fixture->print_lwip_runtime();")
-    wolfssl_index = application.index("fixture->print_wolfssl_runtime();")
     mqtt_index = application.index("fixture->print_wolfmqtt_runtime();")
     completion_index = application.index("fixture->mark_complete();")
-    assert selected_index < bringup_index < ready_index < lwip_index < wolfssl_index < mqtt_index < completion_index
-
+    assert bringup_index < ready_index < lwip_index < mqtt_index < completion_index

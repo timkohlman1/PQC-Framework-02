@@ -14,6 +14,7 @@ Documentation inside vendor or submodule trees is upstream-owned and is excluded
 
 - `tools/wolfboot/`
 - `Middlewares/Third_Party/wolfMQTT/`
+- `Middlewares/Third_Party/wolfSSL/`
 
 Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generated build trees, virtual environments, result directories, and dependency caches is also outside this index unless a project-owned document is explicitly listed below.
 
