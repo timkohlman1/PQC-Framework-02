@@ -42,6 +42,7 @@ mqtt:
     tls_version: tls1.3
     mode: pqc_hybrid_tls_server_auth
     certificate_profile: ecdsa-p256
+    server_signature_algorithm: ecdsa_secp256r1_sha256
     key_exchange_group: SecP256r1MLKEM768
   result_schema:
     unavailable_metrics:

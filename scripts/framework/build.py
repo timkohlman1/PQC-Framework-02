@@ -310,6 +310,18 @@ def _certificate_ecc_bits(bundle: dict[str, dict[str, Any]]) -> int | None:
     return {"ecdsa-p256": 256, "ecdsa-p384": 384}.get(str(tls.get("certificate_profile", "")).strip().lower())
 
 
+def _certificate_requires_sha384(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether the selected certificate profile needs SHA-384 support."""
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    mode = str(tls.get("mode", "plaintext")).strip()
+    certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
+    if mode == "plaintext":
+        return False
+    return certificate_profile == "ecdsa-p384"
+
+
 def _resolved_firmware_application(bundle: dict[str, dict[str, Any]]) -> str:
     firmware = bundle.get("experiment", {}).get("firmware", {})
     application = str(firmware.get("application", DEFAULT_STM32_MQTT_APPLICATION)).strip()
@@ -355,10 +367,12 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     """Write the resolved profile-specific CMake algorithm selection."""
     selected = dict(resolve_tls_algorithm_set(bundle))
     selected["certificate_ecc"] = _certificate_requires_ecc(bundle)
+    selected["sha384"] = _certificate_requires_sha384(bundle)
     enabled_ecc_sizes = []
     if selected["ecc"]:
         enabled_ecc_sizes.append(int(selected["ecc_bits"]))
     certificate_ecc_bits = _certificate_ecc_bits(bundle)
+    selected["certificate_ecc_bits"] = certificate_ecc_bits or 0
     if selected["certificate_ecc"] and certificate_ecc_bits is not None:
         enabled_ecc_sizes.append(certificate_ecc_bits)
     selected["ecc_min_bits"] = min(enabled_ecc_sizes, default=256)
@@ -371,6 +385,8 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
         f'set(PQC_TLS_ENABLE_ECC {cmake_boolean(selected["ecc"])})\n'
         f'set(PQC_TLS_ENABLE_CERT_ECC {cmake_boolean(selected["certificate_ecc"])})\n'
+        f'set(PQC_TLS_CERT_ECC_BITS {selected["certificate_ecc_bits"]})\n'
+        f'set(PQC_TLS_ENABLE_SHA384 {cmake_boolean(selected["sha384"])})\n'
         f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
         f'set(PQC_TLS_ECC_MIN_BITS {selected["ecc_min_bits"]})\n'
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
@@ -410,7 +426,12 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
                 "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
             )
-        supported_server_signature_algorithms = {"classical", "mldsa65"}
+        supported_server_signature_algorithms = {
+            "classical",
+            "ecdsa_secp256r1_sha256",
+            "ecdsa_secp384r1_sha384",
+            "mldsa65",
+        }
         if server_signature_algorithm not in supported_server_signature_algorithms:
             raise ValueError(
                 "MQTT TLS server signature algorithm " + server_signature_algorithm

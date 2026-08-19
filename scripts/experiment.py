@@ -936,18 +936,33 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
                         "PQC_TLS_PRIMITIVE name=mlkem1024_decapsulate",
                     ))
 
-                server_signature = str(tls.get("server_signature_algorithm", "classical")).lower()
+                certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
+                if certificate_profile == "ecdsa-p384":
+                    markers.append("PQC_TLS_PRIMITIVE name=sha384")
+                server_signature = str(tls.get("server_signature_algorithm", "")).strip().lower()
+                if not server_signature:
+                    server_signature = {
+                        "rsa3072": "rsa_pss_rsae_sha256",
+                        "ecdsa-p256": "ecdsa_secp256r1_sha256",
+                        "ecdsa-p384": "ecdsa_secp384r1_sha384",
+                        "mldsa65": "mldsa65",
+                    }.get(certificate_profile, "")
+
                 authentication = str(tls.get("authentication", "server")).lower()
                 if server_signature == "mldsa65":
-                    markers.append("PQC_TLS_PRIMITIVE name=mldsa65_verify")
+                    verify_marker = "PQC_TLS_PRIMITIVE name=mldsa65_verify"
+                    sign_marker = "PQC_TLS_PRIMITIVE name=mldsa65_sign"
+                elif server_signature in {"ecdsa-p256", "ecdsa_secp256r1_sha256",
+                                          "ecdsa-p384", "ecdsa_secp384r1_sha384"}:
+                    verify_marker = "PQC_TLS_PRIMITIVE name=ecdsa_verify"
+                    sign_marker = "PQC_TLS_PRIMITIVE name=ecdsa_sign"
                 else:
-                    markers.append("PQC_TLS_PRIMITIVE name=rsa_verify")
+                    verify_marker = "PQC_TLS_PRIMITIVE name=rsa_verify"
+                    sign_marker = "PQC_TLS_PRIMITIVE name=rsa_sign"
 
+                markers.append(verify_marker)
                 if authentication == "mutual":
-                    if server_signature == "mldsa65":
-                        markers.append("PQC_TLS_PRIMITIVE name=mldsa65_sign")
-                    else:
-                        markers.append("PQC_TLS_PRIMITIVE name=rsa_sign")
+                    markers.append(sign_marker)
 
             if evidence_class == "stm32_st67_pqc_hybrid_tls_e2e":
                 markers.extend(("key_exchange_group=passed",))

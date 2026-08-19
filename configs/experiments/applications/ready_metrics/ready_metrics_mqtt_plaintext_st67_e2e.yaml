@@ -22,9 +22,12 @@ mqtt:
   enabled: true
   evidence_class: stm32_st67_plaintext_e2e
   transport_backend: st67w61m1_lwip_sockets
+  broker_profile: classical
   broker:
-    host: 10.1.1.18
+    host: pqc-gateway1.pqcnet
     port: 1883
+    server_name: pqc-gateway1.pqcnet
+    dns_required: true
   client_id: pqc-stm32-e2e
   topics:
     command: pqc/experiments/stm32/command

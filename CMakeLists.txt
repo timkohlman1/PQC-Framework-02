@@ -74,8 +74,10 @@ set(PQC_TLS_ENABLE_RSA 1 CACHE BOOL "Compile RSA certificate verification")
 set(PQC_TLS_ENABLE_RSA_PSS 1 CACHE BOOL "Compile and advertise RSA-PSS")
 set(PQC_TLS_ENABLE_ECC 1 CACHE BOOL "Compile prime-curve ECC key exchange")
 set(PQC_TLS_ENABLE_CERT_ECC 0 CACHE BOOL "Compile ECC for X.509 certificate parsing and verification")
+set(PQC_TLS_CERT_ECC_BITS 0 CACHE STRING "Selected ECC certificate key size; 0 when not applicable")
+set(PQC_TLS_ENABLE_SHA384 0 CACHE BOOL "Compile SHA-384 for certificate signatures that require it")
 set(PQC_TLS_ECC_MIN_BITS 256 CACHE STRING "Minimum accepted ECC key size across KEX and certificates")
-set(PQC_TLS_ECC_BITS 256 CACHE STRING "Selected prime-curve size")
+set(PQC_TLS_ECC_BITS 256 CACHE STRING "Selected prime-curve KEX size")
 set(PQC_TLS_ENABLE_CURVE25519 0 CACHE BOOL "Compile X25519 key exchange")
 set(PQC_TLS_ENABLE_MLKEM_768 0 CACHE BOOL "Compile ML-KEM-768 hybrid key exchange")
 set(PQC_TLS_ENABLE_MLKEM_1024 0 CACHE BOOL "Compile ML-KEM-1024 hybrid key exchange")
@@ -99,7 +101,8 @@ message("TLS algorithm mode: " ${PQC_TLS_ALGORITHM_MODE})
 message("TLS RSA/RSA-PSS: " ${PQC_TLS_ENABLE_RSA} "/" ${PQC_TLS_ENABLE_RSA_PSS})
 message("TLS group: " ${PQC_TLS_GROUP_NAME} " (" ${PQC_TLS_GROUP_ID} ")")
 message("TLS key-exchange ECC/Curve25519: " ${PQC_TLS_ENABLE_ECC} "/" ${PQC_TLS_ENABLE_CURVE25519})
-message("TLS certificate ECC/minimum bits: " ${PQC_TLS_ENABLE_CERT_ECC} "/" ${PQC_TLS_ECC_MIN_BITS})
+message("TLS certificate ECC/bits/minimum bits: " ${PQC_TLS_ENABLE_CERT_ECC} "/" ${PQC_TLS_CERT_ECC_BITS} "/" ${PQC_TLS_ECC_MIN_BITS})
+message("TLS SHA-384: " ${PQC_TLS_ENABLE_SHA384})
 message("TLS ML-KEM-768/1024: " ${PQC_TLS_ENABLE_MLKEM_768} "/" ${PQC_TLS_ENABLE_MLKEM_1024})
 message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${PQC_TLS_ENABLE_MLDSA_65_SIGN})
 
@@ -168,6 +171,12 @@ if(PQC_TLS_COMPILED)
         )
     endif()
 
+    if(PQC_TLS_ENABLE_SHA384)
+        list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
+            "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha512.c"
+        )
+    endif()
+
     if(PQC_TLS_ENABLE_CURVE25519)
         list(APPEND PQC_WOLFSSL_TLS_CONTEXT_SOURCES
             "${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/curve25519.c"
@@ -229,6 +238,8 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_ENABLE_CERT_ECC=$<BOOL:${PQC_TLS_ENABLE_CERT_ECC}>
         PQC_TLS_ECC_MIN_BITS=${PQC_TLS_ECC_MIN_BITS}
         PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+        PQC_TLS_CERT_ECC_BITS=${PQC_TLS_CERT_ECC_BITS}
+        PQC_TLS_ENABLE_SHA384=$<BOOL:${PQC_TLS_ENABLE_SHA384}>
         PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
         PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
         PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>
@@ -356,6 +367,8 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_ENABLE_CERT_ECC=$<BOOL:${PQC_TLS_ENABLE_CERT_ECC}>
         PQC_TLS_ECC_MIN_BITS=${PQC_TLS_ECC_MIN_BITS}
         PQC_TLS_ECC_BITS=${PQC_TLS_ECC_BITS}
+        PQC_TLS_CERT_ECC_BITS=${PQC_TLS_CERT_ECC_BITS}
+        PQC_TLS_ENABLE_SHA384=$<BOOL:${PQC_TLS_ENABLE_SHA384}>
         PQC_TLS_ENABLE_CURVE25519=$<BOOL:${PQC_TLS_ENABLE_CURVE25519}>
         PQC_TLS_ENABLE_MLKEM_768=$<BOOL:${PQC_TLS_ENABLE_MLKEM_768}>
         PQC_TLS_ENABLE_MLKEM_1024=$<BOOL:${PQC_TLS_ENABLE_MLKEM_1024}>

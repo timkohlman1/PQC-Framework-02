@@ -261,7 +261,7 @@ Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O r
 
 ## Hybrid PQC server-authenticated profile
 
-The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024` so the Mosquitto server process can select the same hybrid key share as the client.
+The `oqs` profile is used for TLS 1.3 experiments whose authentication path can use PQC certificates. Its mounted OpenSSL configuration permits the supported hybrid groups plus classical P-256: `Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024:P-256`. The hybrid groups remain first in the preference order, while P-256 is retained so controlled experiments can isolate classical `secp256r1` key exchange with PQC authentication.
 
 Provision OQS certificates after deployment. The provisioning command retrieves only the public CA certificate for the local firmware build. The strict TLS validator fails when OpenSSL exits unsuccessfully, no peer certificate is presented, the cipher is `(NONE)`, TLS 1.3 is not negotiated, or certificate verification fails.
 

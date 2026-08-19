@@ -400,6 +400,7 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "P-256",
     }
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
     assert "--tls-version tlsv1.3" in compose
@@ -716,6 +717,7 @@ def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "P-256",
     }
     for profile in ("oqs", "oqs-mtls"):
         config = _read(BROKER_ROOT / "config" / profile / "openssl.cnf")

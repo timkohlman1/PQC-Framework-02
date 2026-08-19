@@ -43,6 +43,7 @@ mqtt:
     mode: pqc_hybrid_tls_mutual
     authentication: mutual
     certificate_profile: ecdsa-p256
+    server_signature_algorithm: ecdsa_secp256r1_sha256
     key_exchange_group: SecP256r1MLKEM768
   result_schema:
     unavailable_metrics:

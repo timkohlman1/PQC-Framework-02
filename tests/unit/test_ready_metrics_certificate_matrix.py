@@ -33,6 +33,15 @@ def _expected_mode(kex: str, auth: str) -> str:
     )
 
 
+def _expected_server_signature_algorithm(certificate_profile: str) -> str:
+    return {
+        "rsa3072": "classical",
+        "ecdsa-p256": "ecdsa_secp256r1_sha256",
+        "ecdsa-p384": "ecdsa_secp384r1_sha384",
+        "mldsa65": "mldsa65",
+    }[certificate_profile]
+
+
 def _expected_broker(kex: str, certificate_profile: str, auth: str) -> tuple[str, int]:
     oqs_required = kex == "SecP256r1MLKEM768" or certificate_profile == "mldsa65"
     if oqs_required:
@@ -64,6 +73,10 @@ def test_controlled_certificate_comparison_matrix_selects_exact_variables():
                 assert f"mode: {_expected_mode(kex, auth)}" in text
                 assert f"broker_profile: {broker_profile}" in text
                 assert f"port: {broker_port}" in text
+
+                if kex == "SecP256r1MLKEM768":
+                    expected_signature = _expected_server_signature_algorithm(certificate_profile)
+                    assert f"server_signature_algorithm: {expected_signature}" in text
 
                 if auth == "mutual_auth":
                     assert "authentication: mutual" in text
