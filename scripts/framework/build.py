@@ -40,8 +40,8 @@ BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics"}
-SUPPORTED_UART_LOG_LEVELS = {"error": 0, "info": 1, "debug": 2}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
+SUPPORTED_UART_LOG_LEVELS = {"off": -1, "error": 0, "info": 1, "debug": 2}
 
 
 @dataclass(frozen=True)

@@ -157,9 +157,19 @@ def _mqtt_application(bundle: dict[str, dict[str, Any]]) -> str:
 
 
 def _is_mqtt_ready_metrics_application(bundle: dict[str, dict[str, Any]]) -> bool:
-    """Return whether the selected firmware workload is ready/timing/metrics."""
+    """Return whether the selected firmware workload is Ready Metrics 1."""
 
     return _mqtt_application(bundle) == "mqtt_ready_metrics"
+
+
+def _is_mqtt_ready_metrics_2_application(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether the selected firmware workload is Ready Metrics 2."""
+
+    return _mqtt_application(bundle) == "mqtt_ready_metrics_2"
+
+
+def _is_device_initiated_metrics_application(bundle: dict[str, dict[str, Any]]) -> bool:
+    return _is_mqtt_ready_metrics_application(bundle) or _is_mqtt_ready_metrics_2_application(bundle)
 
 
 def _parse_ready_metrics_subscriber_output(
@@ -238,6 +248,254 @@ def _parse_ready_metrics_subscriber_output(
         "metrics_count": len(metrics_messages),
         "metrics_valid": metrics_valid,
         "metric_sequences": metric_sequences,
+        "invalid_json_count": invalid_json_count,
+        "malformed_topic_lines": malformed_topic_lines,
+    }
+
+
+def _parse_ready_metrics_2_subscriber_output(
+    output: str, *, response_topic: str
+) -> dict[str, Any]:
+    """Validate the fixed Ready Metrics 2 broker result bundle."""
+
+    payloads: list[str] = []
+    prefix = response_topic + " "
+    malformed_topic_lines = 0
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not line.startswith(prefix):
+            malformed_topic_lines += 1
+            continue
+        payloads.append(line[len(prefix):])
+
+    ready_count = sum(payload == "ready" for payload in payloads)
+    decoded_messages: list[dict[str, Any]] = []
+    invalid_json_count = 0
+    for payload in payloads:
+        if payload == "ready":
+            continue
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            invalid_json_count += 1
+            continue
+        if not isinstance(decoded, dict):
+            invalid_json_count += 1
+            continue
+        decoded_messages.append(decoded)
+
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for decoded in decoded_messages:
+        by_type.setdefault(str(decoded.get("type", "")), []).append(decoded)
+
+    timing = by_type.get("experiment_timing", [])
+    timing_message = timing[0] if len(timing) == 1 else {}
+    timing_fields = (
+        "tcp_connect_ms",
+        "ttfb_ms",
+        "mqtt_connect_ms",
+        "legacy_connect_timing_ms",
+    )
+    timing_valid = (
+        len(timing) == 1
+        and timing_message.get("schema_version") == 1
+        and timing_message.get("ttfb_definition")
+        == "tcp_connect_start_to_first_mqtt_connack_plaintext_byte"
+        and timing_message.get("dns_included") is False
+        and all(
+            isinstance(timing_message.get(field), int)
+            and timing_message[field] >= 0
+            for field in timing_fields
+        )
+        and timing_message.get("first_response_valid") == 1
+        and timing_message["ttfb_ms"] >= timing_message["tcp_connect_ms"]
+    )
+
+    boot_messages = by_type.get("boot_timing", [])
+    boot_message = boot_messages[0] if len(boot_messages) == 1 else {}
+    boot_fields = (
+        "boot_to_tcp_connect_ms",
+        "boot_to_tls_complete_ms",
+        "boot_to_mqtt_first_response_ms",
+        "boot_to_mqtt_connected_ms",
+        "boot_to_ready_publish_ms",
+    )
+    boot_fields_are_non_negative = (
+        len(boot_messages) == 1
+        and all(
+            isinstance(boot_message.get(field), int)
+            and boot_message[field] >= 0
+            for field in boot_fields
+        )
+    )
+    tls_timing_valid = timing_message.get("tls_timing_valid")
+    if tls_timing_valid == 1:
+        boot_order_valid = (
+            boot_message["boot_to_mqtt_connected_ms"]
+            >= boot_message["boot_to_mqtt_first_response_ms"]
+            >= boot_message["boot_to_tls_complete_ms"]
+            >= boot_message["boot_to_tcp_connect_ms"]
+        ) if boot_fields_are_non_negative else False
+    else:
+        # Plaintext Ready Metrics 2 has no TLS-complete event. Preserve zero as
+        # the explicit unavailable value and validate the remaining TCP/MQTT
+        # ordering without inventing a synthetic TLS boundary.
+        boot_order_valid = (
+            boot_message["boot_to_tls_complete_ms"] == 0
+            and boot_message["boot_to_mqtt_connected_ms"]
+            >= boot_message["boot_to_mqtt_first_response_ms"]
+            >= boot_message["boot_to_tcp_connect_ms"]
+        ) if boot_fields_are_non_negative else False
+
+    boot_valid = (
+        len(boot_messages) == 1
+        and boot_message.get("schema_version") == 1
+        and boot_message.get("firmware_boot_origin") == "post_hal_init"
+        and boot_fields_are_non_negative
+        and tls_timing_valid in (0, 1)
+        and boot_order_valid
+        and boot_message["boot_to_ready_publish_ms"]
+        >= boot_message["boot_to_mqtt_connected_ms"]
+    )
+
+    connect_messages = by_type.get("connect_timing", [])
+    memory_messages = by_type.get("memory_metrics", [])
+    primitive_messages = by_type.get("tls_primitive_timing", [])
+    primitive_parts = sorted(item.get("part") for item in primitive_messages)
+    complete_messages = by_type.get("ready_metrics_2_complete", [])
+
+    connect_valid = (
+        len(connect_messages) == 1
+        and isinstance(connect_messages[0].get("milliseconds"), int)
+        and connect_messages[0]["milliseconds"] >= 0
+        and isinstance(connect_messages[0].get("tls_mode"), str)
+        and bool(connect_messages[0]["tls_mode"])
+    )
+    memory_sequences = [item.get("sequence") for item in memory_messages]
+    memory_valid = (
+        len(memory_messages) == 2
+        and memory_sequences == [1, 2]
+        and all(
+            isinstance(item.get("stack_high_water_words"), int)
+            and item["stack_high_water_words"] >= 0
+            and isinstance(item.get("heap_free_bytes"), int)
+            and item["heap_free_bytes"] >= 0
+            and isinstance(item.get("heap_min_ever_bytes"), int)
+            and item["heap_min_ever_bytes"] >= 0
+            for item in memory_messages
+        )
+    )
+    handshake_messages = by_type.get("tls_handshake_timing", [])
+    handshake = handshake_messages[0] if len(handshake_messages) == 1 else {}
+    handshake_fields = (
+        "elapsed_cycles",
+        "elapsed_ms",
+        "stack_before_min_free_bytes",
+        "stack_after_min_free_bytes",
+        "heap_before_free_bytes",
+        "heap_after_free_bytes",
+        "heap_before_min_ever_free_bytes",
+        "heap_after_min_ever_free_bytes",
+    )
+    handshake_valid = (
+        len(handshake_messages) == 1
+        and handshake.get("schema_version") == 1
+        and handshake.get("available") in (0, 1)
+        and isinstance(handshake.get("result"), int)
+        and handshake.get("cycle_counter_available") in (0, 1)
+        and all(
+            isinstance(handshake.get(field), int) and handshake[field] >= 0
+            for field in handshake_fields
+        )
+    )
+
+    def _valid_timing_record(record: Any) -> bool:
+        return (
+            isinstance(record, list)
+            and len(record) == 6
+            and all(isinstance(value, int) and value >= 0 for value in record)
+        )
+
+    phase_messages = by_type.get("tls_phase_timing", [])
+    phase_values = phase_messages[0].get("values") if len(phase_messages) == 1 else None
+    phase_valid = (
+        len(phase_messages) == 1
+        and phase_messages[0].get("schema_version") == 1
+        and isinstance(phase_values, list)
+        and len(phase_values) == 5
+        and all(_valid_timing_record(record) for record in phase_values)
+    )
+
+    primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 22)]
+    primitive_valid = len(primitive_messages) == 6 and primitive_parts == [1, 2, 3, 4, 5, 6]
+    if primitive_valid:
+        for part, (first_index, last_index) in enumerate(primitive_ranges, start=1):
+            message = next(
+                (item for item in primitive_messages if item.get("part") == part),
+                {},
+            )
+            values = message.get("values")
+            if not (
+                message.get("schema_version") == 1
+                and message.get("first_index") == first_index
+                and message.get("last_index") == last_index
+                and isinstance(values, list)
+                and len(values) == (last_index - first_index + 1)
+                and all(_valid_timing_record(record) for record in values)
+            ):
+                primitive_valid = False
+                break
+
+    x509_messages = by_type.get("tls_x509_verify_timing", [])
+    x509 = x509_messages[0] if len(x509_messages) == 1 else {}
+    x509_cycles = x509.get("elapsed_cycles")
+    x509_valid = (
+        len(x509_messages) == 1
+        and x509.get("schema_version") == 1
+        and isinstance(x509.get("count"), int)
+        and 0 <= x509["count"] <= 4
+        and x509.get("overflow") in (0, 1)
+        and isinstance(x509_cycles, list)
+        and len(x509_cycles) == 4
+        and all(isinstance(value, int) and value >= 0 for value in x509_cycles)
+    )
+
+    tls_bundle_valid = handshake_valid and phase_valid and primitive_valid and x509_valid
+    complete_valid = (
+        len(complete_messages) == 1
+        and complete_messages[0].get("schema_version") == 1
+        and complete_messages[0].get("status") == "success"
+        and complete_messages[0].get("message_count") == 16
+    )
+    passed = (
+        len(payloads) == 16
+        and ready_count == 1
+        and connect_valid
+        and memory_valid
+        and timing_valid
+        and boot_valid
+        and tls_bundle_valid
+        and complete_valid
+        and invalid_json_count == 0
+        and malformed_topic_lines == 0
+    )
+    return {
+        "passed": passed,
+        "message_count": len(payloads),
+        "ready_count": ready_count,
+        "connect_count": len(connect_messages),
+        "memory_count": len(memory_messages),
+        "memory_sequences": memory_sequences,
+        "timing_count": len(timing),
+        "timing_valid": timing_valid,
+        "experiment_timing": timing_message if timing_valid else None,
+        "boot_timing": boot_message if boot_valid else None,
+        "boot_timing_valid": boot_valid,
+        "tls_bundle_valid": tls_bundle_valid,
+        "primitive_parts": primitive_parts,
+        "complete_valid": complete_valid,
         "invalid_json_count": invalid_json_count,
         "malformed_topic_lines": malformed_topic_lines,
     }
@@ -859,6 +1117,28 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
 
 def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    if _is_mqtt_ready_metrics_2_application(bundle):
+        markers = [
+            "ST67 DHCP: result=passed",
+            "MQTT application: profile=mqtt_ready_metrics_2 state=workload_start",
+            "PQC_RM2_TTFB definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
+            "PQC_APP_PUBLISH sequence=1 type=ready result=0",
+            "PQC_APP_PUBLISH sequence=2 type=connect_timing",
+            "PQC_APP_PUBLISH sequence=16 type=ready_metrics_2_complete result=0",
+            _mqtt_completion_marker(bundle),
+        ]
+        evidence_class = mqtt.get("evidence_class") if isinstance(mqtt, dict) else None
+        if evidence_class in {
+            "stm32_st67_classical_tls_e2e",
+            "stm32_st67_pqc_hybrid_tls_e2e",
+        }:
+            markers.extend((
+                "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1",
+                "PQC_TLS_HANDSHAKE_MEMORY",
+                "wolfMQTT TLS: stage=handshake result=1 error=0",
+                "wolfMQTT TLS: handshake passed",
+            ))
+        return tuple(markers)
     if _is_mqtt_ready_metrics_application(bundle):
         markers = [
             "ST67 DHCP: result=passed",
@@ -1124,10 +1404,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     topics = mqtt["topics"]
     orchestration = mqtt.get("orchestration", {})
     command_payload = str(mqtt.get("command_payload", "run"))
-    ready_metrics_application = _is_mqtt_ready_metrics_application(bundle)
+    ready_metrics_2_application = _is_mqtt_ready_metrics_2_application(bundle)
+    ready_metrics_application = _is_device_initiated_metrics_application(bundle)
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
+    expected_response_count = 16 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
@@ -1268,7 +1549,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
         publisher_description = (
-            "Publisher disabled: mqtt_ready_metrics is device-initiated.\n"
+            "Publisher disabled: selected ready-metrics application is device-initiated.\n"
             if ready_metrics_application
             else (
                 f"Publisher client ID: {publisher_client_id}\n"
@@ -1313,7 +1594,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 "Starting MQTT ready/timing/metrics validation",
                 detail=(
                     f"Subscriber topic: {topics['response']}; expected messages: "
-                    "1 ready, 1 connect timing, and 2 memory metrics."
+                    + (
+                        "16-message Ready Metrics 2 timing/TLS bundle."
+                        if ready_metrics_2_application
+                        else "1 ready, 1 connect timing, and 2 memory metrics."
+                    )
                 ),
             )
         else:
@@ -1337,8 +1622,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         }
         subscriber_evidence_integrity["passed"] = all(subscriber_evidence_integrity.values())
         if ready_metrics_application:
-            ready_metrics_evidence = _parse_ready_metrics_subscriber_output(
-                persisted_subscriber_output, response_topic=str(topics["response"])
+            ready_metrics_evidence = (
+                _parse_ready_metrics_2_subscriber_output(
+                    persisted_subscriber_output, response_topic=str(topics["response"])
+                )
+                if ready_metrics_2_application
+                else _parse_ready_metrics_subscriber_output(
+                    persisted_subscriber_output, response_topic=str(topics["response"])
+                )
             )
             broker_response_passed = (
                 marker.get("subscriber_rc") == 0
@@ -1364,7 +1655,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                     f"Messages: {ready_metrics_evidence.get('message_count')}/{expected_response_count}; "
                     f"ready: {ready_metrics_evidence.get('ready_count')}; "
                     f"timing: {ready_metrics_evidence.get('timing_count')}; "
-                    f"metrics: {ready_metrics_evidence.get('metrics_count')}; "
+                    f"metrics: {ready_metrics_evidence.get('metrics_count', ready_metrics_evidence.get('memory_count'))}; "
                     f"missing UART markers: {len(missing_uart_markers)}."
                 ),
             )
@@ -1495,9 +1786,13 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "failure_stage": failure_stage,
             "application": _mqtt_application(bundle),
             "validation_contract": (
-                "ready_connect_timing_two_memory_metrics"
-                if ready_metrics_application
-                else "command_response_correlation"
+                "ready_metrics_2_paper_ttfb_tls_primitive_bundle"
+                if ready_metrics_2_application
+                else (
+                    "ready_connect_timing_two_memory_metrics"
+                    if ready_metrics_application
+                    else "command_response_correlation"
+                )
             ),
             "command_topic": topics["command"],
             "response_topic": topics["response"],
@@ -1768,7 +2063,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
     "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
 }
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
 
 
@@ -2025,8 +2320,8 @@ def validate_experiment_config(config: dict[str, Any]) -> None:
         )
     firmware["application"] = application
     uart_log_level = firmware.get("uart_log_level", "info")
-    if not isinstance(uart_log_level, str) or uart_log_level.strip().lower() not in {"error", "info", "debug"}:
-        raise ConfigError("firmware.uart_log_level must be one of: debug, error, info")
+    if not isinstance(uart_log_level, str) or uart_log_level.strip().lower() not in {"off", "error", "info", "debug"}:
+        raise ConfigError("firmware.uart_log_level must be one of: debug, error, info, off")
     firmware["uart_log_level"] = uart_log_level.strip().lower()
 
     if "network" in config:

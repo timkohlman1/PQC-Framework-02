@@ -62,3 +62,18 @@ def test_wolfboot_composition_preserves_ready_metrics_application():
 
     assert bundle["experiment"]["firmware"]["application"] == "mqtt_ready_metrics"
     assert bundle["experiment"]["firmware"]["mode"] == "wolfboot_integrity"
+
+
+
+def test_ready_metrics_2_profile_exists_and_selects_new_application():
+    profile = Path(
+        "configs/experiments/applications/ready_metrics_2/"
+        "ready_metrics_2_mqtt_tls_secp256r1_server_auth_st67_e2e.yaml"
+    )
+    assert profile.is_file()
+    text = profile.read_text(encoding="utf-8")
+    assert text.startswith("id: ready_metrics_2_")
+    assert "application: mqtt_ready_metrics_2" in text
+    assert "uart_log_level: info" in text
+    assert "ttfb_start: immediately_before_lwip_connect_after_dns" in text
+    assert "ttfb_end: first_plaintext_byte_returned_while_receiving_mqtt_connack" in text

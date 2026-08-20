@@ -140,7 +140,7 @@ Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RA
 
 ### Ready-metrics MQTT application profiles
 
-The original profiles retain `mqtt_validation`. Matching persistent ready/timing/memory profiles are under `configs/experiments/applications/ready_metrics/`, prefixed with `ready_metrics_`; they preserve the corresponding transport, group, and authentication mode while selecting `mqtt_ready_metrics`.
+The original profiles retain `mqtt_validation`. Matching persistent ready/timing/memory profiles are under `configs/experiments/applications/ready_metrics/`, prefixed with `ready_metrics_`; they preserve the corresponding transport, group, and authentication mode while selecting `mqtt_ready_metrics`. Ready Metrics 2 is a separate timing workload under `configs/experiments/applications/ready_metrics_2/`; its TTFB metric starts immediately before TCP `connect` after DNS and stops when wolfMQTT receives the first plaintext CONNACK byte, matching the paper's TCP + TLS + request + first-response decomposition at an MQTT-equivalent protocol boundary. Absolute HTTP/EC2 and STM32/MQTT values are not assumed interchangeable. It additionally publishes firmware-boot, TLS, phase, primitive, X.509, and memory timing evidence to the broker after the measured interval.
 
 ### Controlled network-degradation grid
 

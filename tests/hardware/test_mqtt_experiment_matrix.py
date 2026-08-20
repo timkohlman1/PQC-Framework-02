@@ -49,6 +49,12 @@ CASES = (
         "secp256r1",
     ),
     HardwareExperimentCase(
+        "ready-metrics-2-secp256r1-server-auth",
+        "configs/experiments/applications/ready_metrics_2/ready_metrics_2_mqtt_tls_secp256r1_server_auth_st67_e2e.yaml",
+        "classical_tls_server_auth",
+        "secp256r1",
+    ),
+    HardwareExperimentCase(
         "secp256r1-mutual-auth",
         "configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml",
         "classical_tls_mutual",

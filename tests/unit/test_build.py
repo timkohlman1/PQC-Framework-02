@@ -1143,6 +1143,19 @@ def test_write_application_selection_rejects_unknown_uart_log_level(tmp_path):
     else:
         raise AssertionError("unknown UART log level should be rejected")
 
+
+
+def test_write_application_selection_supports_ready_metrics_2_and_uart_off(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["application"] = "mqtt_ready_metrics_2"
+    bundle["experiment"]["firmware"]["uart_log_level"] = "off"
+    path, application = build._write_application_selection(bundle, tmp_path, "Release")
+    assert application == "mqtt_ready_metrics_2"
+    text = path.read_text(encoding="utf-8")
+    assert 'set(PQC_STM32_MQTT_APPLICATION "mqtt_ready_metrics_2")' in text
+    assert 'set(PQC_UART_LOG_LEVEL "off")' in text
+
 def test_write_application_selection_rejects_unknown_application(tmp_path):
     build = load_build_module()
     bundle = sample_bundle()

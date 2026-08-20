@@ -87,7 +87,12 @@ typedef struct {
     unsigned int tls_send_calls;
     unsigned int tls_recv_bytes;
     unsigned int tls_send_bytes;
+    PQC_WolfMQTTReadyMetrics2Snapshot *ready_metrics_2;
+    bool mqtt_first_response_armed;
+    bool suppress_success_diagnostics;
 } PQC_WolfMQTTSocketContext;
+
+static PQC_WolfMQTTReadyMetrics2Snapshot s_ready_metrics_2_snapshot;
 
 typedef struct {
     bool received;
@@ -661,17 +666,35 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         PQC_WolfMQTT_DiagnosticDnsServer();
     }
     result = PQC_WolfMQTT_ResolveBroker(
-        host, &address, !socket_context->tls_requested);
+        host, &address, !socket_context->tls_requested &&
+        !socket_context->suppress_success_diagnostics);
     address.sin_port = lwip_htons(port);
+    if ((result == 0) && (socket_context->ready_metrics_2 != NULL)) {
+        /* Paper-compatible TTFB starts at the TCP connection attempt. DNS is
+         * intentionally excluded so the measured interval is TCP + TLS +
+         * MQTT CONNECT request/first CONNACK response byte. */
+        socket_context->ready_metrics_2->ttfb_start_tick_ms = HAL_GetTick();
+    }
     if ((result != 0) ||
         (lwip_connect(socket_context->socket_fd, (struct sockaddr *)&address, sizeof(address)) != 0)) {
         PQC_WolfMQTT_CloseTransport(socket_context);
         return -1;
     }
     socket_context->tcp_connected = true;
+    if (socket_context->ready_metrics_2 != NULL) {
+        uint32_t connected_tick = HAL_GetTick();
+        PQC_WolfMQTTReadyMetrics2Snapshot *metrics = socket_context->ready_metrics_2;
+        metrics->tcp_connected_tick_ms = connected_tick;
+        metrics->tcp_connect_ms = connected_tick - metrics->ttfb_start_tick_ms;
+        metrics->firmware_boot_to_tcp_connect_ms =
+            connected_tick - metrics->firmware_boot_origin_tick_ms;
+        metrics->tcp_timing_valid = 1U;
+    }
     result = MQTT_CODE_SUCCESS;
     if (!socket_context->tls_requested) {
-        PQC_WolfMQTT_DiagnosticCode("tcp_connect", result, 0);
+        if (!socket_context->suppress_success_diagnostics) {
+            PQC_WolfMQTT_DiagnosticCode("tcp_connect", result, 0);
+        }
         return MQTT_CODE_SUCCESS;
     }
 
@@ -837,11 +860,24 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
             (uint32_t)heap_after_free,
             (uint32_t)heap_after_min);
 
-        /* Reporting is intentionally deferred until the handshake interval has
-         * ended and the post-handshake memory samples have been captured. */
-        PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);
+        /* Ready Metrics 1 reports here, after the handshake interval. Ready
+         * Metrics 2 defers formatting/UART until its broader TTFB and ready
+         * publication intervals have both ended. */
+        if (!socket_context->suppress_success_diagnostics ||
+            (result != WOLFSSL_SUCCESS)) {
+            PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);
+        }
     }
     socket_context->tls_connect_result = result;
+    if ((result == WOLFSSL_SUCCESS) && (socket_context->ready_metrics_2 != NULL)) {
+        const PQC_TLSInstrumentationSnapshot *tls_metrics =
+            PQC_TLS_InstrumentationSnapshot();
+        PQC_WolfMQTTReadyMetrics2Snapshot *metrics = socket_context->ready_metrics_2;
+        metrics->tls_complete_tick_ms = tls_metrics->handshake_end_tick_ms;
+        metrics->firmware_boot_to_tls_complete_ms =
+            metrics->tls_complete_tick_ms - metrics->firmware_boot_origin_tick_ms;
+        metrics->tls_timing_valid = 1U;
+    }
     if (result != WOLFSSL_SUCCESS) {
         int error = wolfSSL_get_error(socket_context->tls, result);
         char marker[224];
@@ -860,24 +896,30 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         PQC_WolfMQTT_CloseTransport(socket_context);
         return error == 0 ? -1 : -error;
     }
-    PQC_WolfMQTT_DiagnosticCode("handshake", result, 0);
+    if (!socket_context->suppress_success_diagnostics) {
+        PQC_WolfMQTT_DiagnosticCode("handshake", result, 0);
+    }
     socket_context->tls_handshake_complete = true;
     if (socket_context->tls_requested) {
         const char *curve_name = wolfSSL_get_curve_name(socket_context->tls);
         char marker[224];
         socket_context->pqc_group_negotiated =
             PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name);
-        (void)snprintf(marker, sizeof(marker),
-            "wolfMQTT TLS: protocol=TLSv1.3 configured_group=%s negotiated_group=%s key_exchange_group=%s\r\n",
-            PQC_TLS_GROUP_NAME, curve_name != NULL ? curve_name : "unavailable",
-            socket_context->pqc_group_negotiated ? "passed" : "failed");
-        PQC_WolfMQTT_DiagnosticMarker(marker);
+        if (!socket_context->suppress_success_diagnostics) {
+            (void)snprintf(marker, sizeof(marker),
+                "wolfMQTT TLS: protocol=TLSv1.3 configured_group=%s negotiated_group=%s key_exchange_group=%s\r\n",
+                PQC_TLS_GROUP_NAME, curve_name != NULL ? curve_name : "unavailable",
+                socket_context->pqc_group_negotiated ? "passed" : "failed");
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+        }
         if (!socket_context->pqc_group_negotiated) {
             PQC_WolfMQTT_CloseTransport(socket_context);
             return MQTT_CODE_ERROR_TLS_CONNECT;
         }
     }
-    PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
+    if (!socket_context->suppress_success_diagnostics) {
+        PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
+    }
     return MQTT_CODE_SUCCESS;
 #else
     PQC_WolfMQTT_CloseTransport(socket_context);
@@ -888,12 +930,31 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
 static int PQC_WolfMQTT_LwIPRead(void *context, byte *buffer, int length, int timeout_ms)
 {
     PQC_WolfMQTTSocketContext *c = context;
+    int result;
     if ((c == NULL) || (c->socket_fd < 0)) return -1;
     (void)PQC_WolfMQTT_SetTimeout(c->socket_fd, SO_RCVTIMEO, timeout_ms);
 #if PQC_TLS_COMPILED
-    if (c->tls_requested) return wolfSSL_read(c->tls, buffer, length);
+    if (c->tls_requested) {
+        result = wolfSSL_read(c->tls, buffer, length);
+    }
+    else
 #endif
-    return lwip_recv(c->socket_fd, buffer, (size_t)length, 0);
+    {
+        result = lwip_recv(c->socket_fd, buffer, (size_t)length, 0);
+    }
+
+    if ((result > 0) && c->mqtt_first_response_armed &&
+        (c->ready_metrics_2 != NULL) &&
+        (c->ready_metrics_2->mqtt_first_response_valid == 0U)) {
+        uint32_t first_byte_tick = HAL_GetTick();
+        PQC_WolfMQTTReadyMetrics2Snapshot *metrics = c->ready_metrics_2;
+        metrics->mqtt_first_response_tick_ms = first_byte_tick;
+        metrics->ttfb_ms = first_byte_tick - metrics->ttfb_start_tick_ms;
+        metrics->firmware_boot_to_mqtt_first_response_ms =
+            first_byte_tick - metrics->firmware_boot_origin_tick_ms;
+        metrics->mqtt_first_response_valid = 1U;
+    }
+    return result;
 }
 
 static int PQC_WolfMQTT_LwIPWrite(void *context, const byte *buffer, int length, int timeout_ms)
@@ -1101,6 +1162,342 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
             mark_complete();
         }
     }
+cleanup_mqtt:
+    (void)MqttClient_Disconnect(&client);
+cleanup_network:
+    (void)MqttClient_NetDisconnect(&client);
+cleanup_client:
+    MqttClient_DeInit(&client);
+cleanup_tls:
+#if PQC_TLS_COMPILED
+    if (socket_context.tls_requested) (void)wolfSSL_Cleanup();
+#endif
+    return result;
+}
+
+
+const PQC_WolfMQTTReadyMetrics2Snapshot *PQC_WolfMQTT_ReadyMetrics2Snapshot(void)
+{
+    return &s_ready_metrics_2_snapshot;
+}
+
+static int PQC_WolfMQTT_AppendTimingRecord(
+    char *buffer,
+    size_t buffer_size,
+    size_t *offset,
+    const PQC_TLSTimingAggregate *timing,
+    bool prepend_comma)
+{
+    int written;
+    if ((buffer == NULL) || (offset == NULL) ||
+        (timing == NULL) || (*offset >= buffer_size)) {
+        return -1;
+    }
+    /* Records are emitted in the stable enum order documented by the schema.
+     * Omitting repeated names keeps every MQTT payload below the existing
+     * 512-byte wolfMQTT buffer without increasing firmware RAM usage. */
+    written = snprintf(buffer + *offset, buffer_size - *offset,
+        "%s[%lu,%lu,%lu,%lu,%lu,%lu]",
+        prepend_comma ? "," : "",
+        (unsigned long)timing->count,
+        (unsigned long)timing->total_cycles,
+        (unsigned long)timing->min_cycles,
+        (unsigned long)timing->max_cycles,
+        (unsigned long)timing->first_start_cycle,
+        (unsigned long)timing->last_end_cycle);
+    if ((written <= 0) || ((size_t)written >= (buffer_size - *offset))) {
+        return -1;
+    }
+    *offset += (size_t)written;
+    return 0;
+}
+
+static int PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(
+    MqttClient *client,
+    word16 packet_id,
+    unsigned int part,
+    unsigned int first,
+    unsigned int last)
+{
+    char payload[PQC_WOLFMQTT_BUFFER_SIZE];
+    size_t offset;
+    unsigned int index;
+    int written;
+    const PQC_TLSInstrumentationSnapshot *tls = PQC_TLS_InstrumentationSnapshot();
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"tls_primitive_timing\",\"schema_version\":1,"
+        "\"part\":%u,\"first_index\":%u,\"last_index\":%u,\"values\":[",
+        part, first, last);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    offset = (size_t)written;
+
+    for (index = first; index <= last; ++index) {
+        if (PQC_WolfMQTT_AppendTimingRecord(payload, sizeof(payload), &offset,
+                &tls->primitives[index], index != first) != 0) {
+            return -1;
+        }
+    }
+    if (offset + 3U >= sizeof(payload)) return -1;
+    payload[offset++] = ']';
+    payload[offset++] = '}';
+    payload[offset] = '\0';
+    return PQC_WolfMQTT_PublishText(client, payload, packet_id);
+}
+
+static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
+    MqttClient *client,
+    const PQC_WolfMQTTSocketContext *socket_context)
+{
+    char payload[PQC_WOLFMQTT_BUFFER_SIZE];
+    size_t offset;
+    unsigned int index;
+    int written;
+    int result;
+    const PQC_WolfMQTTReadyMetrics2Snapshot *metrics = &s_ready_metrics_2_snapshot;
+    const PQC_TLSInstrumentationSnapshot *tls = PQC_TLS_InstrumentationSnapshot();
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"experiment_timing\",\"schema_version\":1,"
+        "\"ttfb_definition\":\"tcp_connect_start_to_first_mqtt_connack_plaintext_byte\","
+        "\"dns_included\":false,\"tcp_connect_ms\":%lu,\"ttfb_ms\":%lu,"
+        "\"mqtt_connect_ms\":%lu,\"legacy_connect_timing_ms\":%lu,"
+        "\"tls_timing_valid\":%u,\"first_response_valid\":%u}",
+        (unsigned long)metrics->tcp_connect_ms,
+        (unsigned long)metrics->ttfb_ms,
+        (unsigned long)metrics->mqtt_connect_ms,
+        (unsigned long)metrics->legacy_connect_timing_ms,
+        (unsigned int)metrics->tls_timing_valid,
+        (unsigned int)metrics->mqtt_first_response_valid);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    result = PQC_WolfMQTT_PublishText(client, payload, 6U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"boot_timing\",\"schema_version\":1,"
+        "\"firmware_boot_origin\":\"post_hal_init\","
+        "\"boot_to_tcp_connect_ms\":%lu,\"boot_to_tls_complete_ms\":%lu,"
+        "\"boot_to_mqtt_first_response_ms\":%lu,\"boot_to_mqtt_connected_ms\":%lu,"
+        "\"boot_to_ready_publish_ms\":%lu}",
+        (unsigned long)metrics->firmware_boot_to_tcp_connect_ms,
+        (unsigned long)metrics->firmware_boot_to_tls_complete_ms,
+        (unsigned long)metrics->firmware_boot_to_mqtt_first_response_ms,
+        (unsigned long)metrics->firmware_boot_to_mqtt_connected_ms,
+        (unsigned long)metrics->firmware_boot_to_ready_publish_ms);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    result = PQC_WolfMQTT_PublishText(client, payload, 7U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"tls_handshake_timing\",\"schema_version\":1,"
+        "\"available\":%u,\"result\":%d,\"cycle_counter_available\":%u,"
+        "\"elapsed_cycles\":%lu,\"elapsed_ms\":%lu,"
+        "\"stack_before_min_free_bytes\":%lu,\"stack_after_min_free_bytes\":%lu,"
+        "\"heap_before_free_bytes\":%lu,\"heap_after_free_bytes\":%lu,"
+        "\"heap_before_min_ever_free_bytes\":%lu,\"heap_after_min_ever_free_bytes\":%lu}",
+        socket_context->tls_requested ? 1U : 0U,
+        tls->handshake_result,
+        (unsigned int)tls->cycle_counter_available,
+        (unsigned long)tls->handshake_elapsed_cycles,
+        (unsigned long)tls->handshake_elapsed_ms,
+        (unsigned long)tls->stack_before_min_free_bytes,
+        (unsigned long)tls->stack_after_min_free_bytes,
+        (unsigned long)tls->heap_before_free_bytes,
+        (unsigned long)tls->heap_after_free_bytes,
+        (unsigned long)tls->heap_before_min_ever_free_bytes,
+        (unsigned long)tls->heap_after_min_ever_free_bytes);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    result = PQC_WolfMQTT_PublishText(client, payload, 8U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"tls_phase_timing\",\"schema_version\":1,\"values\":[");
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    offset = (size_t)written;
+    for (index = 0U; index < (unsigned int)PQC_TLS_PHASE_COUNT; ++index) {
+        if (PQC_WolfMQTT_AppendTimingRecord(payload, sizeof(payload), &offset,
+                &tls->phases[index], index != 0U) != 0) {
+            return -1;
+        }
+    }
+    if (offset + 3U >= sizeof(payload)) return -1;
+    payload[offset++] = ']'; payload[offset++] = '}'; payload[offset] = '\0';
+    result = PQC_WolfMQTT_PublishText(client, payload, 9U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 10U, 1U, 0U, 3U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 11U, 2U, 4U, 7U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 12U, 3U, 8U, 11U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 13U, 4U, 12U, 15U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 14U, 5U, 16U, 19U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(
+        client, 15U, 6U, 20U, (unsigned int)PQC_TLS_PRIMITIVE_COUNT - 1U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"tls_x509_verify_timing\",\"schema_version\":1,"
+        "\"count\":%u,\"overflow\":%u,\"elapsed_cycles\":[%lu,%lu,%lu,%lu]}",
+        (unsigned int)tls->x509_verify_invocation_count,
+        (unsigned int)tls->x509_verify_invocation_overflow,
+        (unsigned long)tls->x509_verify_invocations[0].elapsed_cycles,
+        (unsigned long)tls->x509_verify_invocations[1].elapsed_cycles,
+        (unsigned long)tls->x509_verify_invocations[2].elapsed_cycles,
+        (unsigned long)tls->x509_verify_invocations[3].elapsed_cycles);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    result = PQC_WolfMQTT_PublishText(client, payload, 16U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":1,"
+        "\"status\":\"success\",\"message_count\":16}");
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    return PQC_WolfMQTT_PublishText(client, payload, 17U);
+}
+
+int PQC_WolfMQTT_RunReadyMetrics2Application(
+    void (*mark_complete)(void),
+    uint32_t firmware_boot_origin_tick_ms)
+{
+    MqttClient client; MqttNet network; MqttConnect connect;
+    PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
+    byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
+    char payload[224]; char marker[256];
+    TickType_t legacy_connect_started, legacy_connect_finished, last_wake;
+    unsigned int metrics_count = 0U; int result;
+
+    memset(&s_ready_metrics_2_snapshot, 0, sizeof(s_ready_metrics_2_snapshot));
+    s_ready_metrics_2_snapshot.schema_version = 1U;
+    s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms =
+        firmware_boot_origin_tick_ms;
+
+    memset(&client, 0, sizeof(client)); memset(&network, 0, sizeof(network));
+    memset(&socket_context, 0, sizeof(socket_context)); memset(&message_context, 0, sizeof(message_context));
+    socket_context.socket_fd = -1;
+    socket_context.tls_requested = PQC_WolfMQTT_TLSRequested();
+    socket_context.ready_metrics_2 = &s_ready_metrics_2_snapshot;
+    socket_context.suppress_success_diagnostics = true;
+    network.context = &socket_context; network.connect = PQC_WolfMQTT_LwIPConnect;
+    network.read = PQC_WolfMQTT_LwIPRead; network.write = PQC_WolfMQTT_LwIPWrite;
+    network.disconnect = PQC_WolfMQTT_LwIPDisconnect;
+
+#if PQC_TLS_COMPILED
+    if (socket_context.tls_requested && (wolfSSL_Init() != WOLFSSL_SUCCESS)) return MQTT_CODE_ERROR_TLS_CONNECT;
+#endif
+    result = MqttClient_Init(&client, &network, PQC_WolfMQTT_MessageCallback,
+        tx, sizeof(tx), rx, sizeof(rx), PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_tls;
+    client.ctx = &message_context;
+
+    /* Legacy Ready Metrics timing is retained separately for continuity. The
+     * paper-comparable TTFB origin is captured later, immediately before the
+     * actual lwip_connect() call and therefore excludes DNS resolution. */
+    legacy_connect_started = xTaskGetTickCount();
+    result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST,
+        (word16)PQC_MQTT_BROKER_PORT, PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_client;
+
+    socket_context.mqtt_first_response_armed = true;
+    memset(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = PQC_WOLFMQTT_KEEPALIVE_SECONDS;
+    connect.clean_session = 1;
+    connect.client_id = PQC_MQTT_CLIENT_ID;
+    result = MqttClient_Connect(&client, &connect);
+    socket_context.mqtt_first_response_armed = false;
+    legacy_connect_finished = xTaskGetTickCount();
+    s_ready_metrics_2_snapshot.legacy_connect_timing_ms =
+        (uint32_t)((legacy_connect_finished - legacy_connect_started) * portTICK_PERIOD_MS);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_network;
+
+    s_ready_metrics_2_snapshot.mqtt_connected_tick_ms = HAL_GetTick();
+    s_ready_metrics_2_snapshot.mqtt_connect_ms =
+        s_ready_metrics_2_snapshot.mqtt_connected_tick_ms -
+        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
+    s_ready_metrics_2_snapshot.firmware_boot_to_mqtt_connected_ms =
+        s_ready_metrics_2_snapshot.mqtt_connected_tick_ms -
+        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.mqtt_connected_valid = 1U;
+
+    /* No wolfMQTT/TLS UART or diagnostic formatting is emitted from the TTFB
+     * origin through this ready publish. Earlier boot/network UART remains in
+     * the firmware-boot-to-ready interval while uart_log_level is not off, so
+     * benchmark-quality boot timing requires a later UART-off evidence path. */
+    result = PQC_WolfMQTT_PublishText(&client, "ready", 2U);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+    s_ready_metrics_2_snapshot.ready_published_tick_ms = HAL_GetTick();
+    s_ready_metrics_2_snapshot.measurement_complete_tick_ms =
+        s_ready_metrics_2_snapshot.ready_published_tick_ms;
+    s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms =
+        s_ready_metrics_2_snapshot.ready_published_tick_ms -
+        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.ready_publish_valid = 1U;
+
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_RM2_TTFB definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte "
+        "dns_included=0 ttfb_ms=%lu tcp_connect_ms=%lu mqtt_connect_ms=%lu "
+        "boot_to_mqtt_connected_ms=%lu boot_to_ready_publish_ms=%lu\r\n",
+        (unsigned long)s_ready_metrics_2_snapshot.ttfb_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.tcp_connect_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.mqtt_connect_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_mqtt_connected_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_PUBLISH sequence=1 type=ready result=0\r\n");
+
+    (void)snprintf(payload, sizeof(payload),
+        "{\"type\":\"connect_timing\",\"milliseconds\":%lu,\"tls_mode\":\"%s\"}",
+        (unsigned long)s_ready_metrics_2_snapshot.legacy_connect_timing_ms,
+        PQC_MQTT_TLS_MODE);
+    result = PQC_WolfMQTT_PublishText(&client, payload, 3U);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_APP_PUBLISH sequence=2 type=connect_timing duration_ms=%lu result=%d\r\n",
+        (unsigned long)s_ready_metrics_2_snapshot.legacy_connect_timing_ms, result);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+    last_wake = xTaskGetTickCount();
+    while (metrics_count < 2U) {
+        UBaseType_t stack_words; size_t heap_free, heap_min;
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U));
+        metrics_count++;
+        stack_words = uxTaskGetStackHighWaterMark(NULL);
+        heap_free = xPortGetFreeHeapSize();
+        heap_min = xPortGetMinimumEverFreeHeapSize();
+        (void)snprintf(payload, sizeof(payload),
+            "{\"type\":\"memory_metrics\",\"sequence\":%u,\"stack_high_water_words\":%lu,\"heap_free_bytes\":%lu,\"heap_min_ever_bytes\":%lu}",
+            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free,
+            (unsigned long)heap_min);
+        result = PQC_WolfMQTT_PublishText(&client, payload, (word16)(3U + metrics_count));
+        if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+    }
+
+    /* Export the RAM-resident benchmark record only after the timed workload
+     * and its two compatibility memory samples have completed. */
+    result = PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(&client, &socket_context);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_APP_PUBLISH sequence=16 type=ready_metrics_2_complete result=%d\r\n",
+        result);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+#if PQC_TLS_COMPILED
+    if (socket_context.tls_requested) {
+        PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);
+        PQC_WolfMQTT_DiagnosticMarker(
+            "wolfMQTT TLS: stage=handshake result=1 error=0\r\n");
+        PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
+    }
+#endif
+
+    if (mark_complete != NULL) mark_complete();
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000U));
+    }
+
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);
 cleanup_network:
