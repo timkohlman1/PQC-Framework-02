@@ -1,5 +1,5 @@
 id: ready_metrics_2_mqtt_tls_SecP256r1MLKEM768_mldsa65_mutual_auth_st67_e2e
-description: Ready Metrics 2 variant with paper-comparable MQTT TTFB and RAM-backed timing evidence. Ready/connection-timing/periodic-memory application profile using SecP256r1MLKEM768 ML-DSA-65 mutual-authenticated MQTT over TLS 1.3 from STM32 through ST67W61M1 to the gateway broker.
+description: Ready Metrics 2 profile with paper-aligned broker-to-STM32 application TTLB, MQTT connection TTFB, firmware-boot, TLS, primitive, and memory instrumentation.
 board: board_a
 host: gateway
 boot: direct_flash
@@ -33,6 +33,12 @@ mqtt:
     command: pqc/experiments/stm32/secp256r1mlkem768/mldsa65/mutual_auth/command
     response: pqc/experiments/stm32/secp256r1mlkem768/mldsa65/mutual_auth/response
   command_payload: run
+  transfer:
+    payload_bytes: 204800
+    chunk_bytes: 400
+    request_topic: pqc/experiments/stm32/secp256r1mlkem768/mldsa65/mutual_auth/response/transfer/request
+    response_topic: pqc/experiments/stm32/secp256r1mlkem768/mldsa65/mutual_auth/response/transfer/response
+    request_payload: send
   correlation_payload: pqc-stm32-secp256r1mlkem768-mldsa65-mtls-e2e-ok
   reconnect_attempts: 1
   orchestration:
@@ -50,10 +56,13 @@ mqtt:
     timing_contract:
       ttfb_start: immediately_before_lwip_connect_after_dns
       ttfb_end: first_plaintext_byte_returned_while_receiving_mqtt_connack
+      application_ttfb_end: first_byte_of_requested_application_payload
+      ttlb_start: immediately_before_lwip_connect_after_dns
+      ttlb_end: last_byte_of_requested_application_payload
+      ttlb_direction: broker_to_stm32
       firmware_boot_origin: first_hal_tick_immediately_after_hal_init
     unavailable_metrics:
       latency_ms: No synchronized end-to-end latency metric is recorded.
-      throughput_bytes_per_second: The bounded control exchange does not establish throughput.
 uart:
   expected_boot_message: stm32-basic_hal1 boot v0.1.0
   expected_tick_message: tick

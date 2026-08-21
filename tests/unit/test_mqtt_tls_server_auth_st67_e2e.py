@@ -195,7 +195,7 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
+    assert 'expected_response_count = 17 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
     assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source

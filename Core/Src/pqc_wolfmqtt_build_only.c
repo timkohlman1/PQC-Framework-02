@@ -51,6 +51,21 @@
 #ifndef PQC_MQTT_TLS_CLIENT_KEY_PEM
 #define PQC_MQTT_TLS_CLIENT_KEY_PEM ""
 #endif
+#ifndef PQC_MQTT_TRANSFER_REQUEST_TOPIC
+#define PQC_MQTT_TRANSFER_REQUEST_TOPIC "pqc/stm32/transfer/request"
+#endif
+#ifndef PQC_MQTT_TRANSFER_RESPONSE_TOPIC
+#define PQC_MQTT_TRANSFER_RESPONSE_TOPIC "pqc/stm32/transfer/response"
+#endif
+#ifndef PQC_MQTT_TRANSFER_REQUEST_PAYLOAD
+#define PQC_MQTT_TRANSFER_REQUEST_PAYLOAD "send"
+#endif
+#ifndef PQC_MQTT_TRANSFER_PAYLOAD_BYTES
+#define PQC_MQTT_TRANSFER_PAYLOAD_BYTES 204800U
+#endif
+#ifndef PQC_MQTT_TRANSFER_CHUNK_BYTES
+#define PQC_MQTT_TRANSFER_CHUNK_BYTES 400U
+#endif
 #define PQC_WOLFMQTT_BUFFER_SIZE 512
 #ifndef PQC_WOLFMQTT_COMMAND_TIMEOUT_MS
 #define PQC_WOLFMQTT_COMMAND_TIMEOUT_MS 30000
@@ -96,8 +111,16 @@ static PQC_WolfMQTTReadyMetrics2Snapshot s_ready_metrics_2_snapshot;
 
 typedef struct {
     bool received;
+    bool transfer_mode;
     char payload[PQC_WOLFMQTT_BUFFER_SIZE];
     size_t payload_length;
+    uint32_t transfer_expected_bytes;
+    uint32_t transfer_received_bytes;
+    uint32_t transfer_message_count;
+    uint32_t transfer_first_byte_tick_ms;
+    uint32_t transfer_last_byte_tick_ms;
+    bool transfer_first_byte_valid;
+    bool transfer_complete;
 } PQC_WolfMQTTMessageContext;
 
 #if PQC_TLS_COMPILED
@@ -982,8 +1005,27 @@ static int PQC_WolfMQTT_MessageCallback(MqttClient *client, MqttMessage *message
 {
     PQC_WolfMQTTMessageContext *context = client == NULL ? NULL : client->ctx;
     size_t available, copy_length;
-    (void)msg_new;
     if ((context == NULL) || (message == NULL)) return MQTT_CODE_ERROR_BAD_ARG;
+
+    if (context->transfer_mode) {
+        if ((message->buffer_len > 0U) && !context->transfer_first_byte_valid) {
+            context->transfer_first_byte_tick_ms = HAL_GetTick();
+            context->transfer_first_byte_valid = true;
+        }
+        if (message->buffer_len > 0U) {
+            context->transfer_received_bytes += (uint32_t)message->buffer_len;
+            context->transfer_last_byte_tick_ms = HAL_GetTick();
+        }
+        if (msg_done != 0U) {
+            context->transfer_message_count++;
+        }
+        if (context->transfer_received_bytes >= context->transfer_expected_bytes) {
+            context->transfer_complete = true;
+        }
+        return MQTT_CODE_SUCCESS;
+    }
+
+    (void)msg_new;
     available = sizeof(context->payload) - 1U - context->payload_length;
     copy_length = message->buffer_len < available ? message->buffer_len : available;
     if (copy_length > 0U) {
@@ -1278,11 +1320,14 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
         "\"firmware_boot_origin\":\"post_hal_init\","
         "\"boot_to_tcp_connect_ms\":%lu,\"boot_to_tls_complete_ms\":%lu,"
         "\"boot_to_mqtt_first_response_ms\":%lu,\"boot_to_mqtt_connected_ms\":%lu,"
+        "\"boot_to_application_first_byte_ms\":%lu,\"boot_to_application_last_byte_ms\":%lu,"
         "\"boot_to_ready_publish_ms\":%lu}",
         (unsigned long)metrics->firmware_boot_to_tcp_connect_ms,
         (unsigned long)metrics->firmware_boot_to_tls_complete_ms,
         (unsigned long)metrics->firmware_boot_to_mqtt_first_response_ms,
         (unsigned long)metrics->firmware_boot_to_mqtt_connected_ms,
+        (unsigned long)metrics->firmware_boot_to_application_first_byte_ms,
+        (unsigned long)metrics->firmware_boot_to_application_last_byte_ms,
         (unsigned long)metrics->firmware_boot_to_ready_publish_ms);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     result = PQC_WolfMQTT_PublishText(client, payload, 7U);
@@ -1353,10 +1398,33 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":1,"
-        "\"status\":\"success\",\"message_count\":16}");
+        "{\"type\":\"application_transfer_timing\",\"schema_version\":1,"
+        "\"ttlb_definition\":\"tcp_connect_start_to_last_byte_of_requested_application_payload\","
+        "\"direction\":\"broker_to_stm32\",\"payload_bytes\":%lu,"
+        "\"received_bytes\":%lu,\"message_count\":%lu,\"chunk_bytes\":%u,"
+        "\"application_ttfb_ms\":%lu,\"ttlb_ms\":%lu,"
+        "\"request_to_first_byte_ms\":%lu,\"application_transfer_ms\":%lu,"
+        "\"first_byte_valid\":%u,\"last_byte_valid\":%u,\"complete_valid\":%u}",
+        (unsigned long)metrics->transfer_payload_bytes,
+        (unsigned long)metrics->transfer_received_bytes,
+        (unsigned long)metrics->transfer_message_count,
+        (unsigned int)PQC_MQTT_TRANSFER_CHUNK_BYTES,
+        (unsigned long)metrics->application_ttfb_ms,
+        (unsigned long)metrics->ttlb_ms,
+        (unsigned long)metrics->application_request_to_first_byte_ms,
+        (unsigned long)metrics->application_transfer_ms,
+        (unsigned int)metrics->application_first_byte_valid,
+        (unsigned int)metrics->application_last_byte_valid,
+        (unsigned int)metrics->transfer_complete_valid);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    return PQC_WolfMQTT_PublishText(client, payload, 17U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 17U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":1,"
+        "\"status\":\"success\",\"message_count\":17}");
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    return PQC_WolfMQTT_PublishText(client, payload, 18U);
 }
 
 int PQC_WolfMQTT_RunReadyMetrics2Application(
@@ -1364,6 +1432,7 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     uint32_t firmware_boot_origin_tick_ms)
 {
     MqttClient client; MqttNet network; MqttConnect connect;
+    MqttSubscribe transfer_subscribe; MqttTopic transfer_topic; MqttPublish transfer_request;
     PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
     byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
     char payload[224]; char marker[256];
@@ -1422,15 +1491,93 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
         s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
     s_ready_metrics_2_snapshot.mqtt_connected_valid = 1U;
 
-    /* No wolfMQTT/TLS UART or diagnostic formatting is emitted from the TTFB
-     * origin through this ready publish. Earlier boot/network UART remains in
-     * the firmware-boot-to-ready interval while uart_log_level is not off, so
-     * benchmark-quality boot timing requires a later UART-off evidence path. */
-    result = PQC_WolfMQTT_PublishText(&client, "ready", 2U);
+    /* Paper-aligned TTLB workload. The application requests a fixed amount of
+     * data and the broker-side responder sends that payload back over this
+     * already-established MQTT/TLS connection. The TTLB origin remains the
+     * TCP connect start, matching Kampanakis/Childs-Klein. No application
+     * diagnostics or result formatting occurs until the final response byte
+     * has been received. */
+    memset(&transfer_topic, 0, sizeof(transfer_topic));
+    transfer_topic.topic_filter = PQC_MQTT_TRANSFER_RESPONSE_TOPIC;
+    transfer_topic.qos = MQTT_QOS_0;
+    memset(&transfer_subscribe, 0, sizeof(transfer_subscribe));
+    transfer_subscribe.packet_id = 2U;
+    transfer_subscribe.topic_count = 1;
+    transfer_subscribe.topics = &transfer_topic;
+    result = MqttClient_Subscribe(&client, &transfer_subscribe);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+    message_context.transfer_mode = true;
+    message_context.transfer_expected_bytes = (uint32_t)PQC_MQTT_TRANSFER_PAYLOAD_BYTES;
+    message_context.transfer_received_bytes = 0U;
+    message_context.transfer_message_count = 0U;
+    message_context.transfer_first_byte_valid = false;
+    message_context.transfer_complete = false;
+
+    memset(&transfer_request, 0, sizeof(transfer_request));
+    transfer_request.topic_name = PQC_MQTT_TRANSFER_REQUEST_TOPIC;
+    transfer_request.qos = MQTT_QOS_0;
+    transfer_request.packet_id = 3U;
+    transfer_request.buffer = (byte *)PQC_MQTT_TRANSFER_REQUEST_PAYLOAD;
+    transfer_request.total_len = (word32)strlen(PQC_MQTT_TRANSFER_REQUEST_PAYLOAD);
+
+    s_ready_metrics_2_snapshot.application_request_tick_ms = HAL_GetTick();
+    result = MqttClient_Publish(&client, &transfer_request);
+    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+
+    while (!message_context.transfer_complete) {
+        result = MqttClient_WaitMessage(&client, PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+        if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+    }
+
+    if ((message_context.transfer_received_bytes !=
+            (uint32_t)PQC_MQTT_TRANSFER_PAYLOAD_BYTES) ||
+        !message_context.transfer_first_byte_valid) {
+        result = -1;
+        goto cleanup_mqtt;
+    }
+
+    s_ready_metrics_2_snapshot.application_first_byte_tick_ms =
+        message_context.transfer_first_byte_tick_ms;
+    s_ready_metrics_2_snapshot.application_last_byte_tick_ms =
+        message_context.transfer_last_byte_tick_ms;
+    s_ready_metrics_2_snapshot.application_ttfb_ms =
+        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
+        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
+    s_ready_metrics_2_snapshot.ttlb_ms =
+        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
+        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
+    s_ready_metrics_2_snapshot.application_request_to_first_byte_ms =
+        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
+        s_ready_metrics_2_snapshot.application_request_tick_ms;
+    s_ready_metrics_2_snapshot.application_transfer_ms =
+        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
+        s_ready_metrics_2_snapshot.application_first_byte_tick_ms;
+    s_ready_metrics_2_snapshot.transfer_payload_bytes =
+        (uint32_t)PQC_MQTT_TRANSFER_PAYLOAD_BYTES;
+    s_ready_metrics_2_snapshot.transfer_received_bytes =
+        message_context.transfer_received_bytes;
+    s_ready_metrics_2_snapshot.transfer_message_count =
+        message_context.transfer_message_count;
+    s_ready_metrics_2_snapshot.firmware_boot_to_application_first_byte_ms =
+        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
+        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.firmware_boot_to_application_last_byte_ms =
+        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
+        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.application_first_byte_valid = 1U;
+    s_ready_metrics_2_snapshot.application_last_byte_valid = 1U;
+    s_ready_metrics_2_snapshot.transfer_complete_valid = 1U;
+    s_ready_metrics_2_snapshot.measurement_complete_tick_ms =
+        s_ready_metrics_2_snapshot.application_last_byte_tick_ms;
+    message_context.transfer_mode = false;
+
+    /* Compatibility evidence is published only after the paper-aligned
+     * transfer has finished so it cannot warm the TCP congestion window or
+     * otherwise perturb the measured TTLB. */
+    result = PQC_WolfMQTT_PublishText(&client, "ready", 4U);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
     s_ready_metrics_2_snapshot.ready_published_tick_ms = HAL_GetTick();
-    s_ready_metrics_2_snapshot.measurement_complete_tick_ms =
-        s_ready_metrics_2_snapshot.ready_published_tick_ms;
     s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms =
         s_ready_metrics_2_snapshot.ready_published_tick_ms -
         s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
@@ -1445,6 +1592,17 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
         (unsigned long)s_ready_metrics_2_snapshot.mqtt_connect_ms,
         (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_mqtt_connected_ms,
         (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_RM2_TTLB definition=tcp_connect_start_to_last_byte_of_requested_application_payload "
+        "direction=broker_to_stm32 payload_bytes=%lu received_bytes=%lu messages=%lu "
+        "application_ttfb_ms=%lu ttlb_ms=%lu transfer_ms=%lu\r\n",
+        (unsigned long)s_ready_metrics_2_snapshot.transfer_payload_bytes,
+        (unsigned long)s_ready_metrics_2_snapshot.transfer_received_bytes,
+        (unsigned long)s_ready_metrics_2_snapshot.transfer_message_count,
+        (unsigned long)s_ready_metrics_2_snapshot.application_ttfb_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.ttlb_ms,
+        (unsigned long)s_ready_metrics_2_snapshot.application_transfer_ms);
     PQC_WolfMQTT_DiagnosticMarker(marker);
     PQC_WolfMQTT_DiagnosticMarker("PQC_APP_PUBLISH sequence=1 type=ready result=0\r\n");
 
@@ -1479,7 +1637,7 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
      * and its two compatibility memory samples have completed. */
     result = PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(&client, &socket_context);
     (void)snprintf(marker, sizeof(marker),
-        "PQC_APP_PUBLISH sequence=16 type=ready_metrics_2_complete result=%d\r\n",
+        "PQC_APP_PUBLISH sequence=17 type=ready_metrics_2_complete result=%d\r\n",
         result);
     PQC_WolfMQTT_DiagnosticMarker(marker);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;

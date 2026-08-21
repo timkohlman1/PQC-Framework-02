@@ -41,6 +41,13 @@ def test_ready_metrics_2_matrix_selects_new_application_and_requested_wifi_passw
             "ttfb_end: first_plaintext_byte_returned_while_receiving_mqtt_connack"
             in text
         )
+        assert "payload_bytes: 204800" in text
+        assert "chunk_bytes: 400" in text
+        assert "ttlb_start: immediately_before_lwip_connect_after_dns" in text
+        assert "ttlb_end: last_byte_of_requested_application_payload" in text
+        assert "ttlb_direction: broker_to_stm32" in text
+        assert "/transfer/request" in text
+        assert "/transfer/response" in text
         assert (
             "firmware_boot_origin: first_hal_tick_immediately_after_hal_init"
             in text
@@ -80,5 +87,10 @@ def test_ready_metrics_2_runner_targets_only_ready_metrics_2_directory():
     )
     assert '/ "ready_metrics_2"' in source
     assert '/ "ready_metrics"' not in source
+    assert 'experiment_cli = repo_root / "scripts" / "experiment.py"' in source
+    assert "sys.executable" in source
     assert '"run"' in source
     assert '"--experiment"' in source
+    assert '"experiment-gateway"' not in source
+    assert '"powershell.exe"' not in source
+    assert 'os.name != "nt"' not in source

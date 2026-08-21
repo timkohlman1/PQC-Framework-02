@@ -296,6 +296,7 @@ def _certificate_requires_ecc(bundle: dict[str, dict[str, Any]]) -> bool:
     experiment = bundle.get("experiment", {})
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    transfer = mqtt.get("transfer", {}) if isinstance(mqtt, dict) else {}
     mode = str(tls.get("mode", "plaintext")).strip()
     certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
     if mode == "plaintext":
@@ -409,6 +410,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
     topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
+    transfer = mqtt.get("transfer", {}) if isinstance(mqtt, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
     ca_pem = ""
@@ -486,6 +488,11 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
         f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_REQUEST_TOPIC "{esc(str(transfer.get("request_topic", "pqc/stm32/transfer/request")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_RESPONSE_TOPIC "{esc(str(transfer.get("response_topic", "pqc/stm32/transfer/response")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_REQUEST_PAYLOAD "{esc(str(transfer.get("request_payload", "send")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_PAYLOAD_BYTES {int(transfer.get("payload_bytes", 204800))}U\n'
+        f'#define PQC_MQTT_TRANSFER_CHUNK_BYTES {int(transfer.get("chunk_bytes", 400))}U\n'
         f'#define PQC_MQTT_CORRELATION_PAYLOAD "{esc(str(mqtt.get("correlation_payload", "pqc-e2e")))}"\n'
         f'#define PQC_MQTT_TLS_MODE "{esc(str(tls.get("mode", "plaintext")))}"\n'
         f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'

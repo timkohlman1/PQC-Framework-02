@@ -320,6 +320,8 @@ def _parse_ready_metrics_2_subscriber_output(
         "boot_to_tls_complete_ms",
         "boot_to_mqtt_first_response_ms",
         "boot_to_mqtt_connected_ms",
+        "boot_to_application_first_byte_ms",
+        "boot_to_application_last_byte_ms",
         "boot_to_ready_publish_ms",
     )
     boot_fields_are_non_negative = (
@@ -333,7 +335,9 @@ def _parse_ready_metrics_2_subscriber_output(
     tls_timing_valid = timing_message.get("tls_timing_valid")
     if tls_timing_valid == 1:
         boot_order_valid = (
-            boot_message["boot_to_mqtt_connected_ms"]
+            boot_message["boot_to_application_last_byte_ms"]
+            >= boot_message["boot_to_application_first_byte_ms"]
+            >= boot_message["boot_to_mqtt_connected_ms"]
             >= boot_message["boot_to_mqtt_first_response_ms"]
             >= boot_message["boot_to_tls_complete_ms"]
             >= boot_message["boot_to_tcp_connect_ms"]
@@ -344,7 +348,9 @@ def _parse_ready_metrics_2_subscriber_output(
         # ordering without inventing a synthetic TLS boundary.
         boot_order_valid = (
             boot_message["boot_to_tls_complete_ms"] == 0
-            and boot_message["boot_to_mqtt_connected_ms"]
+            and boot_message["boot_to_application_last_byte_ms"]
+            >= boot_message["boot_to_application_first_byte_ms"]
+            >= boot_message["boot_to_mqtt_connected_ms"]
             >= boot_message["boot_to_mqtt_first_response_ms"]
             >= boot_message["boot_to_tcp_connect_ms"]
         ) if boot_fields_are_non_negative else False
@@ -357,7 +363,7 @@ def _parse_ready_metrics_2_subscriber_output(
         and tls_timing_valid in (0, 1)
         and boot_order_valid
         and boot_message["boot_to_ready_publish_ms"]
-        >= boot_message["boot_to_mqtt_connected_ms"]
+        >= boot_message["boot_to_application_last_byte_ms"]
     )
 
     connect_messages = by_type.get("connect_timing", [])
@@ -463,20 +469,58 @@ def _parse_ready_metrics_2_subscriber_output(
     )
 
     tls_bundle_valid = handshake_valid and phase_valid and primitive_valid and x509_valid
+
+    transfer_messages = by_type.get("application_transfer_timing", [])
+    transfer_message = transfer_messages[0] if len(transfer_messages) == 1 else {}
+    transfer_numeric_fields = (
+        "payload_bytes",
+        "received_bytes",
+        "message_count",
+        "chunk_bytes",
+        "application_ttfb_ms",
+        "ttlb_ms",
+        "request_to_first_byte_ms",
+        "application_transfer_ms",
+    )
+    transfer_valid = (
+        len(transfer_messages) == 1
+        and transfer_message.get("schema_version") == 1
+        and transfer_message.get("ttlb_definition")
+        == "tcp_connect_start_to_last_byte_of_requested_application_payload"
+        and transfer_message.get("direction") == "broker_to_stm32"
+        and all(
+            isinstance(transfer_message.get(field), int)
+            and transfer_message[field] >= 0
+            for field in transfer_numeric_fields
+        )
+        and transfer_message["payload_bytes"] > 0
+        and transfer_message["received_bytes"] == transfer_message["payload_bytes"]
+        and transfer_message["message_count"] > 0
+        and 0 < transfer_message["chunk_bytes"] <= 400
+        and transfer_message["application_ttfb_ms"] >= timing_message.get("ttfb_ms", 0)
+        and transfer_message["ttlb_ms"] >= transfer_message["application_ttfb_ms"]
+        and transfer_message["application_transfer_ms"]
+        <= transfer_message["ttlb_ms"]
+        and transfer_message.get("first_byte_valid") == 1
+        and transfer_message.get("last_byte_valid") == 1
+        and transfer_message.get("complete_valid") == 1
+    )
+
     complete_valid = (
         len(complete_messages) == 1
         and complete_messages[0].get("schema_version") == 1
         and complete_messages[0].get("status") == "success"
-        and complete_messages[0].get("message_count") == 16
+        and complete_messages[0].get("message_count") == 17
     )
     passed = (
-        len(payloads) == 16
+        len(payloads) == 17
         and ready_count == 1
         and connect_valid
         and memory_valid
         and timing_valid
         and boot_valid
         and tls_bundle_valid
+        and transfer_valid
         and complete_valid
         and invalid_json_count == 0
         and malformed_topic_lines == 0
@@ -495,6 +539,8 @@ def _parse_ready_metrics_2_subscriber_output(
         "boot_timing_valid": boot_valid,
         "tls_bundle_valid": tls_bundle_valid,
         "primitive_parts": primitive_parts,
+        "transfer_valid": transfer_valid,
+        "application_transfer_timing": transfer_message if transfer_valid else None,
         "complete_valid": complete_valid,
         "invalid_json_count": invalid_json_count,
         "malformed_topic_lines": malformed_topic_lines,
@@ -1002,6 +1048,21 @@ def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
                 values[key] = int(values[key])
             except ValueError:
                 pass
+    for line in stderr.splitlines():
+        prefix = "PQC_RM2_TRANSFER_RESPONDER "
+        index = line.find(prefix)
+        if index < 0:
+            continue
+        for token in line[index + len(prefix):].split():
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            if key in {"rc", "payload_bytes", "chunk_bytes"}:
+                try:
+                    values["transfer_responder_" + key] = int(value)
+                except ValueError:
+                    values["transfer_responder_" + key] = value
+        break
     return values
 
 
@@ -1043,6 +1104,9 @@ def _parse_mqtt_broker_message_evidence(
     command_topic: str,
     response_topic: str,
     device_initiated: bool = False,
+    transfer_request_topic: str | None = None,
+    transfer_response_topic: str | None = None,
+    transfer_responder_client_id: str = "pqc-host-rm2-transfer-publisher",
 ) -> dict[str, Any]:
     """Parse independent Mosquitto packet-routing evidence for one E2E run."""
 
@@ -1062,6 +1126,22 @@ def _parse_mqtt_broker_message_evidence(
             "stm32_suback_sent": has_line(f"Sending SUBACK to {stm32_client_id}"),
             "command_publish_received": has_line(f"Received PUBLISH from {publisher_client_id}", command_topic),
             "command_publish_delivered": has_line(f"Sending PUBLISH to {stm32_client_id}", command_topic),
+        })
+    if transfer_request_topic and transfer_response_topic:
+        checks.update({
+            "transfer_subscribe_received": (
+                has_line(f"Received SUBSCRIBE from {stm32_client_id}")
+                and has_line(transfer_response_topic)
+            ),
+            "transfer_request_received": has_line(
+                f"Received PUBLISH from {stm32_client_id}", transfer_request_topic
+            ),
+            "transfer_payload_received": has_line(
+                f"Received PUBLISH from {transfer_responder_client_id}", transfer_response_topic
+            ),
+            "transfer_payload_delivered": has_line(
+                f"Sending PUBLISH to {stm32_client_id}", transfer_response_topic
+            ),
         })
     return {**checks, "passed": all(checks.values())}
 
@@ -1122,9 +1202,10 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
             "ST67 DHCP: result=passed",
             "MQTT application: profile=mqtt_ready_metrics_2 state=workload_start",
             "PQC_RM2_TTFB definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
+            "PQC_RM2_TTLB definition=tcp_connect_start_to_last_byte_of_requested_application_payload",
             "PQC_APP_PUBLISH sequence=1 type=ready result=0",
             "PQC_APP_PUBLISH sequence=2 type=connect_timing",
-            "PQC_APP_PUBLISH sequence=16 type=ready_metrics_2_complete result=0",
+            "PQC_APP_PUBLISH sequence=17 type=ready_metrics_2_complete result=0",
             _mqtt_completion_marker(bundle),
         ]
         evidence_class = mqtt.get("evidence_class") if isinstance(mqtt, dict) else None
@@ -1402,13 +1483,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     mqtt = experiment["mqtt"]
     broker = mqtt["broker"]
     topics = mqtt["topics"]
+    transfer = mqtt.get("transfer", {})
     orchestration = mqtt.get("orchestration", {})
     command_payload = str(mqtt.get("command_payload", "run"))
     ready_metrics_2_application = _is_mqtt_ready_metrics_2_application(bundle)
     ready_metrics_application = _is_device_initiated_metrics_application(bundle)
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 16 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
+    expected_response_count = 17 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
@@ -1452,10 +1534,23 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             f"docker run --rm {common_container_options}"
             "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine"
         )
+        mqtt_pub_stdin = (
+            f"docker run --rm -i {common_container_options}"
+            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine"
+        )
+        transfer_responder_subscriber_name = "pqc-mqtt-rm2-transfer-sub-$$"
+        transfer_mqtt_sub = (
+            f'docker run --rm --name "{transfer_responder_subscriber_name}" '
+            f"{common_container_options}"
+            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine"
+        )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
     else:
         mqtt_sub = "mosquitto_sub"
         mqtt_pub = "mosquitto_pub"
+        mqtt_pub_stdin = "mosquitto_pub"
+        transfer_mqtt_sub = "mosquitto_sub"
+        transfer_responder_subscriber_name = ""
         tls_args = (
             _mqtt_gateway_tls_args(bundle, container_paths=False)
             if tls_enabled
@@ -1467,6 +1562,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     command_topic = shlex.quote(str(topics["command"]))
     response_topic = shlex.quote(str(topics["response"]))
     command_value = shlex.quote(command_payload)
+    transfer_request_topic = shlex.quote(str(transfer.get("request_topic", "")))
+    transfer_response_topic = shlex.quote(str(transfer.get("response_topic", "")))
+    transfer_request_payload = shlex.quote(str(transfer.get("request_payload", "send")))
+    transfer_payload_bytes = int(transfer.get("payload_bytes", 0) or 0)
+    transfer_chunk_bytes = int(transfer.get("chunk_bytes", 400) or 400)
     stm32_client_id = str(mqtt["client_id"])
     publisher_client_id = "pqc-host-e2e-publisher"
     subscriber_client_id = "pqc-host-e2e-subscriber"
@@ -1479,12 +1579,44 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" '
         '& subscriber_pid=$!; '
     )
+
+    transfer_request_file = "/tmp/pqc-rm2-transfer-request.$$"
+    transfer_responder_log = "/tmp/pqc-rm2-transfer-responder.$$"
+    transfer_responder_rc_file = "/tmp/pqc-rm2-transfer-responder-rc.$$"
+    transfer_python = (
+        "import sys; n=int(sys.argv[1]); c=int(sys.argv[2]); "
+        "q,r=divmod(n,c); block='A'*c; "
+        "[sys.stdout.write(block+'\\n') for _ in range(q)]; "
+        "sys.stdout.write(('A'*r)+'\\n') if r else None"
+    )
+    transfer_responder_command = ""
+    if ready_metrics_2_application:
+        transfer_responder_command = (
+            f'rm -f "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
+            '( '
+            f'{transfer_mqtt_sub} -h {client_host} -p {client_port} {tls_args} '
+            f'-i pqc-host-rm2-transfer-request -t {transfer_request_topic} '
+            f'-C 1 -W {hard_limit_seconds} >"{transfer_request_file}" 2>>"{transfer_responder_log}"; '
+            'request_rc=$?; '
+            'if [ "$request_rc" -ne 0 ]; then echo "$request_rc" >'
+            f'"{transfer_responder_rc_file}"; exit "$request_rc"; fi; '
+            f'if [ "$(cat "{transfer_request_file}")" != {transfer_request_payload} ]; then '
+            f'echo "unexpected transfer request payload" >>"{transfer_responder_log}"; '
+            f'echo 41 >"{transfer_responder_rc_file}"; exit 41; fi; '
+            f'python3 -c {shlex.quote(transfer_python)} {transfer_payload_bytes} {transfer_chunk_bytes} | '
+            f'{mqtt_pub_stdin} -h {client_host} -p {client_port} {tls_args} '
+            f'-i pqc-host-rm2-transfer-publisher -q 0 -t {transfer_response_topic} -l '
+            f'>>"{transfer_responder_log}" 2>&1; responder_rc=$?; '
+            f'echo "$responder_rc" >"{transfer_responder_rc_file}"; exit "$responder_rc"; '
+            ') & transfer_responder_pid=$!; '
+        )
     common_prefix = (
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
         f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
         f"timeout 0.2s cat {device} >/dev/null 2>&1 || true; "
         + subscriber_command
+        + transfer_responder_command
         + f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
         + f"{restart_command} 1>&2; reset_rc=$?; "
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
@@ -1495,10 +1627,28 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         if pqc_hybrid
         else ''
     )
+    transfer_responder_cleanup = ""
+    if ready_metrics_2_application:
+        transfer_container_cleanup = (
+            f'docker rm -f "{transfer_responder_subscriber_name}" >/dev/null 2>&1 || true; '
+            if pqc_hybrid
+            else ""
+        )
+        transfer_responder_cleanup = (
+            'if kill -0 "$transfer_responder_pid" 2>/dev/null; then wait "$transfer_responder_pid"; '
+            'transfer_responder_wait_rc=$?; else transfer_responder_wait_rc=$(cat '
+            f'"{transfer_responder_rc_file}" 2>/dev/null || echo 1); fi; '
+            + transfer_container_cleanup
+            + f'transfer_responder_rc=$(cat "{transfer_responder_rc_file}" 2>/dev/null || echo "$transfer_responder_wait_rc"); '
+            + f'echo "PQC_RM2_TRANSFER_RESPONDER rc=$transfer_responder_rc payload_bytes={transfer_payload_bytes} chunk_bytes={transfer_chunk_bytes}" 1>&2; '
+            + f'if [ -s "{transfer_responder_log}" ]; then echo "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN" 1>&2; '
+            + f'cat "{transfer_responder_log}" 1>&2; echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; fi; '
+        )
     common_suffix = (
         f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
+        + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
         + 'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
@@ -1518,7 +1668,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
             + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
-            + 'rm -f "$response_file" "$uart_file"; '
+            + f'rm -f "$response_file" "$uart_file" "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
     else:
@@ -1595,7 +1745,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 detail=(
                     f"Subscriber topic: {topics['response']}; expected messages: "
                     + (
-                        "16-message Ready Metrics 2 timing/TLS bundle."
+                        "17-message Ready Metrics 2 timing/TLS/TTLB bundle."
                         if ready_metrics_2_application
                         else "1 ready, 1 connect timing, and 2 memory metrics."
                     )
@@ -1635,6 +1785,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 marker.get("subscriber_rc") == 0
                 and marker.get("response_count") == expected_response_count
                 and marker.get("expected_response_count") == expected_response_count
+                and (
+                    marker.get("transfer_responder_rc") == 0
+                    if ready_metrics_2_application
+                    else True
+                )
                 and bool(ready_metrics_evidence.get("passed"))
                 and bool(subscriber_evidence_integrity.get("passed"))
             )
@@ -1749,6 +1904,16 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 command_topic=str(topics["command"]),
                 response_topic=str(topics["response"]),
                 device_initiated=ready_metrics_application,
+                transfer_request_topic=(
+                    str(transfer.get("request_topic"))
+                    if ready_metrics_2_application
+                    else None
+                ),
+                transfer_response_topic=(
+                    str(transfer.get("response_topic"))
+                    if ready_metrics_2_application
+                    else None
+                ),
             ),
             "available": bool(broker_log_text.strip()),
             "required_for_pass": True,
@@ -2209,6 +2374,31 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
             )
     if evidence_class == "fake_no_network" and broker:
         raise ConfigError("fake_no_network MQTT configs must not configure a real broker endpoint")
+
+    application_name = str(config.get("firmware", {}).get("application", ""))
+    if application_name == "mqtt_ready_metrics_2":
+        transfer = mqtt_config.get("transfer")
+        if not isinstance(transfer, dict):
+            raise ConfigError("Ready Metrics 2 requires mqtt.transfer to be a mapping")
+        payload_bytes = transfer.get("payload_bytes")
+        chunk_bytes = transfer.get("chunk_bytes")
+        request_topic = transfer.get("request_topic")
+        response_topic = transfer.get("response_topic")
+        request_payload = transfer.get("request_payload", "send")
+        if not isinstance(payload_bytes, int) or not (1 <= payload_bytes <= 16 * 1024 * 1024):
+            raise ConfigError("mqtt.transfer.payload_bytes must be an integer from 1 to 16777216")
+        if not isinstance(chunk_bytes, int) or not (1 <= chunk_bytes <= 400):
+            raise ConfigError("mqtt.transfer.chunk_bytes must be an integer from 1 to 400")
+        if not isinstance(request_topic, str) or not request_topic.strip():
+            raise ConfigError("mqtt.transfer.request_topic must be a non-empty string")
+        if not isinstance(response_topic, str) or not response_topic.strip():
+            raise ConfigError("mqtt.transfer.response_topic must be a non-empty string")
+        if not isinstance(request_payload, str) or not request_payload:
+            raise ConfigError("mqtt.transfer.request_payload must be a non-empty string")
+        if request_topic == response_topic:
+            raise ConfigError("mqtt.transfer request and response topics must be distinct")
+        if response_topic == str(mqtt_config.get("topics", {}).get("response", "")):
+            raise ConfigError("mqtt.transfer.response_topic must be distinct from mqtt.topics.response")
 
     fake_transport = mqtt_config.get("fake_transport", {})
     if fake_transport and not isinstance(fake_transport, dict):

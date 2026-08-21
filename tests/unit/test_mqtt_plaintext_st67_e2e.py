@@ -155,7 +155,8 @@ def test_plaintext_wolfmqtt_transport_compiles_without_wolfssl_headers_or_calls(
     wolfssl_include = source.index('#include "wolfssl/ssl.h"')
     include_guard_end = source.index("#endif", wolfssl_include)
     assert include_guard < wolfssl_include < include_guard_end
-    assert "#if PQC_TLS_COMPILED\n    if (c->tls_requested) return wolfSSL_read" in source
+    assert "#if PQC_TLS_COMPILED\n    if (c->tls_requested) {" in source
+    assert "result = wolfSSL_read(c->tls, buffer, length);" in source
     assert "#if PQC_TLS_COMPILED\n    if (c->tls_requested) return wolfSSL_write" in source
     assert "#if PQC_TLS_COMPILED\n    if ((c != NULL) && (c->tls != NULL))" in source
 
