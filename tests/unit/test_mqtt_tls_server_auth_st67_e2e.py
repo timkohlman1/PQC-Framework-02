@@ -161,33 +161,8 @@ def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     assert "orchestration:\n    host: 10.1.1.18" in config
 
 
-def test_stepca_sync_defaults_to_selected_fqdn_and_authoritative_source():
-    module = _load_mqtt_broker_ctl_module()
-    source = Path(
-        "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
-    ).read_text(encoding="utf-8")
-
-    args = module.build_parser().parse_args(["provision-certs", "--dry-run"])
-
-    assert module.DEFAULT_SERVER_NAME == "pqc-gateway1.pqcnet"
-    assert module.DEFAULT_SERVER_ALIAS == "pqc-gateway1"
-    assert args.server_name == "pqc-gateway1.pqcnet"
-    assert args.certificate_profile == "stepca-classical"
-    assert 'source_root = repo_root() / "framework" / "certs"' in source
-    assert 'broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"' in source
-    assert "write_server_openssl_config" not in source
-    assert "openssl req" not in source
 
 
-def test_stepca_sync_does_not_generate_server_certificate_sans_locally():
-    source = Path(
-        "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"
-    ).read_text(encoding="utf-8")
-
-    assert 'provision-certs", help="synchronize selected MQTT TLS material from framework/certs"' in source
-    assert "server-openssl.cnf" not in source
-    assert "DNS.1" not in source
-    assert "IP.1" not in source
 
 def test_orchestration_host_validation_is_optional_but_non_empty_when_present():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
@@ -220,7 +195,7 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
 
 def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
+    assert 'expected_response_count = 17 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
     assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source

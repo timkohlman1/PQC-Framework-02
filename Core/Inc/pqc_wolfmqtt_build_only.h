@@ -41,6 +41,52 @@ typedef struct
     int last_result;
 } PQC_WolfMQTTBuildOnlyStatus;
 
+/* Ready Metrics 2 stores end-to-end application timing in RAM while the
+ * benchmark-critical path is active. All fields are HAL/FreeRTOS millisecond
+ * ticks or durations derived from those ticks. The firmware boot origin is the
+ * first reliable HAL tick captured immediately after HAL_Init(). */
+typedef struct
+{
+    uint32_t schema_version;
+    uint32_t firmware_boot_origin_tick_ms;
+    uint32_t ttfb_start_tick_ms;
+    uint32_t tcp_connected_tick_ms;
+    uint32_t tls_complete_tick_ms;
+    uint32_t mqtt_first_response_tick_ms;
+    uint32_t mqtt_connected_tick_ms;
+    uint32_t application_request_tick_ms;
+    uint32_t application_first_byte_tick_ms;
+    uint32_t application_last_byte_tick_ms;
+    uint32_t ready_published_tick_ms;
+    uint32_t measurement_complete_tick_ms;
+    uint32_t tcp_connect_ms;
+    uint32_t ttfb_ms;
+    uint32_t mqtt_connect_ms;
+    uint32_t application_ttfb_ms;
+    uint32_t ttlb_ms;
+    uint32_t application_request_to_first_byte_ms;
+    uint32_t application_transfer_ms;
+    uint32_t transfer_payload_bytes;
+    uint32_t transfer_received_bytes;
+    uint32_t transfer_message_count;
+    uint32_t firmware_boot_to_tcp_connect_ms;
+    uint32_t firmware_boot_to_tls_complete_ms;
+    uint32_t firmware_boot_to_mqtt_first_response_ms;
+    uint32_t firmware_boot_to_mqtt_connected_ms;
+    uint32_t firmware_boot_to_application_first_byte_ms;
+    uint32_t firmware_boot_to_application_last_byte_ms;
+    uint32_t firmware_boot_to_ready_publish_ms;
+    uint32_t legacy_connect_timing_ms;
+    uint8_t tcp_timing_valid;
+    uint8_t tls_timing_valid;
+    uint8_t mqtt_first_response_valid;
+    uint8_t mqtt_connected_valid;
+    uint8_t application_first_byte_valid;
+    uint8_t application_last_byte_valid;
+    uint8_t transfer_complete_valid;
+    uint8_t ready_publish_valid;
+} PQC_WolfMQTTReadyMetrics2Snapshot;
+
 int PQC_WolfMQTT_BuildOnly_Initialize(
     PQC_WolfMQTTBackend backend,
     PQC_WolfMQTTBuildOnlyStatus *status
@@ -51,6 +97,12 @@ void PQC_WolfMQTT_DiagnosticMarker(const char *marker);
 int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status);
 
 int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void));
+
+int PQC_WolfMQTT_RunReadyMetrics2Application(
+    void (*mark_complete)(void),
+    uint32_t firmware_boot_origin_tick_ms);
+
+const PQC_WolfMQTTReadyMetrics2Snapshot *PQC_WolfMQTT_ReadyMetrics2Snapshot(void);
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend);
 

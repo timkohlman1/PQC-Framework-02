@@ -83,8 +83,3 @@ secrets/wolfboot/tuples/
 # Canonical local cryptographic material
 /secrets/
 
-# Certificate service generated state and staged MQTT runtime material
-framework/certs/.env.stepca
-framework/certs/secrets/runtime/
-framework/certs/secrets/public/ca/*.crt
-secrets/mqtt/stepca-classical/

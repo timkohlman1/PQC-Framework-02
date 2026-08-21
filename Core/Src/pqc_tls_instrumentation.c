@@ -222,9 +222,12 @@ static const char *PQC_TLS_PrimitiveName(PQC_TLSPrimitive primitive)
         "mlkem1024_decapsulate",
         "rsa_verify",
         "rsa_sign",
+        "ecdsa_verify",
+        "ecdsa_sign",
         "mldsa65_verify",
         "mldsa65_sign",
         "sha256",
+        "sha384",
         "hkdf_extract",
         "hkdf_expand",
         "x509_verify"

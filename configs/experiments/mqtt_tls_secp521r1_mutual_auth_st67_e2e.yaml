@@ -41,9 +41,7 @@ mqtt:
     tls_version: tls1.3
     mode: classical_tls_mutual
     authentication: mutual
-    certificate_profile: stepca-classical
-    certificate_authority_algorithm: classical-x509
-    server_certificate_algorithm: classical
+    certificate_profile: rsa3072
     key_exchange_group: secp521r1
   result_schema:
     unavailable_metrics:

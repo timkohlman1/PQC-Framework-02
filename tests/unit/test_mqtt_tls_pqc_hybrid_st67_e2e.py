@@ -58,6 +58,7 @@ def test_oqs_broker_is_server_auth_and_healthcheck_uses_hybrid_group():
     assert "SecP256r1MLKEM768" in configured_groups
     assert "X25519MLKEM768" in configured_groups
     assert "SecP384r1MLKEM1024" in configured_groups
+    assert "P-256" in configured_groups
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in oqs_service

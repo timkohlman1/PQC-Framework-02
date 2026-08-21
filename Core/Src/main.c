@@ -83,6 +83,7 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;
+static uint32_t app_firmware_boot_origin_tick_ms;
 osThreadId_t networkTaskHandle;
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
@@ -128,6 +129,7 @@ void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapsho
 #define PQC_UART_LOG_LEVEL 1
 #endif
 
+#define APP_UART_LOG_LEVEL_OFF  (-1)
 #define APP_UART_LOG_LEVEL_ERROR 0
 #define APP_UART_LOG_LEVEL_INFO  1
 #define APP_UART_LOG_LEVEL_DEBUG 2
@@ -195,7 +197,10 @@ static bool APP_UART_LineIsWhitespaceOnly(const char *line)
 
 static bool APP_UART_ShouldEmitLine(const char *line)
 {
-#if PQC_UART_LOG_LEVEL >= APP_UART_LOG_LEVEL_DEBUG
+#if PQC_UART_LOG_LEVEL <= APP_UART_LOG_LEVEL_OFF
+  (void)line;
+  return false;
+#elif PQC_UART_LOG_LEVEL >= APP_UART_LOG_LEVEL_DEBUG
   (void)line;
   return true;
 #else
@@ -1398,6 +1403,10 @@ int main(void)
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
+  /* HAL_Init() establishes the first reliable millisecond time base visible to
+   * application firmware. Ready Metrics 2 uses this as its documented firmware
+   * boot origin; it is not claimed to include pre-HAL reset/startup time. */
+  app_firmware_boot_origin_tick_ms = HAL_GetTick();
 
   /* USER CODE BEGIN Init */
 
@@ -2060,6 +2069,12 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
   return PQC_WolfMQTT_RunReadyMetricsApplication(mark_complete);
 }
 
+static int APP_RunReadyMetrics2Workload(void (*mark_complete)(void))
+{
+  return PQC_WolfMQTT_RunReadyMetrics2Application(
+      mark_complete, app_firmware_boot_origin_tick_ms);
+}
+
 static void APP_PrintMemoryHighWatermark(void)
 {
   extern uint8_t __ram_region_start__;
@@ -2256,6 +2271,7 @@ void StartNetworkTask(void *argument)
     .print_wolfssl_runtime = APP_WolfSSLRuntimeFixtureNoOp,
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
     .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
+    .run_ready_metrics_2_workload = APP_RunReadyMetrics2Workload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
     .print_memory_checkpoint = APP_PrintNetworkTaskMemoryCheckpoint,
     .mark_complete = APP_MarkExperimentComplete,

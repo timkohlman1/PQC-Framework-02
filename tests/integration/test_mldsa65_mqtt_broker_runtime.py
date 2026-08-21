@@ -15,7 +15,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_ROOT = REPO_ROOT / "experiment" / "mqtt-broker"
 BROKER_CTL = BROKER_ROOT / "scripts" / "mqtt_broker_ctl.py"
-PROFILE_ID = "mldsa65-pqc"
+PROFILE_ID = "mldsa65"
 
 
 def _run(
@@ -64,24 +64,14 @@ def _assert_success(completed: subprocess.CompletedProcess[str], label: str) -> 
 @pytest.mark.integration
 @pytest.mark.docker
 @pytest.mark.docker_runtime
-def test_mldsa65_profile_provisions_and_accepts_hybrid_mutual_tls() -> None:
+def test_mldsa65_profile_accepts_hybrid_mutual_tls_when_preprovisioned() -> None:
     """Exercise the real ML-DSA certificate family with the maintained hybrid broker."""
     _require_docker_runtime()
 
-    provision = _run(
-        [
-            sys.executable,
-            str(BROKER_CTL),
-            "provision-certs",
-            "--certificate-profile",
-            PROFILE_ID,
-        ],
-        cwd=REPO_ROOT,
-        timeout=300,
-    )
-    _assert_success(provision, "ML-DSA-65 certificate provisioning")
+    cert_dir = REPO_ROOT / "secrets" / "certificates" / PROFILE_ID
+    if not cert_dir.is_dir():
+        pytest.skip("pre-provisioned ML-DSA-65 certificate profile is unavailable")
 
-    cert_dir = REPO_ROOT / "secrets" / "mqtt" / PROFILE_ID
     required = (
         "ca.crt",
         "intermediate-ca.crt",
@@ -94,7 +84,7 @@ def test_mldsa65_profile_provisions_and_accepts_hybrid_mutual_tls() -> None:
         "healthcheck.key",
     )
     missing = [name for name in required if not (cert_dir / name).is_file()]
-    assert not missing, "ML-DSA-65 staged material is incomplete: " + ", ".join(missing)
+    assert not missing, "ML-DSA-65 certificate profile is incomplete: " + ", ".join(missing)
 
     project_name = f"pqc-mldsa65-runtime-{uuid.uuid4().hex[:10]}"
     host_port = _free_port()

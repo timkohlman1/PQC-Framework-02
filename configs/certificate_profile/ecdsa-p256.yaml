@@ -1,0 +1,52 @@
+schema_version: 1
+id: ecdsa-p256
+description: Controlled ECDSA P-256 X.509 hierarchy for MQTT/TLS experiments.
+key:
+  algorithm: ecdsa-p256
+  display_name: ECDSA P-256
+  openssl_algorithm: EC
+  genpkey_args:
+  - -algorithm
+  - EC
+  - -pkeyopt
+  - ec_paramgen_curve:prime256v1
+certificate:
+  organization: PQC Framework Research
+  digest: sha256
+  expected_signature_algorithm: ecdsa-with-SHA256
+  tls_signature_scheme: ecdsa_secp256r1_sha256
+  validity_days:
+    root: 7300
+    intermediate: 5475
+    leaf: 3650
+hierarchy:
+  intermediate: true
+  root_common_name: PQC Framework ecdsa-p256 Root CA
+  intermediate_common_name: PQC Framework ecdsa-p256 Intermediate CA
+identities:
+  server:
+    common_name: pqc-gateway1.pqcnet
+    extended_key_usage:
+    - serverAuth
+    dns_names:
+    - pqc-gateway1.pqcnet
+    - pqc-gateway1
+    - mqtt-broker
+    - localhost
+    ip_addresses:
+    - 127.0.0.1
+    - 10.1.1.18
+  client:
+    common_name: stm32-mqtt-client
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - stm32-mqtt-client
+    ip_addresses: []
+  healthcheck:
+    common_name: pqc-mqtt-server-healthcheck
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - pqc-mqtt-server-healthcheck
+    ip_addresses: []

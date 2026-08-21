@@ -1,6 +1,10 @@
 from pathlib import Path
 import pytest
-from scripts.framework.build import _certificate_requires_ecc
+from scripts.framework.build import (
+    _certificate_requires_ecc,
+    _certificate_requires_sha384,
+    _write_tls_algorithm_selection,
+)
 from scripts.framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 
 
@@ -46,12 +50,6 @@ def test_hybrid_mutual_profile_enables_mldsa65_signing_for_client_certificate_ve
     assert selected["signature_schemes"] == ["mldsa65"]
 
 
-@pytest.mark.parametrize("signature", ["falcon512", "unsupported-pqc-signature"])
-def test_hybrid_profile_rejects_unknown_server_signatures(signature):
-    with pytest.raises(ValueError, match="Supported algorithms: classical, mldsa65"):
-        resolve_tls_algorithm_set(_bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", signature))
-
-
 def test_mode_and_group_family_must_match():
     with pytest.raises(ValueError, match="incompatible"):
         resolve_tls_algorithm_set(_bundle("classical_tls_server_auth", "X25519MLKEM768"))
@@ -71,26 +69,16 @@ def test_settings_disable_tls12_for_tls13_only_group_pruning():
     assert "#define WOLFSSL_NO_TLS12" in settings
 
 
-def test_stepca_classical_requires_certificate_ecc_independently_of_x25519_kex():
-    bundle = _bundle("pqc_hybrid_tls_mutual", "X25519MLKEM768")
-    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
-    selected = resolve_tls_algorithm_set(bundle)
-    assert selected["ecc"] is False
-    assert selected["curve25519"] is True
-    assert _certificate_requires_ecc(bundle) is True
 
 
-def test_plaintext_does_not_enable_certificate_ecc():
-    bundle = _bundle("plaintext", "none")
-    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "stepca-classical"
-    assert _certificate_requires_ecc(bundle) is False
 
 
 def test_settings_keep_certificate_curve_floor_separate_from_kex_curve():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
     assert "#define ECC_MIN_KEY_SZ PQC_TLS_ECC_MIN_BITS" in settings
     assert "#define ECC_USER_CURVES" in settings
-    assert "PQC_TLS_ENABLE_CERT_ECC || PQC_TLS_ECC_BITS == 256" in settings
+    assert "PQC_TLS_CERT_ECC_BITS == 256" in settings
+    assert "PQC_TLS_CERT_ECC_BITS == 384" in settings
     assert "#define WOLFSSL_SP_384" in settings
     assert "#define WOLFSSL_SP_521" in settings
 
@@ -127,3 +115,75 @@ def test_x25519_mldsa65_build_guards_cover_certificate_verify_and_pk_oid():
     guard = internal_h[guard_start:pk_curve]
     assert "defined(WOLFSSL_HAVE_MLDSA)" in guard
 
+
+
+def test_ecdsa_p256_profile_enables_certificate_ecc_independently_of_x25519_kex():
+    bundle = _bundle("classical_tls_server_auth", "x25519", "ecdsa_secp256r1_sha256")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p256"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["curve25519"] is True
+    assert selected["signature_schemes"] == ["ecdsa_secp256r1_sha256"]
+    assert _certificate_requires_ecc(bundle) is True
+
+
+def test_certificate_profile_can_supply_default_signature_scheme():
+    bundle = _bundle("classical_tls_server_auth", "secp384r1", "")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p384"
+    selected = resolve_tls_algorithm_set(bundle)
+    assert selected["signature_schemes"] == ["ecdsa_secp384r1_sha384"]
+
+
+def test_p384_certificate_curve_is_independent_of_p256_kex(tmp_path):
+    bundle = _bundle("classical_tls_server_auth", "secp256r1", "")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p384"
+
+    selection_path, selected = _write_tls_algorithm_selection(
+        bundle, tmp_path, configure_preset="Release"
+    )
+    selection = selection_path.read_text(encoding="utf-8")
+
+    assert selected["ecc_bits"] == 256
+    assert selected["certificate_ecc_bits"] == 384
+    assert selected["sha384"] is True
+    assert selected["ecc_min_bits"] == 256
+    assert "set(PQC_TLS_ECC_BITS 256)" in selection
+    assert "set(PQC_TLS_CERT_ECC_BITS 384)" in selection
+    assert "set(PQC_TLS_ENABLE_SHA384 ON)" in selection
+    assert "set(PQC_TLS_ECC_MIN_BITS 256)" in selection
+
+
+
+
+def test_sha384_capability_is_certificate_profile_driven():
+    p384 = _bundle("classical_tls_server_auth", "secp256r1", "")
+    p384["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p384"
+    p256 = _bundle("classical_tls_server_auth", "secp256r1", "")
+    p256["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ecdsa-p256"
+
+    assert _certificate_requires_sha384(p384) is True
+    assert _certificate_requires_sha384(p256) is False
+
+
+def test_cmake_propagates_sha384_to_wolfssl_and_application_scopes():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    assert cmake.count("PQC_TLS_ENABLE_SHA384=$<BOOL:${PQC_TLS_ENABLE_SHA384}>") == 2
+    assert '"${PQC_WOLFSSL_SOURCE_DIR}/wolfcrypt/src/sha512.c"' in cmake
+
+
+def test_cmake_propagates_certificate_ecc_bits_to_all_tls_compile_scopes():
+    cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+    marker = "PQC_TLS_CERT_ECC_BITS=${PQC_TLS_CERT_ECC_BITS}"
+    assert cmake.count(marker) == 2
+
+
+def test_ed25519_profile_fails_explicitly_until_target_build_support_exists():
+    bundle = _bundle("classical_tls_server_auth", "x25519", "")
+    bundle["experiment"]["mqtt"]["tls"]["certificate_profile"] = "ed25519"
+    with pytest.raises(ValueError, match="Ed25519 certificate profiles can be provisioned"):
+        resolve_tls_algorithm_set(bundle)
+
+
+@pytest.mark.parametrize("signature", ["falcon512", "unsupported-pqc-signature"])
+def test_unknown_signature_is_rejected(signature):
+    with pytest.raises(ValueError, match="Unsupported or missing TLS server signature algorithm"):
+        resolve_tls_algorithm_set(_bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", signature))

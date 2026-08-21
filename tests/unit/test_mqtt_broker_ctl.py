@@ -17,15 +17,6 @@ def load_module():
     return module
 
 
-def test_oqs_provision_command_is_stepca_sync_alias():
-    module = load_module()
-    parser = module.build_parser()
-    args = parser.parse_args(["provision-oqs-certs"])
-
-    assert args.certificate_profile == "stepca-classical"
-    assert args.func is module.sync_stepca_certs
-    assert not hasattr(args, "ca_algorithm")
-    assert not hasattr(args, "leaf_algorithm")
 
 
 def test_remote_repo_root_is_derived_from_broker_directory():
@@ -48,43 +39,10 @@ def test_remote_repo_root_rejects_unrelated_directory():
         raise AssertionError("expected invalid remote directory to be rejected")
 
 
-def test_provision_defaults_to_long_lived_leaf_policy():
-    module = load_module()
-    args = module.build_parser().parse_args(["provision-certs"])
-    assert args.days == 365
-    assert args.renew_before_days == 30
-    assert args.reset_pki is False
 
 
-def test_certificate_lifecycle_skips_compose_when_material_is_fresh(tmp_path, monkeypatch):
-    module = load_module()
-    args = module.build_parser().parse_args(["provision-certs"])
-    for relative in (
-        "secrets/public/ca/root-ca.crt",
-        "secrets/public/ca/intermediate-ca.crt",
-        "secrets/public/ca/ca-chain.crt",
-        "secrets/runtime/mqtt-broker/tls.crt",
-        "secrets/runtime/mqtt-broker/tls.key",
-        "secrets/runtime/stm32/client.crt",
-        "secrets/runtime/stm32/client.key",
-    ):
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("material", encoding="utf-8")
-    monkeypatch.setattr(module, "_certificate_valid_for", lambda *a, **k: True)
-    monkeypatch.setattr(module, "_run_local_compose", lambda *a, **k: (_ for _ in ()).throw(AssertionError("compose should not start")))
-    assert module.ensure_framework_certificates(args, tmp_path) is False
 
 
-def test_certificate_policy_forces_stepca_process_restart() -> None:
-    source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
-
-    policy_position = source.index('"stepca_policy"')
-    restart_position = source.index('["restart", "stepca"]', policy_position)
-    health_position = source.index('["up", "-d", "--wait", "stepca"]', restart_position)
-    issuance_position = source.index('for service in ("mqtt-broker_cert", "stm32_client_cert")', health_position)
-
-    assert policy_position < restart_position < health_position < issuance_position
 
 
 def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
@@ -103,67 +61,23 @@ def test_broker_start_waits_for_healthy_container():
     assert '["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"]' in source
 
 
-def test_mldsa65_provisioner_runs_directly_without_nested_docker(tmp_path, monkeypatch):
+
+
+
+
+def test_certificate_profile_directory_is_root_secrets_certificates(tmp_path, monkeypatch):
     module = load_module()
-    script = tmp_path / "services" / "mldsa-pki" / "provision.sh"
-    script.parent.mkdir(parents=True)
-    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    captured = {}
-
-    def fake_run(command, **kwargs):
-        captured["command"] = command
-        captured["kwargs"] = kwargs
-        return module.subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
-
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
-    completed = module._run_mldsa65_provisioner(
-        tmp_path,
-        certificate_days=365,
-        renewal_days=30,
-        reset_pki=True,
-    )
-
-    assert completed.returncode == 0
-    assert captured["command"] == ["sh", str(script)]
-    assert captured["command"][0] != "docker"
-    environment = captured["kwargs"]["env"]
-    assert environment["CERT_DAYS"] == "365"
-    assert environment["RENEW_BEFORE_DAYS"] == "30"
-    assert environment["MLDSA_RESET_PKI"] == "1"
-    assert environment["PRIVATE_DIR"] == str(tmp_path / "secrets" / "private" / "mldsa65")
-    assert environment["BROKER_DIR"] == str(
-        tmp_path / "secrets" / "runtime" / "mldsa65" / "mqtt-broker"
-    )
-    assert environment["CLIENT_DIR"] == str(
-        tmp_path / "secrets" / "runtime" / "mldsa65" / "stm32"
-    )
+    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
+    assert module.certificate_profile_dir("ecdsa-p256") == tmp_path / "secrets" / "certificates" / "ecdsa-p256"
 
 
-def test_mldsa65_ensure_does_not_use_compose_cleanup(tmp_path, monkeypatch):
+def test_broker_ctl_has_no_certificate_provisioning_subcommand():
     module = load_module()
-    args = module.build_parser().parse_args(
-        ["provision-certs", "--certificate-profile", "mldsa65-pqc"]
-    )
-
-    def fail_compose(*args, **kwargs):
-        raise AssertionError("ML-DSA-65 provisioning must not invoke nested docker compose")
-
-    def fake_provisioner(certs_root, *, certificate_days, renewal_days, reset_pki):
-        for relative in (
-            "secrets/private/mldsa65/root-ca.crt",
-            "secrets/private/mldsa65/intermediate-ca.crt",
-            "secrets/private/mldsa65/ca-chain.crt",
-            "secrets/runtime/mldsa65/mqtt-broker/tls.crt",
-            "secrets/runtime/mldsa65/mqtt-broker/tls.key",
-            "secrets/runtime/mldsa65/stm32/client.crt",
-            "secrets/runtime/mldsa65/stm32/client.key",
-        ):
-            path = certs_root / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("material", encoding="utf-8")
-        return module.subprocess.CompletedProcess(["sh", "provision.sh"], 0, stdout="ok\n", stderr="")
-
-    monkeypatch.setattr(module, "_run_local_compose", fail_compose)
-    monkeypatch.setattr(module, "_run_mldsa65_provisioner", fake_provisioner)
-    assert module.ensure_framework_mldsa65_certificates(args, tmp_path) is True
-    assert "mldsa65_pki rc=0" in (tmp_path / "certificate-lifecycle.log").read_text(encoding="utf-8")
+    parser = module.build_parser()
+    for command in ("provision-certs", "provision-oqs-certs"):
+        try:
+            parser.parse_args([command])
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"legacy certificate provisioning command still exists: {command}")

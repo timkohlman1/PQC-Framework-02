@@ -12,6 +12,7 @@ typedef struct
   void (*print_wolfssl_runtime)(void);
   void (*print_wolfmqtt_runtime)(void);
   int (*run_ready_metrics_workload)(void (*mark_complete)(void));
+  int (*run_ready_metrics_2_workload)(void (*mark_complete)(void));
   void (*print_clock_configuration)(void);
   void (*print_memory_checkpoint)(void);
   void (*mark_complete)(void);

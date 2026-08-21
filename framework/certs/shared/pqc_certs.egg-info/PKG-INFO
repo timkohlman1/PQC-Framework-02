@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: pqc-certs
-Version: 0.1.0
-Summary: Vault-backed certificate and signing material support for PQC experiments
-Requires-Python: >=3.11
-Requires-Dist: requests>=2.31
-Provides-Extra: test
-Requires-Dist: pytest>=8.0; extra == "test"

@@ -86,11 +86,11 @@ def _copy_broker_project(source: Path, destination: Path) -> None:
 
 
 def _require_staged_stepca_material() -> Path:
-    cert_dir = REPO_ROOT / "secrets" / "mqtt" / "stepca-classical"
+    cert_dir = REPO_ROOT / "secrets" / "certificates" / "rsa3072"
     required = ("ca.crt", "ca-chain.crt", "server.crt", "server.key", "client.crt", "client.key")
     missing = [name for name in required if not (cert_dir / name).is_file()]
     if missing:
-        pytest.skip("staged step-ca MQTT material is unavailable: " + ", ".join(missing))
+        pytest.skip("pre-provisioned RSA-3072 MQTT material is unavailable: " + ", ".join(missing))
     return cert_dir
 
 
@@ -115,7 +115,7 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     source_cert_dir = _require_staged_stepca_material()
     workspace_root = tmp_path / "workspace"
     broker_root = workspace_root / "experiment" / "mqtt-broker"
-    cert_dir = workspace_root / "secrets" / "mqtt" / "stepca-classical"
+    cert_dir = workspace_root / "secrets" / "certificates" / "rsa3072"
     broker_root.parent.mkdir(parents=True, exist_ok=True)
     _copy_broker_project(BROKER_ROOT, broker_root)
     _copy_staged_material(source_cert_dir, cert_dir)
@@ -124,7 +124,7 @@ def classical_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _docker_ru
     host_port = _free_local_port()
     port_env = {
         "MQTT_CLASSICAL_TLS_PORT": str(host_port),
-        "MQTT_CERTIFICATE_PROFILE": "stepca-classical",
+        "MQTT_CERTIFICATE_PROFILE": "rsa3072",
     }
     env = {**os.environ, **port_env}
 
@@ -196,7 +196,7 @@ def _wait_for_tls(host_port: int, cert_dir: Path, broker_root: Path, project_nam
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root.parents[1] / "secrets" / "mqtt" / "stepca-classical"
+    cert_dir = broker_root.parents[1] / "secrets" / "certificates" / "rsa3072"
 
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
@@ -215,7 +215,7 @@ def test_mqtt_classical_container_starts_and_accepts_mutual_tls(classical_broker
 @pytest.mark.docker_runtime
 def test_mqtt_classical_container_supports_client_certificate_pubsub(classical_broker):
     broker_root, project_name, host_port, env = classical_broker
-    cert_dir = broker_root.parents[1] / "secrets" / "mqtt" / "stepca-classical"
+    cert_dir = broker_root.parents[1] / "secrets" / "certificates" / "rsa3072"
     _wait_for_tls(host_port, cert_dir, broker_root, project_name, env)
 
     suffix = uuid.uuid4().hex[:10]

@@ -223,7 +223,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MX_Application_Src})
 # layer must not register an application entry point independently, otherwise
 # legacy and selected workloads can both define PQC_MQTT_ApplicationRun().
 
-if(PQC_UART_LOG_LEVEL STREQUAL "error")
+if(PQC_UART_LOG_LEVEL STREQUAL "off")
+    set(PQC_UART_LOG_LEVEL_VALUE -1)
+elseif(PQC_UART_LOG_LEVEL STREQUAL "error")
     set(PQC_UART_LOG_LEVEL_VALUE 0)
 elseif(PQC_UART_LOG_LEVEL STREQUAL "info")
     set(PQC_UART_LOG_LEVEL_VALUE 1)

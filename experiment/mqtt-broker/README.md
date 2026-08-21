@@ -8,9 +8,9 @@ Framework build, test, and experiment workflows use the Docker wrappers. Broker 
 
 ## Profiles
 
-- `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the classical step-ca hierarchy and requires a client certificate (mutual TLS).
-- `classical-server-auth`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the same step-ca broker identity but does not request a client certificate.
-- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses the same classical step-ca identity hierarchy, performs hybrid `SecP256r1MLKEM768` key exchange, and does not request a client certificate.
+- `classical`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the `rsa3072` certificate profile, and requires a client certificate (mutual TLS).
+- `classical-server-auth`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the same staged RSA-3072 broker identity but does not request a client certificate.
+- `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses the selected staged certificate family independently of the hybrid `SecP256r1MLKEM768` key exchange and does not request a client certificate.
 
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
@@ -36,28 +36,25 @@ experiment/mqtt-broker/log/
 experiment/mqtt-broker/.env
 ```
 
-## Provision localhost-only classical TLS material
+## Provision certificate profiles
+
+Certificate provisioning is a separate one-time setup action. From the repository root run:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name localhost
+.\scripts\dev.ps1 python scripts/provision_certificates.py
 ```
 
-This creates a local development CA, localhost server certificate, and client certificate under `secrets/mqtt/server-ecdsa-p256/`. These generated files are not committed. This example is for local-only validation and does not add the gateway IP address as an IP subject alternative name. Use the gateway-specific command below when clients connect through `configs/hosts/gateway.yaml` and its configured `network.address`.
+The provisioner reads `configs/certificate_profile/*.yaml` and writes each generated profile directly under `secrets/certificates/<profile-id>/`. To regenerate selected material intentionally, use `--profile <id> --force`. Broker control and experiment orchestration never generate, renew, or synchronize certificates.
 
-## Provision remote OQS TLS material
+The generated server SANs, leaf identities, validity, hierarchy topology, key algorithm, and certificate signature settings are controlled by the corresponding certificate-profile YAML. Edit that profile and deliberately reprovision when those inputs need to change.
 
-The OQS broker profile uses the classical Step CA certificate chain for server authentication and the hybrid TLS group `SecP256r1MLKEM768` for key exchange. The STM32 profile therefore compiles ML-KEM-768 support while retaining classical RSA certificate verification.
-
-Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct script invocation below is the supported host-native administration path because it uses the host SSH configuration. The framework-level `dev.ps1 experiment mqtt-broker-experiment` command remains the normal recorded orchestration path.
-
-Provisioning and deployment are normally performed automatically by the experiment prerequisite phase. For broker-only diagnosis, the equivalent direct commands are:
+Run gateway broker administration with the repository Python environment on the development host. `mqtt-broker` is not a `dev.ps1` command. The direct broker-control script remains the supported host-native administration path because it uses the host SSH configuration. Deployment copies the already-provisioned `secrets/certificates/` tree required by the selected profile.
 
 ```powershell
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py deploy
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-oqs-certs --host-config configs/hosts/gateway.yaml
 ```
 
-Provisioning verifies the classical certificate chain and the server certificate/private-key match before succeeding. The experiment runner resolves the certificate profile before build fingerprinting and broker startup.
+If an experiment selects a profile that is absent or incomplete, prerequisite preparation fails and reports the provisioning command.
 
 Validate the server-authenticated hybrid TLS handshake after starting the profile:
 
@@ -143,9 +140,9 @@ For PowerShell, pass upstream wolfMQTT options after `--client-args` and quote e
   --result-json results/host-wolfmqtt/classical-gateway-validation.json `
   run `
   --client-args '-h' 10.1.1.18 '-p' 8883 '-t' `
-  '-A' /workspace/secrets/mqtt/server-ecdsa-p256/ca.crt `
-  '-K' /workspace/secrets/mqtt/server-ecdsa-p256/client.key `
-  '-c' /workspace/secrets/mqtt/server-ecdsa-p256/client.crt
+  '-A' /workspace/secrets/certificates/ecdsa-p256/ca.crt `
+  '-K' /workspace/secrets/certificates/ecdsa-p256/client.key `
+  '-c' /workspace/secrets/certificates/ecdsa-p256/client.crt
 ```
 
 This is native host wolfMQTT/wolfSSL compatibility evidence only. It does not prove wolfMQTT-on-STM32, ST67W61M1 operation, or end-to-end wireless behavior.
@@ -167,10 +164,10 @@ Local and gateway Docker success must be confirmed from command output or logs b
 
 `configs/hosts/gateway.yaml` contains both the SSH alias and `network.address`. The SSH alias is used for orchestration commands, while `network.address` is used for MQTT/TLS validation from clients that cannot resolve the SSH alias through DNS.
 
-Provision certificates with the host config so the server certificate includes the gateway IP address as an IP subject alternative name:
+The server SANs are declared in each `configs/certificate_profile/<profile-id>.yaml`. The initial profiles include the maintained gateway address used by the supplied experiment configurations. If the gateway address or broker DNS names change, update the certificate-profile YAML and intentionally reprovision that profile:
 
 ```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --server-name pqc-gateway1 --host-config configs/hosts/gateway.yaml
+.\scripts\dev.ps1 python scripts/provision_certificates.py --profile rsa3072 --force
 ```
 
 External TLS validation can use the configured IP address:
@@ -249,7 +246,7 @@ Host-side validation commands are mode-specific:
 
 `validate-classical-mqtt` sends `client.crt` and `client.key`. The server-auth and OQS validators deliberately omit client identity material. These commands are host-side/broker-side evidence and do not prove STM32 mTLS. The STM32 experiment set covers classical and hybrid server authentication plus equivalent classical and hybrid mutual-TLS profiles. Mutual-TLS builds embed the experiment-only client certificate and private key and include both files in the immutable build fingerprint.
 
-The experiment prerequisite phase provisions or reuses `secrets/mqtt/server-ecdsa-p256` before fingerprinting. The build embeds only that profile’s public `ca.crt`; private keys remain generated dependency state and are not copied into firmware results or manifests.
+The experiment prerequisite phase requires the selected `secrets/certificates/<certificate-profile>/` material to exist before build preparation. It never provisions or renews certificates. The build embeds only the selected profile’s public `ca.crt`; private material remains ignored local state except where explicitly retained with experiment evidence under the security policy.
 
 ## STM32 reconnect validation
 
@@ -264,7 +261,7 @@ Routine MQTT experiment UART output is intentionally concise. Per-call TLS I/O r
 
 ## Hybrid PQC server-authenticated profile
 
-The `oqs` profile is the broker for the first STM32 PQC MQTT experiment. It requires TLS 1.3, uses the `SecP256r1MLKEM768` hybrid group, validates the broker certificate from the STM32 client, and does not request a client certificate. Its mounted OpenSSL configuration activates the default and OQS providers and sets `Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024` so the Mosquitto server process can select the same hybrid key share as the client.
+The `oqs` profile is used for TLS 1.3 experiments whose authentication path can use PQC certificates. Its mounted OpenSSL configuration permits the supported hybrid groups plus classical P-256: `Groups = X25519MLKEM768:SecP256r1MLKEM768:SecP384r1MLKEM1024:P-256`. The hybrid groups remain first in the preference order, while P-256 is retained so controlled experiments can isolate classical `secp256r1` key exchange with PQC authentication.
 
 Provision OQS certificates after deployment. The provisioning command retrieves only the public CA certificate for the local firmware build. The strict TLS validator fails when OpenSSL exits unsuccessfully, no peer certificate is presented, the cipher is `(NONE)`, TLS 1.3 is not negotiated, or certificate verification fails.
 
@@ -278,27 +275,27 @@ The STM32 PQC hybrid TLS profile uses classical server authentication. The exper
 
 Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS clients may support Falcon, but that does not establish compatibility with the firmware client.
 
-## step-ca certificate source and TLS 1.3 policy
+## Offline certificate source and TLS 1.3 policy
 
-All encrypted MQTT profiles use TLS 1.3. The classical and hybrid-key-exchange profiles share the same classical X.509 identity hierarchy produced by `framework/certs`; the hybrid profile changes only the TLS 1.3 key-exchange group.
+All encrypted MQTT profiles use TLS 1.3. Certificate generation is an explicit one-time setup step. `scripts/provision_certificates.py` reads every YAML definition under `configs/certificate_profile/` and writes the corresponding hierarchy directly under ignored `secrets/certificates/<profile-id>/`. No online CA service is required and experiment execution never generates or renews certificates.
 
-Start or refresh the certificate services first, then synchronize the current material:
+Generate or replace the complete certificate set from the host with:
 
 ```powershell
-docker compose -f framework/certs/docker-compose.yml up -d --build
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py provision-certs --certificate-profile stepca-classical
+python scripts/provision_certificates.py
+# use --force to replace an existing complete tree
 ```
 
-The synchronization command copies the root trust anchor, intermediate, CA chain, broker leaf certificate, and broker private key from `framework/certs/secrets/` into `secrets/mqtt/stepca-classical`. It always refreshes the staged copy and writes `certificate-provenance.json`; it never creates a fallback CA. A changed root CA therefore changes the firmware build input and build fingerprint, while a broker-leaf-only renewal requires broker redeployment but does not change the embedded root trust anchor.
+Run the provisioner once after cloning, after deliberately changing a certificate-profile YAML, or when you intentionally want new keys. Experiments select the real profile id with `mqtt.tls.certificate_profile` and consume that directory directly. If a required profile or file is absent, prerequisite preparation fails with the provisioning command rather than silently changing certificate state.
 
 ### Container-local TLS key staging
 
-The repository-root `secrets/mqtt/stepca-classical` directory is mounted read-only. On startup, each TLS broker copies `ca.crt`, `server.crt`, and `server.key` into `/tmp/mosquitto-certs`, assigns the broker runtime user, and applies mode `0640` to the private key. Mosquitto reads TLS material only from that container-local directory. This avoids host bind-mount permission differences on Windows and the gateway while preserving a read-only deployment source.
+The selected repository-root `secrets/certificates/<certificate-profile>/` directory is mounted read-only. On startup, each TLS broker copies `ca.crt`, `server.crt`, and `server.key` into `/tmp/mosquitto-certs`, assigns the broker runtime user, and applies mode `0640` to the private key. Mosquitto reads TLS material only from that container-local directory. This avoids host bind-mount permission differences on Windows and the gateway while preserving a read-only deployment source.
 
 
 ### mTLS identity mapping
 
-The classical mTLS listener uses `use_identity_as_username true`. The step-ca STM32 client certificate has `CN=stm32-mqtt-client`, so the classical ACL authorises the MQTT username `stm32-mqtt-client` for `pqc/#`. A different client certificate common name requires a corresponding ACL entry.
+The classical mTLS listener uses `use_identity_as_username true`. The generated STM32 client certificate has `CN=stm32-mqtt-client`, so the classical ACL authorises the MQTT username `stm32-mqtt-client` for `pqc/#`. A different client certificate common name requires a corresponding ACL entry.
 
 
 The `validate-oqs-mqtt` client containers load the project-managed OQS OpenSSL configuration and provider module path so MQTT publish/subscribe uses `SecP256r1MLKEM768`, matching the OQS broker profile.
@@ -315,8 +312,7 @@ The classical mutual-TLS profile uses the same classical TLS algorithm set as
 the classical server-authentication profile. The hybrid mutual-TLS profile uses
 the same `SecP256r1MLKEM768` key-exchange group as the hybrid
 server-authentication profile. Both use classical server and STM32 client
-certificates issued by the existing Step CA hierarchy. ML-DSA is not used by
-the TLS component.
+certificates staged from the selected generated family. Certificate authentication remains independent from the selected TLS key-exchange group.
 
 ## Timestamped experiment progress output
 
@@ -348,7 +344,7 @@ Application builds report reuse evaluation separately from compilation: the fram
 
 ## Result-retained certificate material
 
-When an experiment selects an MQTT certificate profile, the owning result retains that complete disposable profile beneath `cryptographic-material/mqtt/<certificate-profile>/` and records each file in `material-inventory.json`. This includes applicable CA chains, broker certificates and private keys, and mutual-TLS client certificates and private keys. These copies support manual broker installation and result reproduction; canonical generated state remains authoritative for later runs. SSH/VPN credentials, tokens, production material, and unrelated host credentials are never retained.
+When an experiment selects an MQTT certificate profile, the owning result retains that complete disposable profile beneath `cryptographic-material/mqtt/<certificate-profile>/` and records each file in `material-inventory.json`. This includes applicable CA chains, broker certificates and private keys, and mutual-TLS client certificates and private keys. These copies support manual broker installation and result reproduction; `secrets/certificates/<certificate-profile>/` remains authoritative for later runs. SSH/VPN credentials, tokens, production material, and unrelated host credentials are never retained.
 
 
 ## Packet-level MQTT evidence

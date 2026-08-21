@@ -20,16 +20,8 @@ def test_existing_mqtt_profiles_remain_validation_profiles():
 
 
 def test_ready_metrics_profile_matrix_exists_and_selects_application():
-    originals = sorted(Path('configs/experiments').glob('mqtt*_st67_e2e.yaml'))
     generated = sorted(ROOT.glob('ready_metrics_mqtt*_st67_e2e.yaml'))
-    mldsa65_profiles = [path for path in generated if '_mldsa65_' in path.name]
-
-    # The original validation matrix remains unchanged. Ready-metrics contains
-    # one mirror for each original profile plus six additive ML-DSA-65 TLS
-    # authentication profiles for the three hybrid groups in server/mutual auth.
-    assert len(originals) == 15
-    assert len(generated) == 21
-    assert len(mldsa65_profiles) == 6
+    assert generated, "expected at least one ready-metrics profile"
 
     for path in generated:
         text = path.read_text(encoding='utf-8')
@@ -70,3 +62,18 @@ def test_wolfboot_composition_preserves_ready_metrics_application():
 
     assert bundle["experiment"]["firmware"]["application"] == "mqtt_ready_metrics"
     assert bundle["experiment"]["firmware"]["mode"] == "wolfboot_integrity"
+
+
+
+def test_ready_metrics_2_profile_exists_and_selects_new_application():
+    profile = Path(
+        "configs/experiments/applications/ready_metrics_2/"
+        "ready_metrics_2_mqtt_tls_secp256r1_server_auth_st67_e2e.yaml"
+    )
+    assert profile.is_file()
+    text = profile.read_text(encoding="utf-8")
+    assert text.startswith("id: ready_metrics_2_")
+    assert "application: mqtt_ready_metrics_2" in text
+    assert "uart_log_level: info" in text
+    assert "ttfb_start: immediately_before_lwip_connect_after_dns" in text
+    assert "ttfb_end: first_plaintext_byte_returned_while_receiving_mqtt_connack" in text

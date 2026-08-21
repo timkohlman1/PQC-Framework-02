@@ -9,8 +9,9 @@ def test_uart_logger_prefixes_complete_lines_with_hal_tick():
     assert "APP_UART_WriteRaw(\"\\r\\n\", 2U);" in source
 
 
-def test_uart_logger_supports_error_info_and_debug_levels():
+def test_uart_logger_supports_off_error_info_and_debug_levels():
     source = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    assert "APP_UART_LOG_LEVEL_OFF  (-1)" in source
     assert "APP_UART_LOG_LEVEL_ERROR 0" in source
     assert "APP_UART_LOG_LEVEL_INFO  1" in source
     assert "APP_UART_LOG_LEVEL_DEBUG 2" in source
@@ -25,6 +26,8 @@ def test_bounded_validation_no_longer_emits_standalone_tick_heartbeat():
 
 def test_cmake_maps_profile_uart_log_level_to_compile_definition():
     source = Path("cmake/stm32cubemx/CMakeLists.txt").read_text(encoding="utf-8")
+    assert 'PQC_UART_LOG_LEVEL STREQUAL "off"' in source
+    assert 'set(PQC_UART_LOG_LEVEL_VALUE -1)' in source
     assert 'PQC_UART_LOG_LEVEL STREQUAL "error"' in source
     assert 'PQC_UART_LOG_LEVEL STREQUAL "info"' in source
     assert 'PQC_UART_LOG_LEVEL STREQUAL "debug"' in source

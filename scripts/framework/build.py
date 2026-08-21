@@ -40,8 +40,8 @@ BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics"}
-SUPPORTED_UART_LOG_LEVELS = {"error": 0, "info": 1, "debug": 2}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
+SUPPORTED_UART_LOG_LEVELS = {"off": -1, "error": 0, "info": 1, "debug": 2}
 
 
 @dataclass(frozen=True)
@@ -292,20 +292,35 @@ def _current_run_id(result_dir: Path) -> str | None:
 
 
 def _certificate_requires_ecc(bundle: dict[str, dict[str, Any]]) -> bool:
-    """Return whether the selected certificate profile needs wolfSSL ECC support.
+    """Return whether the selected certificate profile needs wolfSSL ECC support."""
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    transfer = mqtt.get("transfer", {}) if isinstance(mqtt, dict) else {}
+    mode = str(tls.get("mode", "plaintext")).strip()
+    certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
+    if mode == "plaintext":
+        return False
+    return certificate_profile in {"ecdsa-p256", "ecdsa-p384"}
 
-    This is independent of the negotiated TLS key-exchange group. The
-    stepca-classical certificate material contains EC keys/signatures and must
-    remain parseable for X25519-only key-exchange profiles.
-    """
+
+def _certificate_ecc_bits(bundle: dict[str, dict[str, Any]]) -> int | None:
+    experiment = bundle.get("experiment", {})
+    mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    return {"ecdsa-p256": 256, "ecdsa-p384": 384}.get(str(tls.get("certificate_profile", "")).strip().lower())
+
+
+def _certificate_requires_sha384(bundle: dict[str, dict[str, Any]]) -> bool:
+    """Return whether the selected certificate profile needs SHA-384 support."""
     experiment = bundle.get("experiment", {})
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     mode = str(tls.get("mode", "plaintext")).strip()
-    certificate_profile = str(tls.get("certificate_profile", "")).strip()
+    certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
     if mode == "plaintext":
         return False
-    return certificate_profile in {"stepca-classical"}
+    return certificate_profile == "ecdsa-p384"
 
 
 def _resolved_firmware_application(bundle: dict[str, dict[str, Any]]) -> str:
@@ -353,13 +368,14 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     """Write the resolved profile-specific CMake algorithm selection."""
     selected = dict(resolve_tls_algorithm_set(bundle))
     selected["certificate_ecc"] = _certificate_requires_ecc(bundle)
+    selected["sha384"] = _certificate_requires_sha384(bundle)
     enabled_ecc_sizes = []
     if selected["ecc"]:
         enabled_ecc_sizes.append(int(selected["ecc_bits"]))
-    if selected["certificate_ecc"]:
-        # stepca-classical currently uses a P-256 EC CA/signature chain. Keep
-        # certificate acceptance independent from the selected TLS KEX curve.
-        enabled_ecc_sizes.append(256)
+    certificate_ecc_bits = _certificate_ecc_bits(bundle)
+    selected["certificate_ecc_bits"] = certificate_ecc_bits or 0
+    if selected["certificate_ecc"] and certificate_ecc_bits is not None:
+        enabled_ecc_sizes.append(certificate_ecc_bits)
     selected["ecc_min_bits"] = min(enabled_ecc_sizes, default=256)
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
@@ -370,6 +386,8 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ENABLE_RSA_PSS {cmake_boolean(selected["rsa_pss"])})\n'
         f'set(PQC_TLS_ENABLE_ECC {cmake_boolean(selected["ecc"])})\n'
         f'set(PQC_TLS_ENABLE_CERT_ECC {cmake_boolean(selected["certificate_ecc"])})\n'
+        f'set(PQC_TLS_CERT_ECC_BITS {selected["certificate_ecc_bits"]})\n'
+        f'set(PQC_TLS_ENABLE_SHA384 {cmake_boolean(selected["sha384"])})\n'
         f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
         f'set(PQC_TLS_ECC_MIN_BITS {selected["ecc_min_bits"]})\n'
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
@@ -392,6 +410,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
     topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
+    transfer = mqtt.get("transfer", {}) if isinstance(mqtt, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_refs = tls.get("certificate_refs", {}) if isinstance(tls, dict) else {}
     ca_pem = ""
@@ -409,7 +428,12 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
                 "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
                 "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
             )
-        supported_server_signature_algorithms = {"classical", "mldsa65"}
+        supported_server_signature_algorithms = {
+            "classical",
+            "ecdsa_secp256r1_sha256",
+            "ecdsa_secp384r1_sha384",
+            "mldsa65",
+        }
         if server_signature_algorithm not in supported_server_signature_algorithms:
             raise ValueError(
                 "MQTT TLS server signature algorithm " + server_signature_algorithm
@@ -464,6 +488,11 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'
         f'#define PQC_MQTT_RESPONSE_TOPIC "{esc(str(topics.get("response", "pqc/stm32/response")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_REQUEST_TOPIC "{esc(str(transfer.get("request_topic", "pqc/stm32/transfer/request")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_RESPONSE_TOPIC "{esc(str(transfer.get("response_topic", "pqc/stm32/transfer/response")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_REQUEST_PAYLOAD "{esc(str(transfer.get("request_payload", "send")))}"\n'
+        f'#define PQC_MQTT_TRANSFER_PAYLOAD_BYTES {int(transfer.get("payload_bytes", 204800))}U\n'
+        f'#define PQC_MQTT_TRANSFER_CHUNK_BYTES {int(transfer.get("chunk_bytes", 400))}U\n'
         f'#define PQC_MQTT_CORRELATION_PAYLOAD "{esc(str(mqtt.get("correlation_payload", "pqc-e2e")))}"\n'
         f'#define PQC_MQTT_TLS_MODE "{esc(str(tls.get("mode", "plaintext")))}"\n'
         f'#define PQC_MQTT_TLS_SERVER_NAME "{esc(str(broker.get("server_name", broker.get("host", ""))))}"\n'

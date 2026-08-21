@@ -444,11 +444,20 @@ def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
         raise AssertionError("unsupported profile_kind was accepted")
 
 
-def test_all_repository_yaml_configs_are_accepted_by_framework_loader():
-    """Prevent unsupported YAML formatting from reaching runtime commands."""
+def test_framework_owned_yaml_configs_are_accepted_by_framework_loader():
+    """Prevent unsupported YAML formatting from reaching framework runtime commands.
+
+    Certificate-profile YAML is intentionally parsed by scripts/provision_certificates.py
+    with PyYAML rather than by the framework's constrained configuration loader.
+    """
     experiment_cli = load_experiment_module()
     repo_root = Path(__file__).resolve().parents[2]
-    config_paths = sorted((repo_root / "configs").rglob("*.yaml"))
+    certificate_profile_root = repo_root / "configs" / "certificate_profile"
+    config_paths = sorted(
+        path
+        for path in (repo_root / "configs").rglob("*.yaml")
+        if certificate_profile_root not in path.parents
+    )
 
     assert config_paths, "expected repository YAML configuration files"
 

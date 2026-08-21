@@ -392,13 +392,13 @@ def test_classical_gateway_mqtt_clients_use_resolved_certificate_profile():
     bundle = {
         "experiment": {
             "mqtt": {
-                "tls": {"certificate_profile": "stepca-classical"}
+                "tls": {"certificate_profile": "rsa3072"}
             }
         }
     }
 
     assert experiment_cli._mqtt_remote_ca_file(bundle) == (
-        "$HOME/pqc-framework-02/secrets/mqtt/stepca-classical/ca.crt"
+        "$HOME/pqc-framework-02/secrets/certificates/rsa3072/ca.crt"
     )
 
 def test_oqs_gateway_clients_mount_profile_at_container_certificate_path():

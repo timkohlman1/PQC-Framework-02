@@ -192,7 +192,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
     broker_root = tmp_path / "experiment" / "mqtt-broker"
     (broker_root / "scripts" / "__pycache__").mkdir(parents=True)
-    (tmp_path / "secrets" / "mqtt" / "stepca-classical").mkdir(parents=True)
+    (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -204,11 +204,11 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "$HOME/pqc-framework-02/secrets" in commands[0][-1]
-    assert "$HOME/pqc-framework-02/secrets/mqtt" in commands[0][-1]
+    assert "$HOME/pqc-framework-02/secrets/certificates" in commands[0][-1]
     assert "__pycache__" not in command_text
     assert "mqtt_broker_ctl.cpython" not in command_text
     assert any(command[0] == "scp" and command[1].endswith("mqtt_broker_ctl.py") for command in commands)
-    assert any(command[0:2] == ["scp", "-r"] and command[2].replace("\\", "/").endswith("secrets/mqtt") for command in commands)
+    assert any(command[0:2] == ["scp", "-r"] and command[2].replace("\\", "/").endswith("secrets/certificates") for command in commands)
 
 
 def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(tmp_path, monkeypatch):
@@ -216,7 +216,7 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
     host_config = tmp_path / "gateway.yaml"
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
     broker_root = tmp_path / "experiment" / "mqtt-broker"
-    (tmp_path / "secrets" / "mqtt" / "stepca-classical").mkdir(parents=True)
+    (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -233,7 +233,7 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
     ]
     assert permission_commands
     assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
-    assert "$HOME/pqc-framework-02/secrets/mqtt" in permission_commands[-1][-1]
+    assert "$HOME/pqc-framework-02/secrets/certificates" in permission_commands[-1][-1]
     assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime" not in permission_commands[-1][-1]
 
 
@@ -242,7 +242,7 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
     host_config = tmp_path / "gateway.yaml"
     host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
     broker_root = tmp_path / "experiment" / "mqtt-broker"
-    (tmp_path / "secrets" / "mqtt" / "stepca-classical").mkdir(parents=True)
+    (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -253,8 +253,8 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
     module.deploy(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
-    assert "secrets/mqtt" in command_text
-    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/secrets/mqtt" in command_text
+    assert "secrets/certificates" in command_text
+    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/secrets/certificates" in command_text
     assert "runtime/oqs" not in command_text
 
 
@@ -318,46 +318,7 @@ def test_mqtt_docs_record_oqs_as_experimental_not_production():
     assert "Confirm negotiated algorithms" in oqs_readme
 
 
-def test_mqtt_cert_provisioning_synchronizes_authoritative_stepca_material(tmp_path, monkeypatch):
-    module = _load_ctl_module()
-    source_root = tmp_path / "framework" / "certs"
-    public_ca = source_root / "secrets" / "public" / "ca"
-    broker_identity = source_root / "secrets" / "runtime" / "mqtt-broker"
-    client_identity = source_root / "secrets" / "runtime" / "stm32"
-    public_ca.mkdir(parents=True)
-    broker_identity.mkdir(parents=True)
-    client_identity.mkdir(parents=True)
 
-    (public_ca / "root-ca.crt").write_text("root", encoding="utf-8")
-    (public_ca / "intermediate-ca.crt").write_text("intermediate", encoding="utf-8")
-    (public_ca / "ca-chain.crt").write_text("chain", encoding="utf-8")
-    (broker_identity / "tls.crt").write_text("server cert", encoding="utf-8")
-    (broker_identity / "tls.key").write_text("server key", encoding="utf-8")
-    (client_identity / "client.crt").write_text("client cert", encoding="utf-8")
-    (client_identity / "client.key").write_text("client key", encoding="utf-8")
-
-    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(module, "broker_root", lambda: tmp_path)
-    monkeypatch.setattr(module, "_certificate_valid_for", lambda *_args, **_kwargs: True)
-
-    args = module.build_parser().parse_args([
-        "provision-certs",
-        "--certificate-profile",
-        "stepca-classical",
-    ])
-    module.sync_stepca_certs(args)
-
-    cert_dir = tmp_path / "secrets" / "mqtt" / "stepca-classical"
-    assert (cert_dir / "ca.crt").read_text(encoding="utf-8") == "root"
-    assert (cert_dir / "intermediate-ca.crt").read_text(encoding="utf-8") == "intermediate"
-    assert (cert_dir / "ca-chain.crt").read_text(encoding="utf-8") == "chain"
-    assert (cert_dir / "server.crt").read_text(encoding="utf-8") == "server cert"
-    assert (cert_dir / "server.key").read_text(encoding="utf-8") == "server key"
-    provenance = json.loads((cert_dir / "certificate-provenance.json").read_text(encoding="utf-8"))
-    assert provenance["source"] == "framework/certs"
-    assert provenance["profile_kind"] == "stepca-classical"
-    assert provenance["ca_algorithm"] == "classical-x509"
-    assert provenance["leaf_algorithm"] == "classical"
 
 
 def test_mqtt_remote_shell_path_preserves_home_directory_expansion():
@@ -426,7 +387,7 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in compose
     assert "./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro" in compose
     assert "./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro" in compose
-    assert "../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro" in compose
+    assert "../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro" in compose
     assert 'OPENSSL_CONF: "/mosquitto/config/openssl.cnf"' in compose
     assert "OPENSSL_MODULES" not in compose
     configured_groups = {
@@ -439,6 +400,7 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "P-256",
     }
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
     assert "--tls-version tlsv1.3" in compose
@@ -446,33 +408,6 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
     assert "--insecure" in compose
     assert "oqsprovider" not in openssl_config
 
-def test_mqtt_control_script_has_provision_and_validation_subcommands():
-    module = _load_ctl_module()
-    parser = module.build_parser()
-
-    oqs = parser.parse_args(["provision-oqs-certs", "--dry-run"])
-    validate = parser.parse_args(["validate-oqs-tls", "--dry-run"])
-    classical_mqtt = parser.parse_args(["validate-classical-mqtt", "--dry-run"])
-    oqs_mqtt = parser.parse_args(["validate-oqs-mqtt", "--dry-run"])
-
-    assert oqs.command == "provision-oqs-certs"
-    assert oqs.certificate_profile == "stepca-classical"
-    assert oqs.func is module.sync_stepca_certs
-    assert validate.command == "validate-oqs-tls"
-    assert validate.oqs_group == "SecP256r1MLKEM768"
-    assert classical_mqtt.command == "validate-classical-mqtt"
-    assert classical_mqtt.topic == "pqc/test/e2e"
-    assert classical_mqtt.message == "pqc-classical-mqtt-e2e"
-    assert classical_mqtt.image == "eclipse-mosquitto:2.1.2-alpine"
-    assert callable(classical_mqtt.func)
-    assert not isinstance(classical_mqtt.func, type(parser))
-    assert oqs_mqtt.command == "validate-oqs-mqtt"
-    assert oqs_mqtt.topic == "pqc/test/e2e"
-    assert callable(oqs_mqtt.func)
-    assert not isinstance(oqs_mqtt.func, type(parser))
-    assert module.HOST_BROKER_EVIDENCE_CLASS == "host_side"
-    assert module.HOST_BROKER_EVIDENCE_LABEL == "host-side/broker-side MQTT/TLS compatibility evidence"
-    assert "does not claim STM32" in module.HOST_BROKER_EVIDENCE_BOUNDARY
 
 
 
@@ -528,18 +463,6 @@ def test_validate_oqs_mqtt_main_dispatches_to_validation_function(tmp_path, monk
     assert "mosquitto_pub" in command_text
 
 
-def test_oqs_certificate_provisioning_alias_synchronizes_stepca_profile(tmp_path, monkeypatch):
-    module = _load_ctl_module()
-    monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(module, "broker_root", lambda: tmp_path)
-
-    args = module.build_parser().parse_args([
-        "provision-oqs-certs",
-        "--dry-run",
-    ])
-
-    assert args.certificate_profile == "stepca-classical"
-    assert args.func is module.sync_stepca_certs
 
 
 def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshake(tmp_path, monkeypatch):
@@ -614,7 +537,7 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
     assert "--entrypoint mosquitto_pub" in command_text
     assert "--network host" in command_text
     assert "-p 28883" in command_text
-    assert "$HOME/pqc-framework-02/secrets/mqtt/stepca-classical" in command_text
+    assert "$HOME/pqc-framework-02/secrets/certificates/rsa3072" in command_text
     assert "runtime/classical/certs" not in command_text
     assert "--cafile /certs/ca.crt" in command_text
     assert "--cert /certs/client.crt" in command_text
@@ -794,6 +717,7 @@ def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "P-256",
     }
     for profile in ("oqs", "oqs-mtls"):
         config = _read(BROKER_ROOT / "config" / profile / "openssl.cnf")

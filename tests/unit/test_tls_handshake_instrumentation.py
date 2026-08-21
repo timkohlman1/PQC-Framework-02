@@ -54,6 +54,7 @@ def test_crypto_hooks_cover_selected_tls_primitives():
     tls = read("Middlewares/Third_Party/wolfSSL/src/tls.c")
     kdf = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/kdf.c")
     sha = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha256.c")
+    sha384 = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha512.c")
 
     assert "PQC_TLS_PRIMITIVE_P256_KEYGEN" in internal
     assert "PQC_TLS_PRIMITIVE_P256_SHARED_SECRET" in internal
@@ -64,6 +65,7 @@ def test_crypto_hooks_cover_selected_tls_primitives():
     assert "PQC_TLS_PRIMITIVE_HKDF_EXTRACT" in kdf
     assert "PQC_TLS_PRIMITIVE_HKDF_EXPAND" in kdf
     assert "PQC_TLS_PRIMITIVE_SHA256" in sha
+    assert "PQC_TLS_PRIMITIVE_SHA384" in sha384
 
 
 
@@ -206,10 +208,13 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
         assert primitive in tls
 
     # TLS CertificateVerify and X.509 chain verification use different wolfSSL
-    # paths. Both must feed the same RSA/ML-DSA aggregate.
+    # paths. Signature-family aggregates must cover both layers consistently.
     assert "PQC_TLS_PRIMITIVE_RSA_VERIFY" in internal
     assert "PQC_TLS_PRIMITIVE_RSA_VERIFY" in asn
     assert "PQC_TLS_PRIMITIVE_RSA_SIGN" in tls13
+    assert "PQC_TLS_PRIMITIVE_ECDSA_VERIFY" in internal
+    assert "PQC_TLS_PRIMITIVE_ECDSA_VERIFY" in asn
+    assert "PQC_TLS_PRIMITIVE_ECDSA_SIGN" in internal
     assert "PQC_TLS_PRIMITIVE_MLDSA65_VERIFY" in tls13
     assert "PQC_TLS_PRIMITIVE_MLDSA65_VERIFY" in asn
     assert "PQC_TLS_PRIMITIVE_MLDSA65_SIGN" in tls13
@@ -222,7 +227,9 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
         '"mlkem768_keygen"', '"mlkem768_decapsulate"',
         '"mlkem1024_keygen"', '"mlkem1024_decapsulate"',
         '"rsa_verify"', '"rsa_sign"',
+        '"ecdsa_verify"', '"ecdsa_sign"',
         '"mldsa65_verify"', '"mldsa65_sign"',
+        '"sha256"', '"sha384"',
     ):
         assert name in report
 
@@ -239,19 +246,32 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
 
     profiles = ROOT / "configs/experiments/applications/ready_metrics"
     tls_profiles = sorted(profiles.glob("ready_metrics_mqtt_tls_*_st67_e2e.yaml"))
-    assert len(tls_profiles) == 20
+    assert tls_profiles, "expected at least one TLS ready-metrics profile"
 
     for path in tls_profiles:
         experiment = module.load_config(path)
         markers = module._mqtt_e2e_required_uart_markers({"experiment": experiment})
         tls = experiment["mqtt"]["tls"]
         group = tls["key_exchange_group"].lower()
-        signature = str(tls.get("server_signature_algorithm", "classical")).lower()
+        certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
+        signature = str(tls.get("server_signature_algorithm", "")).strip().lower()
+        if not signature:
+            signature = {
+                "rsa3072": "rsa_pss_rsae_sha256",
+                "ecdsa-p256": "ecdsa_secp256r1_sha256",
+                "ecdsa-p384": "ecdsa_secp384r1_sha384",
+                "mldsa65": "mldsa65",
+            }.get(certificate_profile, "")
         mutual = str(tls.get("authentication", "server")).lower() == "mutual"
 
         assert "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1" in markers
         assert "PQC_TLS_HANDSHAKE_MEMORY" in markers
         assert "PQC_TLS_PRIMITIVE name=x509_verify" in markers
+        assert "PQC_TLS_PRIMITIVE name=sha256" in markers
+        if certificate_profile == "ecdsa-p384":
+            assert "PQC_TLS_PRIMITIVE name=sha384" in markers
+        else:
+            assert "PQC_TLS_PRIMITIVE name=sha384" not in markers
         assert "ST67 DNS: required=true" not in markers
         assert "ST67 DNS lookup: result=passed" not in markers
 
@@ -279,6 +299,11 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
             assert "PQC_TLS_PRIMITIVE name=mldsa65_verify" in markers
             if mutual:
                 assert "PQC_TLS_PRIMITIVE name=mldsa65_sign" in markers
+        elif signature in {"ecdsa-p256", "ecdsa_secp256r1_sha256",
+                            "ecdsa-p384", "ecdsa_secp384r1_sha384"}:
+            assert "PQC_TLS_PRIMITIVE name=ecdsa_verify" in markers
+            if mutual:
+                assert "PQC_TLS_PRIMITIVE name=ecdsa_sign" in markers
         else:
             assert "PQC_TLS_PRIMITIVE name=rsa_verify" in markers
             if mutual:

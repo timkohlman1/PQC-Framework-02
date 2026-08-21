@@ -1143,6 +1143,19 @@ def test_write_application_selection_rejects_unknown_uart_log_level(tmp_path):
     else:
         raise AssertionError("unknown UART log level should be rejected")
 
+
+
+def test_write_application_selection_supports_ready_metrics_2_and_uart_off(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["application"] = "mqtt_ready_metrics_2"
+    bundle["experiment"]["firmware"]["uart_log_level"] = "off"
+    path, application = build._write_application_selection(bundle, tmp_path, "Release")
+    assert application == "mqtt_ready_metrics_2"
+    text = path.read_text(encoding="utf-8")
+    assert 'set(PQC_STM32_MQTT_APPLICATION "mqtt_ready_metrics_2")' in text
+    assert 'set(PQC_UART_LOG_LEVEL "off")' in text
+
 def test_write_application_selection_rejects_unknown_application(tmp_path):
     build = load_build_module()
     bundle = sample_bundle()
@@ -1162,3 +1175,32 @@ def test_write_application_selection_supports_ready_metrics(tmp_path):
     path, application = build._write_application_selection(bundle, tmp_path, "Release")
     assert application == "mqtt_ready_metrics"
     assert 'set(PQC_STM32_MQTT_APPLICATION "mqtt_ready_metrics")' in path.read_text(encoding="utf-8")
+
+
+def test_ready_metrics_2_wifi_header_contains_transfer_contract(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "network": {"wifi": {}, "ipv4": {}},
+            "mqtt": {
+                "enabled": True,
+                "broker": {"host": "broker", "port": 1883, "dns_required": True},
+                "topics": {"command": "cmd", "response": "result"},
+                "transfer": {
+                    "payload_bytes": 204800,
+                    "chunk_bytes": 400,
+                    "request_topic": "result/transfer/request",
+                    "response_topic": "result/transfer/response",
+                    "request_payload": "send",
+                },
+                "tls": {},
+            },
+        }
+    }
+    header = _write_wifi_config_header(bundle, tmp_path, "Debug").read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_TRANSFER_REQUEST_TOPIC "result/transfer/request"' in header
+    assert '#define PQC_MQTT_TRANSFER_RESPONSE_TOPIC "result/transfer/response"' in header
+    assert '#define PQC_MQTT_TRANSFER_REQUEST_PAYLOAD "send"' in header
+    assert "#define PQC_MQTT_TRANSFER_PAYLOAD_BYTES 204800U" in header
+    assert "#define PQC_MQTT_TRANSFER_CHUNK_BYTES 400U" in header

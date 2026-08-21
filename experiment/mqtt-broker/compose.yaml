@@ -40,7 +40,7 @@ services:
     volumes:
       - ./config/classical/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/classical/aclfile:/mosquitto/config/aclfile.source:ro
-      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
+      - ../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro
     healthcheck:
       test:
         [
@@ -90,7 +90,7 @@ services:
       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
     volumes:
       - ./config/classical-server-auth/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
+      - ../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro
     healthcheck:
       test:
         [
@@ -141,7 +141,7 @@ services:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs/aclfile:/mosquitto/config/aclfile.source:ro
-      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
+      - ../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
@@ -190,7 +190,7 @@ services:
       - ./config/oqs-mtls/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/oqs-mtls/openssl.cnf:/mosquitto/config/openssl.cnf:ro
       - ./config/oqs-mtls/aclfile:/mosquitto/config/aclfile.source:ro
-      - ../../secrets/mqtt/${MQTT_CERTIFICATE_PROFILE:-stepca-classical}:/mosquitto/config/certs:ro
+      - ../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --cert /tmp/mosquitto-certs/healthcheck.crt --key /tmp/mosquitto-certs/healthcheck.key --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
