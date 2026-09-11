@@ -26,6 +26,697 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 
 
 
+
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+--------------
+
+
+|  Order | Request                                                      | Why here                                                                                                                                                                                                                                                 |
+| -----: | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  **1** | **10 — Configuration profiles and versioned resolver**       | This establishes the final configuration model: targets, workloads, TLS KEX/auth, secure boot, instruments, services and campaigns. Almost everything else should target this model rather than the old YAML structure.                                  |
+|  **2** | **9 — Reproducibility, provenance and credential hardening** | Once configuration is rationalised, lock down source/submodule/tool identities, secrets and dependency provenance. This supplies information needed by the final evidence model.                                                                         |
+|  **3** | **16 — Run-evidence manifest and artefact lineage**          | Establish the final evidence contract early. New features can then emit evidence into the final schema instead of being retrofitted later.                                                                                                               |
+|  **4** | **15 — Reporting broker and buffered result publication**    | This creates the common STM32/ESP32 result transport and separates reporting from the measured/impairment path. TLS instrumentation, repeated handshakes and energy should all use this rather than inventing their own reporting mechanisms.            |
+|  **5** | **11 — General campaign executor**                           | At this point configuration, evidence and result transport are stable enough for the campaign layer. Getting this in early also makes subsequent hardware validation much easier because repetitions/build reuse/condition retention become first-class. |
+|  **6** | **5 — Dual-bank wolfBoot / OTA architecture**                | Establish the final Flash and boot architecture before adding more wolfBoot timing/memory instrumentation. Otherwise you risk instrumenting the old primary/update/swap design and then changing it again.                                               |
+|  **7** | **13 — 1 MHz timing timebase and reset-origin support**      | Do this after the final wolfBoot architecture because RTFB/RTLB require a reset-origin marker carried across the wolfBoot/application handoff. It becomes the timing foundation for subsequent application metrics and energy synchronisation.           |
+|  **8** | **2 — Ready Metrics 2 timing definitions**                   | Once the timing source exists, implement RTFB/RTLB, TTFB/TTLB and ReqTFB/ReqTLB correctly. Doing Request 2 before Request 13 would mean changing the timing fields twice.                                                                                |
+|  **9** | **3 — Hierarchical TLS instrumentation**                     | The API can now use the final result buffer/reporting architecture and final timing infrastructure. Implement the begin/end hooks, event hierarchy and standalone ML-KEM coverage here.                                                                  |
+| **10** | **12 — Repeated full TLS 1.3 workload**                      | This directly consumes the instrumentation from Request 3, the configuration resolver, reporting plane and campaign semantics. It should be quite clean once those pieces exist.                                                                         |
+| **11** | **14 — wolfBoot integrity-only baseline**                    | Now instrument the final dual-bank wolfBoot implementation and use the established reset/timing model. This avoids measuring a bootloader architecture that is about to change.                                                                          |
+| **12** | **4 — wolfBoot runtime stack high-water measurement**        | Same rationale as Request 14. Add the runtime-memory measurement only once the bootloader structure and handoff evidence are stable.                                                                                                                     |
+| **13** | **1 — Bare-metal cryptographic benchmark**                   | By this point the algorithm/profile catalogue, evidence schema and provenance system are mature. The benchmark can use the final wolfCrypt configuration and produce directly comparable structured evidence.                                            |
+| **14** | **6 — ESP32/INA228 energy instrument**                       | This depends quite strongly on Requests 10, 13, 15 and 16: instrument profile, 1 MHz STM32 timestamps, reporting broker and evidence schema. Implementing it earlier would cause unnecessary integration work.                                           |
+| **15** | **8 — Live gateway/network-degradation validation**          | Now validate the complete final topology: experiment broker impaired, reporting broker exempt, campaign conditions retained, STM32 results working and ESP32 energy results still working under impairment.                                              |
+| **16** | **7 — Automated PCAP analysis and correlation**              | Do this last because it is an analysis consumer of the evidence produced by the completed framework. At this point PCAP ownership, timing terminology, TLS key logs, impairment semantics and artefact hashes are all stable.                            |
+
+
+
+
+-----------
+
+IMPLEMENTATION REQUEST 1 — Dedicated bare-metal cryptographic benchmark harness
+
+Implement the dedicated bare-metal cryptographic benchmark capability described by the thesis.
+
+The outcome should be a reproducible STM32 benchmark target that runs selected wolfCrypt cryptographic primitives without FreeRTOS, MQTT, TLS, Wi-Fi, or other application workload overhead. It should use the same relevant wolfCrypt implementation/configuration as the main firmware wherever practical so results remain meaningful for comparison.
+
+The benchmark should produce explicit cycle/timing evidence for supported operations and parameter sets, retain enough build/runtime provenance to identify exactly what was measured, and provide structured results suitable for comparison with the thesis experiment results and external Cortex-M4/PQM4-style benchmarks. The measurement interval and interrupt policy must be clearly defined and must not silently include unrelated setup or reporting work.
+
+Integrate the capability into the existing framework build/result model rather than creating an unrelated standalone process. Add appropriate non-hardware and hardware validation, documentation, and example commands. Unsupported algorithms or operations must be reported as unavailable rather than estimated or silently skipped.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 2 — Align Ready Metrics 2 timing names and origins
+
+Review and update Ready Metrics 2 so every application-visible timing metric has one unambiguous origin and the firmware/result schema uses the same terminology as the thesis.
+
+Use the following canonical definitions:
+- RTFB: reset origin to first byte of the requested application payload.
+- RTLB: reset origin to final byte of the requested application payload.
+- TTFB: TCP connection initiation to first byte of the requested application payload.
+- TTLB: TCP connection initiation to final byte of the requested application payload.
+- ReqTFB: application transfer request to first byte of the requested application payload.
+- ReqTLB: application transfer request to final byte of the requested application payload.
+
+TTFB/TTLB must remain connection-relative so they are comparable with the TLS/Web literature used by the thesis. In particular, the TTFB interval includes TCP establishment, TLS, MQTT connection, the application request and the first application response byte; TTLB uses the same TCP-connect origin and ends at the final byte of the complete requested payload.
+
+Do not label the first MQTT CONNACK/plaintext response byte as TTFB. Retain it as a separate MQTT-readiness/first-response checkpoint. If the existing `ttfb_ms` field currently refers to the CONNACK response while `application_ttfb_ms` refers to the first application-payload byte, migrate the canonical names so `ttfb_ms` represents the application-payload definition above and the MQTT checkpoint receives a distinct field name. Preserve backwards-compatibility only where it cannot create ambiguity in new result records.
+
+The intended end state must provide a reset-relative origin rather than reusing the current post-HAL application checkpoint. Establish the reset origin at the earliest framework-controlled wolfBoot entry after hardware reset and before firmware verification, retain the clock/timing provenance needed to interpret that marker, and propagate the reset-relative state through the existing bootloader-to-application handoff/mailbox. The result schema must identify this operational reset origin explicitly so RTFB/RTLB are not confused with an external oscilloscope measurement of the NRST electrical edge.
+
+Record the six derived metrics together with the underlying checkpoints (reset origin, TCP-connect start, MQTT readiness, application request, first application byte, final application byte). Retain payload-transfer duration from first to final byte as a separate optional metric; it is not ReqTLB.
+
+Keep measurement overhead outside the critical intervals as far as practical. Update structured MQTT/UART evidence, result schemas, host parsers, validation rules, tests, workload documentation and Chapter 4 source comments so old and new metric names cannot be confused.
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 3 — Complete hierarchical TLS instrumentation evidence
+
+Enhance the TLS instrumentation so it can support the hierarchy and event-attribution model described in the thesis, while preserving the current low-overhead aggregate measurements.
+
+The outcome should be a bounded, preallocated instrumentation record that can identify the semantic operation, timing, ordering, and nesting/parent relationship needed to distinguish TLS phases, security functions, and cryptographic primitives. It should remain safe for embedded use and must not introduce UART formatting, dynamic allocation, or other avoidable measurement perturbation inside the TLS handshake.
+
+Define explicit overflow/truncation behaviour. If the fixed capacity is exceeded, the run must retain an explicit incomplete/overflow indication rather than silently presenting partial instrumentation as complete evidence.
+
+Preserve the existing aggregate timing records where they remain useful, and ensure validation is profile-aware so every expected operation for the selected KEX/authentication mode is either recorded or explicitly reported unavailable. Keep the project-owned API in Core/Inc/pqc_tls_instrumentation.h and Core/Src/pqc_tls_instrumentation.c, with thin begin/end hooks at the relevant application, tls13.c, tls.c, internal.c and wolfCrypt call sites. Extend the semantic primitive set to cover standalone ML-KEM-512 as well as ML-KEM-768/1024, selecting the event identity from the active ML-KEM parameter set so standalone and hybrid profiles share the same underlying hook locations. Add unit/integration coverage for ordering, nesting, overflow behaviour, and required-marker completeness, and update the architecture/instrumentation documentation accordingly.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 4 — Implement wolfBoot runtime stack high-water measurement
+
+Complete the secure-boot runtime memory instrumentation so wolfBoot reports an actual verification-time stack high-water value instead of the current unavailable sentinel.
+
+The measurement must cover the bootloader verification workload relevant to the secure-boot benchmark and must not materially alter the DWT authenticity-verification timing interval. Preserve the existing bootloader-to-application mailbox/evidence handoff and extend it only as necessary to carry trustworthy stack evidence and status.
+
+The framework should distinguish measured bootloader stack demand from static .data/.bss RAM and from application FreeRTOS task/MSP measurements. If the watermark cannot be measured reliably for a profile, the result must remain explicitly unavailable rather than being inferred from linker reservations.
+
+Update parsing, manifests, benchmark aggregation, validation tests, and documentation so cross-algorithm secure-boot comparisons can include measured runtime stack demand with a clearly documented measurement boundary.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 5 — STM32L4R5 dual-bank application and bootloader OTA workflow
+
+Implement the end-to-end STM32 OTA capability described by the thesis using the STM32L4R5 hardware dual-bank boot mechanism rather than the current software primary/update/swap layout.
+
+Configure the 2 MiB Flash as two symmetric 1 MiB bootable banks. Each bank must contain wolfBoot at bank offset 0x00000 (128 KiB reserved) and a signed application slot at bank offset 0x20000 (896 KiB), with the existing 12 KiB image-header reserve and application linked for the logical active-bank vector address 0x08023000. The inactive physical bank is the staging target; after hardware bank selection it must map to the same logical active addresses as the previous bank. No dedicated 128 KiB software swap partition is used in the end state.
+
+Add/complete STM32L4R5 hardware-assisted wolfBoot switching support, including a project-local hal_flash_dualbank_swap() implementation in the STM32L4 wolfBoot HAL that performs the required BFB2/option-byte bank selection and reset/reload semantics. Build wolfBoot with the hardware dual-bank update path and validate active-bank detection/mapping before any update workflow relies on it.
+
+Before activation, the inactive bank must be a complete valid boot environment. For an application-only update, retain or replicate a compatible trusted wolfBoot in the inactive bank and stage the new signed application. For a bootloader/PQC migration, stage the replacement wolfBoot and a compatible application together. A bank containing a replacement bootloader must not be activated solely because it was written successfully: authenticate candidate-bank metadata under a trust/recovery key already accepted by the active system, covering at minimum the replacement wolfBoot hash and application artefact identity.
+
+Support controlled delivery, incremental inactive-bank programming, completeness/hash checks, activation/reset, post-swap wolfBoot application authentication, and confirmed execution of the intended new application. This is an STM32 application/boot-environment workflow, not the ST67 Wi-Fi-module firmware-update API.
+
+Retain explicit evidence for active/inactive physical bank identity, BFB2/bank-mapping state, both wolfBoot hashes, candidate/staged/installed application hashes, candidate-bank authentication, reboot/update state, wolfBoot verification, and final application identity. Include interrupted/corrupt/invalid-signature/invalid-bank-manifest cases and prove that an invalid inactive bank is not activated and the previous valid bank remains recoverable. Add unit, gateway and hardware tests plus documentation.
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 6 — Build and integrate the persistent ESP32/INA228 energy-measurement instrument
+
+Implement the external energy-measurement capability specified by Chapters 3 and 4 as a first-class experiment evidence source.
+
+Build an independent acquisition device using an ESP32 and INA228 high-side current/power monitor. Measure the 5 V supply feeding the NUCLEO-L4R5ZI-P target and ST67 expansion through E5V. The ST-LINK and acquisition electronics must remain outside the measured power domain and must not back-power the target.
+
+Document and validate the NUCLEO target-power configuration as part of the instrument setup: JP6 across pins 1-2 to select E5V, JP1 removed, and ST-LINK USB retained only for debugger/SWD/UART power and signalling. Treat E5V-before-ST-LINK as an initial laboratory power-up/setup requirement rather than a per-run reconfiguration. The campaign may perform readiness/current/back-feed checks, but it must not attempt to reconfigure physical jumpers or reflash/reset the persistent ESP32 as part of a normal run.
+
+Treat the ESP32 as persistent laboratory instrumentation rather than experiment firmware. It is flashed/provisioned manually once, remains powered between runs, and must not be compiled, reflashed or reset by normal campaign execution. The framework should health-check and arm it, but not manage its firmware lifecycle as part of a repetition.
+
+Use the actual INA228 breakout revision, shunt value and calibrated range as profile data. Connect INA228 conversion-ready ALERT to an ESP32 capture-capable GPIO and use it as the sensor-sample timing reference.
+
+Implement a continuously running 1 MHz monotonic ESP32 session clock. Connect one dedicated STM32 3.3 V synchronisation GPIO to a second ESP32 capture input:
+- rising edge = start a measurement interval;
+- falling edge = end/finalise that interval.
+
+Do not reset the underlying ESP32 session clock at each rising edge. Record absolute session-clock boundaries and expose interval-relative timestamps. Support multiple measured workload iterations within one STM32 boot/run. At both GPIO transitions the STM32 records its own 1 MHz timestamp immediately adjacent to the GPIO write; retain paired STM32/ESP32 start/end timestamps and derive an affine per-interval mapping for offset/rate-error compensation.
+
+Implement acquisition firmware that:
+1. remains idle/ready between experiments;
+2. receives a run ID, expected interval count where known and resolved acquisition configuration through the dedicated reporting MQTT service;
+3. acknowledges readiness without rebooting;
+4. acquires at the configured sustained sample rate using INA228 ALERT timing;
+5. calculates per-sample delta energy and cumulative interval energy with a defined integration rule;
+6. stores interval-indexed relative time, delta energy, cumulative energy and status locally;
+7. retains interval/session metadata including clock-pair mapping, sample counts, total energy, peak current and bus-voltage extrema;
+8. buffers all completed intervals across the complete run; and
+9. detects I2C errors, saturation, timing faults, sample gaps and buffer overrun.
+
+A falling sync edge finalises/buffers an interval but must not publish it immediately. No bulk result traffic may be generated while a measurement interval is active. After all expected intervals have completed, or after an explicit session-finalise command, publish the buffered trace through the framework's plaintext reporting MQTT broker in bounded sequenced records. Publish a final completion record containing the run ID, interval/sample/chunk counts, acquisition status and logical-trace hash.
+
+Do not provision experiment TLS certificates onto the ESP32. The reporting broker is a fixed plaintext infrastructure service and must be outside all experiment network-degradation paths. The gateway result collector should store/reassemble the ESP32 records using the same run-ID, sequence, completion and evidence-directory mechanisms used for STM32 buffered result publication.
+
+Update configs/instruments/energy/esp32_ina228.yaml to define persistent/manual lifecycle, sensor/shunt/calibration data, 1 MHz session clock, sample rate, ALERT/sync inputs, buffering limits and reporting-broker/topic configuration.
+
+Provide calibration/validation for shunt value, zero-current offset, bus voltage, multiple known loads and a timed constant-load integration test. Retain instrument firmware/configuration identity and calibration identity with every trace.
+
+Reject or flag evidence when the run ID does not match, expected interval boundaries are missing, STM32/ESP32 edge pairs are inconsistent, sample sequence contains gaps, sensor/buffer errors occur, calibration is invalid or MQTT sequence/count/hash validation fails.
+
+Add unit tests for clock mapping, interval handling, integration and record chunking; persistent-instrument state tests; and end-to-end hardware tests covering single and multiple intervals within one STM32 boot.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 7 — Automated packet-capture analysis and evidence correlation
+
+Add an offline analysis stage for retained gateway packet captures so the framework can automatically derive the network evidence required by the thesis from each completed run.
+
+The analyser should operate on the retained PCAP and, where available, the broker TLS key log. It should derive useful transport/network observations such as packet and byte counts, TCP retransmissions, segmentation/fragmentation behaviour, connection boundaries, and other packet-level features needed to interpret latency, packet loss, MTU effects, and the connection-relative TTFB/TTLB metrics.
+
+Correlate packet-derived observations with the existing UART, broker/subscriber, manifest, and firmware timing evidence where a defensible mapping exists. Do not invent clock alignment or infer firmware-internal state from network traffic alone. Where precise cross-clock correlation is not possible, preserve the independent time domains and state that limitation explicitly.
+
+Store the derived analysis as a result-local artefact with clear source references to the PCAP/key-log hashes. Preserve the original PCAP as authoritative raw evidence. Add tests using deterministic captures/fixtures for retransmission, fragmentation/MTU, TLS/MQTT traffic, and failure cases.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 8 — Complete live gateway validation for network degradation
+
+Complete the deferred real-gateway validation of the network-degradation subsystem.
+
+Add a capability-gated integration test/workflow that applies the configured rate, RTT, packet loss, and MTU conditions to the dedicated experiment interface, verifies the effective Linux qdisc/interface state, runs a bounded real STM32/broker experiment, and confirms guaranteed cleanup/restoration afterwards.
+
+The validation must exercise both egress and IFB-backed ingress shaping and confirm the framework's symmetric-rate, split-RTT, independent-direction-loss, and MTU semantics. A requested condition must not be accepted as applied evidence unless gateway state confirms it.
+
+Move the impairment boundary onto a dedicated experiment-broker virtual/interface path so that rate, RTT, loss and MTU controls cannot affect the plaintext reporting broker. Validate with live traffic that STM32/ESP32 reporting messages remain reachable and unmodified while each impairment type is active and retained across repetitions.
+
+The test should retain the impairment log, relevant gateway state, PCAP, experiment manifest, and cleanup outcome. Failed apply or failed cleanup must make the validation fail even if the STM32 workload itself completed.
+
+Keep this test capability-gated and separate from ordinary unit/CI execution because it requires real gateway privileges, network interfaces, broker infrastructure, and hardware.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 9 — Reproducibility, dependency provenance, and credential-staging hardening
+
+Harden the framework's reproducibility and infrastructure evidence so the thesis can identify the exact software environment used for each experimental campaign.
+
+Ensure experiment/build/test provenance records the parent repository revision and dirty state, relevant submodule revisions, effective compiler/CMake/Ninja/Python/OpenSSL/Mosquitto versions, and the final firmware artefact hashes used by the run. Where practical, pin the project container base/toolchain and runtime images sufficiently to prevent silent version drift, while still keeping maintenance manageable.
+
+Reconcile CI and runtime image declarations so validation uses the same intended Mosquitto version/profile as the maintained Compose configuration. Remove stale or contradictory version assumptions from the workflow and documentation.
+
+Also review gateway certificate deployment permissions. Private keys generated with restrictive permissions must remain restricted when copied/staged on the gateway and inside containers; avoid broad recursive permission changes that make private material world-readable. Preserve the existing result-material inventory and secret-exclusion rules.
+
+Remove Wi-Fi credentials and other local secrets from source-controlled experiment/profile YAML. Canonical configuration must contain only named secret references; the referenced values are resolved from ignored local state during preparation. Generated resolved cases, manifests, logs, and provenance artefacts must retain enough non-secret identity information to reproduce the configuration without copying secret values into evidence.
+
+Add tests for provenance completeness, version reporting, image/config consistency, certificate-file permission handling, and secret-exclusion behaviour. Update the canonical documentation so reproducibility claims match what the framework actually records and pins.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 10 — Rationalise configuration profiles and implement a versioned resolver
+
+Replace the organically grown experiment-configuration tree with the rationalised configuration architecture specified by Chapter 4.
+
+The canonical source-controlled hierarchy should use one YAML file per independently selectable instance:
+
+configs/
+|-- targets/
+|-- gateways/
+|-- instruments/
+|   `-- energy/
+|-- services/
+|   `-- mqtt_broker/
+|-- workloads/
+|-- tls_kex/
+|-- tls_auth/
+|-- secure_boot/
+|-- network_conditions/
+`-- campaigns/
+
+Implement the initial profiles required by the thesis while keeping the hierarchy extensible to additional targets, gateways, measurement instruments, services, workloads, and cryptographic configurations.
+
+The configuration domains must remain orthogonal:
+
+- targets define physical target/build/capability information;
+- gateways define gateway identity, hardware-control paths, UART, network interfaces, and gateway tooling;
+- instruments define independently selectable measurement devices, including acquisition endpoint, sampling, synchronisation, calibration and evidence settings;
+- services define independently deployed/configured runtime components such as Mosquitto;
+- workloads define STM32 application behaviour and workload-specific constants;
+- tls_kex defines TLS 1.3 key-establishment groups;
+- tls_auth defines the X.509/signature credential family;
+- auth_mode remains a scalar experiment choice, initially server or mutual;
+- secure_boot defines wolfBoot authentication/signing profiles;
+- network_conditions defines reusable named impairment conditions where useful;
+- campaigns compose profiles and define experiment matrices.
+
+Do not create separate server-auth and mutual-auth copies of every tls_auth profile. A tls_auth profile should describe the certificate/signature family and identities available in that family. Support optional mutual-specific blocks only where an authentication family genuinely requires additional per-profile information. Universal mutual-TLS behaviour belongs in resolver/framework logic. Profiles should be able to declare supported authentication modes so invalid combinations are rejected before build.
+
+Implement the ten thesis STM32 TLS key-establishment profiles:
+x25519, secp256r1, secp384r1, secp521r1, X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, ML_KEM_512, ML_KEM_768, and ML_KEM_1024. The final three are standalone ML-KEM TLS groups and must enable wolfSSL's standalone ML-KEM TLS support rather than silently resolving to a hybrid group. Pairing ML_KEM_768 with the mldsa65 authentication profile is the principal post-quantum-only TLS condition; server and mutual authentication remain separate auth_mode selections.
+
+Implement the thesis TLS-authentication profiles:
+rsa3072, ecdsa-p256, ecdsa-p384, and mldsa65. Preserve Ed25519 only as an optional compatibility/test profile if it remains useful, rather than making it part of the thesis campaign matrix by default.
+
+Implement Ready Metrics 2 transfer controls as workload-profile parameters rather than fixed firmware constants. The default ready_metrics_2 profile must set payload_bytes=204800 and chunk_bytes=400, while the resolver permits either field to be overridden/promoted to a campaign matrix dimension without duplicating the workload profile. The resolved payload/chunk values must be supplied consistently to the STM32 evidence contract and gateway responder and retained in the run manifest/result.
+
+Implement an energy-instrument profile under configs/instruments/energy/, initially esp32_ina228.yaml, containing the ESP32 endpoint, INA228/shunt configuration, sampling rate, conversion-ready and STM32 synchronisation inputs, calibration reference, buffering limits and result-transfer policy. Instrument selection is optional per campaign and must participate in resolution, evidence expectations and provenance when enabled.
+
+Implement the secure-boot catalogue for integrity_sha256, ECDSA P-256/P-384/P-521, Ed25519, Ed448, RSA-2048/3072/4096, and ML-DSA-44/65/87. Common wolfBoot target values such as SHA-256 integrity, STM32L4R5 layout, and 12 KiB image-header reserve must be defined once rather than copied into every algorithm profile. Generate the complete wolfBoot .config from the resolved secure-boot profile so source-controlled per-algorithm .config files cannot drift from the YAML definition.
+
+Implement one YAML profile for every independently configured runtime service. Under configs/services/mqtt_broker/, define separate experiment_gateway1.yaml and reporting_gateway1.yaml profiles. The experiment broker owns workload listener/TLS capability, logging/keylog, ACL and health-check behaviour; its effective cryptographic configuration is derived from tls_kex, tls_auth and auth_mode. The reporting broker is mandatory for every experiment, fixed plaintext/non-TLS, owns the result/control topic namespace and collector access, and must resolve to a network path excluded from all experiment impairment controls. Do not require PKI material for the reporting broker or ESP32 instrument.
+
+Use one versioned YAML schema and one canonical parsing/resolution path for the framework configuration. Replace the current mixture of duplicated concrete experiment YAMLs and special-case parsers where practical. The resolver must:
+
+1. load the selected target, gateway, measurement-instrument, service, workload, cryptographic, network-condition, and campaign profiles;
+2. expand campaign matrices into concrete cases;
+3. validate cross-profile compatibility before provisioning, compilation, broker startup, or hardware access;
+4. resolve local prerequisite/secret references without embedding secret values;
+5. derive firmware, wolfSSL, PKI, broker, MQTT, measurement-instrument, UART/evidence, network, and wolfBoot implementation settings;
+6. materialise a canonical resolved-case YAML under .pqc-generated-state/; and
+7. calculate stable configuration/provenance identities used by preparation and execution.
+
+A generated case should record selected profile identities and resolved experimental choices rather than duplicating source profile contents unnecessarily. Generated state is derivative and must not become a second manually maintained source of truth.
+
+Migrate or remove the existing duplicated concrete experiment YAMLs only after equivalence tests show that the new resolver produces the intended build/runtime behaviour. Add schema validation, unit tests, compatibility tests, migration tests, and documentation. The framework must fail explicitly for unsupported combinations rather than silently substituting defaults or falling back to another cryptographic configuration.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 11 — General campaign executor and explicit repetition policy
+
+Generalise the existing experiment-grid/runtime-only approach into a first-class campaign executor that operates above the normal experiment runner without bypassing it.
+
+A campaign should compose canonical profiles, expand its experimental matrix, group cases by firmware identity, execute repeated conditions efficiently, and retain independent evidence for every run. The normal experiment runner must remain the authority for individual preparation/runtime execution, validation, and result evidence.
+
+Implement an explicit campaign execution-policy block with semantics equivalent to:
+
+execution:
+  repetitions: <N>
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  broker: reuse_if_compatible
+  condition: retain_within_condition
+  evidence: per_run
+
+The exact field names may be adjusted during implementation, but the behaviour and ownership must remain explicit in campaign configuration.
+
+Campaign-level repetition is an independent framework/device run. The campaign controls whether the STM32 is reset between those runs. This must be distinguished from iterations performed inside a workload, such as repeated TLS handshakes within one boot.
+
+The campaign executor should implement the hierarchy:
+
+Campaign
+|-- Firmware identity A
+|   |-- Preparation: resolve -> build -> flash -> validate
+|   |-- Condition 1
+|   |   |-- Repetition 1 -> independent evidence set
+|   |   |-- Repetition 2 -> independent evidence set
+|   |   `-- Repetition N -> independent evidence set
+|   `-- Condition N
+|-- Firmware identity B
+|   `-- ...
+`-- Campaign aggregation
+
+Use the final validated firmware/ELF SHA-256 as an authoritative firmware identity component rather than assuming that a profile name uniquely determines the executable. Compile-time workload, KEX, TLS authentication capability, secure-boot mode, diagnostics, and other build-affecting selections must be included in grouping/resolution.
+
+Where valid, preparation should be amortised across repeated runs:
+- build once per unchanged firmware identity;
+- flash once per unchanged firmware identity;
+- reuse the validated preparation manifest and firmware hash for runtime-only repetitions;
+- keep a compatible broker running across repetitions;
+- retain an applied network condition across repetitions of that condition;
+- use a health/readiness check before relying on reused infrastructure.
+
+Broker reuse is allowed only while the effective broker implementation, listener policy, certificate/credential identity, TLS policy, and other relevant runtime settings remain compatible. The campaign executor must restart/reconfigure the broker when this identity changes or when health checks detect abnormal state.
+
+Network impairment must be applied at condition boundaries and guaranteed to be removed during cleanup, including interrupted or failed campaigns. It may remain installed across repetitions of the same condition, but must apply only to the experiment-broker data plane. The mandatory plaintext reporting broker/result collector remains available throughout so STM32 and instrument buffers can be flushed and validated between repetitions without condition teardown. Each individual run should normally retain its own experiment-data-plane PCAP rather than using one undifferentiated campaign-long capture.
+
+Every repetition must have a distinct result/evidence boundary and retain at minimum its own manifest, UART capture, required MQTT/broker evidence, packet capture where enabled, preparation-manifest reference, firmware hash, condition identity, and repetition index.
+
+Generate a campaign-level manifest that records:
+- campaign source/configuration identity;
+- expanded cases;
+- firmware grouping;
+- preparation dependencies;
+- condition ordering;
+- repetition indices;
+- per-run result references;
+- completion/failure state; and
+- cleanup outcome.
+
+Support safe restart/resume of interrupted campaigns where practical. A resumed campaign must not silently reuse stale preparation, broker, network-condition, or result state without validating compatibility.
+
+Validate execution policy against workload and target constraints before starting hardware work. For example, reject a no-reset policy when the selected workload explicitly requires a fresh boot boundary.
+
+Add unit tests for matrix expansion, grouping, policy validation, deterministic case IDs, and resume logic; integration tests for preparation/runtime-only reuse; and hardware/gateway tests for reset, broker reuse, condition retention/cleanup, and per-run evidence isolation.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 12 — Dedicated repeated full TLS 1.3 handshake workload
+
+Implement the dedicated repeated-TLS workload specified by Chapter 4 for high-volume TLS-handshake measurement without repeatedly including Wi-Fi association and DHCP startup.
+
+The workload should initialise the STM32 platform, ST67 Wi-Fi link, IP configuration, and required common application infrastructure once. It should then perform a configurable number of independent full TLS 1.3 handshakes inside a single framework run.
+
+The workload profile should support explicit iteration semantics equivalent to:
+
+iterations:
+  handshakes_per_run: <M>
+  reset_between_handshakes: false
+  fresh_tcp_connection: true
+  fresh_tls_context: true
+  session_resumption: false
+
+The exact field names may be adjusted, but the measurement semantics must remain unambiguous.
+
+For every handshake iteration:
+1. establish a fresh TCP connection;
+2. create/reset the TLS connection state required for an independent full TLS 1.3 handshake;
+3. prevent session resumption or other abbreviated-handshake behaviour;
+4. apply the selected tls_kex, tls_auth, and auth_mode configuration;
+5. perform the handshake;
+6. verify that the negotiated group/authentication behaviour matches the resolved configuration;
+7. collect the bounded TLS/cryptographic instrumentation for that handshake;
+8. emit iteration-indexed timing/result evidence after the critical measurement interval; and
+9. cleanly close/free the per-handshake TLS/TCP state before the next iteration.
+
+Do not include MQTT application-transfer timing in this workload. Its purpose is steady-state repeated full-handshake measurement after network establishment, separate from Ready Metrics reset-relative RTFB/RTLB and connection-relative TTFB/TTLB measurements.
+
+Preserve low measurement perturbation. UART/string formatting, heap inspection, result publication, and other non-essential diagnostics must remain outside the critical TLS timing interval. Continue to use DWT cycle timing for cryptographic/TLS instrumentation where appropriate.
+
+Define clear failure semantics. A failed iteration must be recorded with its iteration index and failure stage. The framework must distinguish an individual TLS-handshake failure from a setup failure that invalidates the entire workload. Do not silently omit failed iterations from aggregate results.
+
+Record enough evidence to establish for every iteration:
+- iteration number;
+- TCP/TLS connection outcome;
+- selected and negotiated KEX;
+- authentication mode/profile;
+- TLS phase/primitive instrumentation;
+- timing values;
+- overflow/incomplete instrumentation state; and
+- cleanup outcome.
+
+Keep workload iteration separate from campaign repetition. A campaign repetition is an independent outer framework run and may reset the STM32 according to campaign.execution. handshakes_per_run controls only the number of fresh TLS handshakes performed inside that run.
+
+Integrate the workload with the rationalised configuration resolver and general campaign executor. Add unit tests for iteration state/reset behaviour, integration tests against the broker, and hardware tests confirming multiple fresh non-resumed TLS 1.3 handshakes are observed within one boot.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 13 — Implement the 1 MHz application timing timebase specified by the methodology
+
+Align the STM32 application timing implementation with the thesis methodology by providing a dedicated monotonic 1 MHz hardware timebase with 1 microsecond resolution for application-visible experiment timestamps.
+
+The current implementation must first be inspected to identify the safest available STM32 timer/counter and any existing timer ownership. Do not change the HAL/FreeRTOS tick behaviour or repurpose a peripheral in a way that affects the network stack, scheduler, UART, or other experiment functions. Prefer a timer that can run continuously at 1 MHz for the duration of an experiment; where the hardware counter width can wrap during a plausible run, implement wrap-safe elapsed-time handling or a monotonic software extension.
+
+The application timing interface must provide a common timestamp source for system-level experiment checkpoints. In addition, the end-state timing model must support the reset-relative RTFB/RTLB origin established in wolfBoot. This may be implemented by preserving a compatible reset-relative counter across handoff or by carrying an explicit bootloader-to-application offset/provenance record, but the derived reset-relative elapsed time must remain unambiguous and reproducible.
+
+Application checkpoints include:
+- network/connection milestones;
+- TCP connection timing;
+- TLS workload start/end boundaries;
+- MQTT readiness milestones;
+- application transfer request, first-byte and final-byte checkpoints;
+- other Chapter 3 application-visible timing markers that currently depend on millisecond HAL ticks.
+
+Use explicit microsecond-valued fields/API names. Do not silently reinterpret existing fields whose names imply milliseconds. Where backward compatibility is required, retain legacy millisecond output only as a clearly derived value from the microsecond source and version the result schema/markers as necessary.
+
+DWT cycle counting must remain available for TLS phase, cryptographic primitive, and other cycle-accurate computational attribution. The intended timing model is therefore:
+- a reset-origin measurement established in wolfBoot and carried across the boot/application handoff for RTFB/RTLB;
+- DWT cycles for bootloader and fine-grained computational measurements;
+- a dedicated 1 MHz free-running application timer for connection-, request- and application-visible timestamps and elapsed intervals; and
+- the normal HAL/RTOS tick retained for operating-system timing rather than used as the research measurement timebase.
+
+Ensure that timing instrumentation does not perform UART formatting, heap inspection, blocking I/O, or other avoidable work inside critical measured intervals. Reading the 1 MHz timer should be lightweight and deterministic.
+
+Record sufficient timing provenance to establish the timebase used for each result. At minimum retain:
+- timer peripheral/source;
+- effective timer input clock;
+- configured prescaler;
+- effective 1 MHz counter frequency;
+- counter width and wrap-handling method;
+- application timing schema/version; and
+- firmware ELF SHA-256.
+
+Update all relevant firmware timing checkpoints, result records, UART parsers, manifests, tests, and Chapter 4 implementation documentation so the emitted evidence consistently uses the new application timebase.
+
+Add tests that:
+1. verify the selected timer is configured to an effective 1 MHz rate from the active clock tree;
+2. verify monotonic timestamps and correct wrap-safe elapsed-time calculations;
+3. verify known delays produce expected microsecond-scale elapsed values within an appropriate hardware-test tolerance;
+4. verify the HAL/FreeRTOS tick remains unchanged;
+5. verify application timing results no longer depend on HAL_GetTick() granularity;
+6. verify DWT primitive/TLS cycle measurements remain intact; and
+7. verify result parsers/manifests distinguish microsecond application timestamps from cycle-count evidence.
+
+Run the representative plaintext, classical TLS, hybrid TLS, server-authentication, mutual-authentication, Ready Metrics, and Ready Metrics 2 hardware profiles after the change and confirm that timing evidence is complete and internally consistent.
+
+This request is complete only when the implementation actually provides the 1 MHz monotonic application timing source described by Chapter 3; configuring a timer to a 1 MHz input while continuing to read only the 1 ms HAL tick is not sufficient.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 14 — Instrument and validate the wolfBoot integrity-only secure-boot baseline
+
+Implement a clearly defined and directly measurable secure-boot timing baseline for the integrity-only wolfBoot profile.
+
+The current secure-boot instrumentation measures the signed-image authenticity path by wrapping wolfBoot's authenticity-verification function with the Cortex-M DWT cycle counter. The integrity-only profile uses SIGN=NONE and SHA-256 image-integrity checking, so it must not be assumed to exercise an equivalent authenticity-verification path or to produce directly comparable timing evidence without explicit instrumentation.
+
+Define the integrity-only baseline as a first-class measured operation. The implementation must identify the exact wolfBoot function/boundary responsible for validating the integrity-only image and place DWT start/end reads immediately around that operation. Do not include UART formatting, mailbox serialization, flash preparation, application handoff, or other unrelated bootloader work inside the measured interval.
+
+The resulting evidence model must distinguish at least the following concepts:
+
+- integrity-only image verification;
+- signature/authenticity verification;
+- complete image verification where integrity and authenticity are both included;
+- total secure-boot execution time; and
+- total reset-to-application startup time.
+
+Do not reuse one label for multiple timing boundaries.
+
+For signed profiles, preserve the existing authenticity-verification measurement unless a broader refactor is required for consistency. For the SIGN=NONE profile, add a dedicated timing path that measures the SHA-256 integrity verification actually used as the reference condition.
+
+Report the integrity-only result through the same bootloader-to-application evidence mechanism used by the signed profiles where practical. The evidence must retain:
+- profile/algorithm identity;
+- verification type;
+- elapsed DWT cycles;
+- verification return/result;
+- active SYSCLK/HCLK values needed to convert cycles to time;
+- mailbox/schema version;
+- bootloader build/source provenance; and
+- the SHA-256 identity of the application image being verified.
+
+If the existing RAM2 mailbox schema cannot represent the new verification type unambiguously, version and extend it rather than overloading an existing field.
+
+The application-side reader, UART markers, host parser, manifest, and aggregation logic must preserve the distinction between integrity-only and signature-authentication measurements. Missing or zero timing evidence must not be silently interpreted as a valid zero-cost verification result.
+
+Add tests that:
+1. confirm the SIGN=NONE wolfBoot build includes the intended integrity instrumentation;
+2. confirm a valid integrity-only image produces a non-zero DWT cycle result and successful verification result;
+3. confirm corrupted image content is rejected by the integrity check and does not transfer control to the application through the normal valid-image path;
+4. confirm signed profiles continue to report their existing authenticity-verification timing correctly;
+5. confirm host parsing and manifests identify the verification type explicitly;
+6. confirm cycles are converted using the bootloader-reported active clock rather than an assumed fixed frequency; and
+7. confirm the measured interval excludes UART/reporting overhead.
+
+Run the complete maintained secure-boot hardware profile set after the change and retain one representative evidence bundle for each verification family.
+
+The integrity-only profile may be used as the secure-boot reference baseline in thesis comparisons only after this implementation demonstrates that its measurement boundary is explicit, reproducible, and correctly identified in the retained evidence.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 15 — Dedicated impairment-exempt MQTT reporting plane and buffered STM32 result publication
+
+Implement the future-state device-result architecture described by Chapters 3 and 4.
+
+Every experiment must start or verify a dedicated plaintext, non-TLS Mosquitto reporting broker independently from the experiment/workload broker. The reporting broker is infrastructure for framework control and evidence only; it must not inherit the experiment's TLS key-establishment, certificate-authentication, network-degradation or application-workload settings.
+
+Provide a network topology in which the experiment broker is behind a dedicated broker-side virtual/interface impairment boundary while the reporting broker remains on an unmodified host/control path. Rate, RTT, packet-loss and MTU controls must apply only to the experiment data plane. Reporting traffic must remain usable while a degradation condition is retained across repeated runs. Do not implement MTU by changing a shared interface in a way that can affect the reporting path.
+
+Implement the STM32 application result path as deferred buffered publication:
+1. record timing, memory, TLS/security-function/primitive and application-state evidence into a bounded preallocated SRAM buffer during the measured workload;
+2. support repeated intra-run iterations without transmitting result data between measured iterations;
+3. leave the critical measurement path before serialisation/network reporting;
+4. connect/use the dedicated plaintext reporting MQTT service after measurement;
+5. publish bounded, sequenced structured records carrying the experiment run ID and iteration/context identifiers; and
+6. publish a final result-complete record containing expected record/chunk counts and a logical-buffer hash.
+
+Do not use UART as the normal structured-result transport. Retain UART for early boot, fault, recovery and network-reporting failure diagnostics so evidence is still available when the MQTT reporting path cannot be established.
+
+Implement a gateway result collector that subscribes before target execution, associates every record with the expected run ID, stores the raw device result stream in the run directory, validates sequence/count/hash/completion state, and exposes parsed result records to the normal manifest/evidence-validation path. The collector must support both STM32 result topics and measurement-instrument result topics using the same collection mechanism.
+
+Use a stable reporting topic namespace, for example:
+- pqc/result/stm32/<run-id>/...
+- pqc/instrument/energy/<run-id>/...
+with explicit metadata and completion records. Exact topic names may differ, but result-source, run identity, sequence and completion semantics must be unambiguous.
+
+The reporting broker must require no experiment TLS certificates. This is mandatory for auxiliary instruments such as the ESP32 energy device, which should be able to use the service without PKI provisioning. The service exists only inside the controlled laboratory framework and must be isolated from the workload broker's security/profile choices.
+
+Ensure the reporting mechanism does not perturb the measured workload:
+- no structured result publication while a sensitive measurement interval is active;
+- no automatic publication between repeated measured iterations;
+- reporting occurs only after the final relevant measurement boundary;
+- reporting-broker traffic is excluded from experiment PCAP/network metrics unless explicitly captured for diagnostics.
+
+Integrate the two-broker model with configuration resolution, service readiness, campaign reuse, network degradation, result manifests and cleanup. A retained impairment condition must never need to be removed solely so result evidence can be transferred.
+
+Add unit/integration tests for buffering, MQTT chunking, run-ID association, ordering, completion/hash validation, missing/duplicate chunks and reporting-broker isolation. Add live gateway/hardware tests demonstrating that STM32 result publication and ESP32 energy-result publication remain reliable while each supported rate, RTT, loss and MTU condition is active on the experiment data plane.
+
+The implementation is complete only when normal STM32 structured evidence is collected through this deferred MQTT reporting path and network-degradation campaigns can retain their condition across repetitions without compromising result collection.
+
+------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+
+-----------
+
+IMPLEMENTATION REQUEST 16 — Versioned run-evidence manifest, artefact integrity, and derived-output lineage
+
+Implement the final-state run evidence model specified by Chapter 4 so every accepted result can be traced from resolved configuration through build/deployment to raw observations and derived analysis.
+
+Introduce a versioned run-evidence manifest schema. Create the run record before execution and incrementally record stage status, while retaining a final immutable index of the evidence required by the resolved experiment class.
+
+For every retained artefact, record at minimum:
+- evidence/source class and semantic role;
+- result-relative path;
+- producing stage/tool identity;
+- size and SHA-256;
+- required/optional/not-applicable status;
+- acquisition/production result; and
+- an explicit reason when required evidence is unavailable or invalid.
+
+Do not represent unavailable metrics as numeric zero.
+
+Persist an immutable resolved-case snapshot containing selected profile identities, profile-content hashes, resolver/schema version and all effective non-secret experiment parameters. Secret values must remain excluded; retain only named secret references and permitted public identities.
+
+Extend build/dependency linkage so a run can resolve:
+- parent repository commit and dirty state;
+- recursive submodule revisions/dirty state;
+- relevant compiler/CMake/Ninja/Python/OpenSSL versions;
+- container/runtime image identities and immutable digests where available;
+- final application ELF/binary/signed-image SHA-256;
+- wolfBoot image/configuration identity;
+- cryptographic material inventory; and
+- referenced preparation/build identity when firmware is reused.
+
+Integrate flash provenance so the artefact selected for gateway programming is re-hashed and matched to the preparation/build record before target access. Runtime-only/repeated cases must reference the exact successful preparation manifest and firmware identities they reuse.
+
+Make raw evidence immutable after collection. Keep raw STM32 MQTT result records, diagnostic UART, experiment-broker/observer logs, PCAP/key logs, secure-boot/OTA records and ESP32 energy traces distinct from parsed or aggregated outputs.
+
+Every derived output must record:
+- parser/analyser/tool version;
+- direct input artefact SHA-256 identities;
+- relevant analysis parameters; and
+- output SHA-256.
+
+Re-running analysis must create/update a derived record without modifying the raw source artefacts.
+
+Generate the required-evidence contract from the resolved experiment class. Distinguish system-under-test completion from evidence-complete acceptance. The final run state may be accepted for analysis only when all required evidence items pass their class-specific validation; otherwise preserve the SUT outcome but mark the run rejected/incomplete with a reason.
+
+Integrate the STM32/ESP32 reporting-broker collectors with this manifest model, including run ID, source identity, sequence/chunk count, completion record and logical-content hash validation.
+
+Define minimum evidence contracts for at least:
+- build-only;
+- MQTT plaintext/runtime;
+- TLS runtime;
+- network-degradation;
+- secure-boot;
+- OTA; and
+- energy-enabled runs.
+
+Add migration/compatibility handling for older manifest versions where practical, but never silently reinterpret an older incomplete evidence record as satisfying a newer contract.
+
+Add unit/integration tests covering schema validation, required/optional/not-applicable states, missing evidence, hash mismatch, reused preparation linkage, dirty/submodule provenance, raw-versus-derived immutability, derived-input lineage and SUT-success/evidence-failure separation.
+
+The implementation is complete when an accepted experiment result can be mechanically traced from its resolved case to the exact built/flashed artefacts, raw observations and any reported derived metrics without relying on undocumented directory conventions or manual inference.
+
+
 -----------
 
 end to end profile tests
