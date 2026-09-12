@@ -380,7 +380,7 @@ def test_oqs_mosquitto_config_enforces_server_authenticated_tls_with_project_cer
     assert "acl_file /mosquitto/config/aclfile.source" in config
     assert "user nobody" in config
 
-def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthcheck():
+def test_oqs_compose_uses_project_managed_pqc_tls_config_and_strict_healthcheck():
     compose = _read(BROKER_ROOT / "compose.yaml")
     openssl_config = _read(BROKER_ROOT / "config" / "oqs" / "openssl.cnf")
 
@@ -400,6 +400,9 @@ def test_oqs_compose_uses_project_managed_hybrid_tls_config_and_strict_healthche
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "MLKEM512",
+        "MLKEM768",
+        "MLKEM1024",
         "P-256",
     }
     assert "mosquitto_pub -h 127.0.0.1 -p 8883" in compose
@@ -716,11 +719,27 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
     assert "./runtime/tls-keylog/" not in compose
 
 
-def test_native_openssl_hybrid_profiles_do_not_load_oqsprovider():
+def test_reporting_broker_healthcheck_uses_deterministic_allowed_pubsub_probe():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    reporting = _service_block(compose, "mqtt-reporting")
+
+    assert "mosquitto_pub -h 127.0.0.1 -p 1886 -q 1" in reporting
+    assert "-t pqc/control/health -m ready -r" in reporting
+    assert "mosquitto_sub -h 127.0.0.1 -p 1886 -t pqc/control/health -C 1 -W 3" in reporting
+    assert "-t pqc/control/health -n -r" in reporting
+    assert "$$SYS/broker/version" not in reporting
+    assert "MQTT_REPORTING_COLLECTOR_PASSWORD" not in reporting
+    assert "timeout: 8s" in reporting
+
+
+def test_native_openssl_pqc_profiles_include_hybrid_and_standalone_groups_without_oqsprovider():
     expected_groups = {
         "X25519MLKEM768",
         "SecP256r1MLKEM768",
         "SecP384r1MLKEM1024",
+        "MLKEM512",
+        "MLKEM768",
+        "MLKEM1024",
         "P-256",
     }
     for profile in ("oqs", "oqs-mtls"):

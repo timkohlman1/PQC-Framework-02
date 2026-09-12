@@ -142,6 +142,16 @@ void PQC_WolfSSL_TrackedFree(
 
 #if PQC_TLS_ENABLE_MLKEM_512 || PQC_TLS_ENABLE_MLKEM_768 || PQC_TLS_ENABLE_MLKEM_1024
 #define WOLFSSL_HAVE_MLKEM
+#if PQC_TLS_MLKEM_STANDALONE
+/*
+ * wolfSSL's legacy cipher-suite sanity check does not recognise a
+ * TLS 1.3 standalone ML-KEM named group as a viable key-establishment
+ * capability when DH/ECC/Curve25519 are disabled.  Allow configuration
+ * to proceed without enabling unrelated classical/static suites; runtime
+ * group verification still enforces the resolved standalone ML-KEM group.
+ */
+#define WOLFSSL_ALLOW_NO_SUITES
+#endif
 #if !PQC_TLS_MLKEM_STANDALONE
 #define WOLFSSL_PQC_HYBRIDS
 #endif

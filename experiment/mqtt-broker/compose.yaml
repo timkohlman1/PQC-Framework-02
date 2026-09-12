@@ -208,8 +208,8 @@ services:
       - ./config/reporting/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./config/reporting/aclfile:/mosquitto/config/aclfile:ro
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1886 -u collector -P \"${MQTT_REPORTING_COLLECTOR_PASSWORD:-invalid}\" -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1886 -q 1 -t pqc/control/health -m ready -r >/dev/null 2>&1 && test \"$$(mosquitto_sub -h 127.0.0.1 -p 1886 -t pqc/control/health -C 1 -W 3 2>/dev/null)\" = ready && mosquitto_pub -h 127.0.0.1 -p 1886 -q 1 -t pqc/control/health -n -r >/dev/null 2>&1"]
       interval: 10s
-      timeout: 5s
+      timeout: 8s
       retries: 6
       start_period: 5s

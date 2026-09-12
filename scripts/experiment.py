@@ -802,7 +802,10 @@ def _wait_for_plaintext_mqtt_broker(
         "stm32_st67_pqc_hybrid_tls_e2e",
         "stm32_st67_pqc_tls_e2e",
     }
-    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    pqc_oqs = evidence_class in {
+        "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
+    }
     host = shlex.quote(
         _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
     )
@@ -810,7 +813,7 @@ def _wait_for_plaintext_mqtt_broker(
     topic = "pqc/framework/readiness"
     message = "ready"
 
-    if pqc_hybrid:
+    if pqc_oqs:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
         oqs_config = (
             "$HOME/pqc-framework-02/experiment/mqtt-broker/"
@@ -823,39 +826,39 @@ def _wait_for_plaintext_mqtt_broker(
             f"-v {certificate_dir}:/certs:ro "
         )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
-        subscriber_name = "pqc-mqtt-readiness-sub"
         script = (
-            f'attempt=0; subscriber={subscriber_name}; '
-            'cleanup() { docker rm -f "$subscriber" >/dev/null 2>&1 || true; }; '
-            'trap cleanup EXIT; '
-            f'while [ "$attempt" -lt {retries} ]; do '
-            'attempt=$((attempt + 1)); cleanup; '
-            f'docker run -d {container_options}'
-            '--name "$subscriber" --entrypoint mosquitto_sub '
-            'eclipse-mosquitto:2.1.2-alpine '
-            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 >/dev/null; sub_start_rc=$?; '
-            'if [ "$sub_start_rc" -ne 0 ]; then '
-            'echo "subscriber_start_failed attempt=$attempt rc=$sub_start_rc"; '
-            f'sleep {delay_seconds}; continue; fi; '
-            'sleep 2; '
-            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
-            'if [ "$subscriber_state" != running ]; then '
-            'echo "subscriber_not_running attempt=$attempt state=$subscriber_state"; '
-            'docker logs "$subscriber" 2>&1 || true; '
-            f'sleep {delay_seconds}; continue; fi; '
+            f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); '
+            'response_file=/tmp/pqc-mqtt-ready.$$; '
+            'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
+            'rm -f "$response_file" "$publisher_file"; '
             f'docker run --rm {container_options}'
             '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
-            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
-            'found=0; poll=0; while [ "$poll" -lt 10 ]; do '
-            'poll=$((poll + 1)); response=$(docker logs "$subscriber" 2>&1 || true); '
-            f'if printf "%s\n" "$response" | grep -Fx -- {message} >/dev/null; then found=1; break; fi; '
-            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
-            'if [ "$subscriber_state" != running ]; then break; fi; sleep 1; done; '
-            'if [ "$found" -eq 1 ] && [ "$pub_rc" -eq 0 ]; then '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} -r '
+            '>"$publisher_file" 2>&1; pub_rc=$?; '
+            'if [ "$pub_rc" -eq 0 ]; then '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 -W 4 '
+            '>"$response_file" 2>&1; sub_rc=$?; '
+            'else sub_rc=1; fi; '
+            'response=$(paste -sd, "$response_file" 2>/dev/null || true); '
+            f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] && [ "$response" = {message} ]; then '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            'rm -f "$response_file" "$publisher_file"; '
             'echo "broker_ready attempt=$attempt"; exit 0; fi; '
-            'echo "subscriber_output:"; printf "%s\n" "$response"; '
-            'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            'echo "subscriber_output:"; cat "$response_file" 2>/dev/null || true; '
+            'echo "publisher_output:"; cat "$publisher_file" 2>/dev/null || true; '
             f'sleep {delay_seconds}; done; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            'rm -f /tmp/pqc-mqtt-ready.$$ /tmp/pqc-mqtt-ready-pub.$$; '
             'echo "broker_not_ready attempts=$attempt"; exit 1'
         )
     else:
@@ -926,9 +929,17 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_profile = str(tls.get("certificate_profile", "")).strip() if isinstance(tls, dict) else ""
+    broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
+    broker_port = int(broker.get("port", 0) or 0) if isinstance(broker, dict) else 0
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     if certificate_profile:
         common.extend(["--certificate-profile", certificate_profile])
+    start_args = [*common, "--profile", profile]
+    if broker_port:
+        if profile in {"oqs", "oqs-mtls"}:
+            start_args.extend(["--oqs-port", str(broker_port)])
+        elif profile in {"classical", "classical-server-auth"}:
+            start_args.extend(["--classical-port", str(broker_port)])
     broker_messages = {
         "stop-existing": "Stopping any existing managed broker",
         "deploy": "Deploying MQTT broker framework",
@@ -938,7 +949,7 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
-        ("start", "start", [*common, "--profile", profile]),
+        ("start", "start", start_args),
         ("status", "status", common),
     ):
         emit_progress("broker", broker_messages[step_name], detail=f"Profile: {profile}.")
@@ -1231,6 +1242,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         if evidence_class in {
             "stm32_st67_classical_tls_e2e",
             "stm32_st67_pqc_hybrid_tls_e2e",
+            "stm32_st67_pqc_tls_e2e",
         }:
             markers.extend((
                 "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1",
@@ -1259,6 +1271,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
             is_tls = evidence_class in {
                 "stm32_st67_classical_tls_e2e",
                 "stm32_st67_pqc_hybrid_tls_e2e",
+                "stm32_st67_pqc_tls_e2e",
             }
             # Plaintext runs retain explicit DNS UART evidence. TLS runs suppress
             # successful DNS diagnostics so formatting/UART cannot perturb the
@@ -1344,7 +1357,10 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
                 if authentication == "mutual":
                     markers.append(sign_marker)
 
-            if evidence_class == "stm32_st67_pqc_hybrid_tls_e2e":
+            if evidence_class in {
+                "stm32_st67_pqc_hybrid_tls_e2e",
+                "stm32_st67_pqc_tls_e2e",
+            }:
                 markers.extend(("key_exchange_group=passed",))
         return tuple(markers)
 
@@ -1526,13 +1542,16 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         "stm32_st67_pqc_hybrid_tls_e2e",
         "stm32_st67_pqc_tls_e2e",
     }
-    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    pqc_oqs = evidence_class in {
+        "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
+    }
     broker_host = shlex.quote(
         _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
     )
 
     oqs_subscriber_name = ""
-    if pqc_hybrid:
+    if pqc_oqs:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
         oqs_config = (
             "$HOME/pqc-framework-02/experiment/mqtt-broker/"
@@ -1644,14 +1663,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     )
     subscriber_cleanup = (
         f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
-        if pqc_hybrid
+        if pqc_oqs
         else ''
     )
     transfer_responder_cleanup = ""
     if ready_metrics_2_application:
         transfer_container_cleanup = (
             f'docker rm -f "{transfer_responder_subscriber_name}" >/dev/null 2>&1 || true; '
-            if pqc_hybrid
+            if pqc_oqs
             else ""
         )
         transfer_responder_cleanup = (
@@ -2986,42 +3005,150 @@ def load_secure_boot_experiment_bundle(
     }
 
 
+def _status_cipher_policy(tls: dict[str, Any]) -> str:
+    """Return a declarative cipher-suite policy description for status output."""
+
+    suites = tls.get("cipher_suites")
+    if isinstance(suites, (list, tuple)) and suites:
+        return ", ".join(str(item) for item in suites)
+    suite = tls.get("cipher_suite")
+    if suite:
+        return str(suite)
+    return "not pinned by resolver; negotiated at runtime"
+
+
 def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
-    """Format a human-readable status summary."""
+    """Format a human-readable status summary without performing side effects."""
 
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
     boot = bundle["boot"]
 
-    return "\n".join(
-        [
-            "Experiment status",
-            "-----------------",
-            f"Experiment ID: {experiment['id']}",
-            f"Description: {experiment['description']}",
-            f"Board: {board['id']} ({board['name']}, {board['mcu']})",
-            f"ST-LINK serial: {board['stlink']['serial']}",
-            f"Host: {host['id']} ({host['alias']}, user {host['user']})",
-            f"Flash helper: {host['flash']['helper']}",
-            f"Boot config: {boot['id']}",
-            f"Boot mode: {boot['mode']}",
-            f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
-            f"Firmware mode: {experiment['firmware']['mode']}",
-            f"Firmware artifact: {experiment['firmware']['artifact']}",
-            f"UART device: {host['uart']['device']}",
-            f"UART baud: {host['uart']['baud']}",
-            f"Expected boot message: {experiment['uart']['expected_boot_message']}",
-            (
-                f"Expected tick prefix: {experiment['uart']['expected_tick_prefix']}"
-                if experiment["uart"].get("expected_tick_prefix")
-                else f"Expected tick message: {experiment['uart']['expected_tick_message']}"
-            ),
+    lines = [
+        "Experiment status",
+        "-----------------",
+        f"Experiment ID: {experiment['id']}",
+        f"Description: {experiment['description']}",
+    ]
+
+    resolved = experiment.get("resolved_configuration")
+    if isinstance(resolved, dict):
+        selections = resolved.get("selected_profiles", {})
+        choices = resolved.get("choices", {})
+        if not isinstance(selections, dict):
+            selections = {}
+        if not isinstance(choices, dict):
+            choices = {}
+
+        lines.extend([
             "",
-            "Actions performed: status only.",
-            "No build, flash, UART access, SSH, hardware access, or network access was performed.",
-        ]
-    )
+            "Resolved configuration",
+            "----------------------",
+            f"Schema version: {resolved.get('schema_version', 'unavailable')}",
+            f"Resolver version: {resolved.get('resolver_version', 'unavailable')}",
+            f"Configuration identity: {resolved.get('configuration_identity', 'unavailable')}",
+            f"Firmware identity: {resolved.get('firmware_identity', 'unavailable')}",
+            f"Target profile: {selections.get('target', 'unavailable')}",
+            f"Gateway profile: {selections.get('gateway', 'unavailable')}",
+            f"Workload profile: {selections.get('workload', 'unavailable')}",
+            f"Secure-boot profile: {choices.get('secure_boot', 'unavailable')}",
+            f"Network condition: {choices.get('network_condition', 'unavailable')}",
+        ])
+
+        mqtt = experiment.get("mqtt", {})
+        if isinstance(mqtt, dict) and mqtt.get("enabled"):
+            tls = mqtt.get("tls", {})
+            if isinstance(tls, dict) and tls:
+                broker = mqtt.get("broker", {})
+                if not isinstance(broker, dict):
+                    broker = {}
+                tls_version = str(tls.get("tls_version", "unavailable"))
+                lines.extend([
+                    "",
+                    "TLS",
+                    "---",
+                    f"Mode: {tls.get('mode', 'unavailable')}",
+                    f"Version: {tls_version}",
+                    f"Authentication mode: {tls.get('authentication', choices.get('auth_mode', 'unavailable'))}",
+                    f"KEX profile/group: {tls.get('key_exchange_group', choices.get('tls_kex', 'unavailable'))}",
+                    f"TLS-auth profile: {tls.get('certificate_profile', choices.get('tls_auth', 'unavailable'))}",
+                    f"Signature scheme: {tls.get('server_signature_algorithm', 'unavailable')}",
+                    f"Cipher suite policy: {_status_cipher_policy(tls)}",
+                    "Runtime negotiation: not available from status; verify UART/broker evidence after execution.",
+                    "",
+                    "Experiment broker",
+                    "-----------------",
+                    f"Service profile: {selections.get('services', {}).get('experiment_broker', 'unavailable') if isinstance(selections.get('services'), dict) else 'unavailable'}",
+                    f"Runtime profile: {mqtt.get('broker_profile', 'unavailable')}",
+                    f"Endpoint: {broker.get('host', 'unavailable')}:{broker.get('port', 'unavailable')}",
+                    f"TLS server name: {broker.get('server_name', 'unavailable')}",
+                ])
+
+        services = selections.get("services", {})
+        reporting_profile = services.get("reporting_broker") if isinstance(services, dict) else None
+        lines.extend([
+            "",
+            "Reporting service",
+            "-----------------",
+            f"Reporting broker profile: {reporting_profile or 'unavailable'}",
+        ])
+
+        transfer = experiment.get("mqtt", {}).get("transfer", {}) if isinstance(experiment.get("mqtt"), dict) else {}
+        lines.extend([
+            "",
+            "Workload",
+            "--------",
+            f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
+        ])
+        if isinstance(transfer, dict) and transfer:
+            lines.extend([
+                f"Payload bytes: {transfer.get('payload_bytes', 'unavailable')}",
+                f"Chunk bytes: {transfer.get('chunk_bytes', 'unavailable')}",
+            ])
+
+        instruments = selections.get("instruments", {})
+        lines.extend([
+            "",
+            "Instruments",
+            "-----------",
+        ])
+        if isinstance(instruments, dict) and instruments:
+            for instrument_type, profile_id in sorted(instruments.items()):
+                lines.append(f"{instrument_type}: {profile_id}")
+        else:
+            lines.append("Selected instruments: none")
+
+        lines.extend([
+            "",
+            "Target and gateway",
+            "------------------",
+        ])
+
+    lines.extend([
+        f"Board: {board['id']} ({board['name']}, {board['mcu']})",
+        f"ST-LINK serial: {board['stlink']['serial']}",
+        f"Host: {host['id']} ({host['alias']}, user {host['user']})",
+        f"Flash helper: {host['flash']['helper']}",
+        f"Boot config: {boot['id']}",
+        f"Boot mode: {boot['mode']}",
+        f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
+        f"Firmware mode: {experiment['firmware']['mode']}",
+        f"Firmware artifact: {experiment['firmware']['artifact']}",
+        f"UART device: {host['uart']['device']}",
+        f"UART baud: {host['uart']['baud']}",
+        f"Expected boot message: {experiment['uart']['expected_boot_message']}",
+        (
+            f"Expected tick prefix: {experiment['uart']['expected_tick_prefix']}"
+            if experiment["uart"].get("expected_tick_prefix")
+            else f"Expected tick message: {experiment['uart']['expected_tick_message']}"
+        ),
+        "",
+        "Actions performed: status only.",
+        "No build, flash, UART access, SSH, hardware access, or network access was performed.",
+    ])
+
+    return "\n".join(lines)
 
 
 def run_status_command(args: argparse.Namespace) -> int:

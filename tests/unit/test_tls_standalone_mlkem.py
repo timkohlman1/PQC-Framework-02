@@ -19,3 +19,13 @@ def test_standalone_group_rejects_hybrid_mode():
     try: resolve_tls_algorithm_set(_bundle('ML_KEM_768','pqc_hybrid_tls_server_auth'))
     except ValueError: pass
     else: raise AssertionError('standalone ML-KEM must not silently resolve as hybrid')
+
+
+def test_standalone_mlkem_enables_wolfssl_allow_no_suites_only_for_standalone():
+    settings = (ROOT / 'Core' / 'Inc' / 'pqc_wolfssl_user_settings.h').read_text(encoding='utf-8')
+    block = """#if PQC_TLS_MLKEM_STANDALONE
+/*"""
+    assert block in settings
+    assert '#define WOLFSSL_ALLOW_NO_SUITES' in settings
+    assert settings.index('#if PQC_TLS_MLKEM_STANDALONE') < settings.index('#define WOLFSSL_ALLOW_NO_SUITES')
+

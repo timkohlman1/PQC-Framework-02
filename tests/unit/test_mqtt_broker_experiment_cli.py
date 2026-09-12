@@ -317,20 +317,20 @@ def test_mqtt_broker_experiment_marks_step_timeout_failed(tmp_path, monkeypatch)
     assert "partial output" in (tmp_path / "results" / "2026-07-04_005_mqtt_classical_broker" / "provision_classical_certs.log").read_text(encoding="utf-8")
 
 
-def test_pqc_experiment_uses_separate_oqs_client_containers():
+def test_pqc_experiment_uses_separate_foreground_oqs_client_containers():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+    readiness = source[source.index("def _wait_for_plaintext_mqtt_broker"):source.index("def _start_managed_mqtt_broker")]
+    pqc_branch = readiness[readiness.index("if pqc_oqs:"):readiness.index("    else:", readiness.index("if pqc_oqs:"))]
 
-    assert "eclipse-mosquitto:2.1.2-alpine" in source
-    assert "docker run -d " in source
-    assert '--name "$subscriber" --entrypoint mosquitto_sub' in source
-    assert 'docker rm -f "$subscriber"' in source
-    assert "docker run --rm " in source
-    assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in source
-    assert "OPENSSL_MODULES" not in source
-    assert "--entrypoint mosquitto_sub" in source
-    assert "--entrypoint mosquitto_pub" in source
-    assert 'docker exec -i "$oqs_container_id"' not in source
-    assert "label=com.docker.compose.service=mqtt-oqs" not in source
+    assert "eclipse-mosquitto:2.1.2-alpine" in pqc_branch
+    assert "docker run --rm " in pqc_branch
+    assert "docker run -d " not in pqc_branch
+    assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in pqc_branch
+    assert "OPENSSL_MODULES" not in pqc_branch
+    assert "--entrypoint mosquitto_sub" in pqc_branch
+    assert "--entrypoint mosquitto_pub" in pqc_branch
+    assert 'docker exec -i "$oqs_container_id"' not in pqc_branch
+    assert "label=com.docker.compose.service=mqtt-oqs" not in pqc_branch
 
 def test_pqc_readiness_requires_subscriber_and_publisher_success():
     source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
@@ -553,3 +553,19 @@ def test_uart_capture_forces_marker_onto_a_new_line():
 
     assert "printf '\\\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\\\n'" in source
     assert "printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\\\n'" in source
+
+
+def test_managed_broker_start_uses_resolved_oqs_listener_port():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+    start = source[source.index("def _start_managed_mqtt_broker"):source.index("def _collect_and_stop_managed_mqtt_broker")]
+    assert 'broker_port = int(broker.get("port", 0) or 0)' in start
+    assert 'profile in {"oqs", "oqs-mtls"}' in start
+    assert 'start_args.extend(["--oqs-port", str(broker_port)])' in start
+    assert '("start", "start", start_args)' in start
+
+
+def test_managed_broker_start_uses_resolved_classical_listener_port():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+    start = source[source.index("def _start_managed_mqtt_broker"):source.index("def _collect_and_stop_managed_mqtt_broker")]
+    assert 'profile in {"classical", "classical-server-auth"}' in start
+    assert 'start_args.extend(["--classical-port", str(broker_port)])' in start

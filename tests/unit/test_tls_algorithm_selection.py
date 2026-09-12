@@ -30,6 +30,16 @@ def test_hybrid_profile_selects_only_requested_hybrid_group():
     assert selected["mlkem_768"] is False
 
 
+
+
+def test_hybrid_rsa3072_accepts_canonical_rsa_pss_signature_scheme():
+    selected = resolve_tls_algorithm_set(
+        _bundle("pqc_hybrid_tls_server_auth", "X25519MLKEM768", "rsa_pss_rsae_sha256")
+    )
+    assert selected["rsa"] is True
+    assert selected["rsa_pss"] is True
+    assert selected["signature_schemes"] == ["rsa_pss_rsae_sha256"]
+
 def test_hybrid_profile_selects_mldsa65_server_signature_without_rsa():
     selected = resolve_tls_algorithm_set(
         _bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", "mldsa65")

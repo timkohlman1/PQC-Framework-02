@@ -424,14 +424,15 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     authentication = str(tls.get("authentication", "server")).strip().lower()
     mutual_tls = authentication == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
     server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
-    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual"}:
+    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual", "pqc_tls_server_auth", "pqc_tls_mutual"}:
         if not server_signature_algorithm:
             raise ValueError(
-                "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
+                "MQTT PQC TLS configuration is missing tls.server_signature_algorithm. "
                 "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
             )
         supported_server_signature_algorithms = {
             "classical",
+            "rsa_pss_rsae_sha256",
             "ecdsa_secp256r1_sha256",
             "ecdsa_secp384r1_sha384",
             "mldsa65",

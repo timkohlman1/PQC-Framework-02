@@ -490,3 +490,107 @@ def test_legacy_framework_owned_yaml_configs_are_accepted_by_legacy_loader():
             failures.append(f"{config_path.relative_to(repo_root)}: {exc}")
 
     assert not failures, "legacy repository YAML parser failures:\n" + "\n".join(failures)
+
+
+def test_status_summary_reports_canonical_crypto_and_profile_choices():
+    experiment_cli = load_experiment_module()
+
+    bundle = {
+        "experiment": {
+            "id": "tls_key_exchange-0009-example",
+            "description": "Resolved canonical case tls_key_exchange-0009-example",
+            "firmware": {
+                "application": "mqtt_ready_metrics",
+                "mode": "direct_flash",
+                "artifact": "build/Release/stm32_basic_hal1.elf",
+            },
+            "mqtt": {
+                "enabled": True,
+                "broker_profile": "oqs",
+                "broker": {
+                    "host": "pqc-gateway1.pqcnet",
+                    "port": 8883,
+                    "server_name": "pqc-gateway1.pqcnet",
+                },
+                "tls": {
+                    "tls_version": "tls1.3",
+                    "mode": "pqc_tls_server_auth",
+                    "authentication": "server",
+                    "certificate_profile": "rsa3072",
+                    "server_signature_algorithm": "rsa_pss_rsae_sha256",
+                    "key_exchange_group": "ML_KEM_768",
+                },
+                "transfer": {
+                    "payload_bytes": 204800,
+                    "chunk_bytes": 400,
+                },
+            },
+            "uart": {
+                "expected_boot_message": "stm32-basic_hal1 boot v0.1.0",
+                "expected_tick_message": "tick",
+            },
+            "resolved_configuration": {
+                "schema_version": 1,
+                "resolver_version": "request10-v1",
+                "configuration_identity": "config-id",
+                "firmware_identity": "firmware-id",
+                "selected_profiles": {
+                    "target": "stm32l4r5_st67",
+                    "gateway": "pqc_gateway1",
+                    "workload": "ready_metrics_2",
+                    "services": {
+                        "experiment_broker": "experiment_gateway1",
+                        "reporting_broker": "reporting_gateway1",
+                    },
+                },
+                "choices": {
+                    "tls_kex": "ML_KEM_768",
+                    "tls_auth": "rsa3072",
+                    "auth_mode": "server",
+                    "secure_boot": "integrity_sha256",
+                    "network_condition": "baseline",
+                },
+            },
+        },
+        "board": {
+            "id": "board_a",
+            "name": "NUCLEO-L4R5ZI-P",
+            "mcu": "STM32L4R5",
+            "stlink": {"serial": "123"},
+        },
+        "boot": {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Direct-flash test boot config.",
+            "runnable": True,
+        },
+        "host": {
+            "id": "gateway",
+            "alias": "pqc-gateway1",
+            "user": "timk",
+            "flash": {"helper": "flash-stm32a"},
+            "uart": {"device": "/dev/example", "baud": 115200},
+        },
+    }
+
+    summary = experiment_cli.format_status_summary(bundle)
+
+    assert "Resolved configuration" in summary
+    assert "Target profile: stm32l4r5_st67" in summary
+    assert "Workload profile: ready_metrics_2" in summary
+    assert "Secure-boot profile: integrity_sha256" in summary
+    assert "Network condition: baseline" in summary
+    assert "Mode: pqc_tls_server_auth" in summary
+    assert "Version: tls1.3" in summary
+    assert "Authentication mode: server" in summary
+    assert "KEX profile/group: ML_KEM_768" in summary
+    assert "TLS-auth profile: rsa3072" in summary
+    assert "Signature scheme: rsa_pss_rsae_sha256" in summary
+    assert "Cipher suite policy: not pinned by resolver; negotiated at runtime" in summary
+    assert "Runtime negotiation: not available from status" in summary
+    assert "Service profile: experiment_gateway1" in summary
+    assert "Endpoint: pqc-gateway1.pqcnet:8883" in summary
+    assert "Reporting broker profile: reporting_gateway1" in summary
+    assert "Payload bytes: 204800" in summary
+    assert "Chunk bytes: 400" in summary
+    assert "Selected instruments: none" in summary

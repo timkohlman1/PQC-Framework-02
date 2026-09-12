@@ -3,15 +3,20 @@ from pathlib import Path
 EXPERIMENT_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "experiment.py"
 
 
-def test_hybrid_readiness_uses_detached_subscriber_and_log_polling():
+def test_pqc_readiness_uses_retained_publish_then_foreground_subscribe():
     source = EXPERIMENT_SCRIPT.read_text(encoding="utf-8")
     readiness = source[source.index("def _wait_for_plaintext_mqtt_broker"):source.index("def _start_managed_mqtt_broker")]
-    assert 'subscriber_name = "pqc-mqtt-readiness-sub"' in readiness
-    assert 'docker run -d {container_options}' in readiness
-    assert 'sleep 2;' in readiness
-    assert 'subscriber_state=$(docker inspect' in readiness
-    assert 'response=$(docker logs "$subscriber"' in readiness
-    assert 'grep -Fx -- {message}' in readiness
+    pqc_branch = readiness[readiness.index("if pqc_oqs:"):readiness.index("    else:", readiness.index("if pqc_oqs:"))]
+    assert 'docker run -d {container_options}' not in pqc_branch
+    assert 'docker inspect' not in pqc_branch
+    assert 'docker logs' not in pqc_branch
+    assert '--entrypoint mosquitto_pub' in pqc_branch
+    assert '-m {message} -r' in pqc_branch
+    assert '--entrypoint mosquitto_sub' in pqc_branch
+    assert '-C 1 -W 4' in pqc_branch
+    assert 'response=$(paste -sd, "$response_file"' in pqc_branch
+    assert '[ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ]' in pqc_branch
+    assert '-n -r >/dev/null 2>&1 || true' in pqc_branch
 
 
 def test_non_hybrid_readiness_retains_existing_probe_path():

@@ -1038,6 +1038,46 @@ def test_pqc_hybrid_wifi_header_rejects_falcon_leaf_profile(tmp_path):
         raise AssertionError("incompatible Falcon server signature algorithm was accepted")
 
 
+def test_pqc_hybrid_wifi_header_accepts_canonical_rsa_pss_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "rsa_pss_rsae_sha256",
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "rsa_pss_rsae_sha256"' in text
+
+
+def test_pqc_standalone_wifi_header_accepts_canonical_rsa_pss_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_tls_server_auth",
+                    "server_signature_algorithm": "rsa_pss_rsae_sha256",
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "rsa_pss_rsae_sha256"' in text
+
+
 def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path):
     from framework.build import _write_wifi_config_header
 
