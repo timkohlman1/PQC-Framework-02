@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Provision configured offline X.509 research certificate profiles.
 
-Certificate profiles are data under ``configs/certificate_profile/*.yaml``.
+Certificate profiles are data under ``configs/tls_auth/*.yaml``.
 This script contains only generic provisioning, validation, and manifest logic.
 Normal host execution uses a short-lived Alpine/OpenSSL container.  The
 ``--local-openssl`` switch is reserved for the repository development container.
@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - host path normally uses Docker
     raise SystemExit("PyYAML is required; use the normal Docker-backed invocation") from exc
 
 DOCKER_IMAGE = "alpine:3.23"
-DEFAULT_CONFIG_DIR = Path("configs/certificate_profile")
+DEFAULT_CONFIG_DIR = Path("configs/tls_auth")
 DEFAULT_OUTPUT_DIR = Path("secrets/certificates")
 
 
@@ -381,7 +381,7 @@ def provision_with_docker(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     root = repo_root()
-    parser = argparse.ArgumentParser(description="Provision offline X.509 certificate profiles declared under configs/certificate_profile")
+    parser = argparse.ArgumentParser(description="Provision offline X.509 certificate profiles declared under configs/tls_auth")
     parser.add_argument("--config-dir", default=str(root / DEFAULT_CONFIG_DIR))
     parser.add_argument("--output", default=str(root / DEFAULT_OUTPUT_DIR))
     parser.add_argument("--profile", action="append", help="provision only the named profile; may be repeated")

@@ -588,42 +588,36 @@ def _copy_project_local_config(
     repo_root: Path,
     source_dir: Path,
 ) -> tuple[Path | None, Path | None, bool]:
-    """Copy a repository-local wolfBoot config template into the local source tree.
-
-    The generated file is intentionally placed inside the local wolfBoot working
-    tree because upstream wolfBoot reads its normal build settings from
-    ``.config``. The template remains tracked in this repository; the generated
-    copy and all wolfBoot build outputs remain local developer state.
-    """
+    """Materialise the complete resolved wolfBoot .config into the source tree."""
 
     config_template = _optional_profile_path(profile, "build.config_template")
+    config_content = _optional_profile_path(profile, "build.config_content")
     generated_config = _optional_profile_path(profile, "build.generated_config")
 
-    if config_template is None and generated_config is None:
+    if config_template is None and config_content is None and generated_config is None:
         return None, None, False
-
-    if config_template is None or generated_config is None:
+    if generated_config is None or (config_template is None) == (config_content is None):
         raise WolfBootBuildProfileError(
-            "wolfBoot build profile must set both build.config_template and "
-            "build.generated_config, or neither"
+            "wolfBoot build profile must pair build.generated_config with exactly one of "
+            "build.config_template or build.config_content"
         )
 
-    template_path = repo_root / config_template
     generated_path = repo_root / generated_config
-
     try:
         generated_path.relative_to(source_dir)
     except ValueError as exc:
         raise WolfBootBuildProfileError(
             "wolfBoot build.generated_config must be inside the configured source_dir"
         ) from exc
-
-    if not template_path.is_file():
-        raise WolfBootBuildProfileError(
-            f"wolfBoot build config template not found: {template_path}"
-        )
-
     generated_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if config_content is not None:
+        generated_path.write_text(config_content, encoding="utf-8")
+        return None, generated_path, True
+
+    template_path = repo_root / str(config_template)
+    if not template_path.is_file():
+        raise WolfBootBuildProfileError(f"wolfBoot build config template not found: {template_path}")
     shutil.copyfile(template_path, generated_path)
     return template_path, generated_path, True
 

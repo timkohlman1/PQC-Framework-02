@@ -106,6 +106,7 @@ from framework.network_degradation import (
     remove_gateway_network_degradation,
 )
 from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
+from framework.config_resolver import ConfigResolver, ResolutionError, render_wolfboot_config
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
@@ -743,7 +744,7 @@ def _mqtt_gateway_client_host(
 
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
-    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
 
 
 
@@ -799,6 +800,7 @@ def _wait_for_plaintext_mqtt_broker(
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
     pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
     host = shlex.quote(
@@ -948,6 +950,15 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
             emit_progress("broker", f"{broker_messages[step_name]} failed", detail=f"Return code: {result.return_code}; log: mqtt-broker-{step_name}.log")
             update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": f"broker_{step_name}"}})
             return False, f"broker_{step_name}"
+    emit_progress("broker", "Starting mandatory reporting broker", detail="Plaintext impairment-exempt reporting service.")
+    reporting_start = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="reporting-start", subcommand="start",
+        extra_args=[*common, "--profile", "reporting"],
+    )
+    steps["reporting-start"] = {"return_code": reporting_start.return_code, "log": "mqtt-broker-reporting-start.log"}
+    if reporting_start.return_code != 0:
+        update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": "reporting_broker_start"}})
+        return False, "reporting_broker_start"
     emit_progress("broker", "Waiting for MQTT broker readiness", detail="Gateway-side publish/subscribe readiness probe.")
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
     emit_progress("broker", "MQTT broker readiness probe complete" if readiness.return_code == 0 else "MQTT broker readiness probe failed", detail=f"Return code: {readiness.return_code}; log: mqtt-broker-readiness.log")
@@ -968,6 +979,7 @@ def _collect_and_stop_managed_mqtt_broker(
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
     common = ["--host-config", "configs/hosts/gateway.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
@@ -1006,7 +1018,11 @@ def _collect_and_stop_managed_mqtt_broker(
     else:
         keylog_evidence.update({"status": "not_applicable", "return_code": None, "failure_reason": None})
 
-    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}.")
+    reporting_logs_result = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="reporting-log", subcommand="logs",
+        extra_args=[*common, "--profile", "reporting", "--tail", "100000"],
+    )
+    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}; reporting profile: reporting.")
     stop_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
     )
@@ -1016,6 +1032,9 @@ def _collect_and_stop_managed_mqtt_broker(
         "image": MQTT_BROKER_IMAGE,
         "log": "mqtt-broker-log.log",
         "log_return_code": logs_result.return_code,
+        "reporting_profile": "reporting",
+        "reporting_log": "mqtt-broker-reporting-log.log",
+        "reporting_log_return_code": reporting_logs_result.return_code,
         "tls_keylog": keylog_evidence,
         "stop_log": "mqtt-broker-stop.log",
         "stop_return_code": stop_result.return_code,
@@ -1338,7 +1357,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         broker = mqtt.get("broker", {})
         if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
             markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
-        if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
+        if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}:
             markers.extend(("tls_handshake=passed", "reconnect=passed",
                             "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
         if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
@@ -1505,6 +1524,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
     pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
     broker_host = shlex.quote(
@@ -2171,7 +2191,26 @@ def load_secure_boot_profile_section(
         raise ConfigError(f"{target_path} missing profiles.{section} mapping")
     if not isinstance(algorithm_profiles, dict) or not isinstance(algorithm_profiles.get(section), dict):
         raise ConfigError(f"{algorithm_path} missing profiles.{section} mapping")
-    return _merge_config(target_profiles[section], algorithm_profiles[section]), repo_root
+    resolved = _merge_config(target_profiles[section], algorithm_profiles[section])
+    if section == "build":
+        canonical_ids = {"ecc384": "ecdsa_p384", "ecc521": "ecdsa_p521"}
+        canonical_id = canonical_ids.get(algorithm, algorithm)
+        try:
+            canonical = ConfigResolver(repo_root)
+            canonical_target = canonical.load_profile("target", "stm32l4r5_st67").data
+            canonical_secure_boot = canonical.load_profile("secure_boot", canonical_id).data
+            content = render_wolfboot_config(canonical_target, canonical_secure_boot)
+        except ResolutionError as exc:
+            raise ConfigError(f"canonical wolfBoot configuration resolution failed: {exc}") from exc
+        build = resolved.get("build")
+        if not isinstance(build, dict):
+            raise ConfigError("resolved wolfBoot build profile missing build mapping")
+        build = dict(build)
+        build.pop("config_template", None)
+        build["config_content"] = content
+        build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
+        resolved["build"] = build
+    return resolved, repo_root
 
 
 def load_config(path: Path | str) -> dict[str, Any]:
@@ -2209,6 +2248,7 @@ MQTT_TLS_EVIDENCE_CLASSES = {
     "stm32_st67_plaintext_e2e",
     "stm32_st67_classical_tls_e2e",
     "stm32_st67_pqc_hybrid_tls_e2e",
+    "stm32_st67_pqc_tls_e2e",
 }
 MQTT_TLS_TRANSPORT_BACKENDS = {
     "fake_no_network",
@@ -2226,7 +2266,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "stm32_runtime": {"stm32_runtime"},
     "st67w61m1": {"st67w61m1_backed"},
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
-    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
+    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"},
 }
 SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
@@ -2243,6 +2283,8 @@ MQTT_TLS_MODES = {
     "classical_tls_mutual",
     "pqc_hybrid_tls_server_auth",
     "pqc_hybrid_tls_mutual",
+    "pqc_tls_server_auth",
+    "pqc_tls_mutual",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -2255,8 +2297,8 @@ MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "latency_ms",
     "throughput_bytes_per_second",
 }
-MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
-MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
 
 
 def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
@@ -2332,7 +2374,8 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         if key_exchange_group not in TLS_GROUPS:
             raise ConfigError("TLS experiments must declare mqtt.tls.key_exchange_group as one of: " + ", ".join(TLS_GROUPS))
         group_is_hybrid = bool(TLS_GROUPS[key_exchange_group].get("hybrid", False))
-        if tls_mode.startswith("pqc_hybrid_") != group_is_hybrid:
+        group_is_standalone = bool(TLS_GROUPS[key_exchange_group].get("standalone_mlkem", False))
+        if tls_mode.startswith("pqc_hybrid_") != group_is_hybrid or tls_mode.startswith("pqc_tls_") != group_is_standalone:
             raise ConfigError("mqtt.tls.mode is incompatible with mqtt.tls.key_exchange_group")
         certificate_profile = tls_config.get("certificate_profile")
         if not isinstance(certificate_profile, str) or not certificate_profile.strip():
@@ -2356,7 +2399,7 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
-    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
+    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
         broker_host = str(broker.get("host", "")).strip()
@@ -2654,11 +2697,18 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         raise ConfigError("wolfBoot build profile build field must be a mapping")
 
     has_config_template = bool(build_config.get("config_template"))
+    has_config_content = bool(build_config.get("config_content"))
     has_generated_config = bool(build_config.get("generated_config"))
-    if has_config_template != has_generated_config:
+    if has_generated_config:
+        if has_config_template == has_config_content:
+            raise ConfigError(
+                "wolfBoot build profile must pair build.generated_config with exactly one of "
+                "build.config_template or build.config_content"
+            )
+    elif has_config_template or has_config_content:
         raise ConfigError(
-            "wolfBoot build profile must set both build.config_template and "
-            "build.generated_config, or neither"
+            "wolfBoot build profile must set build.generated_config when "
+            "build.config_template or build.config_content is configured"
         )
 
 
@@ -2795,10 +2845,30 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
 
     experiment_config_path = Path(experiment_path)
 
-    experiment_config = load_config(experiment_config_path)
-    validate_experiment_config(experiment_config)
-
-    board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
+    # Canonical generated cases are compact references. Re-resolve them through the
+    # versioned resolver before using the legacy execution bundle.
+    try:
+        import yaml as _yaml
+        _raw = _yaml.safe_load(experiment_config_path.read_text(encoding="utf-8"))
+    except Exception:
+        _raw = None
+    if isinstance(_raw, dict) and _raw.get("kind") == "resolved_case":
+        try:
+            resolver = ConfigResolver(repo_root_from_experiment_path(experiment_config_path))
+            case = resolver.load_resolved_case(experiment_config_path)
+            partial = resolver.to_legacy_bundle(case, resolve_secrets=True)
+            experiment_config = partial["experiment"]
+            validate_experiment_config(experiment_config)
+            configs_root = _configs_root_from_experiment_path(experiment_config_path)
+            board_path = configs_root / "boards" / f"{experiment_config['board']}.yaml"
+            host_path = configs_root / "hosts" / f"{experiment_config['host']}.yaml"
+            boot_path = configs_root / "boot" / f"{experiment_config['boot']}.yaml"
+        except ResolutionError as exc:
+            raise ConfigError(str(exc)) from exc
+    else:
+        experiment_config = load_config(experiment_config_path)
+        validate_experiment_config(experiment_config)
+        board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
 
     board_config = load_config(board_path)
     host_config = load_config(host_path)

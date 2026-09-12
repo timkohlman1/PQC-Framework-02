@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib.util
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HARDWARE_TEST_PATH = (
-    REPO_ROOT / "tests/hardware/test_secure_boot_flash_workflow.py"
+    REPO_ROOT / "tests/hardware/test_secure_boot_flash_workflow_hw.py"
 )
 
 
@@ -95,3 +95,4 @@ def test_secure_boot_result_selection_uses_manifest_semantics(tmp_path):
     )
 
     assert module._secure_boot_result_dirs(tmp_path) == [secure_boot]
+

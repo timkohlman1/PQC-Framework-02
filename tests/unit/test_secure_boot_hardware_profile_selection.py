@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib.util
 import sys
@@ -8,7 +8,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "tests" / "hardware" / "test_secure_boot_algorithm_benchmarks.py"
+MODULE_PATH = REPO_ROOT / "tests" / "hardware" / "test_secure_boot_algorithm_benchmarks_hw.py"
 
 
 def _load_module():
@@ -55,3 +55,4 @@ def test_pytest_startup_cleanup_does_not_delete_wolfboot_tuple_keys() -> None:
     assert "wolfboot_signing_private_key.der" not in cleanup_block
     assert "wolfboot_signing_public_key.der" not in cleanup_block
     assert "src/keystore.c" not in cleanup_block
+

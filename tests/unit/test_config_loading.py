@@ -396,9 +396,10 @@ def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
     experiment_profile = bundle["experiment"]
 
     assert build_profile["signature_algorithm"] == "ecdsa_p256"
-    assert build_profile["build"]["config_template"] == (
-        "configs/wolfboot/stm32l4r5_ecdsa_p256.config"
-    )
+    assert "config_template" not in build_profile["build"]
+    assert build_profile["build"]["config_source"] == "configs/secure_boot/ecdsa_p256.yaml"
+    assert "SIGN=ECC256" in build_profile["build"]["config_content"]
+    experiment_cli.validate_wolfboot_build_profile_config(build_profile)
     assert signing_profile["sign"]["args"].startswith("--ecc256 ")
     assert signing_profile["image_header_size_bytes"] == 12288
     assert experiment_profile["boot"] == "wolfboot_ecdsa_p256"
@@ -444,22 +445,42 @@ def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
         raise AssertionError("unsupported profile_kind was accepted")
 
 
-def test_framework_owned_yaml_configs_are_accepted_by_framework_loader():
-    """Prevent unsupported YAML formatting from reaching framework runtime commands.
+def test_legacy_framework_owned_yaml_configs_are_accepted_by_legacy_loader():
+    """Keep the legacy loader bounded to legacy configuration during migration.
 
-    Certificate-profile YAML is intentionally parsed by scripts/provision_certificates.py
-    with PyYAML rather than by the framework's constrained configuration loader.
+    Schema-versioned canonical profiles are owned by ConfigResolver/PyYAML and must not be
+    forced through the historical constrained loader. Certificate profiles are likewise
+    provisioned through the canonical tls_auth path.
     """
     experiment_cli = load_experiment_module()
     repo_root = Path(__file__).resolve().parents[2]
-    certificate_profile_root = repo_root / "configs" / "certificate_profile"
+    configs_root = repo_root / "configs"
+    canonical_roots = {
+        configs_root / "campaigns",
+        configs_root / "gateways",
+        configs_root / "instruments",
+        configs_root / "network_conditions",
+        configs_root / "secure_boot",
+        configs_root / "services",
+        configs_root / "tls_auth",
+        configs_root / "tls_kex",
+        configs_root / "workloads",
+    }
+    # stm32l4r5_st67.yaml is canonical; stm32l4r5_wolfboot.yaml remains the temporary
+    # legacy compatibility target until migration/equivalence retirement is complete.
+    canonical_target = configs_root / "targets" / "stm32l4r5_st67.yaml"
+    certificate_profile_root = configs_root / "certificate_profile"
+
+    def is_canonical(path: Path) -> bool:
+        return path == canonical_target or any(root in path.parents for root in canonical_roots)
+
     config_paths = sorted(
         path
-        for path in (repo_root / "configs").rglob("*.yaml")
-        if certificate_profile_root not in path.parents
+        for path in configs_root.rglob("*.yaml")
+        if certificate_profile_root not in path.parents and not is_canonical(path)
     )
 
-    assert config_paths, "expected repository YAML configuration files"
+    assert config_paths, "expected legacy repository YAML configuration files"
 
     failures: list[str] = []
     for config_path in config_paths:
@@ -468,4 +489,4 @@ def test_framework_owned_yaml_configs_are_accepted_by_framework_loader():
         except Exception as exc:  # report every malformed config in one test run
             failures.append(f"{config_path.relative_to(repo_root)}: {exc}")
 
-    assert not failures, "repository YAML parser failures:\n" + "\n".join(failures)
+    assert not failures, "legacy repository YAML parser failures:\n" + "\n".join(failures)

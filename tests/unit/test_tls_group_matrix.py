@@ -17,21 +17,22 @@ def _scalar(text: str, key: str) -> str:
 
 
 def test_exact_group_profile_matrix_exists():
-    profiles = list(PROFILE_DIR.glob("mqtt_tls_*_st67_e2e.yaml"))
-    tls_profiles = [
-        path
-        for path in profiles
-        if "plaintext" not in path.name and "schema_fake" not in path.name
-    ]
-    expected = {
-        f"mqtt_tls_{group}_{auth}_st67_e2e.yaml"
-        for group in GROUPS
-        for auth in ("server_auth", "mutual_auth")
+    canonical = Path("configs/tls_kex")
+    assert {path.stem for path in canonical.glob("*.yaml")} == set(GROUPS)
+
+    # Legacy concrete experiment YAMLs remain temporarily for migration equivalence.
+    # They are not required for the three new standalone ML-KEM groups.
+    legacy_groups = {
+        "x25519", "secp256r1", "secp384r1", "secp521r1",
+        "X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024",
     }
-    assert {path.name for path in tls_profiles} == expected
+    profiles = list(PROFILE_DIR.glob("mqtt_tls_*_st67_e2e.yaml"))
+    tls_profiles = [p for p in profiles if "plaintext" not in p.name and "schema_fake" not in p.name]
+    expected = {f"mqtt_tls_{group}_{auth}_st67_e2e.yaml" for group in legacy_groups for auth in ("server_auth", "mutual_auth")}
+    assert expected <= {path.name for path in tls_profiles}
 
 
-@pytest.mark.parametrize("group", GROUPS)
+@pytest.mark.parametrize("group", ["x25519", "secp256r1", "secp384r1", "secp521r1", "X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024"])
 @pytest.mark.parametrize("auth", ["server_auth", "mutual_auth"])
 def test_profile_resolves_only_selected_group(group, auth):
     path = PROFILE_DIR / f"mqtt_tls_{group}_{auth}_st67_e2e.yaml"
@@ -68,7 +69,7 @@ def test_cmake_conditionally_includes_algorithm_sources():
     assert "wolfcrypt/src/curve25519.c" in cmake
     assert "wolfcrypt/src/fe_low_mem.c" in cmake
     assert "wolfcrypt/src/fe_operations.c" not in cmake
-    assert "PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024" in cmake
+    assert "PQC_TLS_ENABLE_MLKEM_512 OR PQC_TLS_ENABLE_MLKEM_768 OR PQC_TLS_ENABLE_MLKEM_1024" in cmake
 
 
 def test_runtime_forces_and_verifies_selected_group():

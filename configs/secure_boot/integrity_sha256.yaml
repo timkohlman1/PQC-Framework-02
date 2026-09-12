@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: integrity_sha256
+description: integrity sha256 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: NONE
+  packaging_option: --no-sign --sha256
+signature_size_bytes: 0
+signing:
+  requires_private_key: false
+  tuple_id: null

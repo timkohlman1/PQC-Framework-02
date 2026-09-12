@@ -1,0 +1,13 @@
+schema_version: 1
+profile_type: tls_kex
+id: SecP256r1MLKEM768
+class: hybrid_pqc
+tls_version: '1.3'
+wolfssl:
+  group_token: WOLFSSL_SECP256R1MLKEM768
+  ecc: true
+  ecc_bits: 256
+  mlkem: 768
+  pqc_hybrids: true
+requirements:
+  target_capability: tls13

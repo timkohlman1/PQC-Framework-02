@@ -1,4 +1,4 @@
-"""Repository-wide pytest evidence capture.
+﻿"""Repository-wide pytest evidence capture.
 
 This file intentionally uses only Python and pytest public hooks so collection,
 setup, call, teardown, gateway, integration, and hardware failures retain
@@ -21,7 +21,7 @@ _SCRIPTS = _REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from framework.test_provenance import (  # noqa: E402
+from framework.provenance import (  # noqa: E402
     allocate_test_result_dir,
     safe_test_run_id,
     sha256_file,
@@ -180,3 +180,4 @@ def pytest_unconfigure(config):
     _ACTIVE_CONFIG = None
     for key in ("PQC_BUILD_PURPOSE", "PQC_TEST_RUN_ID", "PQC_TEST_RESULT_DIR"):
         os.environ.pop(key, None)
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib.util
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HARDWARE_TEST_PATH = (
-    REPO_ROOT / "tests/hardware/test_secure_boot_flash_workflow.py"
+    REPO_ROOT / "tests/hardware/test_secure_boot_flash_workflow_hw.py"
 )
 
 
@@ -82,3 +82,4 @@ def test_secure_boot_timing_assertions_accept_fractional_milliseconds():
         'isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], '
         '(int, float))'
     ) in source
+

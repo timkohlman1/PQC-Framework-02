@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: rsa3072
+description: rsa3072 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: RSA3072
+  packaging_option: --rsa3072
+signature_size_bytes: 384
+signing:
+  requires_private_key: true
+  tuple_id: rsa3072-development

@@ -12,8 +12,8 @@ def _module():
     scripts = repo_root / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
-    from framework import test_provenance
-    return test_provenance
+    from framework import provenance
+    return provenance
 
 
 def test_test_run_and_build_identities_are_separate_from_normal_numbers(tmp_path):

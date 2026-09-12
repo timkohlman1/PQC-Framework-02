@@ -1,0 +1,27 @@
+schema_version: 1
+profile_type: service
+service_type: mqtt_broker
+id: reporting_gateway1
+description: Mandatory plaintext result/control broker isolated from experiment impairment.
+mandatory: true
+deployment:
+  tool: mosquitto
+  instance: reporting
+transport: plaintext
+listener:
+  host: pqc-gateway1.pqcnet
+  port: 1886
+tls:
+  enabled: false
+  pki_required: false
+topics:
+  results: pqc/results/{run_id}/#
+  control: pqc/control/{run_id}/#
+collector:
+  required: true
+  access: local_gateway
+network:
+  path: host_control
+  impairment_exempt: true
+acl:
+  enabled: true

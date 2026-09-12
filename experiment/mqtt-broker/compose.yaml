@@ -197,3 +197,19 @@ services:
       timeout: 12s
       retries: 3
       start_period: 10s
+
+  mqtt-reporting:
+    image: eclipse-mosquitto:2.1.2-alpine
+    restart: unless-stopped
+    profiles: ["reporting"]
+    ports:
+      - "${MQTT_REPORTING_PORT:-1886}:1886"
+    volumes:
+      - ./config/reporting/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./config/reporting/aclfile:/mosquitto/config/aclfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1886 -u collector -P \"${MQTT_REPORTING_COLLECTOR_PASSWORD:-invalid}\" -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s

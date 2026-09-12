@@ -71,7 +71,7 @@ def test_config_schema_accepts_pqc_evidence_and_mode():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert '"stm32_st67_pqc_hybrid_tls_e2e"' in source
     assert '"pqc_hybrid_tls_server_auth"' in source
-    assert '"st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}' in source
+    assert '"st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}' in source
 
 
 def test_pqc_profile_uses_extended_uart_hard_limit():

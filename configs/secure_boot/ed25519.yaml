@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: ed25519
+description: ed25519 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ED25519
+  packaging_option: --ed25519
+signature_size_bytes: 64
+signing:
+  requires_private_key: true
+  tuple_id: ed25519-development

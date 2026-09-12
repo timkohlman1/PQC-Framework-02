@@ -25,7 +25,7 @@ from framework.generated_state import (
     detect_execution_identity,
     record_generated_state_success,
 )
-from framework.test_provenance import (
+from framework.provenance import (
     TEST_BUILD_PURPOSE,
     current_build_purpose,
     current_test_result_dir,
@@ -391,8 +391,10 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
         f'set(PQC_TLS_ECC_MIN_BITS {selected["ecc_min_bits"]})\n'
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_512 {cmake_boolean(selected["mlkem_512"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'
+        f'set(PQC_TLS_MLKEM_STANDALONE {cmake_boolean(selected["mlkem_standalone"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65 {cmake_boolean(selected["mldsa_65"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65_SIGN {cmake_boolean(selected["mldsa_65_sign"])})\n'
         f'set(PQC_TLS_GROUP_ID {selected["group_token"]})\n'

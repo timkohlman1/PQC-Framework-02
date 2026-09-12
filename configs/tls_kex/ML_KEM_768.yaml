@@ -1,0 +1,11 @@
+schema_version: 1
+profile_type: tls_kex
+id: ML_KEM_768
+class: standalone_pqc
+tls_version: '1.3'
+wolfssl:
+  group_token: WOLFSSL_ML_KEM_768
+  mlkem: 768
+  standalone_mlkem_tls: true
+requirements:
+  target_capability: tls13

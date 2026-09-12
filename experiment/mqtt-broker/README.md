@@ -190,7 +190,7 @@ The default container command does not run gateway or broker integration tests. 
 Example PowerShell pattern:
 
 ```powershell
-docker run --rm -v ${PWD}:/workspace -w /workspace -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v ${env:USERPROFILE}\.ssh:/root/.ssh:ro pqc-framework-stm32-build python -m pytest tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+docker run --rm -v ${PWD}:/workspace -w /workspace -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v ${env:USERPROFILE}\.ssh:/root/.ssh:ro pqc-framework-stm32-build python -m pytest tests/integration/test_mqtt_broker_gateway_e2e_in.py -m integration --pqc-require-gateway
 ```
 
 Without `PQC_CONTAINER_ENABLE_GATEWAY=1`, gateway capability checks inside the container skip or fail according to the existing pytest strict flag. Passing this test is broker/gateway evidence only when supported by the pytest output and collected broker logs; it is not hardware, UART, timing, memory, benchmark, or secure-boot runtime evidence.
@@ -202,13 +202,13 @@ The gateway integration tests create temporary broker directories under the gate
 It skips cleanly unless gateway access and Docker Compose are available:
 
 ```powershell
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e_in.py -m integration
 ```
 
 To fail instead of skip when the gateway capability is unavailable:
 
 ```powershell
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e.py -m integration --pqc-require-gateway
+.\scripts\dev.ps1 pytest-gateway tests/integration/test_mqtt_broker_gateway_e2e_in.py -m integration --pqc-require-gateway
 ```
 
 
@@ -363,3 +363,7 @@ All broker profiles use the pinned `eclipse-mosquitto:2.1.2-alpine` image. The h
 Recorded TLS firmware experiments retain `mqtt-broker-tls-keylog.log` in the same result directory as `gateway-network-capture.pcap`. The manifest records the key-log filename, byte count, SHA-256 digest, collection return code, and failure status. Plaintext experiments mark TLS key logging as not applicable.
 
 In Wireshark, open **Edit → Preferences → Protocols → TLS** and select the retained `mqtt-broker-tls-keylog.log` as the `(Pre)-Master-Secret log filename`, then open the corresponding packet capture. The key log permits decryption of that experiment's TLS traffic and must be treated as sensitive generated evidence.
+
+## Reporting broker
+
+Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/results/#` and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.

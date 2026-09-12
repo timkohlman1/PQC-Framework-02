@@ -897,10 +897,26 @@ def build_manifest(
         "result": result,
     }
 
+    resolved_configuration = experiment.get("resolved_configuration")
+    if isinstance(resolved_configuration, dict):
+        manifest["resolved_configuration"] = dict(resolved_configuration)
+    instruments = experiment.get("instruments")
+    if isinstance(instruments, dict) and instruments:
+        manifest["measurement_instruments"] = instruments
+    services = experiment.get("services")
+    if isinstance(services, dict):
+        manifest["runtime_services"] = services
+
     mqtt_config = experiment.get("mqtt")
     if isinstance(mqtt_config, dict):
         tls_config = mqtt_config.get("tls", {})
         result_schema = mqtt_config.get("result_schema", {})
+        transfer_config = mqtt_config.get("transfer")
+        if isinstance(transfer_config, dict):
+            manifest["workload_transfer"] = {
+                "payload_bytes": transfer_config.get("payload_bytes"),
+                "chunk_bytes": transfer_config.get("chunk_bytes"),
+            }
         manifest["mqtt_tls"] = build_mqtt_tls_result_model(
             experiment_id=experiment["id"],
             evidence_class=mqtt_config.get("evidence_class", "unknown"),

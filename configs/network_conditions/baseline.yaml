@@ -1,0 +1,10 @@
+schema_version: 1
+profile_type: network_condition
+id: baseline
+description: No software-defined experiment impairment.
+impairment:
+  enabled: false
+  rate_kbit: 0
+  rtt_ms: 0
+  loss_percent: 0
+  mtu: 0

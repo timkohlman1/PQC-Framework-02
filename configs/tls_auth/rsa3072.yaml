@@ -1,0 +1,59 @@
+schema_version: 1
+id: rsa3072
+description: Controlled RSA-3072 X.509 hierarchy for MQTT/TLS experiments.
+key:
+  algorithm: rsa3072
+  display_name: RSA-3072
+  openssl_algorithm: RSA
+  genpkey_args:
+  - -algorithm
+  - RSA
+  - -pkeyopt
+  - rsa_keygen_bits:3072
+certificate:
+  organization: PQC Framework Research
+  digest: sha256
+  expected_signature_algorithm: sha256WithRSAEncryption
+  tls_signature_scheme: rsa_pss_rsae_sha256
+  validity_days:
+    root: 7300
+    intermediate: 5475
+    leaf: 3650
+hierarchy:
+  intermediate: true
+  root_common_name: PQC Framework rsa3072 Root CA
+  intermediate_common_name: PQC Framework rsa3072 Intermediate CA
+identities:
+  server:
+    common_name: pqc-gateway1.pqcnet
+    extended_key_usage:
+    - serverAuth
+    dns_names:
+    - pqc-gateway1.pqcnet
+    - pqc-gateway1
+    - mqtt-broker
+    - localhost
+    ip_addresses:
+    - 127.0.0.1
+    - 10.1.1.18
+  client:
+    common_name: stm32-mqtt-client
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - stm32-mqtt-client
+    ip_addresses: []
+  healthcheck:
+    common_name: pqc-mqtt-server-healthcheck
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - pqc-mqtt-server-healthcheck
+    ip_addresses: []
+profile_type: tls_auth
+supported_modes:
+- server
+- mutual
+thesis_profile: true
+tls:
+  signature_scheme: rsa_pss_rsae_sha256

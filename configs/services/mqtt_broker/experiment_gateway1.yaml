@@ -1,0 +1,30 @@
+schema_version: 1
+profile_type: service
+service_type: mqtt_broker
+id: experiment_gateway1
+description: Workload-facing Mosquitto broker on the experiment data plane.
+deployment:
+  tool: docker_compose
+  project: experiment/mqtt-broker
+listener:
+  host: pqc-gateway1.pqcnet
+  plaintext_port: 1883
+  tls_port: 8883
+  server_name: pqc-gateway1.pqcnet
+tls:
+  derived_from:
+  - tls_kex
+  - tls_auth
+  - auth_mode
+  tls13: true
+  keylog: true
+logging:
+  enabled: true
+  retain_broker_log: true
+acl:
+  enabled: true
+health_check:
+  independent_identity: true
+network:
+  path: experiment_data_plane
+  impairment_exempt: false

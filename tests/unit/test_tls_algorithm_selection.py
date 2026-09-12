@@ -57,8 +57,9 @@ def test_mode_and_group_family_must_match():
 
 def test_settings_expose_independent_group_capability_guards():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
-    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ECC_MIN_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024"):
+    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ECC_MIN_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_512", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024", "PQC_TLS_MLKEM_STANDALONE"):
         assert marker in settings
+    assert "WOLFSSL_NO_ML_KEM_512" in settings
     assert "WOLFSSL_NO_ML_KEM_768" in settings
     assert "WOLFSSL_NO_ML_KEM_1024" in settings
 

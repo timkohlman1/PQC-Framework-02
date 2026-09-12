@@ -300,7 +300,7 @@ def test_mqtt_stop_removes_profiled_and_orphaned_broker_containers(tmp_path, mon
     assert (
         "docker compose --project-name pqc-framework-mqtt-broker "
         "--profile classical --profile classical-server-auth --profile oqs --profile oqs-mtls "
-        "down --remove-orphans"
+        "--profile reporting down --remove-orphans"
     ) in command_text
     assert (
         "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
@@ -705,10 +705,14 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
     compose = _read(BROKER_ROOT / "compose.yaml")
     assert "openquantumsafe/mosquitto" not in compose
     assert "eclipse-mosquitto:latest" not in compose
-    assert compose.count("image: eclipse-mosquitto:2.1.2-alpine") == 4
+    # Four workload/TLS services plus the mandatory plaintext reporting service use the
+    # same pinned Mosquitto image. TLS key logging remains workload-broker-only.
+    assert compose.count("image: eclipse-mosquitto:2.1.2-alpine") == 5
     assert compose.count("--tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log") == 4
     assert compose.count("chmod 0700 /mosquitto/keylog") == 4
     assert compose.count("umask 077") == 4
+    reporting = _service_block(compose, "mqtt-reporting")
+    assert "--tls-keylog" not in reporting
     assert "./runtime/tls-keylog/" not in compose
 
 

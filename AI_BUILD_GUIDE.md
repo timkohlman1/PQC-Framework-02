@@ -147,11 +147,12 @@ Testing rules:
 1. Add or update tests for framework, firmware-integration, configuration, documentation, or workflow changes.
 2. Unit tests must not require hardware, SSH, UART devices, broker access, VPN access, network-impairment privileges, or private credentials.
 3. Keep hardware-dependent tests separate, marked, bounded, and capability-gated.
-4. Integration tests may use real local toolchains or gateway probes but must skip cleanly when capabilities are unavailable unless a strict `--pqc-require-*` control is intentionally supplied.
-5. A plain full pytest run may skip unavailable gateway or hardware capabilities. A skip is not evidence that the capability succeeded.
-6. Do not stop at unit tests when a feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries.
-7. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/007_framework_architecture.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
-8. Future related changes must inspect the deferred-test register and implement, update, or explicitly retire applicable entries with justification.
+4. Test-module filenames must identify their layer: integration tests under `tests/integration/` end in `_in.py`, and hardware tests under `tests/hardware/` end in `_hw.py`. Unit tests keep the normal `test_*.py` form. Do not reuse the same Python module basename across test directories.
+5. Integration tests may use real local toolchains or gateway probes but must skip cleanly when capabilities are unavailable unless a strict `--pqc-require-*` control is intentionally supplied.
+6. A plain full pytest run may skip unavailable gateway or hardware capabilities. A skip is not evidence that the capability succeeded.
+7. Do not stop at unit tests when a feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries.
+8. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/007_framework_architecture.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
+9. Future related changes must inspect the deferred-test register and implement, update, or explicitly retire applicable entries with justification.
 
 For documentation-only changes, run the targeted documentation tests and the full unit suite. The normal minimum gate is:
 

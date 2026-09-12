@@ -1,0 +1,14 @@
+schema_version: 1
+profile_type: secure_boot
+id: mldsa44
+description: mldsa44 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ML_DSA
+    ML_DSA_LEVEL: 2
+    IMAGE_SIGNATURE_SIZE: 2420
+  packaging_option: --ml_dsa
+signature_size_bytes: 2420
+signing:
+  requires_private_key: true
+  tuple_id: mldsa44-development

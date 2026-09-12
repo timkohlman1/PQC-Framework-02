@@ -1,0 +1,13 @@
+schema_version: 1
+profile_type: tls_kex
+id: SecP384r1MLKEM1024
+class: hybrid_pqc
+tls_version: '1.3'
+wolfssl:
+  group_token: WOLFSSL_SECP384R1MLKEM1024
+  ecc: true
+  ecc_bits: 384
+  mlkem: 1024
+  pqc_hybrids: true
+requirements:
+  target_capability: tls13

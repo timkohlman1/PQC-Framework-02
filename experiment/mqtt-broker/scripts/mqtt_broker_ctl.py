@@ -32,6 +32,7 @@ BROKER_PROFILE_SERVICES = {
     "classical-server-auth": "mqtt-classical-server-auth",
     "oqs": "mqtt-oqs",
     "oqs-mtls": "mqtt-oqs-mtls",
+    "reporting": "mqtt-reporting",
 }
 BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
 TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"
@@ -287,6 +288,8 @@ def stop(args: argparse.Namespace) -> None:
             "oqs",
             "--profile",
             "oqs-mtls",
+            "--profile",
+            "reporting",
             "down",
             "--remove-orphans",
         ],
@@ -294,7 +297,7 @@ def stop(args: argparse.Namespace) -> None:
     host = load_host_config(repo_root() / args.host_config)
     cleanup_command = (
         "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
-        "pqc-mqtt-oqs pqc-mqtt-oqs-mtls >/dev/null 2>&1 || true"
+        "pqc-mqtt-oqs pqc-mqtt-oqs-mtls pqc-mqtt-reporting >/dev/null 2>&1 || true"
     )
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 

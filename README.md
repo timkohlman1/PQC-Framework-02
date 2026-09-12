@@ -48,7 +48,7 @@ cmake --preset Release
 cmake --build --preset Release
 cmake --preset Debug
 cmake --build --preset Debug
-python -m pytest tests/integration/test_local_build.py -m integration --pqc-require-local-build
+python -m pytest tests/integration/test_local_build_in.py -m integration --pqc-require-local-build
 ```
 
 SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough.
@@ -114,7 +114,7 @@ Opt-in physical MQTT experiment matrix:
 
 ```powershell
 .\scripts\dev.ps1 pytest-hardware `
-    tests/hardware/test_mqtt_experiment_matrix.py `
+    tests/hardware/test_mqtt_experiment_matrix_hw.py `
     -m hardware `
     --pqc-require-hardware `
     --pqc-hardware-experiment-matrix
@@ -177,3 +177,19 @@ Select subsets without editing the canonical grid. Selectors may be repeated:
 ```
 
 `--case-offset` and `--case-limit` provide additional bounded chunking after filtering. The command writes its expanded plan under `.pqc-generated-state/network-degradation-grid/`.
+
+## Canonical versioned configuration resolver
+
+The source-controlled experiment configuration is now organised by independently selectable profile domain under `configs/targets`, `configs/gateways`, `configs/instruments`, `configs/services`, `configs/workloads`, `configs/tls_kex`, `configs/tls_auth`, `configs/secure_boot`, `configs/network_conditions`, and `configs/campaigns`. Legacy concrete experiment YAMLs remain temporarily for migration/equivalence coverage; new campaigns must use the canonical profiles rather than adding another concrete Cartesian-product experiment file.
+
+Preview/materialise a campaign without hardware access:
+
+```powershell
+.\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange
+```
+
+Generated cases are written below `.pqc-generated-state/campaigns/` and contain profile identities, non-secret resolved choices, content hashes, configuration identity, and firmware identity. Wi-Fi secret values are resolved only when a generated case is consumed for execution; set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in the local execution environment. They are not written into generated case YAML.
+
+Ready Metrics 2 defaults are owned by `configs/workloads/ready_metrics_2.yaml`: `payload_bytes=204800` and `chunk_bytes=400`. Campaigns may vary them using matrix keys `workload.transfer.payload_bytes` and `workload.transfer.chunk_bytes` without duplicating the workload profile.
+
+The TLS KEX catalogue contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. Standalone `ML_KEM_512`, `ML_KEM_768`, and `ML_KEM_1024` use wolfSSL standalone ML-KEM TLS support and are not treated as hybrid groups. The principal PQ-only TLS condition is `ML_KEM_768` with `mldsa65`; `auth_mode` remains independently selectable as `server` or `mutual`.
