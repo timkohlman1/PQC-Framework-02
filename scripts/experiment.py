@@ -607,7 +607,19 @@ def _crypto_progress_lines(bundle: dict[str, dict[str, Any]]) -> list[str]:
             selected = resolve_tls_algorithm_set(bundle)
             groups = ", ".join(selected.get("key_exchange_groups", [])) or "none"
             signatures = ", ".join(selected.get("signature_schemes", [])) or "none"
-            lines.append(f"MQTT TLS mode={mode}; key exchange={groups}; signatures={signatures}")
+            resolved = experiment.get("resolved_configuration", {})
+            choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
+            if not isinstance(choices, dict):
+                choices = {}
+            auth_profile = (
+                tls.get("certificate_profile")
+                if isinstance(tls, dict)
+                else None
+            ) or choices.get("tls_auth") or "none"
+            lines.append(
+                f"MQTT TLS mode={mode}; key exchange={groups}; "
+                f"auth profile={auth_profile}; signature scheme={signatures}"
+            )
         except ValueError as exc:
             lines.append(f"MQTT TLS mode={mode}; algorithm resolution failed: {exc}")
     boot_crypto = experiment.get("boot_crypto") if isinstance(experiment, dict) else None
@@ -1371,9 +1383,20 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
     ]
     if isinstance(mqtt, dict):
         broker = mqtt.get("broker", {})
-        if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
+        evidence_class = mqtt.get("evidence_class")
+        is_tls = evidence_class in {
+            "stm32_st67_classical_tls_e2e",
+            "stm32_st67_pqc_hybrid_tls_e2e",
+            "stm32_st67_pqc_tls_e2e",
+        }
+        # Successful TLS/MQTT completion is sufficient evidence that the configured
+        # broker hostname was usable. Do not require legacy DNS success diagnostics
+        # as a separate UART contract for TLS workloads. Keep them only for
+        # plaintext profiles that explicitly require DNS.
+        if (isinstance(broker, dict) and bool(broker.get("dns_required", False))
+                and not is_tls):
             markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
-        if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}:
+        if is_tls:
             markers.extend(("tls_handshake=passed", "reconnect=passed",
                             "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
         if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
@@ -4411,12 +4434,37 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
     return final_return_code
 
 
+def _resolved_case_secure_boot_choice(experiment_path: Path | str) -> str | None:
+    """Return the secure-boot choice embedded in a canonical resolved case."""
+
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return None
+
+    choices = raw.get("choices")
+    if not isinstance(choices, dict):
+        return None
+
+    secure_boot = choices.get("secure_boot")
+    if not isinstance(secure_boot, str) or not secure_boot.strip():
+        return None
+    return secure_boot.strip()
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
-    wolfBoot is the default. Supplying a secure-boot algorithm implies wolfBoot;
-    omitting both boot options selects the integrity_sha256 baseline. Direct flash
-    remains available only as an explicit override.
+    wolfBoot is the default. An explicit ``--boot-algorithm`` takes precedence;
+    otherwise canonical resolved cases use their selected secure-boot profile.
+    Legacy experiments without a canonical selection retain the
+    ``integrity_sha256`` baseline. Direct flash remains available only as an
+    explicit override.
     """
 
     from time import perf_counter
@@ -4438,7 +4486,12 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             return 2
     else:
         args.boot_mode = "wolfboot"
-        args.boot_algorithm = explicit_boot_algorithm or "integrity_sha256"
+        canonical_boot_algorithm = _resolved_case_secure_boot_choice(args.experiment)
+        args.boot_algorithm = (
+            explicit_boot_algorithm
+            or canonical_boot_algorithm
+            or "integrity_sha256"
+        )
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)

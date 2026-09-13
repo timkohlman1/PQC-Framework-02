@@ -145,9 +145,10 @@ def test_firmware_reports_dns_server_and_resolution_and_selects_tls_identity_typ
         assert marker in source
 
 
-def test_dns_required_controls_uart_pass_markers():
+def test_dns_required_uart_pass_markers_are_not_mandatory_for_tls():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert 'bool(broker.get("dns_required", False))' in source
+    assert 'and not is_tls' in source
     assert '"ST67 DNS: required=true"' in source
     assert '"ST67 DNS lookup: result=passed"' in source
 

@@ -418,6 +418,68 @@ def test_run_defaults_to_integrity_wolfboot(monkeypatch, tmp_path):
     assert observed == {"mode": "wolfboot", "algorithm": "integrity_sha256"}
 
 
+def test_run_uses_canonical_resolved_case_secure_boot_selection(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = tmp_path / "0002_secure_boot.yaml"
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "kind: resolved_case",
+                "id: secure_boot-0002-test",
+                "choices:",
+                "  secure_boot: ecdsa_p256",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = None
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "ecdsa_p256"}
+
+
+def test_explicit_boot_algorithm_overrides_canonical_resolved_case(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = tmp_path / "0011_secure_boot.yaml"
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "kind: resolved_case",
+                "id: secure_boot-0011-test",
+                "choices:",
+                "  secure_boot: mldsa65",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = "rsa3072"
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "rsa3072"}
+
+
 def test_run_algorithm_implies_wolfboot(monkeypatch, tmp_path):
     cli = load_experiment_module()
     experiment_path = write_sample_configs(tmp_path / "configs")
@@ -670,3 +732,36 @@ def test_authenticated_signing_profile_still_requires_resolved_tuple(tmp_path, m
     assert observed == {"profile": profile, "repo_root": tmp_path}
     assert prepared["private_key"] == "secrets/wolfboot/tuples/mldsa65-development/private_key.der"
     assert prepared["resolved_signing_context"] == {"tuple_id": "mldsa65-development"}
+
+
+def test_crypto_progress_lines_show_auth_profile_and_derived_signature_scheme(monkeypatch):
+    cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "tls": {
+                    "mode": "classical_tls_server_auth",
+                    "certificate_profile": "rsa3072",
+                }
+            },
+            "resolved_configuration": {
+                "choices": {
+                    "tls_auth": "rsa3072",
+                }
+            },
+        }
+    }
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_tls_algorithm_set",
+        lambda _bundle: {
+            "key_exchange_groups": ["secp256r1"],
+            "signature_schemes": ["rsa_pss_rsae_sha256"],
+        },
+    )
+
+    assert cli._crypto_progress_lines(bundle) == [
+        "MQTT TLS mode=classical_tls_server_auth; key exchange=secp256r1; "
+        "auth profile=rsa3072; signature scheme=rsa_pss_rsae_sha256"
+    ]

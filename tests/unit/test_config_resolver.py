@@ -91,3 +91,24 @@ def test_execution_bundle_resolves_secret_refs_only_in_memory(monkeypatch):
     assert bundle['experiment']['mqtt']['transfer']['payload_bytes']==204800
     assert bundle['experiment']['mqtt']['transfer']['chunk_bytes']==400
     assert bundle['experiment']['mqtt']['tls']['mode']=='pqc_tls_server_auth'
+
+
+def test_tls_pq_only_campaign_has_server_and_mutual_mldsa65_mlkem768_cases():
+    cases = ConfigResolver(ROOT).expand_campaign('tls_pq_only')
+    assert len(cases) == 2
+    assert [c['choices']['auth_mode'] for c in cases] == ['server', 'mutual']
+    assert all(c['choices']['tls_kex'] == 'ML_KEM_768' for c in cases)
+    assert all(c['choices']['tls_auth'] == 'mldsa65' for c in cases)
+    assert all(c['choices']['secure_boot'] == 'integrity_sha256' for c in cases)
+    assert all(c['choices']['network_condition'] == 'baseline' for c in cases)
+
+def test_secure_boot_campaign_uses_runnable_mqtt_validation_workload(monkeypatch):
+    monkeypatch.setenv('PQC_WIFI_SSID', 'test-ssid')
+    monkeypatch.setenv('PQC_WIFI_PSK', 'test-psk')
+    resolver = ConfigResolver(ROOT)
+    cases = resolver.expand_campaign('secure_boot')
+    assert len(cases) == 12
+    assert all(c['selections']['workload'] == 'mqtt_validation' for c in cases)
+    bundle = resolver.to_legacy_bundle(cases[0])
+    assert bundle['experiment']['firmware']['application'] == 'mqtt_validation'
+

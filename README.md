@@ -182,6 +182,8 @@ Select subsets without editing the canonical grid. Selectors may be repeated:
 
 The source-controlled experiment configuration is now organised by independently selectable profile domain under `configs/targets`, `configs/gateways`, `configs/instruments`, `configs/services`, `configs/workloads`, `configs/tls_kex`, `configs/tls_auth`, `configs/secure_boot`, `configs/network_conditions`, and `configs/campaigns`. Legacy concrete experiment YAMLs remain temporarily for migration/equivalence coverage; new campaigns must use the canonical profiles rather than adding another concrete Cartesian-product experiment file.
 
+When `experiment.py run` consumes a canonical generated case, the case's `choices.secure_boot` selection is carried automatically into the wolfBoot build/sign/flash path. An explicit `--boot-algorithm` remains an override. Legacy experiment YAMLs that do not contain a canonical secure-boot selection retain the `integrity_sha256` default.
+
 Preview/materialise a campaign without hardware access:
 
 ```powershell
