@@ -12,7 +12,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 from framework.config_resolver import ConfigResolver
 _BASELINE_ROOT = ConfigResolver(ROOT).materialize_campaign("baseline")
-EXPERIMENT_CONFIG = next(sorted((_BASELINE_ROOT / "cases").glob("*.yaml"))).relative_to(ROOT).as_posix()
+EXPERIMENT_CONFIG = next(iter(sorted((_BASELINE_ROOT / "cases").glob("*.yaml")))).relative_to(ROOT).as_posix()
 EXPECTED_UART_DEVICE = "/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02"
 EXPECTED_BOOT_MARKER = "stm32-basic_hal1 boot v0.1.0"
 
