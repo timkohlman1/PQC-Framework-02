@@ -376,7 +376,7 @@ def test_execute_uart_capture_can_restart_during_post_flash_capture(tmp_path):
 
     assert result.return_code == 0
     assert len(calls) == 1
-    assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
+    assert calls[0][0:2] == ["ssh", "timk@pqc-gateway1"]
     assert "timeout 0.2s cat " in calls[0][2]
     assert ">/dev/null 2>&1 || true" in calls[0][2]
     assert "reset-stm32a 1>&2" in calls[0][2]
@@ -751,7 +751,7 @@ def test_execute_uart_monitor_runs_delayed_restart_inside_monitor_command(tmp_pa
     assert result.return_code == 0
     assert result.restart is None
     assert len(calls) == 1
-    assert calls[0][0:2] == ["ssh", "pqc-gateway1"]
+    assert calls[0][0:2] == ["ssh", "timk@pqc-gateway1"]
     assert "timeout 0.2s cat " in calls[0][2]
     assert ">/dev/null 2>&1 || true" in calls[0][2]
     assert "reset-stm32a 1>&2" in calls[0][2]

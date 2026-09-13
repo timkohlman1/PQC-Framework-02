@@ -2,7 +2,7 @@
 
 This directory contains the gateway-hosted MQTT broker service for transport-security experiments.
 
-The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/hosts/gateway.yaml`. The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
+The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway FQDN configured for the gateway (`pqc-gateway1.pqcnet`; currently exposed through the compatibility host config while Request 10 cleanup is completed). The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
 
 Framework build, test, and experiment workflows use the Docker wrappers. Broker administration is the exception: run `mqtt_broker_ctl.py` with host-native Python because it uses the development host SSH configuration. There is no `dev.ps1 mqtt-broker` subcommand. Raw `docker run` and `docker compose` commands remain diagnostic fallback only. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; firmware flash/UART workflows are owned by `docs/005_remote_flash_workflow.md`; the canonical capability matrix is `docs/007_framework_architecture.md`.
 
@@ -162,7 +162,7 @@ Local and gateway Docker success must be confirmed from command output or logs b
 
 ## Gateway address and certificate SANs
 
-`configs/hosts/gateway.yaml` contains both the SSH alias and `network.address`. The SSH alias is used for orchestration commands, while `network.address` is used for MQTT/TLS validation from clients that cannot resolve the SSH alias through DNS.
+`configs/hosts/gateway.yaml` currently exposes the gateway FQDN as its SSH/SCP `alias` and retains the short alias separately. Remote orchestration must use the FQDN `pqc-gateway1.pqcnet`; `network.address` remains available for workflows that explicitly require the stable IP address.
 
 The server SANs are declared in each `configs/certificate_profile/<profile-id>.yaml`. The initial profiles include the maintained gateway address used by the supplied experiment configurations. If the gateway address or broker DNS names change, update the certificate-profile YAML and intentionally reprovision that profile:
 

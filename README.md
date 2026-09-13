@@ -51,7 +51,7 @@ cmake --build --preset Debug
 python -m pytest tests/integration/test_local_build_in.py -m integration --pqc-require-local-build
 ```
 
-SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough.
+SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough. Remote gateway orchestration uses the configured SSH user and FQDN (`timk@pqc-gateway1.pqcnet`); the short alias is display-only and must not be relied on for container DNS resolution. Remote commands never fall back to the container user.
 
 ## Dependency ownership
 

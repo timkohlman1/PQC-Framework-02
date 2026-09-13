@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from framework.manifest import update_manifest
+from framework.ssh_target import gateway_ssh_target
 
 UART_MARKER_MISSING_RETURN_CODE = 9
 UART_NO_DATA_RETURN_CODE = 10
@@ -724,6 +725,7 @@ def execute_uart_capture(
     log_path = result_dir_path / log_name
 
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     device = str(bundle["host"]["uart"]["device"])
     baud = int(bundle["host"]["uart"]["baud"])
     expected_boot_message = str(bundle["experiment"]["uart"]["expected_boot_message"])
@@ -747,14 +749,14 @@ def execute_uart_capture(
     start = perf_counter()
     if restart_command is None:
         capture_command = construct_ssh_uart_capture_command(
-            gateway_alias,
+            gateway_target,
             device,
             baud,
             duration_seconds,
         )
     else:
         capture_command = construct_ssh_uart_monitor_with_restart_command(
-            gateway_alias,
+            gateway_target,
             device,
             baud,
             duration_seconds,
@@ -942,6 +944,7 @@ def execute_uart_monitor(
     log_path = _timestamped_monitor_log_path(results_root_path)
 
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     device = str(bundle["host"]["uart"]["device"])
     baud = int(bundle["host"]["uart"]["baud"])
 
@@ -951,7 +954,7 @@ def execute_uart_monitor(
     if restart:
         capture_execution = runner(
             construct_ssh_uart_monitor_with_restart_command(
-                gateway_alias,
+                gateway_target,
                 device,
                 baud,
                 duration_seconds,
@@ -962,7 +965,7 @@ def execute_uart_monitor(
     else:
         capture_execution = runner(
             construct_ssh_uart_capture_command(
-                gateway_alias,
+                gateway_target,
                 device,
                 baud,
                 duration_seconds,

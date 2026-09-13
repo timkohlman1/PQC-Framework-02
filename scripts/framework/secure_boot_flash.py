@@ -27,6 +27,7 @@ from framework.fingerprint import (
 )
 from framework.manifest import build_secure_boot_benchmark_model, read_elf_alloc_section_metrics, read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.ssh_target import gateway_ssh_target
 
 SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE = 40
 SECURE_BOOT_SCP_FAILED_RETURN_CODE = 41
@@ -723,6 +724,7 @@ def execute_secure_boot_flash(
     board = bundle["board"]
 
     gateway_alias = str(host["alias"])
+    gateway_target = gateway_ssh_target(host)
     flash_helper = str(host["flash"]["helper"])
     stlink_serial = str(board["stlink"]["serial"])
     log_path = result_dir_path / DEFAULT_SECURE_BOOT_FLASH_LOG_NAME
@@ -855,7 +857,7 @@ def execute_secure_boot_flash(
         scp_execution = runner(
             construct_scp_command(
                 artifact.artifact_path,
-                gateway_alias,
+                gateway_target,
                 artifact.remote_artifact_path,
             ),
             repo_root_path,
@@ -874,7 +876,7 @@ def execute_secure_boot_flash(
 
         flash_execution = runner(
             construct_ssh_flash_command(
-                gateway_alias,
+                gateway_target,
                 flash_helper,
                 artifact.remote_artifact_path,
                 artifact.offset,

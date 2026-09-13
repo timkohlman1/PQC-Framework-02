@@ -36,6 +36,7 @@ def sample_bundle():
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
+            "user": "timk",
             "flash": {"helper": "flash-stm32a"},
         },
     }

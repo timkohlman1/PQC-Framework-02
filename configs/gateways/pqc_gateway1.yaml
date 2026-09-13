@@ -4,6 +4,7 @@ id: pqc_gateway1
 description: Experiment gateway identity and hardware-control paths.
 identity:
   alias: pqc-gateway1
+  fqdn: pqc-gateway1.pqcnet
   ssh_user: timk
   address: 10.1.1.18
 control:

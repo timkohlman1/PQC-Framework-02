@@ -130,7 +130,8 @@ def test_mqtt_runtime_paths_are_ignored_by_git():
 def test_gateway_host_config_records_network_address_for_non_ssh_clients():
     gateway = _read(REPO_ROOT / "configs" / "hosts" / "gateway.yaml")
 
-    assert "alias: pqc-gateway1" in gateway
+    assert "alias: pqc-gateway1.pqcnet" in gateway
+    assert "short_alias: pqc-gateway1" in gateway
     assert "user: timk" in gateway
     assert "network:" in gateway
     assert "address: 10.1.1.18" in gateway

@@ -129,6 +129,7 @@ def sample_bundle():
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
+            "user": "timk",
             "flash": {"helper": "flash-stm32a"},
         },
         "boot": {
@@ -243,10 +244,10 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert result.return_code == 0
     assert result.failure_stage == "none"
     assert calls == [
-        ["scp", str(wolfboot_artifact), f"pqc-gateway1:/tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
-        ["ssh", "pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
-        ["scp", str(signed_artifact), f"pqc-gateway1:/tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin"],
-        ["ssh", "pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin 0x08020000"],
+        ["scp", str(wolfboot_artifact), f"timk@pqc-gateway1:/tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
+        ["ssh", "timk@pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
+        ["scp", str(signed_artifact), f"timk@pqc-gateway1:/tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin"],
+        ["ssh", "timk@pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin 0x08020000"],
     ]
 
     log = (result_dir / "secure_boot_flash.log").read_text(encoding="utf-8")
@@ -492,7 +493,7 @@ def test_execute_secure_boot_flash_negative_test_flashes_corrupted_copy_without_
     assert calls[2] == [
         "scp",
         str(corrupted_path),
-        f"pqc-gateway1:/tmp/{result_dir.name}_signed_application_corrupted_application_signed.bin",
+        f"timk@pqc-gateway1:/tmp/{result_dir.name}_signed_application_corrupted_application_signed.bin",
     ]
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))

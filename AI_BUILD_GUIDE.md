@@ -98,7 +98,7 @@ Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not
 
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
 
-Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts.
+Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts. Remote SSH/SCP commands must use the configured gateway SSH user and FQDN explicitly (for the current gateway, `timk@pqc-gateway1.pqcnet`) and must not fall back to the container user.
 
 ## 6. Generated state, signing state, and provenance
 

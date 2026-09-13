@@ -69,6 +69,7 @@ from framework.artifacts import copy_artifact_to_result
 from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
 from framework.flash import execute_flash
+from framework.ssh_target import gateway_ssh_target
 from framework.manifest import (
     apply_repeated_run_samples_to_benchmark_model,
     build_secure_boot_benchmark_model,
@@ -807,6 +808,7 @@ def _wait_for_plaintext_mqtt_broker(
     mqtt = bundle["experiment"]["mqtt"]
     broker = mqtt["broker"]
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     port = int(broker["port"])
     evidence_class = mqtt.get("evidence_class")
     tls_enabled = evidence_class in {
@@ -906,7 +908,7 @@ def _wait_for_plaintext_mqtt_broker(
             'cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
             'echo "broker_not_ready attempts=$attempt"; exit 1'
         )
-    command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+    command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
     start = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -1556,6 +1558,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     boot_marker = str(experiment["uart"]["expected_boot_message"])
 
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
     baud = int(bundle["host"]["uart"]["baud"])
     broker_port = int(broker["port"])
@@ -1754,7 +1757,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
-    ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+    ssh_command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
 
     def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
         start = time.perf_counter()

@@ -180,7 +180,7 @@ Gateway and hardware workflows are still mediated by SSH/SCP rather than direct 
 ```text
 development host with Docker
   -> project container mounted at /workspace
-    -> SSH/SCP to pqc-gateway1 using runtime-mounted SSH material
+    -> SSH/SCP to pqc-gateway1.pqcnet using runtime-mounted SSH material
       -> gateway flash/reset/UART helpers
         -> STM32 board
 ```
@@ -875,7 +875,7 @@ STM32 builds compile ML-DSA-65 verification only for profiles that select `serve
 
 ## Canonical versioned configuration resolver (Implementation Request 10)
 
-The maintained configuration source of truth is the schema-versioned profile hierarchy under `configs/{targets,gateways,instruments,services,workloads,tls_kex,tls_auth,secure_boot,network_conditions,campaigns}`. `scripts/framework/config_resolver.py` is the canonical loader/resolver and `scripts/resolve_campaign.py` materialises derivative cases below `.pqc-generated-state/campaigns/`. Generated cases deliberately retain selected profile identities, non-secret resolved choices, content hashes, configuration identity and firmware identity rather than copying complete profile bodies. When consumed, selected profile hashes are re-evaluated; stale generated state fails before execution.
+The maintained configuration source of truth is the schema-versioned profile hierarchy under `configs/{targets,gateways,instruments,services,workloads,tls_kex,tls_auth,secure_boot,network_conditions,campaigns}`. Gateway profiles retain a human-readable short alias separately from the FQDN used for SSH/SCP orchestration; the current gateway FQDN is `pqc-gateway1.pqcnet`. `scripts/framework/config_resolver.py` is the canonical loader/resolver and `scripts/resolve_campaign.py` materialises derivative cases below `.pqc-generated-state/campaigns/`. Generated cases deliberately retain selected profile identities, non-secret resolved choices, content hashes, configuration identity and firmware identity rather than copying complete profile bodies. When consumed, selected profile hashes are re-evaluated; stale generated state fails before execution.
 
 TLS authentication family and `auth_mode` are orthogonal. `configs/tls_auth/*.yaml` is also the canonical certificate-provisioning catalogue; `scripts/provision_certificates.py` consumes it directly. Ed25519 is retained as a compatibility profile but is not part of the thesis authentication campaign. Ready Metrics 2 transfer size and chunk size are workload parameters and may be promoted to dotted campaign matrix dimensions.
 

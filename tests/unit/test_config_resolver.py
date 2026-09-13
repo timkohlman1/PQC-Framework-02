@@ -38,6 +38,14 @@ def test_standalone_mlkem_is_not_hybrid():
     assert not kex['wolfssl'].get('pqc_hybrids',False)
 
 
+
+
+def test_gateway_profile_declares_fqdn_for_remote_orchestration():
+    resolver = ConfigResolver(ROOT)
+    gateway = resolver.load_profile('gateway', 'pqc_gateway1').data
+    assert gateway['identity']['alias'] == 'pqc-gateway1'
+    assert gateway['identity']['fqdn'] == 'pqc-gateway1.pqcnet'
+
 def test_reporting_broker_is_plaintext_and_impairment_exempt():
     resolver=ConfigResolver(ROOT)
     broker=resolver.load_service('mqtt_broker','reporting_gateway1').data

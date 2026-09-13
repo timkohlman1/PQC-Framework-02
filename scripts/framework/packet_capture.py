@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from framework.uart import CommandExecution
+from framework.ssh_target import gateway_ssh_target
 
 MAC_ADDRESS_PATTERN = re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 PACKET_CAPTURE_ARTIFACT_NAME = "gateway-network-capture.pcap"
@@ -23,6 +24,7 @@ class GatewayPacketCapture:
     """Identity and resolved settings for one remote packet-capture process."""
 
     gateway_alias: str
+    gateway_target: str
     remote_capture_path: str
     remote_log_path: str
     pid: int
@@ -115,6 +117,7 @@ def start_gateway_packet_capture(
         return None, None
 
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     safe_run_id = re.sub(r"[^A-Za-z0-9_.-]", "_", run_id)
     remote_capture_path = f"/tmp/pqc-{safe_run_id}-gateway-network-capture.pcap"
     remote_log_path = f"/tmp/pqc-{safe_run_id}-gateway-network-capture.log"
@@ -143,7 +146,7 @@ def start_gateway_packet_capture(
         f"{shlex.quote(remote_log_path)} >&2 2>/dev/null || true; exit 1; }}; "
         "printf '%s\\n' \"$capture_pid\""
     )
-    command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+    command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
     execution = runner(command, cwd=repo_root)
     if execution.return_code != 0:
         return None, execution
@@ -161,6 +164,7 @@ def start_gateway_packet_capture(
 
     return GatewayPacketCapture(
         gateway_alias=gateway_alias,
+        gateway_target=gateway_target,
         remote_capture_path=remote_capture_path,
         remote_log_path=remote_log_path,
         pid=pid,
@@ -188,13 +192,13 @@ def stop_and_collect_gateway_packet_capture(
         "if kill -0 \"$capture_pid\" 2>/dev/null; then kill -TERM \"$capture_pid\" 2>/dev/null || true; fi; "
         f"test -f {shlex.quote(capture.remote_capture_path)}"
     )
-    stop_command = ["ssh", capture.gateway_alias, f"sh -c {shlex.quote(stop_script)}"]
+    stop_command = ["ssh", capture.gateway_target, f"sh -c {shlex.quote(stop_script)}"]
     stop_execution = runner(stop_command, cwd=repo_root)
 
     artifact_path = result_dir / PACKET_CAPTURE_ARTIFACT_NAME
     copy_command = [
         "scp",
-        f"{capture.gateway_alias}:{capture.remote_capture_path}",
+        f"{capture.gateway_target}:{capture.remote_capture_path}",
         str(artifact_path),
     ]
     copy_execution = runner(copy_command, cwd=repo_root)
@@ -202,7 +206,7 @@ def stop_and_collect_gateway_packet_capture(
     log_path = result_dir / PACKET_CAPTURE_LOG_NAME
     remote_log_command = [
         "ssh",
-        capture.gateway_alias,
+        capture.gateway_target,
         f"cat {shlex.quote(capture.remote_log_path)} 2>/dev/null || true",
     ]
     remote_log = runner(remote_log_command, cwd=repo_root)
@@ -220,7 +224,7 @@ def stop_and_collect_gateway_packet_capture(
     cleanup_script = (
         f"rm -f {shlex.quote(capture.remote_capture_path)} {shlex.quote(capture.remote_log_path)}"
     )
-    runner(["ssh", capture.gateway_alias, f"sh -c {shlex.quote(cleanup_script)}"], cwd=repo_root)
+    runner(["ssh", capture.gateway_target, f"sh -c {shlex.quote(cleanup_script)}"], cwd=repo_root)
 
     if stop_execution.return_code != 0:
         failure_reason = "packet capture could not be stopped cleanly or the remote capture file was missing"

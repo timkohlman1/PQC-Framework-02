@@ -22,7 +22,7 @@ def _bundle(packet_capture: dict | None = None) -> dict:
         network["packet_capture"] = packet_capture
     return {
         "experiment": {"network": network},
-        "host": {"alias": "pqc-gateway1"},
+        "host": {"alias": "pqc-gateway1", "user": "timk"},
     }
 
 
@@ -96,6 +96,7 @@ def test_start_runner_receives_keyword_only_cwd(tmp_path: Path):
 def test_stop_collects_non_empty_capture_and_hashes_artifact(tmp_path: Path):
     capture = GatewayPacketCapture(
         gateway_alias="pqc-gateway1",
+        gateway_target="timk@pqc-gateway1",
         remote_capture_path="/tmp/test.pcap",
         remote_log_path="/tmp/test.log",
         pid=4321,
