@@ -74,8 +74,8 @@ The baseline application provides ST67W61M1 initialization, configured-AP associ
 The direct-flash experiment and boot profiles are:
 
 ```text
-configs/experiments/baseline_direct_uart.yaml
-configs/boot/direct_flash.yaml
+.pqc-generated-state/campaigns/baseline/cases/<case>.yaml
+canonical generated-case direct-flash compatibility metadata
 ```
 
 The same application is built for wolfBoot with the `Release` preset and relocated linker script:
@@ -90,7 +90,7 @@ The relocated application entry address is `0x08023000`, leaving the current 122
 
 ## ST67 Wi-Fi association and DHCP
 
-The baseline experiment supplies SSID and PSK through `configs/experiments/baseline_direct_uart.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
+The baseline experiment supplies SSID and PSK through `.pqc-generated-state/campaigns/baseline/cases/<case>.yaml`. The build workflow generates `build/pqc_generated/pqc_wifi_config.h`; UART and manifests redact the PSK. Firmware joins the configured AP and obtains IPv4 configuration through DHCP. Explicit UART markers record association and IPv4, gateway, and netmask values. Run manifests record parsed evidence under `network`. Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address.
 
 
 ## ST67 T02 network startup

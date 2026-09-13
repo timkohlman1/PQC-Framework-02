@@ -104,7 +104,7 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
     module = _load_ctl_module()
     host = module.load_host_config(HOST_CONFIG)
     if not host.address:
-        pytest.skip("configs/hosts/gateway.yaml is missing network.address for external TLS validation")
+        pytest.skip("configs/gateways/pqc_gateway1.yaml is missing network.address for external TLS validation")
 
     target = module.ssh_target(host)
     docker_probe = _ssh(target, "docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1")

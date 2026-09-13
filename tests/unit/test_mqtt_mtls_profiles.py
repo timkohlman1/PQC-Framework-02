@@ -39,9 +39,9 @@ def test_tls_auth_profiles_support_mutual_without_per_group_profile_duplication(
     }
     assert all(case["choices"]["tls_kex"] == "secp256r1" for case in mutual_cases)
 
-    # The canonical model intentionally does not create server/mutual copies for each
-    # tls_auth or TLS group. Authentication mode is an orthogonal campaign choice.
-    assert not (ROOT / "configs/experiments/mqtt_tls_ML_KEM_512_mutual_auth_st67_e2e.yaml").exists()
+    # The canonical model intentionally keeps authentication mode orthogonal to
+    # TLS KEX and TLS authentication profiles rather than duplicating profile files.
+    assert len(list((ROOT / "configs/tls_auth").glob("*.yaml"))) == 5
     for profile_id in ("rsa3072", "ecdsa-p256", "ecdsa-p384", "mldsa65"):
         profile = resolver.load_profile("tls_auth", profile_id).data
         assert "mutual" in profile["supported_modes"]

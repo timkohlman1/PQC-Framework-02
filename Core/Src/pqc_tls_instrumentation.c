@@ -216,6 +216,8 @@ static const char *PQC_TLS_PrimitiveName(PQC_TLSPrimitive primitive)
         "p521_shared_secret",
         "x25519_keygen",
         "x25519_shared_secret",
+        "mlkem512_keygen",
+        "mlkem512_decapsulate",
         "mlkem768_keygen",
         "mlkem768_decapsulate",
         "mlkem1024_keygen",

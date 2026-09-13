@@ -85,88 +85,23 @@ def write_initial_manifest(result_dir: Path) -> None:
 
 
 def write_sample_configs(configs_root: Path) -> Path:
-    boards_dir = configs_root / "boards"
-    hosts_dir = configs_root / "hosts"
-    boot_dir = configs_root / "boot"
-    experiments_dir = configs_root / "experiments"
+    import os
+    import shutil
 
-    boards_dir.mkdir(parents=True)
-    hosts_dir.mkdir(parents=True)
-    boot_dir.mkdir(parents=True)
-    experiments_dir.mkdir(parents=True)
+    repo_root = configs_root.parent
+    source_repo = Path(__file__).resolve().parents[2]
+    shutil.copytree(source_repo / "configs", configs_root, dirs_exist_ok=True)
+    os.environ.setdefault("PQC_WIFI_SSID", "pqc")
+    os.environ.setdefault("PQC_WIFI_PSK", "test-psk")
+    scripts_path = source_repo / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
 
-    (boards_dir / "board_a.yaml").write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "066EFF3932504E3043111818"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    generated = ConfigResolver(repo_root).materialize_campaign(
+        "baseline", repo_root / ".pqc-generated-state" / "campaigns" / "baseline"
     )
-
-    (hosts_dir / "gateway.yaml").write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "reset:",
-                "  helper: reset-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (boot_dir / "direct_flash.yaml").write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct flash baseline boot profile.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    experiment_path = experiments_dir / "baseline_direct_uart.yaml"
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Debug/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    return experiment_path
+    return sorted((generated / "cases").glob("*.yaml"))[0]
 
 
 

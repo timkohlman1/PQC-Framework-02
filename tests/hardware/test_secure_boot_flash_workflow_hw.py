@@ -8,10 +8,21 @@ from pathlib import Path
 
 import pytest
 
-SECURE_BOOT_EXPERIMENT_CONFIG = "configs/experiments/secure_boot_uart.yaml"
-BUILD_PROVENANCE_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
-SIGNING_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
-WOLFBOOT_BUILD_PROFILE = "configs/algorithms/ecdsa_p256.yaml"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+from framework.config_resolver import ConfigResolver
+
+_RESOLVER = ConfigResolver(ROOT)
+_BASELINE_ROOT = _RESOLVER.materialize_campaign("baseline")
+_SECURE_ROOT = _RESOLVER.materialize_campaign("secure_boot")
+BUILD_PROVENANCE_EXPERIMENT_CONFIG = next(iter(sorted((_BASELINE_ROOT / "cases").glob("*.yaml")))).relative_to(ROOT).as_posix()
+SECURE_BOOT_EXPERIMENT_CONFIG = next(
+    path for path in sorted((_SECURE_ROOT / "cases").glob("*.yaml"))
+    if _RESOLVER.load_resolved_case(path)["choices"]["secure_boot"] == "ecdsa_p256"
+).relative_to(ROOT).as_posix()
+SECURE_BOOT_PROFILE = "configs/secure_boot/ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
 RELOCATED_APPLICATION_ELF = "build/Release/stm32_basic_hal1.elf"
 SIGNED_APPLICATION_ARTIFACT = "build/Release/stm32_basic_hal1_v1_signed.bin"
@@ -333,8 +344,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
         repo_root / SECURE_BOOT_EXPERIMENT_CONFIG,
         "secure-boot experiment config is missing",
     )
-    _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
-    _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
+    _skip_if_missing(repo_root / SECURE_BOOT_PROFILE, "canonical secure-boot profile is missing")
 
     _clean_secure_boot_generated_outputs(repo_root)
     _prepare_instrumented_wolfboot(repo_root, results_dir)
@@ -426,8 +436,7 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         repo_root / SECURE_BOOT_EXPERIMENT_CONFIG,
         "secure-boot experiment config is missing",
     )
-    _skip_if_missing(repo_root / SIGNING_PROFILE, "signing profile is missing")
-    _skip_if_missing(repo_root / WOLFBOOT_BUILD_PROFILE, "wolfBoot build profile is missing")
+    _skip_if_missing(repo_root / SECURE_BOOT_PROFILE, "canonical secure-boot profile is missing")
 
     _clean_secure_boot_generated_outputs(repo_root)
     _prepare_instrumented_wolfboot(repo_root, results_dir)

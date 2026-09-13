@@ -55,27 +55,29 @@ def test_reporting_broker_is_plaintext_and_impairment_exempt():
     assert broker['network']['impairment_exempt'] is True
 
 
-def _effective_config(text):
-    out=[]
-    for line in text.splitlines():
-        line=line.strip()
-        if line and not line.startswith('#'):
-            out.append(line)
-    return sorted(out)
+def _assert_rendered_wolfboot_contains(rendered: str, key: str, value):
+    if isinstance(value, list):
+        for item in value:
+            assert str(item) in rendered
+        return
+    assert f"{key}={value}" in rendered
 
 
-def test_generated_wolfboot_configs_match_legacy_effective_settings():
-    resolver=ConfigResolver(ROOT)
-    target=resolver.load_profile('target','stm32l4r5_st67').data
-    mapping={
-      'integrity_sha256':'stm32l4r5_integrity.config','ecdsa_p256':'stm32l4r5_ecdsa_p256.config',
-      'ecdsa_p384':'stm32l4r5_ecc384.config','ecdsa_p521':'stm32l4r5_ecc521.config','ed25519':'stm32l4r5_ed25519.config',
-      'ed448':'stm32l4r5_ed448.config','rsa2048':'stm32l4r5_rsa2048.config','rsa3072':'stm32l4r5_rsa3072.config',
-      'rsa4096':'stm32l4r5_rsa4096.config','mldsa44':'stm32l4r5_mldsa44.config','mldsa65':'stm32l4r5_mldsa65.config','mldsa87':'stm32l4r5_mldsa87.config'}
-    for ident, legacy in mapping.items():
-        generated=render_wolfboot_config(target,resolver.load_profile('secure_boot',ident).data)
-        old=(ROOT/'configs/wolfboot'/legacy).read_text()
-        assert _effective_config(generated)==_effective_config(old), ident
+def test_generated_wolfboot_configs_are_composed_from_canonical_profiles():
+    resolver = ConfigResolver(ROOT)
+    target = resolver.load_profile("target", "stm32l4r5_st67").data
+    secure_boot_ids = [
+        "integrity_sha256", "ecdsa_p256", "ecdsa_p384", "ecdsa_p521",
+        "ed25519", "ed448", "rsa2048", "rsa3072", "rsa4096",
+        "mldsa44", "mldsa65", "mldsa87",
+    ]
+    for ident in secure_boot_ids:
+        profile = resolver.load_profile("secure_boot", ident).data
+        rendered = render_wolfboot_config(target, profile)
+        for key, value in target["wolfboot"]["config"].items():
+            _assert_rendered_wolfboot_contains(rendered, key, value)
+        for key, value in profile["wolfboot"]["config"].items():
+            _assert_rendered_wolfboot_contains(rendered, key, value)
 
 
 def test_generated_case_materialization_is_compact_and_stable(tmp_path):

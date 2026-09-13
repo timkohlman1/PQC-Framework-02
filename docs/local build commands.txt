@@ -11,9 +11,9 @@ Normal secure-boot workflow
 
 ```powershell
 .\scripts\dev.ps1 experiment build-wolfboot --algorithm <algorithm>
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
 .\scripts\dev.ps1 experiment sign-application --algorithm <algorithm>
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --algorithm <algorithm> --repeat-count 2
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --algorithm <algorithm> --repeat-count 2
 ```
 
 Signing-state safety
@@ -33,7 +33,7 @@ Building Relocated application
 ------------------------------
 
 .\scripts\dev.ps1 experiment build `
-    --experiment configs/experiments/baseline_direct_uart.yaml `
+    --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml `
     --results-dir results/secure-boot-matrix `
     --configure-preset RelocatedDebug `
     --build-preset RelocatedDebug `
@@ -88,7 +88,7 @@ foreach ($algorithm in $algorithms) {
 
     Write-Host "[3/3] Flashing and checking UART"
     .\scripts\dev.ps1 experiment-gateway flash-secure-boot `
-        --experiment configs/experiments/secure_boot_uart.yaml `
+        --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml `
         --algorithm $algorithm `
         --results-dir $resultsRoot `
         --uart-duration-seconds 15

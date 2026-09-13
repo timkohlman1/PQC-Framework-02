@@ -44,13 +44,19 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     repo_root = _repo_root()
     results_dir = tmp_path / "results"
 
+    from framework.config_resolver import ConfigResolver
+    generated = ConfigResolver(repo_root).materialize_campaign(
+        "baseline", repo_root / ".pqc-generated-state" / "campaigns" / "baseline"
+    )
+    experiment_path = sorted((generated / "cases").glob("*.yaml"))[0]
+
     completed = subprocess.run(
         [
             sys.executable,
             "scripts/experiment.py",
             "build",
             "--experiment",
-            "configs/experiments/baseline_direct_uart.yaml",
+            str(experiment_path),
             "--results-dir",
             str(results_dir),
             "--force",

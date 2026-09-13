@@ -224,8 +224,11 @@ jobs:
       - name: Run lwIP/ST67 compile-only static validation in container
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit/test_stm32_lwip_st67_compile_only.py
 
-      - name: Run safe framework status command in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
+      - name: Resolve baseline campaign and run safe framework status command in container
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/resolve_campaign.py baseline.yaml
+          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment "$BASELINE_CASE"
 
       - name: Build direct-flash firmware preset in container
         run: |
@@ -234,9 +237,10 @@ jobs:
 
       - name: Build relocated firmware with framework provenance in container
         run: |
+          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
           docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
             python scripts/experiment.py build \
-              --experiment configs/experiments/baseline_direct_uart.yaml \
+              --experiment "$BASELINE_CASE" \
               --configure-preset Release \
               --build-preset Release \
               --artifact build/Release/stm32_basic_hal1.elf

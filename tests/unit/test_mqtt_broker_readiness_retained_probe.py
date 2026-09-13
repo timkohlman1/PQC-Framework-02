@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 EXPERIMENT_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "experiment.py"
 
 
@@ -26,6 +28,14 @@ def test_non_hybrid_readiness_retains_existing_probe_path():
     assert '-C 1 -W 4' in source
 
 
-def test_hybrid_server_auth_profile_is_present():
-    profile = Path(__file__).resolve().parents[2] / "configs" / "experiments" / "mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
-    assert profile.is_file()
+def test_hybrid_server_auth_case_is_present_in_canonical_campaign():
+    campaign_path = (
+        Path(__file__).resolve().parents[2]
+        / "configs"
+        / "campaigns"
+        / "tls_key_exchange.yaml"
+    )
+    campaign = yaml.safe_load(campaign_path.read_text(encoding="utf-8"))
+
+    assert campaign["fixed"]["auth_mode"] == "server"
+    assert "SecP256r1MLKEM768" in campaign["matrix"]["tls_kex"]

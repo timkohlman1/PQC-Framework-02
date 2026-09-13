@@ -2,7 +2,7 @@
 
 This directory contains the gateway-hosted MQTT broker service for transport-security experiments.
 
-The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway FQDN configured for the gateway (`pqc-gateway1.pqcnet`; currently exposed through the compatibility host config while Request 10 cleanup is completed). The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
+The build server remains the normal orchestrator. Commands are run from the repository root and use `ssh`/`scp` with the gateway alias configured in `configs/gateways/pqc_gateway1.yaml`. The project container can also run these gateway workflows, but only when explicitly enabled and supplied with SSH access at runtime.
 
 Framework build, test, and experiment workflows use the Docker wrappers. Broker administration is the exception: run `mqtt_broker_ctl.py` with host-native Python because it uses the development host SSH configuration. There is no `dev.ps1 mqtt-broker` subcommand. Raw `docker run` and `docker compose` commands remain diagnostic fallback only. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; firmware flash/UART workflows are owned by `docs/005_remote_flash_workflow.md`; the canonical capability matrix is `docs/007_framework_architecture.md`.
 
@@ -44,7 +44,7 @@ Certificate provisioning is a separate one-time setup action. From the repositor
 .\scripts\dev.ps1 python scripts/provision_certificates.py
 ```
 
-The provisioner reads `configs/certificate_profile/*.yaml` and writes each generated profile directly under `secrets/certificates/<profile-id>/`. To regenerate selected material intentionally, use `--profile <id> --force`. Broker control and experiment orchestration never generate, renew, or synchronize certificates.
+The provisioner reads `configs/tls_auth/*.yaml` and writes each generated profile directly under `secrets/certificates/<profile-id>/`. To regenerate selected material intentionally, use `--profile <id> --force`. Broker control and experiment orchestration never generate, renew, or synchronize certificates.
 
 The generated server SANs, leaf identities, validity, hierarchy topology, key algorithm, and certificate signature settings are controlled by the corresponding certificate-profile YAML. Edit that profile and deliberately reprovision when those inputs need to change.
 
@@ -60,7 +60,7 @@ Validate the server-authenticated hybrid TLS handshake after starting the profil
 
 ```powershell
 python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py start --profile oqs
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls --oqs-group SecP256r1MLKEM768 --host-config configs/hosts/gateway.yaml
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls --oqs-group SecP256r1MLKEM768 --gateway-config configs/gateways/pqc_gateway1.yaml
 ```
 
 ## Deploy to the gateway
@@ -162,9 +162,9 @@ Local and gateway Docker success must be confirmed from command output or logs b
 
 ## Gateway address and certificate SANs
 
-`configs/hosts/gateway.yaml` currently exposes the gateway FQDN as its SSH/SCP `alias` and retains the short alias separately. Remote orchestration must use the FQDN `pqc-gateway1.pqcnet`; `network.address` remains available for workflows that explicitly require the stable IP address.
+`configs/gateways/pqc_gateway1.yaml` contains both the SSH alias and `network.address`. The canonical `identity.fqdn` and `identity.ssh_user` form the SSH/SCP target (`timk@pqc-gateway1.pqcnet`); `network.address` remains available for non-SSH clients that require the stable lab IPv4 address.
 
-The server SANs are declared in each `configs/certificate_profile/<profile-id>.yaml`. The initial profiles include the maintained gateway address used by the supplied experiment configurations. If the gateway address or broker DNS names change, update the certificate-profile YAML and intentionally reprovision that profile:
+The server SANs are declared in each `configs/tls_auth/<profile-id>.yaml`. The initial profiles include the maintained gateway address used by the supplied experiment configurations. If the gateway address or broker DNS names change, update the certificate-profile YAML and intentionally reprovision that profile:
 
 ```powershell
 .\scripts\dev.ps1 python scripts/provision_certificates.py --profile rsa3072 --force
@@ -277,7 +277,7 @@ Do not use `--leaf-algorithm falcon512` with this STM32 profile. Host-side OQS c
 
 ## Offline certificate source and TLS 1.3 policy
 
-All encrypted MQTT profiles use TLS 1.3. Certificate generation is an explicit one-time setup step. `scripts/provision_certificates.py` reads every YAML definition under `configs/certificate_profile/` and writes the corresponding hierarchy directly under ignored `secrets/certificates/<profile-id>/`. No online CA service is required and experiment execution never generates or renews certificates.
+All encrypted MQTT profiles use TLS 1.3. Certificate generation is an explicit one-time setup step. `scripts/provision_certificates.py` reads every YAML definition under `configs/tls_auth/` and writes the corresponding hierarchy directly under ignored `secrets/certificates/<profile-id>/`. No online CA service is required and experiment execution never generates or renews certificates.
 
 Generate or replace the complete certificate set from the host with:
 
@@ -305,8 +305,8 @@ The `validate-oqs-mqtt` client containers load the project-managed OQS OpenSSL c
 
 The framework provides two mutual-TLS profiles alongside the existing server-authentication profiles:
 
-- `configs/experiments/mqtt_tls_secp256r1_mutual_auth_st67_e2e.yaml`
-- `configs/experiments/mqtt_tls_SecP256r1MLKEM768_mutual_auth_st67_e2e.yaml`
+- resolver-generated `tls_authentication` campaign cases for mutual authentication
+- resolver-generated `tls_pq_only`/`tls_key_exchange` campaign cases for PQ/hybrid coverage
 
 The classical mutual-TLS profile uses the same classical TLS algorithm set as
 the classical server-authentication profile. The hybrid mutual-TLS profile uses

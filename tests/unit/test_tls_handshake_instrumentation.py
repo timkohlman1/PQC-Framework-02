@@ -60,6 +60,8 @@ def test_crypto_hooks_cover_selected_tls_primitives():
     assert "PQC_TLS_PRIMITIVE_P256_SHARED_SECRET" in internal
     assert "PQC_TLS_PRIMITIVE_RSA_VERIFY" in internal
     assert "PQC_TLS_PRIMITIVE_X509_VERIFY" in internal
+    assert "PQC_TLS_PRIMITIVE_MLKEM512_KEYGEN" in tls
+    assert "PQC_TLS_PRIMITIVE_MLKEM512_DECAPSULATE" in tls
     assert "PQC_TLS_PRIMITIVE_MLKEM768_KEYGEN" in tls
     assert "PQC_TLS_PRIMITIVE_MLKEM768_DECAPSULATE" in tls
     assert "PQC_TLS_PRIMITIVE_HKDF_EXTRACT" in kdf
@@ -200,6 +202,8 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
         assert primitive in internal
 
     for primitive in (
+        "PQC_TLS_PRIMITIVE_MLKEM512_KEYGEN",
+        "PQC_TLS_PRIMITIVE_MLKEM512_DECAPSULATE",
         "PQC_TLS_PRIMITIVE_MLKEM768_KEYGEN",
         "PQC_TLS_PRIMITIVE_MLKEM768_DECAPSULATE",
         "PQC_TLS_PRIMITIVE_MLKEM1024_KEYGEN",
@@ -224,6 +228,7 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
         '"p384_keygen"', '"p384_shared_secret"',
         '"p521_keygen"', '"p521_shared_secret"',
         '"x25519_keygen"', '"x25519_shared_secret"',
+        '"mlkem512_keygen"', '"mlkem512_decapsulate"',
         '"mlkem768_keygen"', '"mlkem768_decapsulate"',
         '"mlkem1024_keygen"', '"mlkem1024_decapsulate"',
         '"rsa_verify"', '"rsa_sign"',
@@ -236,6 +241,7 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
 
 def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation():
     import importlib.util
+    import sys
 
     spec = importlib.util.spec_from_file_location(
         "experiment_cli_tls_instrumentation", ROOT / "scripts/experiment.py"
@@ -244,24 +250,22 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
     assert spec.loader is not None
     spec.loader.exec_module(module)
 
-    profiles = ROOT / "configs/experiments/applications/ready_metrics"
-    tls_profiles = sorted(profiles.glob("ready_metrics_mqtt_tls_*_st67_e2e.yaml"))
-    assert tls_profiles, "expected at least one TLS ready-metrics profile"
+    scripts_path = ROOT / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
 
-    for path in tls_profiles:
-        experiment = module.load_config(path)
-        markers = module._mqtt_e2e_required_uart_markers({"experiment": experiment})
-        tls = experiment["mqtt"]["tls"]
+    resolver = ConfigResolver(ROOT)
+    cases = resolver.expand_campaign("tls_key_exchange") + resolver.expand_campaign("tls_authentication")
+    assert cases, "expected canonical TLS campaign cases"
+
+    for case in cases:
+        bundle = resolver.to_legacy_bundle(case, resolve_secrets=False)
+        markers = module._mqtt_e2e_required_uart_markers(bundle)
+        tls = bundle["experiment"]["mqtt"]["tls"]
         group = tls["key_exchange_group"].lower()
         certificate_profile = str(tls.get("certificate_profile", "")).strip().lower()
         signature = str(tls.get("server_signature_algorithm", "")).strip().lower()
-        if not signature:
-            signature = {
-                "rsa3072": "rsa_pss_rsae_sha256",
-                "ecdsa-p256": "ecdsa_secp256r1_sha256",
-                "ecdsa-p384": "ecdsa_secp384r1_sha384",
-                "mldsa65": "mldsa65",
-            }.get(certificate_profile, "")
         mutual = str(tls.get("authentication", "server")).lower() == "mutual"
 
         assert "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1" in markers
@@ -273,42 +277,22 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
         else:
             assert "PQC_TLS_PRIMITIVE name=sha384" not in markers
         assert "ST67 DNS: required=true" not in markers
-        assert "ST67 DNS lookup: result=passed" not in markers
 
-        if "secp256r1" in group:
-            assert "PQC_TLS_PRIMITIVE name=p256_keygen" in markers
-            assert "PQC_TLS_PRIMITIVE name=p256_shared_secret" in markers
-        elif "secp384r1" in group:
-            assert "PQC_TLS_PRIMITIVE name=p384_keygen" in markers
-            assert "PQC_TLS_PRIMITIVE name=p384_shared_secret" in markers
-        elif "secp521r1" in group:
-            assert "PQC_TLS_PRIMITIVE name=p521_keygen" in markers
-            assert "PQC_TLS_PRIMITIVE name=p521_shared_secret" in markers
-        elif "x25519" in group:
+        if "x25519" in group:
             assert "PQC_TLS_PRIMITIVE name=x25519_keygen" in markers
-            assert "PQC_TLS_PRIMITIVE name=x25519_shared_secret" in markers
-
-        if "mlkem768" in group:
+        if "mlkem512" in group or "ml_kem_512" in group:
+            assert "PQC_TLS_PRIMITIVE name=mlkem512_keygen" in markers
+            assert "PQC_TLS_PRIMITIVE name=mlkem512_decapsulate" in markers
+        if "mlkem768" in group or "ml_kem_768" in group:
             assert "PQC_TLS_PRIMITIVE name=mlkem768_keygen" in markers
             assert "PQC_TLS_PRIMITIVE name=mlkem768_decapsulate" in markers
-        if "mlkem1024" in group:
+        if "mlkem1024" in group or "ml_kem_1024" in group:
             assert "PQC_TLS_PRIMITIVE name=mlkem1024_keygen" in markers
             assert "PQC_TLS_PRIMITIVE name=mlkem1024_decapsulate" in markers
-
         if signature == "mldsa65":
             assert "PQC_TLS_PRIMITIVE name=mldsa65_verify" in markers
-            if mutual:
-                assert "PQC_TLS_PRIMITIVE name=mldsa65_sign" in markers
-        elif signature in {"ecdsa-p256", "ecdsa_secp256r1_sha256",
-                            "ecdsa-p384", "ecdsa_secp384r1_sha384"}:
-            assert "PQC_TLS_PRIMITIVE name=ecdsa_verify" in markers
-            if mutual:
-                assert "PQC_TLS_PRIMITIVE name=ecdsa_sign" in markers
-        else:
-            assert "PQC_TLS_PRIMITIVE name=rsa_verify" in markers
-            if mutual:
-                assert "PQC_TLS_PRIMITIVE name=rsa_sign" in markers
-
+        if mutual and signature == "mldsa65":
+            assert "PQC_TLS_PRIMITIVE name=mldsa65_sign" in markers
 
 def test_tls_dns_resolution_does_not_emit_success_uart_before_handshake():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")

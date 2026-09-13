@@ -1,3 +1,10 @@
+
+$env:PQC_WIFI_SSID = "pqc"
+$env:PQC_WIFI_PSK  = "lukeisadog"
+
+
+
+
 To do list and bug resolution prompts
 
 Start requests with: 

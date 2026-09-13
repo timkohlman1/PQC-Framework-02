@@ -59,7 +59,7 @@ Use stable directory-level ownership rather than exhaustive file lists:
 
 ```text
 Core/, Drivers/, Middlewares/     STM32 firmware and generated/vendor integration
-configs/                          board, host, build, signing, experiment, and benchmark configuration
+configs/                          canonical target, gateway, service, workload, crypto, network-condition, campaign, and benchmark configuration
 scripts/                          Docker wrappers, experiment CLI, and framework implementation
 tests/                            unit, integration, gateway-capable, and hardware tests
 docs/                             project documentation, decisions, and plans
@@ -87,9 +87,12 @@ Use the repository wrappers from the repository root:
 .\scripts\dev.ps1 python <repository-script.py> [args...]
 .\scripts\dev.ps1 python-gateway <script> [arguments...]
 .\scripts\dev.ps1 pytest
-.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 python scripts/resolve_campaign.py baseline.yaml
+$case = Get-ChildItem ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | Select-Object -First 1
+$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
+.\scripts\dev.ps1 experiment status --experiment $path
+.\scripts\dev.ps1 experiment build --experiment $path
+.\scripts\dev.ps1 experiment-gateway run --experiment $path
 .\scripts\dev.ps1 pytest-hardware
 ```
 
@@ -98,7 +101,7 @@ Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not
 
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
 
-Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts. Remote SSH/SCP commands must use the configured gateway SSH user and FQDN explicitly (for the current gateway, `timk@pqc-gateway1.pqcnet`) and must not fall back to the container user.
+Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts.
 
 ## 6. Generated state, signing state, and provenance
 

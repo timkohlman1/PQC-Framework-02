@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -41,96 +42,6 @@ def test_load_config_reads_nested_mapping(tmp_path):
     assert config["message"] == "hello"
 
 
-def test_load_experiment_bundle_resolves_board_host_and_boot_configs(tmp_path):
-    experiment_cli = load_experiment_module()
-
-    configs_root = tmp_path / "configs"
-    boards_dir = configs_root / "boards"
-    hosts_dir = configs_root / "hosts"
-    boot_dir = configs_root / "boot"
-    experiments_dir = configs_root / "experiments"
-
-    boards_dir.mkdir(parents=True)
-    hosts_dir.mkdir(parents=True)
-    boot_dir.mkdir(parents=True)
-    experiments_dir.mkdir(parents=True)
-
-    (boards_dir / "board_a.yaml").write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (boot_dir / "direct_flash.yaml").write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (hosts_dir / "gateway.yaml").write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    experiment_path = experiments_dir / "baseline_direct_uart.yaml"
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    bundle = experiment_cli.load_experiment_bundle(experiment_path)
-
-    assert bundle["experiment"]["id"] == "baseline_direct_uart"
-    assert bundle["board"]["id"] == "board_a"
-    assert bundle["host"]["id"] == "gateway"
-    assert bundle["boot"]["id"] == "direct_flash"
-    assert bundle["boot"]["mode"] == "direct_flash"
 
 
 def test_status_summary_states_no_hardware_actions(tmp_path):
@@ -368,11 +279,17 @@ common_evidence:
     assert set(config["post_quantum_algorithms"]) == {"mldsa44", "mldsa65", "mldsa87"}
 
 
-def test_baseline_experiment_loads_wifi_dhcp_configuration():
+def test_baseline_campaign_resolves_wifi_dhcp_configuration(monkeypatch):
     experiment_cli = load_experiment_module()
-    config = experiment_cli.load_config(
-        Path("configs/experiments/baseline_direct_uart.yaml")
-    )
+    monkeypatch.setenv("PQC_WIFI_SSID", "pqc")
+    monkeypatch.setenv("PQC_WIFI_PSK", "test-psk")
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
+    case = ConfigResolver(repo_root).expand_campaign("baseline")[0]
+    config = ConfigResolver(repo_root).to_legacy_bundle(case)["experiment"]
     assert config["network"]["wifi"]["ssid"] == "pqc"
     assert config["network"]["ipv4"]["mode"] == "dhcp"
 
@@ -388,12 +305,9 @@ def test_committed_secure_boot_profiles_resolve_from_canonical_sources():
     signing_profile, _ = experiment_cli.load_secure_boot_profile_section(
         target_profile=target, algorithm="ecdsa_p256", section="signing"
     )
-    bundle = experiment_cli.load_secure_boot_experiment_bundle(
-        repo_root / "configs/experiments/secure_boot_uart.yaml",
-        algorithm="ecdsa_p256",
-        target_profile=target,
+    experiment_profile, _ = experiment_cli.load_secure_boot_profile_section(
+        target_profile=target, algorithm="ecdsa_p256", section="experiment"
     )
-    experiment_profile = bundle["experiment"]
 
     assert build_profile["signature_algorithm"] == "ecdsa_p256"
     assert "config_template" not in build_profile["build"]
@@ -410,12 +324,12 @@ def test_integrity_secure_boot_profile_includes_canonical_flash_offsets():
     experiment_cli = load_experiment_module()
     repo_root = Path(__file__).resolve().parents[2]
 
-    bundle = experiment_cli.load_secure_boot_experiment_bundle(
-        repo_root / "configs/experiments/secure_boot_uart.yaml",
-        algorithm="integrity_sha256",
+    experiment_profile, _ = experiment_cli.load_secure_boot_profile_section(
         target_profile=repo_root / "configs/targets/stm32l4r5_wolfboot.yaml",
+        algorithm="integrity_sha256",
+        section="experiment",
     )
-    secure_boot_flash = bundle["experiment"]["secure_boot_flash"]
+    secure_boot_flash = experiment_profile["secure_boot_flash"]
 
     assert secure_boot_flash["wolfboot_offset"] == "0x08000000"
     assert secure_boot_flash["signed_application_offset"] == "0x08020000"
@@ -430,7 +344,7 @@ def test_thin_profile_rejects_unknown_profile_kind(tmp_path):
                 "id: invalid",
                 "profile_kind: unsupported",
                 "target_profile: configs/targets/example.yaml",
-                "algorithm_profile: configs/algorithms/example.yaml",
+                "algorithm_profile: configs/secure_boot/example.yaml",
                 "",
             ]
         ),
@@ -594,3 +508,23 @@ def test_status_summary_reports_canonical_crypto_and_profile_choices():
     assert "Payload bytes: 204800" in summary
     assert "Chunk bytes: 400" in summary
     assert "Selected instruments: none" in summary
+
+
+def test_load_experiment_bundle_resolves_canonical_generated_case(monkeypatch):
+    experiment_cli = load_experiment_module()
+    monkeypatch.setenv("PQC_WIFI_SSID", "pqc")
+    monkeypatch.setenv("PQC_WIFI_PSK", "test-psk")
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
+    generated = ConfigResolver(repo_root).materialize_campaign("baseline")
+    case_path = sorted((generated / "cases").glob("*.yaml"))[0]
+    bundle = experiment_cli.load_experiment_bundle(case_path)
+    assert bundle["board"]["id"] == "board_a"
+    assert bundle["host"]["id"] == "gateway"
+    assert bundle["host"]["alias"] == "pqc-gateway1.pqcnet"
+    assert bundle["host"]["user"] == "timk"
+    assert bundle["boot"]["id"] == "direct_flash"
+    assert bundle["boot"]["runnable"] is True

@@ -128,181 +128,7 @@ def test_validate_host_config_rejects_missing_uart_device():
         experiment_cli.validate_host_config(config)
 
 
-def test_load_experiment_bundle_rejects_board_id_mismatch(tmp_path):
-    experiment_cli = load_experiment_module()
 
-    configs_root = tmp_path / "configs"
-    boards_dir = configs_root / "boards"
-    hosts_dir = configs_root / "hosts"
-    boot_dir = configs_root / "boot"
-    experiments_dir = configs_root / "experiments"
-
-    boards_dir.mkdir(parents=True)
-    hosts_dir.mkdir(parents=True)
-    boot_dir.mkdir(parents=True)
-    experiments_dir.mkdir(parents=True)
-
-    (boards_dir / "board_a.yaml").write_text(
-        "\n".join(
-            [
-                "id: wrong_board",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (boot_dir / "direct_flash.yaml").write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (hosts_dir / "gateway.yaml").write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    experiment_path = experiments_dir / "baseline_direct_uart.yaml"
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(experiment_cli.ConfigError, match="board config id mismatch"):
-        experiment_cli.load_experiment_bundle(experiment_path)
-
-def test_load_experiment_bundle_rejects_planned_wolfboot_boot_profile_for_execution(tmp_path):
-    experiment_cli = load_experiment_module()
-
-    configs_root = tmp_path / "configs"
-    boards_dir = configs_root / "boards"
-    hosts_dir = configs_root / "hosts"
-    boot_dir = configs_root / "boot"
-    experiments_dir = configs_root / "experiments"
-
-    boards_dir.mkdir(parents=True)
-    hosts_dir.mkdir(parents=True)
-    boot_dir.mkdir(parents=True)
-    experiments_dir.mkdir(parents=True)
-
-    (boards_dir / "board_a.yaml").write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (boot_dir / "wolfboot_ecdsa_p256.yaml").write_text(
-        "\n".join(
-            [
-                "id: wolfboot_ecdsa_p256",
-                "mode: wolfboot_ecdsa_p256",
-                "description: Planned wolfBoot test boot config.",
-                "runnable: false",
-                "status: planned",
-                "intended_signature_algorithm: ecdsa_p256",
-                "application_slot_concept: planned_signed_application_slot",
-                "flash_layout_status: not_confirmed",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (hosts_dir / "gateway.yaml").write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    experiment_path = experiments_dir / "wolfboot_placeholder_uart.yaml"
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: wolfboot_placeholder_uart",
-                "description: Placeholder wolfBoot experiment that must not execute.",
-                "board: board_a",
-                "host: gateway",
-                "boot: wolfboot_ecdsa_p256",
-                "firmware:",
-                "  mode: wolfboot_ecdsa_p256",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(experiment_cli.ConfigError, match="planned and not runnable"):
-        experiment_cli.load_experiment_bundle(experiment_path)
 
 
 
@@ -522,7 +348,7 @@ def test_validate_wolfboot_build_profile_accepts_ed25519_algorithm():
         "boot_profile": "wolfboot_ed25519",
         "build": {
             "command": "make",
-            "config_template": "configs/wolfboot/stm32l4r5_ed25519.config",
+            "config_template": "testdata/wolfboot/stm32l4r5_ed25519.config",
             "generated_config": "tools/wolfboot/.config",
         },
     }
@@ -544,7 +370,7 @@ def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm(
         "boot_profile": "wolfboot_rsa4096",
         "build": {
             "command": "make",
-            "config_template": "configs/wolfboot/stm32l4r5_rsa4096.config",
+            "config_template": "testdata/wolfboot/stm32l4r5_rsa4096.config",
             "generated_config": "tools/wolfboot/.config",
         },
     }
@@ -566,7 +392,7 @@ def test_validate_wolfboot_build_profile_accepts_mldsa_header_fit_algorithm():
         "boot_profile": "wolfboot_mldsa65",
         "build": {
             "command": "make",
-            "config_template": "configs/wolfboot/stm32l4r5_mldsa65.config",
+            "config_template": "testdata/wolfboot/stm32l4r5_mldsa65.config",
             "generated_config": "tools/wolfboot/.config",
         },
     }
@@ -908,3 +734,11 @@ def test_validate_experiment_config_requires_tick_message_or_prefix():
 
     with pytest.raises(experiment_cli.ConfigError, match="expected_tick_message or"):
         experiment_cli.validate_experiment_config(config)
+
+
+def test_load_experiment_bundle_rejects_non_generated_operational_input(tmp_path):
+    experiment_cli = load_experiment_module()
+    source_profile = tmp_path / "source.yaml"
+    source_profile.write_text("id: unsupported\n", encoding="utf-8")
+    with pytest.raises(experiment_cli.ConfigError, match="resolver-generated cases"):
+        experiment_cli.load_experiment_bundle(source_profile)

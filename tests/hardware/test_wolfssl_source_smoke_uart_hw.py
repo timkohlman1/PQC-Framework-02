@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+from framework.config_resolver import ConfigResolver
+_BASELINE_ROOT = ConfigResolver(ROOT).materialize_campaign("baseline")
+EXPERIMENT_CONFIG = next(sorted((_BASELINE_ROOT / "cases").glob("*.yaml"))).relative_to(ROOT).as_posix()
 EXPECTED_SMOKE_MARKER = "wolfSSL TLS context smoke:"
 EXPECTED_DIGEST = "01b274b19659995cb829a9a925f613109ec02a088f94d9e914a36026cecf00e5"
 

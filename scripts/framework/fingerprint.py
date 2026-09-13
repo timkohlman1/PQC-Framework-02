@@ -331,16 +331,27 @@ def _existing_optional_inputs(repo_root: Path, relative_inputs: Iterable[str]) -
     return [item for item in relative_inputs if (repo_root / item).exists()]
 
 
-def _experiment_profile_input(repo_root: Path, experiment_id: str) -> str:
-    """Return the repository-relative path for a flat or nested experiment profile."""
+def _canonical_build_profile_inputs(bundle: dict[str, dict[str, object]]) -> list[str]:
+    """Return source-controlled canonical profiles that affect firmware output."""
 
-    flat = Path("configs/experiments") / f"{experiment_id}.yaml"
-    if (repo_root / flat).exists():
-        return flat.as_posix()
-    matches = sorted((repo_root / "configs/experiments").rglob(f"{experiment_id}.yaml"))
-    if len(matches) == 1:
-        return matches[0].relative_to(repo_root).as_posix()
-    return flat.as_posix()
+    resolved = bundle.get("experiment", {}).get("resolved_configuration", {})
+    selections = resolved.get("selected_profiles", {}) if isinstance(resolved, dict) else {}
+    choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
+    inputs: list[str] = []
+    if isinstance(selections, dict):
+        target = selections.get("target")
+        workload = selections.get("workload")
+        if target:
+            inputs.append(f"configs/targets/{target}.yaml")
+        if workload:
+            inputs.append(f"configs/workloads/{workload}.yaml")
+    if isinstance(choices, dict):
+        for domain, key in (("tls_kex", "tls_kex"), ("tls_auth", "tls_auth"), ("secure_boot", "secure_boot")):
+            value = choices.get(key)
+            if value:
+                inputs.append(f"configs/{domain}/{value}.yaml")
+    return inputs
+
 
 def default_build_fingerprint_inputs(
     bundle: dict[str, dict[str, object]],
@@ -348,24 +359,10 @@ def default_build_fingerprint_inputs(
     *,
     configure_preset: str = "Debug",
 ) -> list[str]:
-    """Return only files that can affect the selected firmware build."""
+    """Return only canonical files that can affect the selected firmware build."""
 
     experiment = bundle["experiment"]
-    board = bundle["board"]
-    host = bundle["host"]
-    boot = bundle.get("boot", {})
-    experiment_id = str(experiment["id"])
-    board_id = str(board["id"])
-    host_id = str(host["id"])
-    boot_id = str(boot.get("id", experiment.get("boot", "")))
-    inputs = [
-        _experiment_profile_input(Path(repo_root or "."), experiment_id),
-        f"configs/boards/{board_id}.yaml",
-        f"configs/hosts/{host_id}.yaml",
-        *DEFAULT_FIRMWARE_BUILD_DEFINITION_INPUTS,
-    ]
-    if boot_id:
-        inputs.append(f"configs/boot/{boot_id}.yaml")
+    inputs = [*_canonical_build_profile_inputs(bundle), *DEFAULT_FIRMWARE_BUILD_DEFINITION_INPUTS]
 
     linker_script = (
         "STM32L4R5XX_FLASH_RELOCATED.ld"
@@ -386,13 +383,9 @@ def default_build_fingerprint_inputs(
     if repo_root is not None:
         root = Path(repo_root)
         tls_algorithms = resolve_tls_algorithm_set(bundle)
-        sources = _declared_firmware_sources(root, tls_algorithms)
-        inputs.extend(sources)
-        inputs.extend(
-            item for item in DEFAULT_BUILD_ORCHESTRATION_INPUTS if (root / item).is_file()
-        )
+        inputs.extend(_declared_firmware_sources(root, tls_algorithms))
+        inputs.extend(item for item in DEFAULT_BUILD_ORCHESTRATION_INPUTS if (root / item).is_file())
     return sorted(set(inputs))
-
 
 def calculate_build_fingerprint(
     repo_root: Path | str,
@@ -768,63 +761,52 @@ def default_relocated_application_fingerprint_inputs() -> list[str]:
     return list(DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS)
 
 
-def default_wolfboot_fingerprint_inputs(
-    *,
-    profile_id: str,
-    source_dir: str,
-    config_template: str | None = None,
-) -> list[str]:
-    """Return secure-boot wolfBoot build fingerprint input candidates."""
+def _canonical_secure_boot_id_from_compat(value: str) -> str:
+    algorithm = value.removeprefix("wolfboot_stm32l4_").removeprefix("wolfboot_").removesuffix("_app")
+    return {"ecc384": "ecdsa_p384", "ecc521": "ecdsa_p521", "integrity": "integrity_sha256"}.get(algorithm, algorithm)
 
-    algorithm = profile_id.removeprefix("wolfboot_stm32l4_")
+
+def default_wolfboot_fingerprint_inputs(
+    *, profile_id: str, source_dir: str, config_template: str | None = None,
+) -> list[str]:
+    """Return canonical secure-boot source inputs for a wolfBoot build."""
+    canonical_id = _canonical_secure_boot_id_from_compat(profile_id)
     inputs = [
+        "configs/targets/stm32l4r5_st67.yaml",
         "configs/targets/stm32l4r5_wolfboot.yaml",
-        f"configs/algorithms/{algorithm}.yaml",
+        f"configs/secure_boot/{canonical_id}.yaml",
+        "scripts/framework/config_resolver.py",
         "scripts/framework/wolfboot_build.py",
     ]
-    if config_template:
-        inputs.append(config_template)
     source_prefix = source_dir.rstrip("/\\")
     inputs.extend(f"{source_prefix}/{relative}" for relative in DEFAULT_WOLFBOOT_SOURCE_FINGERPRINT_INPUTS)
     return inputs
 
 
 def default_signing_fingerprint_inputs(*, profile_id: str) -> list[str]:
-    """Return secure-boot application signing fingerprint input candidates."""
-
-    algorithm = profile_id.removeprefix("wolfboot_").removesuffix("_app")
+    """Return canonical secure-boot application-signing inputs."""
+    canonical_id = _canonical_secure_boot_id_from_compat(profile_id)
     return [
+        "configs/targets/stm32l4r5_st67.yaml",
         "configs/targets/stm32l4r5_wolfboot.yaml",
-        f"configs/algorithms/{algorithm}.yaml",
+        f"configs/secure_boot/{canonical_id}.yaml",
+        "scripts/framework/config_resolver.py",
         "scripts/framework/signing.py",
         *DEFAULT_RELOCATED_APPLICATION_FINGERPRINT_INPUTS,
     ]
 
 
 def default_secure_boot_flash_fingerprint_inputs(
-    *,
-    experiment_id: str,
-    algorithm_id: str | None = None,
-    boot_id: str | None = None,
+    *, experiment_id: str, algorithm_id: str | None = None, boot_id: str | None = None,
 ) -> list[str]:
-    """Return secure-boot flash workflow fingerprint input candidates.
-
-    The generic secure-boot experiment is composed with one canonical target
-    profile and one selected algorithm profile. Record those canonical inputs
-    directly so provenance does not depend on removed compatibility wrappers.
-    """
-
-    normalized_algorithm = str(algorithm_id or "").strip().lower()
-    if not normalized_algorithm and boot_id:
-        normalized_algorithm = str(boot_id).removeprefix("wolfboot_").strip().lower()
-    if not normalized_algorithm:
-        normalized_algorithm = "ecdsa_p256"
-
+    """Return canonical secure-boot flash workflow fingerprint inputs."""
+    selected = str(algorithm_id or boot_id or "ecdsa_p256")
+    canonical_id = _canonical_secure_boot_id_from_compat(selected)
     return [
-        f"configs/experiments/{experiment_id}.yaml",
+        "configs/targets/stm32l4r5_st67.yaml",
         "configs/targets/stm32l4r5_wolfboot.yaml",
-        f"configs/algorithms/{normalized_algorithm}.yaml",
-        f"configs/wolfboot/stm32l4r5_{normalized_algorithm}.config",
+        f"configs/secure_boot/{canonical_id}.yaml",
+        "scripts/framework/config_resolver.py",
         "scripts/framework/secure_boot_flash.py",
         "scripts/framework/uart.py",
         "scripts/framework/manifest.py",
@@ -837,3 +819,4 @@ def default_secure_boot_flash_fingerprint_inputs(
         "tools/wolfboot/hal/stm32l4xx_hal_conf.h",
         "tools/wolfboot/tools/keytools/Makefile",
     ]
+

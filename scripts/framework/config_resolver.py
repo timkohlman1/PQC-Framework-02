@@ -371,9 +371,40 @@ class ConfigResolver:
                 "evidence": instrument.get("evidence", {}),
                 "result_transfer": instrument.get("result_transfer", {}),
             }
+        board_id = str(target.get("legacy", {}).get("board_id") or target["id"])
+        host_id = str(gateway.get("legacy", {}).get("host_id") or gateway["id"])
+        board = {
+            "id": board_id,
+            "name": target["hardware"]["board"],
+            "mcu": target["hardware"]["mcu"],
+            "description": target.get("description", target["id"]),
+            "stlink": {"serial": gateway["control"]["stlink_serial"]},
+            "uart": {"baud": int(target["uart"]["baud"])},
+        }
+        host = {
+            "id": host_id,
+            "alias": gateway["identity"].get("fqdn") or gateway["identity"]["alias"],
+            "short_alias": gateway["identity"]["alias"],
+            "fqdn": gateway["identity"].get("fqdn"),
+            "user": gateway["identity"]["ssh_user"],
+            "description": gateway.get("description", gateway["id"]),
+            "network": dict(gateway.get("network", {})),
+            "flash": {"helper": gateway["control"]["flash_helper"]},
+            "reset": {"helper": gateway["control"]["reset_helper"]},
+            "uart": {
+                "device": gateway["uart"]["device"],
+                "baud": int(gateway["uart"]["baud"]),
+            },
+        }
+        boot = {
+            "id": "direct_flash",
+            "mode": "direct_flash",
+            "description": "Canonical direct-flash compatibility view derived from selected profiles.",
+            "runnable": True,
+        }
         experiment = {
             "id": case["id"], "description": f"Resolved canonical case {case['id']}",
-            "board": target["legacy"]["board_id"], "host": gateway["legacy"]["host_id"], "boot": "direct_flash",
+            "board": board_id, "host": host_id, "boot": "direct_flash",
             "firmware": {"application": workload["firmware_application"], "uart_log_level": workload.get("uart_log_level", "info"),
                          "mode": "direct_flash", "artifact": target["build"]["artifact"]},
             "network": {"wifi": {"ssid": ssid, "psk": psk}, "ipv4": {"mode": target["network"]["ipv4_mode"]},
@@ -388,7 +419,7 @@ class ConfigResolver:
                                        "firmware_identity": case["provenance"]["firmware_identity"],
                                        "selected_profiles": s, "choices": c},
         }
-        return {"experiment": experiment}
+        return {"experiment": experiment, "board": board, "host": host, "boot": boot}
 
     def _resolve_secret_ref(self, reference: str) -> str:
         if not isinstance(reference, str) or not reference.startswith("env:"):

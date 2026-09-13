@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,8 +11,7 @@ from typing import Any
 import pytest
 
 
-DEFAULT_EXPERIMENT_CONFIG = "configs/experiments/baseline_direct_uart.yaml"
-DEFAULT_HOST_CONFIG = "configs/hosts/gateway.yaml"
+DEFAULT_GATEWAY_CONFIG = "configs/gateways/pqc_gateway1.yaml"
 SSH_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 5
 CONTAINER_GATEWAY_ENABLE_ENV = "PQC_CONTAINER_ENABLE_GATEWAY"
@@ -247,7 +247,7 @@ def _load_simple_yaml(path: Path) -> dict[str, Any]:
     """Parse the small config subset used by these capability checks.
 
     This fallback avoids making pytest collection depend on PyYAML. It supports
-    the simple nested key/value YAML currently used by configs/hosts/gateway.yaml.
+    the simple nested key/value YAML currently used by configs/gateways/pqc_gateway1.yaml.
     """
 
     root: dict[str, Any] = {}
@@ -281,10 +281,18 @@ def _load_simple_yaml(path: Path) -> dict[str, Any]:
 
 
 def _host_config() -> dict[str, Any]:
-    path = _repo_root() / DEFAULT_HOST_CONFIG
+    path = _repo_root() / DEFAULT_GATEWAY_CONFIG
     if not path.is_file():
         return {}
     return _load_yaml(path)
+
+
+def _gateway_ssh_target(config: dict[str, Any]) -> str | None:
+    user = _nested(config, "identity", "ssh_user")
+    host = _nested(config, "identity", "fqdn") or _nested(config, "identity", "alias")
+    if not user or not host:
+        return None
+    return f"{user}@{host}"
 
 
 def _nested(config: dict[str, Any], *keys: str) -> str | None:
@@ -371,9 +379,9 @@ class PqcCapabilityChecker:
             )
 
         host = _host_config()
-        host_alias = _nested(host, "alias")
+        host_alias = _gateway_ssh_target(host)
         if not host_alias:
-            return CapabilityResult("gateway", False, f"{DEFAULT_HOST_CONFIG} is missing alias")
+            return CapabilityResult("gateway", False, f"{DEFAULT_GATEWAY_CONFIG} is missing identity.ssh_user or identity.fqdn/alias")
 
         probe = _ssh_probe(host_alias, "true")
         if not probe.available:
@@ -387,10 +395,10 @@ class PqcCapabilityChecker:
             return CapabilityResult("flash_helper", False, gateway.reason)
 
         host = _host_config()
-        host_alias = _nested(host, "alias")
-        helper = _nested(host, "flash", "helper")
+        host_alias = _gateway_ssh_target(host)
+        helper = _nested(host, "control", "flash_helper")
         if not host_alias or not helper:
-            return CapabilityResult("flash_helper", False, f"{DEFAULT_HOST_CONFIG} is missing flash.helper")
+            return CapabilityResult("flash_helper", False, f"{DEFAULT_GATEWAY_CONFIG} is missing control.flash_helper")
 
         probe = _ssh_probe(host_alias, f"command -v {helper} >/dev/null 2>&1")
         if not probe.available:
@@ -408,10 +416,10 @@ class PqcCapabilityChecker:
             return CapabilityResult("uart_device", False, gateway.reason)
 
         host = _host_config()
-        host_alias = _nested(host, "alias")
+        host_alias = _gateway_ssh_target(host)
         device = _nested(host, "uart", "device")
         if not host_alias or not device:
-            return CapabilityResult("uart_device", False, f"{DEFAULT_HOST_CONFIG} is missing uart.device")
+            return CapabilityResult("uart_device", False, f"{DEFAULT_GATEWAY_CONFIG} is missing uart.device")
 
         probe = _ssh_probe(host_alias, f"test -e {device}")
         if not probe.available:
@@ -616,3 +624,21 @@ def pqc_require_capabilities(
         pytest.skip(message)
 
     return require
+@pytest.fixture
+def pqc_case_path():
+    """Materialize a canonical campaign and return repository-relative case paths."""
+    scripts_dir = _repo_root() / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from framework.config_resolver import ConfigResolver
+
+    resolver = ConfigResolver(_repo_root())
+
+    def _resolve(campaign: str, case_index: int = 1) -> str:
+        root = resolver.materialize_campaign(campaign)
+        cases = sorted((root / "cases").glob("*.yaml"))
+        if case_index < 1 or case_index > len(cases):
+            raise AssertionError(f"campaign {campaign!r} has no case {case_index}")
+        return cases[case_index - 1].relative_to(_repo_root()).as_posix()
+
+    return _resolve

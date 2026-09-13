@@ -1,13 +1,25 @@
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+from framework.config_resolver import ConfigResolver
+
+def _resolved_experiment():
+    resolver = ConfigResolver(ROOT)
+    case = next(c for c in resolver.expand_campaign("tls_key_exchange") if c["choices"]["tls_kex"] == "SecP256r1MLKEM768")
+    return resolver.to_legacy_bundle(case, resolve_secrets=False)["experiment"]
 
 
 def test_pqc_profile_selects_hybrid_tls13_server_auth():
-    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert "evidence_class: stm32_st67_pqc_hybrid_tls_e2e" in config
-    assert "broker_profile: oqs" in config
-    assert "mode: pqc_hybrid_tls_server_auth" in config
-    assert "key_exchange_group: SecP256r1MLKEM768" in config
-    assert "reconnect_attempts: 1" in config
+    mqtt = _resolved_experiment()["mqtt"]
+    assert mqtt["evidence_class"] == "stm32_st67_pqc_hybrid_tls_e2e"
+    assert mqtt["broker_profile"] == "oqs"
+    assert mqtt["tls"]["mode"] == "pqc_hybrid_tls_server_auth"
+    assert mqtt["tls"]["key_exchange_group"] == "SecP256r1MLKEM768"
+    assert mqtt["reconnect_attempts"] == 1
 
 
 def test_stm32_wolfssl_enables_tls13_mlkem768_and_strict_group_check():
@@ -75,8 +87,7 @@ def test_config_schema_accepts_pqc_evidence_and_mode():
 
 
 def test_pqc_profile_uses_extended_uart_hard_limit():
-    config = Path("configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert "hard_limit_seconds: 180" in config
+    assert _resolved_experiment()["mqtt"]["orchestration"]["hard_limit_seconds"] == 180
 
 
 def test_hybrid_group_is_guarded_by_enabled_wolfssl_features():
@@ -119,14 +130,12 @@ def test_tls_handshake_boundary_instrumentation_is_wired():
 
 def test_mlkem_client_key_share_uses_bounded_stack_and_scratch_memory():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text(encoding="utf-8")
-    experiment = Path(
-        "configs/experiments/mqtt_tls_SecP256r1MLKEM768_server_auth_st67_e2e.yaml"
-    ).read_text(encoding="utf-8")
+    experiment = _resolved_experiment()
 
     assert "#define WOLFSSL_SMALL_STACK" in settings
     assert "#define WOLFSSL_TLSX_PQC_MLKEM_STORE_OBJ" in settings
     assert "#define WOLFSSL_MLKEM_MAKEKEY_SMALL_MEM" in settings
-    assert "hard_limit_seconds: 180" in experiment
+    assert experiment["mqtt"]["orchestration"]["hard_limit_seconds"] == 180
 
 
 def test_clienthello_signature_algorithm_diagnostics_are_wired():

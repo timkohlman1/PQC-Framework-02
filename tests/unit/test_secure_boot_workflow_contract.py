@@ -31,11 +31,11 @@ def test_secure_boot_profile_and_hardware_test_use_derived_timing_contract():
     assert experiment_spec is not None and experiment_spec.loader is not None
     experiment_cli = importlib.util.module_from_spec(experiment_spec)
     experiment_spec.loader.exec_module(experiment_cli)
-    bundle = experiment_cli.load_secure_boot_experiment_bundle(
-        REPO_ROOT / "configs/experiments/secure_boot_uart.yaml",
+    profile, _ = experiment_cli.load_secure_boot_profile_section(
+        target_profile=REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml",
         algorithm="ecdsa_p256",
+        section="experiment",
     )
-    profile = bundle["experiment"]
     hardware = HARDWARE_TEST_PATH.read_text(encoding="utf-8")
     expected = "framework_derived_from_uart_cycles_and_reported_hclk"
 

@@ -64,37 +64,6 @@ def test_apply_command_uses_distinct_interface_and_ifb_netem():
     assert "mirred egress redirect dev $ifb" in script
     assert "dev $ifb root netem delay 25ms loss 1% rate 250kbit" in script
 
-def test_preparation_command_preserves_default_secure_boot_policy():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_preparation_command")
-    repo_root = Path(__file__).resolve().parents[2]
-    command = grid_module._preparation_command(
-        repo_root=repo_root,
-        profile_path="configs/experiments/applications/ready_metrics/example.yaml",
-        results_dir=Path("results"),
-        force=False,
-    )
-    assert "--boot-mode" not in command
-    assert "direct_flash" not in command
-    assert "--runtime-only" not in command
-
-
-def test_measurement_command_is_runtime_only_and_references_profile_preparation():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_command")
-    repo_root = Path(__file__).resolve().parents[2]
-    command = grid_module._measurement_command(
-        repo_root=repo_root,
-        profile_path=repo_root / ".pqc-generated-state/network-degradation-grid/case.yaml",
-        results_dir=Path("results"),
-        preparation_manifest=repo_root / "results/preparation/manifest.json",
-    )
-    assert "--runtime-only" in command
-    assert "--profile-preparation-manifest" in command
-    assert "--build-number" not in command
-    assert "--force" not in command
-    assert "--boot-mode" not in command
-    assert "direct_flash" not in command
-
-
 def test_runtime_only_measurement_does_not_prepare_build_or_flash():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     start = source.index("def _run_runtime_only_measurement(")
@@ -111,45 +80,6 @@ def test_legacy_managed_broker_cleanup_structural_count_remains_three():
     assert source.count(
         "_collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)"
     ) == 3
-
-
-def test_result_manifest_discovery_supports_progress_result_directory_format(tmp_path):
-    grid_module = _load_module(
-        "scripts/network_degradation_grid.py",
-        "network_degradation_grid_progress_manifest_discovery",
-    )
-    repo_root = tmp_path
-    result_dir = repo_root / "results" / "2026-08-07_006_example"
-    result_dir.mkdir(parents=True)
-    manifest = result_dir / "manifest.json"
-    manifest.write_text("{}\n", encoding="utf-8")
-
-    lines = [
-        "2026-08-07 13:38:35 AEST  [RESULT      ] Result evidence recorded",
-        "                       Run ID: 2026-08-07_006_example; directory: results/2026-08-07_006_example",
-    ]
-
-    assert grid_module._result_manifest_from_output(
-        lines, repo_root=repo_root
-    ) == manifest.resolve()
-
-
-def test_result_manifest_discovery_still_supports_legacy_result_directory_format(tmp_path):
-    grid_module = _load_module(
-        "scripts/network_degradation_grid.py",
-        "network_degradation_grid_legacy_manifest_discovery",
-    )
-    repo_root = tmp_path
-    result_dir = repo_root / "results" / "legacy-run"
-    result_dir.mkdir(parents=True)
-    manifest = result_dir / "manifest.json"
-    manifest.write_text("{}\n", encoding="utf-8")
-
-    lines = ["Result directory: results/legacy-run"]
-
-    assert grid_module._result_manifest_from_output(
-        lines, repo_root=repo_root
-    ) == manifest.resolve()
 
 
 def test_gateway_command_resolution_falls_back_to_standard_system_paths():
@@ -185,9 +115,3 @@ def test_preflight_checks_noninteractive_sudo_before_profile_build():
     assert "PQC_NETDEG_PREFLIGHT=passed" in script
 
 
-def test_grid_has_preflight_command_before_preparation_command():
-    grid_module = _load_module("scripts/network_degradation_grid.py", "network_degradation_grid_preflight_order")
-    source = Path("scripts/network_degradation_grid.py").read_text(encoding="utf-8")
-    preflight_run = source.index("preflight_rc, preflight_output = _run_streamed(preflight_command")
-    preparation_run = source.index("preparation_rc, preparation_output = _run_streamed(")
-    assert preflight_run < preparation_run

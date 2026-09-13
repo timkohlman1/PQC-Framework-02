@@ -284,10 +284,11 @@ def test_create_result_folder_writes_manifest_and_notes(tmp_path):
     assert "Add manual observations" in (result_dir / "notes.md").read_text(encoding="utf-8")
 
 
-def test_create_run_command_creates_result_folder_without_hardware_actions(tmp_path, capsys):
+def test_create_run_command_creates_result_folder_without_hardware_actions(tmp_path, capsys, monkeypatch):
     experiment_cli = load_experiment_module()
-    experiment_path = write_sample_configs(tmp_path / "configs")
+    experiment_path = tmp_path / ".pqc-generated-state" / "campaigns" / "baseline" / "cases" / "0001_case.yaml"
     results_root = tmp_path / "results"
+    monkeypatch.setattr(experiment_cli, "load_experiment_bundle", lambda _path: sample_bundle())
 
     exit_code = experiment_cli.run_create_run_command(
         Namespace(experiment=experiment_path, results_dir=results_root)

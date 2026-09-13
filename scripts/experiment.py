@@ -1,25 +1,13 @@
 #!/usr/bin/env python3
-"""Minimal experiment framework CLI.
+"""Experiment framework CLI.
 
-The initial supported commands are:
+Operational experiment input is resolver-generated state. Source-controlled
+campaigns under ``configs/campaigns`` are expanded with
+``scripts/resolve_campaign.py`` and the resulting case YAML under
+``.pqc-generated-state/campaigns/<campaign>/cases`` is supplied to this CLI.
+Secure-boot algorithm selection is resolved from canonical target and
+``configs/secure_boot`` profiles.
 
-    python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
-    python scripts/experiment.py sign-application --profile configs/algorithms/ed25519.yaml
-    python scripts/experiment.py sign-application --profile configs/algorithms/rsa2048.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --repeat-count 5
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --negative-corrupt-application
-    python scripts/experiment.py mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
-    python scripts/experiment.py aggregate-benchmarks
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
@@ -945,7 +933,7 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     certificate_profile = str(tls.get("certificate_profile", "")).strip() if isinstance(tls, dict) else ""
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
     broker_port = int(broker.get("port", 0) or 0) if isinstance(broker, dict) else 0
-    common = ["--host-config", "configs/hosts/gateway.yaml"]
+    common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     if certificate_profile:
         common.extend(["--certificate-profile", certificate_profile])
     start_args = [*common, "--profile", profile]
@@ -1006,7 +994,7 @@ def _collect_and_stop_managed_mqtt_broker(
         "stm32_st67_pqc_hybrid_tls_e2e",
         "stm32_st67_pqc_tls_e2e",
     }
-    common = ["--host-config", "configs/hosts/gateway.yaml"]
+    common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
@@ -1332,12 +1320,17 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
                         "PQC_TLS_PRIMITIVE name=x25519_shared_secret",
                     ))
 
-                if "mlkem768" in group:
+                if "mlkem512" in group or "ml_kem_512" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=mlkem512_keygen",
+                        "PQC_TLS_PRIMITIVE name=mlkem512_decapsulate",
+                    ))
+                if "mlkem768" in group or "ml_kem_768" in group:
                     markers.extend((
                         "PQC_TLS_PRIMITIVE name=mlkem768_keygen",
                         "PQC_TLS_PRIMITIVE name=mlkem768_decapsulate",
                     ))
-                if "mlkem1024" in group:
+                if "mlkem1024" in group or "ml_kem_1024" in group:
                     markers.extend((
                         "PQC_TLS_PRIMITIVE name=mlkem1024_keygen",
                         "PQC_TLS_PRIMITIVE name=mlkem1024_decapsulate",
@@ -2219,44 +2212,220 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 def load_secure_boot_profile_section(
     *, target_profile: Path | str, algorithm: str, section: str
 ) -> tuple[dict[str, Any], Path]:
-    """Resolve one secure-boot section from the canonical target and algorithm profiles."""
+    """Resolve a secure-boot compatibility section from canonical profiles.
 
+    The existing build/sign/flash helpers still consume established compatibility
+    section shapes. Those shapes are derived in memory from the canonical target
+    and secure-boot profiles rather than loaded from duplicate source YAML.
+    """
+
+    aliases = {"ecc384": "ecdsa_p384", "ecc521": "ecdsa_p521"}
+    canonical_id = aliases.get(algorithm, algorithm)
+    compat_id = {"ecdsa_p384": "ecc384", "ecdsa_p521": "ecc521"}.get(
+        canonical_id, canonical_id
+    )
     target_path = Path(target_profile)
-    target = _load_config_mapping(target_path)
+    target_defaults = _load_config_mapping(target_path)
     repo_root = _repository_path_from_config(target_path, ".").resolve()
-    algorithm_path = repo_root / "configs" / "algorithms" / f"{algorithm}.yaml"
-    algorithm_config = _load_config_mapping(algorithm_path)
-    if algorithm_config.get("target") != target.get("id"):
-        raise ConfigError(
-            f"{algorithm_path}: target must be {target.get('id')} for {target_path}"
-        )
-    target_profiles = target.get("profiles")
-    algorithm_profiles = algorithm_config.get("profiles")
-    if not isinstance(target_profiles, dict) or not isinstance(target_profiles.get(section), dict):
-        raise ConfigError(f"{target_path} missing profiles.{section} mapping")
-    if not isinstance(algorithm_profiles, dict) or not isinstance(algorithm_profiles.get(section), dict):
-        raise ConfigError(f"{algorithm_path} missing profiles.{section} mapping")
-    resolved = _merge_config(target_profiles[section], algorithm_profiles[section])
-    if section == "build":
-        canonical_ids = {"ecc384": "ecdsa_p384", "ecc521": "ecdsa_p521"}
-        canonical_id = canonical_ids.get(algorithm, algorithm)
-        try:
-            canonical = ConfigResolver(repo_root)
-            canonical_target = canonical.load_profile("target", "stm32l4r5_st67").data
-            canonical_secure_boot = canonical.load_profile("secure_boot", canonical_id).data
-            content = render_wolfboot_config(canonical_target, canonical_secure_boot)
-        except ResolutionError as exc:
-            raise ConfigError(f"canonical wolfBoot configuration resolution failed: {exc}") from exc
-        build = resolved.get("build")
-        if not isinstance(build, dict):
-            raise ConfigError("resolved wolfBoot build profile missing build mapping")
-        build = dict(build)
-        build.pop("config_template", None)
-        build["config_content"] = content
-        build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
-        resolved["build"] = build
-    return resolved, repo_root
+    try:
+        resolver = ConfigResolver(repo_root)
+        canonical_target = resolver.load_profile("target", "stm32l4r5_st67").data
+        secure_boot = resolver.load_profile("secure_boot", canonical_id).data
+    except ResolutionError as exc:
+        raise ConfigError(f"canonical secure-boot resolution failed: {exc}") from exc
 
+    profiles = target_defaults.get("profiles")
+    if not isinstance(profiles, dict) or not isinstance(profiles.get(section), dict):
+        raise ConfigError(f"{target_path} missing profiles.{section} mapping")
+    resolved = dict(profiles[section])
+
+    packaging_option = str(secure_boot["wolfboot"].get("packaging_option", "")).strip()
+    signature_size = int(secure_boot.get("signature_size_bytes", 0) or 0)
+    signing = secure_boot.get("signing", {})
+    requires_private_key = bool(signing.get("requires_private_key"))
+    tuple_id = signing.get("tuple_id")
+    tuple_dir = None if not tuple_id else f"secrets/wolfboot/tuples/{tuple_id}"
+    private_key = None if tuple_dir is None else f"{tuple_dir}/private_key.der"
+    boot_profile = f"wolfboot_{compat_id}" if compat_id != "integrity_sha256" else "wolfboot_integrity"
+    mode = boot_profile
+    image_stem = "integrity" if compat_id == "integrity_sha256" else compat_id
+    input_image = f"build/Release/stm32_basic_hal1_{image_stem}.bin"
+    signed_image = f"build/Release/stm32_basic_hal1_{image_stem}_v1_signed.bin"
+    if compat_id == "ecdsa_p256":
+        input_image = "build/Release/stm32_basic_hal1.bin"
+        signed_image = "build/Release/stm32_basic_hal1_v1_signed.bin"
+
+    benchmark_algorithms = {
+        "ecdsa_p256": ("ECC256", "P-256", 256),
+        "ecc384": ("ECC384", "P-384", 384),
+        "ecc521": ("ECC521", "P-521", 521),
+        "ed25519": ("ED25519", None, 256),
+        "ed448": ("ED448", None, 456),
+        "rsa2048": ("RSA2048", None, 2048),
+        "rsa3072": ("RSA3072", None, 3072),
+        "rsa4096": ("RSA4096", None, 4096),
+        "mldsa44": ("ML-DSA-44", None, None),
+        "mldsa65": ("ML-DSA-65", None, None),
+        "mldsa87": ("ML-DSA-87", None, None),
+        "integrity_sha256": ("INTEGRITY-SHA256", None, None),
+    }
+    benchmark_algorithm, curve, key_bits = benchmark_algorithms[compat_id]
+    benchmark_profile = {
+        "schema_version": 1,
+        "profile_model": "configs/benchmarks/classical_signing_profiles.yaml",
+        "profile_id": canonical_id,
+        "algorithm": benchmark_algorithm,
+        "wolfboot_sign": benchmark_algorithm,
+        "signature_algorithm": compat_id,
+        "signature_size_bytes": signature_size,
+        "image_version": 1,
+        "runnable": True,
+        "status": "canonical_request10_profile",
+        "board": canonical_target["hardware"]["board"],
+        "application_payload": "same_relocated_hal_application_payload",
+        "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
+        "repeated_run_model": "phase_11_2_repeat_count_samples",
+        "static_metrics_model": "phase_11_3_elf_and_artifact_metrics",
+        "runtime_memory_model": "phase_11_4_firmware_side_stack_high_water_marker",
+    }
+    if curve is not None:
+        benchmark_profile["curve"] = curve
+    if key_bits is not None:
+        benchmark_profile["key_size_bits"] = key_bits
+    if compat_id.startswith("mldsa"):
+        benchmark_profile["mldsa_level"] = int(secure_boot["wolfboot"]["config"]["ML_DSA_LEVEL"])
+        benchmark_profile["image_header_size_bytes"] = int(canonical_target["wolfboot"]["image_header_size_bytes"])
+
+    if section == "build":
+        resolved.update({
+            "id": f"wolfboot_stm32l4_{compat_id}",
+            "description": f"Canonical wolfBoot build profile for {canonical_id}.",
+            "signature_algorithm": compat_id,
+            "boot_profile": boot_profile,
+            "status": "canonical_request10_profile",
+        })
+        build = dict(resolved.get("build", {}))
+        build.pop("config_template", None)
+        build["config_content"] = render_wolfboot_config(canonical_target, secure_boot)
+        build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
+        if requires_private_key and private_key and tuple_dir and tuple_id:
+            build["signing_key"] = private_key
+            signing_tuple = dict(build.get("signing_tuple", {}))
+            signing_tuple.update({
+                "tuple_id": tuple_id,
+                "directory": tuple_dir,
+            })
+            build["signing_tuple"] = signing_tuple
+            # Preserve the raw ECC256 public-key export contract used by the
+            # existing persistent-tuple implementation.
+            if canonical_id == "ecdsa_p256":
+                build["signing_tuple"].update({
+                    "public_key": "public_key.der",
+                    "public_key_export_format": "wolfboot_raw_ecc_xy",
+                    "public_key_size": 64,
+                })
+        resolved["build"] = build
+        return resolved, repo_root
+
+    if section == "signing":
+        resolved.update({
+            "id": f"wolfboot_{compat_id}_app",
+            "description": f"Canonical application packaging profile for {canonical_id}.",
+            "boot_profile": boot_profile,
+            "input_elf": "build/Release/stm32_basic_hal1.elf",
+            "input_image": input_image,
+            "signed_image": signed_image,
+            "signature_algorithm": compat_id,
+            "signature_size_bytes": signature_size,
+            "image_version": 1,
+            "image_header_size_bytes": int(canonical_target["wolfboot"]["image_header_size_bytes"]),
+            "require_input_build_provenance": True,
+            "retained_signed_image": f"application_{image_stem}.bin",
+            "status": "canonical_request10_profile",
+        })
+        binary = dict(resolved.get("binary_conversion", {}))
+        binary.update({
+            "enabled": True,
+            "command": "arm-none-eabi-objcopy",
+            "args": "-O binary {input_elf} {input_image}",
+        })
+        resolved["binary_conversion"] = binary
+        sign_section = dict(resolved.get("sign", {}))
+        sign_section.update({
+            "command": "tools/keytools/sign",
+            "working_dir": "tools/wolfboot",
+            "environment": {"IMAGE_HEADER_SIZE": str(canonical_target["wolfboot"]["image_header_size_bytes"])},
+        })
+        if requires_private_key:
+            sign_section["args"] = f"{packaging_option} {{input_image}} {{private_key}} {{image_version}}"
+            resolved["private_key"] = private_key
+            keygen = {
+                "enabled": False,
+                "command": "tools/keytools/keygen",
+                "working_dir": "tools/wolfboot",
+                "args": f"{packaging_option} -g {{private_key}}",
+            }
+            if tuple_id and tuple_dir:
+                signing_tuple = dict(resolved.get("signing_tuple", {}))
+                signing_tuple.update({
+                    "tuple_id": tuple_id,
+                    "directory": tuple_dir,
+                    "public_key": "public_key.der" if canonical_id == "ecdsa_p256" else "keystore.c",
+                })
+                resolved["signing_tuple"] = signing_tuple
+        else:
+            sign_section["args"] = f"{packaging_option} {{input_image}} {{image_version}}"
+            keygen = {"enabled": False}
+        ml_level = secure_boot["wolfboot"]["config"].get("ML_DSA_LEVEL")
+        if ml_level is not None:
+            ml_env = {
+                "ML_DSA_LEVEL": str(ml_level),
+                "IMAGE_SIGNATURE_SIZE": str(signature_size),
+            }
+            sign_section["environment"].update(ml_env)
+            keygen["environment"] = ml_env
+        resolved["sign"] = sign_section
+        resolved["keygen"] = keygen
+        return resolved, repo_root
+
+    if section == "experiment":
+        resolved.update({
+            "id": f"wolfboot_{compat_id}_uart",
+            "description": f"Canonical wolfBoot runtime profile for {canonical_id}.",
+            "boot": boot_profile,
+            "boot_crypto": compat_id,
+            "firmware": {
+                "mode": mode,
+                "artifact": signed_image,
+            },
+            "secure_boot_benchmark_profile": benchmark_profile,
+            "secure_boot_flash": {
+                **dict(resolved.get("secure_boot_flash", {})),
+                "signature_algorithm": compat_id,
+                "signature_size_bytes": signature_size,
+                "boot_timing_source": "framework_derived_from_uart_cycles_and_reported_hclk",
+                "image_version": 1,
+                "wolfboot_offset": "0x08000000",
+                "unsigned_application_artifact": input_image,
+                "signed_application_artifact": signed_image,
+                "signed_application_offset": "0x08020000",
+                "signing_private_key": private_key,
+            },
+        })
+        return resolved, repo_root
+
+    if section == "boot":
+        resolved.update({
+            "id": boot_profile,
+            "mode": mode,
+            "description": f"Canonical wolfBoot {canonical_id} compatibility view.",
+            "runnable": True,
+            "intended_signature_algorithm": compat_id,
+            "status": "canonical_request10_profile",
+        })
+        return resolved, repo_root
+
+    raise ConfigError(f"unsupported secure-boot profile section: {section}")
 
 def load_config(path: Path | str) -> dict[str, Any]:
     """Load a simple YAML mapping and resolve thin composed profiles."""
@@ -2833,203 +3002,77 @@ def validate_boot_config(config: dict[str, Any]) -> None:
 
 
 def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
-    """Resolve the configs root from configs/experiments/<name>.yaml."""
+    """Resolve the repository configs root for a generated canonical case."""
 
     resolved_path = experiment_path.resolve()
-
-    experiments_root = next(
-        (parent for parent in resolved_path.parents if parent.name == "experiments"),
-        None,
-    )
-    if experiments_root is not None and experiments_root.parent.name == "configs":
-        return experiments_root.parent
-
     generated_state_root = next(
         (parent for parent in resolved_path.parents if parent.name == ".pqc-generated-state"),
         None,
     )
-    if generated_state_root is not None:
-        configs_root = generated_state_root.parent / "configs"
-        if (configs_root / "experiments").is_dir():
-            return configs_root
-
-    raise ConfigError(
-        "Experiment config must live under configs/experiments/ or the repository-owned "
-        ".pqc-generated-state/ network-grid path for automatic board and host resolution"
-    )
+    if generated_state_root is None:
+        raise ConfigError(
+            "Operational experiment inputs must be resolver-generated cases under "
+            ".pqc-generated-state/. Resolve a source-controlled campaign first."
+        )
+    configs_root = generated_state_root.parent / "configs"
+    if not configs_root.is_dir():
+        raise ConfigError(f"Canonical configs directory not found: {configs_root}")
+    return configs_root
 
 
 def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:
-    """Resolve the repository root from configs/experiments/<name>.yaml."""
+    """Resolve the repository root from a generated canonical case path."""
 
-    configs_root = _configs_root_from_experiment_path(Path(experiment_path))
-    return configs_root.parent
-
-
-def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Path, Path]:
-    """Resolve board, host, and boot config paths referenced by an experiment config."""
-
-    experiment_config_path = Path(experiment_path)
-    experiment_config = load_config(experiment_config_path)
-    validate_experiment_config(experiment_config)
-
-    configs_root = _configs_root_from_experiment_path(experiment_config_path)
-    board_id = require_field(experiment_config, "board", "experiment config")
-    host_id = require_field(experiment_config, "host", "experiment config")
-    boot_id = require_field(experiment_config, "boot", "experiment config")
-
-    board_path = configs_root / "boards" / f"{board_id}.yaml"
-    host_path = configs_root / "hosts" / f"{host_id}.yaml"
-    boot_path = configs_root / "boot" / f"{boot_id}.yaml"
-
-    return board_path, host_path, boot_path
+    return _configs_root_from_experiment_path(Path(experiment_path)).parent
 
 
 def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, Any]]:
-    """Load and validate an experiment plus its referenced board and host configs."""
+    """Load a generated canonical case and derive the runtime compatibility bundle."""
 
     experiment_config_path = Path(experiment_path)
-
-    # Canonical generated cases are compact references. Re-resolve them through the
-    # versioned resolver before using the legacy execution bundle.
     try:
-        import yaml as _yaml
-        _raw = _yaml.safe_load(experiment_config_path.read_text(encoding="utf-8"))
-    except Exception:
-        _raw = None
-    if isinstance(_raw, dict) and _raw.get("kind") == "resolved_case":
-        try:
-            resolver = ConfigResolver(repo_root_from_experiment_path(experiment_config_path))
-            case = resolver.load_resolved_case(experiment_config_path)
-            partial = resolver.to_legacy_bundle(case, resolve_secrets=True)
-            experiment_config = partial["experiment"]
-            validate_experiment_config(experiment_config)
-            configs_root = _configs_root_from_experiment_path(experiment_config_path)
-            board_path = configs_root / "boards" / f"{experiment_config['board']}.yaml"
-            host_path = configs_root / "hosts" / f"{experiment_config['host']}.yaml"
-            boot_path = configs_root / "boot" / f"{experiment_config['boot']}.yaml"
-        except ResolutionError as exc:
-            raise ConfigError(str(exc)) from exc
-    else:
-        experiment_config = load_config(experiment_config_path)
-        validate_experiment_config(experiment_config)
-        board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
+        resolver = ConfigResolver(repo_root_from_experiment_path(experiment_config_path))
+        case = resolver.load_resolved_case(experiment_config_path)
+        bundle = resolver.to_legacy_bundle(case, resolve_secrets=True)
+    except ResolutionError as exc:
+        raise ConfigError(str(exc)) from exc
 
-    board_config = load_config(board_path)
-    host_config = load_config(host_path)
-    boot_config = load_config(boot_path)
+    experiment_config = bundle["experiment"]
+    board_config = bundle["board"]
+    host_config = bundle["host"]
+    boot_config = bundle["boot"]
 
+    validate_experiment_config(experiment_config)
     validate_board_config(board_config)
     validate_host_config(host_config)
     validate_boot_config(boot_config)
-
-    expected_board_id = require_field(experiment_config, "board", "experiment config")
-    actual_board_id = require_field(board_config, "id", "board config")
-
-    if actual_board_id != expected_board_id:
-        raise ConfigError(
-            f"board config id mismatch: experiment references '{expected_board_id}' "
-            f"but {board_path} contains '{actual_board_id}'"
-        )
-
-    expected_host_id = require_field(experiment_config, "host", "experiment config")
-    actual_host_id = require_field(host_config, "id", "host config")
-
-    if actual_host_id != expected_host_id:
-        raise ConfigError(
-            f"host config id mismatch: experiment references '{expected_host_id}' "
-            f"but {host_path} contains '{actual_host_id}'"
-        )
-
-    expected_boot_id = require_field(experiment_config, "boot", "experiment config")
-    actual_boot_id = require_field(boot_config, "id", "boot config")
-
-    if actual_boot_id != expected_boot_id:
-        raise ConfigError(
-            f"boot config id mismatch: experiment references '{expected_boot_id}' "
-            f"but {boot_path} contains '{actual_boot_id}'"
-        )
-
-    boot_mode = require_field(boot_config, "mode", "boot config")
-    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
-
-    if firmware_mode != boot_mode:
-        raise ConfigError(
-            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
-            f"but boot config mode is '{boot_mode}'"
-        )
-
-    return {
-        "experiment": experiment_config,
-        "board": board_config,
-        "host": host_config,
-        "boot": boot_config,
-    }
+    return bundle
 
 
 def load_secure_boot_experiment_bundle(
-    experiment_path: Path | str, *, algorithm: str, target_profile: Path | str = Path("configs/targets/stm32l4r5_wolfboot.yaml")
+    experiment_path: Path | str,
+    *,
+    algorithm: str,
+    target_profile: Path | str = Path("configs/targets/stm32l4r5_wolfboot.yaml"),
 ) -> dict[str, dict[str, Any]]:
-    """Load a wolfBoot secure-boot flash experiment without enabling generic execution.
+    """Compose a generated canonical case with the selected wolfBoot runtime settings."""
 
-    Phase 10h uses the planned wolfBoot boot config explicitly for the
-    two-artifact flash workflow. The generic experiment loader still rejects
-    non-runnable boot configs so normal direct-flash commands cannot
-    accidentally treat the wolfBoot profile as a validated boot path.
-    """
-
-    experiment_config_path = Path(experiment_path)
-    local_experiment = _load_config_mapping(experiment_config_path)
+    bundle = load_experiment_bundle(experiment_path)
     experiment_defaults, _ = load_secure_boot_profile_section(
         target_profile=target_profile, algorithm=algorithm, section="experiment"
     )
     boot_config, _ = load_secure_boot_profile_section(
         target_profile=target_profile, algorithm=algorithm, section="boot"
     )
-    experiment_config = _merge_config(experiment_defaults, local_experiment)
+    experiment_config = _merge_config(bundle["experiment"], experiment_defaults)
     validate_experiment_config(experiment_config)
-
-    configs_root = _configs_root_from_experiment_path(experiment_config_path)
-    board_path = configs_root / "boards" / f"{require_field(experiment_config, 'board', 'experiment config')}.yaml"
-    host_path = configs_root / "hosts" / f"{require_field(experiment_config, 'host', 'experiment config')}.yaml"
-    board_config = load_config(board_path)
-    host_config = load_config(host_path)
-
-    validate_board_config(board_config)
-    validate_host_config(host_config)
     validate_boot_config_for_inspection(boot_config)
-
-    expected_board_id = require_field(experiment_config, "board", "experiment config")
-    actual_board_id = require_field(board_config, "id", "board config")
-    if actual_board_id != expected_board_id:
-        raise ConfigError(
-            f"board config id mismatch: experiment references '{expected_board_id}' "
-            f"but {board_path} contains '{actual_board_id}'"
-        )
-
-    expected_host_id = require_field(experiment_config, "host", "experiment config")
-    actual_host_id = require_field(host_config, "id", "host config")
-    if actual_host_id != expected_host_id:
-        raise ConfigError(
-            f"host config id mismatch: experiment references '{expected_host_id}' "
-            f"but {host_path} contains '{actual_host_id}'"
-        )
-
-    boot_mode = require_field(boot_config, "mode", "boot config")
-    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
-    if firmware_mode != boot_mode:
-        raise ConfigError(
-            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
-            f"but boot config mode is '{boot_mode}'"
-        )
-
     return {
         "experiment": experiment_config,
-        "board": board_config,
-        "host": host_config,
+        "board": bundle["board"],
+        "host": bundle["host"],
         "boot": boot_config,
     }
-
 
 def _status_cipher_policy(tls: dict[str, Any]) -> str:
     """Return a declarative cipher-suite policy description for status output."""
@@ -3923,7 +3966,7 @@ def _compose_wolfboot_run_bundle(
 
     direct_bundle = load_experiment_bundle(experiment_path)
     secure_bundle = load_secure_boot_experiment_bundle(
-        Path("configs/experiments/secure_boot_uart.yaml"),
+        experiment_path,
         algorithm=boot_algorithm,
         target_profile=target_profile,
     )
@@ -5418,7 +5461,7 @@ def _mqtt_broker_script_path(repo_root: Path) -> Path:
 def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list[str]:
     repo_root = Path.cwd()
     command = [sys.executable, str(_mqtt_broker_script_path(repo_root)), subcommand]
-    _append_option(command, "--host-config", args.host_config)
+    _append_option(command, "--gateway-config", args.gateway_config)
 
     remote_subcommands = {
         "deploy",
@@ -5591,7 +5634,7 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
         "status": "running",
         "profile": args.profile,
         "broker": {
-            "host_config": str(args.host_config),
+            "gateway_config": str(args.gateway_config),
             "remote_dir": args.remote_dir,
             "project_name": args.project_name,
             "classical_port": args.classical_port,
@@ -6075,7 +6118,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--boot-algorithm",
         dest="boot_algorithm",
         default=None,
-        help="Secure-boot mode from configs/algorithms/. Supplying one implies wolfBoot; omitting it uses integrity_sha256.",
+        help="Secure-boot profile from configs/secure_boot/. Supplying one implies wolfBoot; omitting it uses integrity_sha256.",
     )
     run_parser.add_argument(
         "--target-profile",
@@ -6101,7 +6144,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "build-wolfboot",
         help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
     )
-    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     wolfboot_build_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -6118,7 +6161,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "sign-application",
         help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
     )
-    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     sign_application_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -6141,7 +6184,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a wolfBoot secure-boot experiment YAML config.",
     )
-    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     secure_boot_flash_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -6210,7 +6253,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     mqtt_parser.add_argument("--profile", choices=("classical", "oqs"), required=True, help="Broker profile to orchestrate.")
     mqtt_parser.add_argument("--results-dir", default=Path("results"), type=Path, help="Directory where MQTT broker experiment result folders are created.")
-    mqtt_parser.add_argument("--host-config", default=Path("configs/hosts/gateway.yaml"), type=Path, help="Repository-relative gateway host config path.")
+    mqtt_parser.add_argument("--gateway-config", default=Path("configs/gateways/pqc_gateway1.yaml"), type=Path, help="Repository-relative canonical gateway config path.")
     mqtt_parser.add_argument("--remote-dir", default="~/pqc-framework-02/experiment/mqtt-broker", help="Remote gateway broker compose directory.")
     mqtt_parser.add_argument("--project-name", default="pqc-framework-mqtt-broker", help="Docker Compose project name.")
     mqtt_parser.add_argument("--classical-port", type=int, default=None, help="Host TLS port for the classical profile.")

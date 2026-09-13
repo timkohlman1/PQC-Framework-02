@@ -27,7 +27,7 @@ def test_mqtt_broker_experiment_parser_defaults_to_framework_orchestration_comma
 
     assert args.command == "mqtt-broker-experiment"
     assert args.profile == "classical"
-    assert args.host_config == Path("configs/hosts/gateway.yaml")
+    assert args.gateway_config == Path("configs/gateways/pqc_gateway1.yaml")
     assert args.remote_dir == "~/pqc-framework-02/experiment/mqtt-broker"
     assert args.project_name == "pqc-framework-mqtt-broker"
     assert args.topic == "pqc/test/e2e"
@@ -85,8 +85,8 @@ def test_mqtt_broker_experiment_orchestrates_oqs_profile_and_writes_manifest(tmp
         "oqs",
         "--results-dir",
         str(tmp_path / "results"),
-        "--host-config",
-        "configs/hosts/gateway.yaml",
+        "--gateway-config",
+        "configs/gateways/pqc_gateway1.yaml",
         "--remote-dir",
         "~/pqc-framework-02/tmp/mqtt-test",
         "--project-name",

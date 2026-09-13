@@ -17,6 +17,22 @@ def _read(path: Path) -> str:
 
 
 
+
+
+def _write_gateway_config(path: Path, *, alias: str = "pqc-gateway1", fqdn: str = "pqc-gateway1.pqcnet", user: str = "timk", address: str = "10.1.1.18") -> None:
+    path.write_text(
+        "schema_version: 1\n"
+        "profile_type: gateway\n"
+        "id: pqc_gateway1\n"
+        "identity:\n"
+        f"  alias: {alias}\n"
+        f"  fqdn: {fqdn}\n"
+        f"  ssh_user: {user}\n"
+        "network:\n"
+        f"  address: {address}\n",
+        encoding="utf-8",
+    )
+
 def _service_block(compose: str, service: str) -> str:
     marker = f"  {service}:\n"
     start = compose.index(marker)
@@ -127,12 +143,12 @@ def test_mqtt_runtime_paths_are_ignored_by_git():
     assert "experiment/mqtt-broker/.env" in gitignore
 
 
-def test_gateway_host_config_records_network_address_for_non_ssh_clients():
-    gateway = _read(REPO_ROOT / "configs" / "hosts" / "gateway.yaml")
+def test_gateway_config_records_fqdn_user_and_network_address():
+    gateway = _read(REPO_ROOT / "configs" / "gateways" / "pqc_gateway1.yaml")
 
-    assert "alias: pqc-gateway1.pqcnet" in gateway
-    assert "short_alias: pqc-gateway1" in gateway
-    assert "user: timk" in gateway
+    assert "alias: pqc-gateway1" in gateway
+    assert "fqdn: pqc-gateway1.pqcnet" in gateway
+    assert "ssh_user: timk" in gateway
     assert "network:" in gateway
     assert "address: 10.1.1.18" in gateway
 
@@ -155,42 +171,39 @@ def test_mqtt_control_script_has_expected_subcommands_and_defaults():
 def test_mqtt_control_script_reads_gateway_alias_user_and_address_from_host_config(tmp_path):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text(
-        "id: gateway\nalias: test-gateway\nuser: timk\nnetwork:\n  address: 10.1.1.18\n",
-        encoding="utf-8",
-    )
+    _write_gateway_config(host_config, alias="test-gateway", fqdn="test-gateway.example")
 
     loaded = module.load_host_config(host_config)
 
-    assert loaded.alias == "test-gateway"
+    assert loaded.alias == "test-gateway.example"
     assert loaded.user == "timk"
     assert loaded.address == "10.1.1.18"
-    assert module.ssh_target(loaded) == "timk@test-gateway"
+    assert module.ssh_target(loaded) == "timk@test-gateway.example"
     assert module.tls_host(loaded) == "10.1.1.18"
 
 
 def test_mqtt_control_script_uses_configured_ssh_user_for_remote_commands(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(module, "broker_root", lambda: tmp_path / "experiment" / "mqtt-broker")
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
 
-    args = module.build_parser().parse_args(["deploy", "--host-config", str(host_config), "--dry-run"])
+    args = module.build_parser().parse_args(["deploy", "--gateway-config", str(host_config), "--dry-run"])
     module.deploy(args)
 
     assert commands
-    assert commands[0][:2] == ["ssh", "timk@pqc-gateway1"]
-    assert any(command[0:2] == ["scp", "-r"] and "timk@pqc-gateway1:" in command[-1] for command in commands)
+    assert commands[0][:2] == ["ssh", "timk@pqc-gateway1.pqcnet"]
+    assert any(command[0:2] == ["scp", "-r"] and "timk@pqc-gateway1.pqcnet:" in command[-1] for command in commands)
 
 
 def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     broker_root = tmp_path / "experiment" / "mqtt-broker"
     (broker_root / "scripts" / "__pycache__").mkdir(parents=True)
     (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
@@ -200,7 +213,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
     monkeypatch.setattr(module, "broker_root", lambda: broker_root)
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
 
-    args = module.build_parser().parse_args(["deploy", "--host-config", str(host_config), "--dry-run"])
+    args = module.build_parser().parse_args(["deploy", "--gateway-config", str(host_config), "--dry-run"])
     module.deploy(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
@@ -215,7 +228,7 @@ def test_mqtt_deploy_copies_script_source_without_python_cache(tmp_path, monkeyp
 def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     broker_root = tmp_path / "experiment" / "mqtt-broker"
     (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
     commands = []
@@ -224,13 +237,13 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
     monkeypatch.setattr(module, "broker_root", lambda: broker_root)
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
 
-    args = module.build_parser().parse_args(["deploy", "--host-config", str(host_config), "--dry-run"])
+    args = module.build_parser().parse_args(["deploy", "--gateway-config", str(host_config), "--dry-run"])
     module.deploy(args)
 
     permission_commands = [
         command
         for command in commands
-        if command[:2] == ["ssh", "timk@pqc-gateway1"] and "chmod -R a+rX" in command[-1]
+        if command[:2] == ["ssh", "timk@pqc-gateway1.pqcnet"] and "chmod -R a+rX" in command[-1]
     ]
     assert permission_commands
     assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
@@ -241,7 +254,7 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
 def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     broker_root = tmp_path / "experiment" / "mqtt-broker"
     (tmp_path / "secrets" / "certificates" / "rsa3072").mkdir(parents=True)
     commands = []
@@ -250,7 +263,7 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "broker_root", lambda: broker_root)
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
 
-    args = module.build_parser().parse_args(["deploy", "--host-config", str(host_config), "--dry-run"])
+    args = module.build_parser().parse_args(["deploy", "--gateway-config", str(host_config), "--dry-run"])
     module.deploy(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
@@ -262,7 +275,7 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
 def test_mqtt_start_supports_isolated_project_name_and_port_override(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -270,7 +283,7 @@ def test_mqtt_start_supports_isolated_project_name_and_port_override(tmp_path, m
 
     args = module.build_parser().parse_args([
         "start",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--project-name",
         "pytest-mqtt",
@@ -288,13 +301,13 @@ def test_mqtt_start_supports_isolated_project_name_and_port_override(tmp_path, m
 def test_mqtt_stop_removes_profiled_and_orphaned_broker_containers(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
 
-    args = module.build_parser().parse_args(["stop", "--host-config", str(host_config), "--dry-run"])
+    args = module.build_parser().parse_args(["stop", "--gateway-config", str(host_config), "--dry-run"])
     module.stop(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
@@ -333,7 +346,7 @@ def test_mqtt_remote_shell_path_preserves_home_directory_expansion():
 def test_mqtt_start_cd_uses_home_expanded_remote_path(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -341,7 +354,7 @@ def test_mqtt_start_cd_uses_home_expanded_remote_path(tmp_path, monkeypatch):
 
     args = module.build_parser().parse_args([
         "start",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -418,7 +431,7 @@ def test_oqs_compose_uses_project_managed_pqc_tls_config_and_strict_healthcheck(
 def test_validate_classical_mqtt_main_dispatches_to_validation_function(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -426,7 +439,7 @@ def test_validate_classical_mqtt_main_dispatches_to_validation_function(tmp_path
 
     result = module.main([
         "validate-classical-mqtt",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -444,7 +457,7 @@ def test_validate_classical_mqtt_main_dispatches_to_validation_function(tmp_path
 def test_validate_oqs_mqtt_main_dispatches_to_validation_function(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -452,7 +465,7 @@ def test_validate_oqs_mqtt_main_dispatches_to_validation_function(tmp_path, monk
 
     result = module.main([
         "validate-oqs-mqtt",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -472,7 +485,7 @@ def test_validate_oqs_mqtt_main_dispatches_to_validation_function(tmp_path, monk
 def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshake(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -480,7 +493,7 @@ def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshak
 
     args = module.build_parser().parse_args([
         "validate-oqs-tls",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -509,7 +522,7 @@ def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshak
 def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -517,7 +530,7 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
 
     args = module.build_parser().parse_args([
         "validate-classical-mqtt",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -534,7 +547,7 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
     module.validate_classical_mqtt(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
-    assert "timk@pqc-gateway1" in command_text
+    assert "timk@pqc-gateway1.pqcnet" in command_text
     assert "eclipse-mosquitto:2.1.2-alpine" in command_text
     assert "openquantumsafe/mosquitto" not in command_text
     assert "--entrypoint mosquitto_sub" in command_text
@@ -560,7 +573,7 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
 def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -568,7 +581,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
 
     args = module.build_parser().parse_args([
         "validate-oqs-mqtt",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -585,7 +598,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
     module.validate_oqs_mqtt(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
-    assert "timk@pqc-gateway1" in command_text
+    assert "timk@pqc-gateway1.pqcnet" in command_text
     assert "eclipse-mosquitto:2.1.2-alpine" in command_text
     assert "--entrypoint mosquitto_sub" in command_text
     assert "--entrypoint mosquitto_pub" in command_text
@@ -607,7 +620,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
 def test_mqtt_oqs_tls_validation_labels_host_and_broker_side_evidence(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
 
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
@@ -615,7 +628,7 @@ def test_mqtt_oqs_tls_validation_labels_host_and_broker_side_evidence(tmp_path, 
 
     args = module.build_parser().parse_args([
         "validate-oqs-tls",
-        "--host-config",
+        "--gateway-config",
         str(host_config),
         "--remote-dir",
         "~/pqc-framework-02/experiment/mqtt-broker",
@@ -639,13 +652,13 @@ def test_mqtt_oqs_tls_validation_labels_host_and_broker_side_evidence(tmp_path, 
 def test_classical_server_auth_mqtt_validation_omits_client_identity(tmp_path, monkeypatch):
     module = _load_ctl_module()
     host_config = tmp_path / "gateway.yaml"
-    host_config.write_text("id: gateway\nalias: pqc-gateway1\nuser: timk\n", encoding="utf-8")
+    _write_gateway_config(host_config)
     commands = []
     monkeypatch.setattr(module, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(module, "run_command", lambda command, **kwargs: commands.append(command))
     args = module.build_parser().parse_args([
         "validate-classical-server-auth-mqtt",
-        "--host-config", str(host_config),
+        "--gateway-config", str(host_config),
         "--remote-dir", "~/pqc-framework-02/experiment/mqtt-broker",
         "--classical-port", "28883",
         "--dry-run",

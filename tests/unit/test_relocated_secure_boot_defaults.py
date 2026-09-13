@@ -15,23 +15,29 @@ def test_release_is_default_and_debug_is_cli_selectable():
 
 
 def test_integrity_profile_is_keyless_sha256_baseline():
-    profile = _read("configs/algorithms/integrity_sha256.yaml")
-    assert "target: stm32l4r5_wolfboot" in profile
-    assert "signature_algorithm: integrity_sha256" in profile
-    assert "description: Run the selected experiment through wolfBoot" in profile
-    assert "description: Runnable wolfBoot integrity-only baseline" in profile
-    assert "runnable: true" in profile
-    assert "private_key:" not in profile
-    assert "args: --no-sign --sha256 {input_image} {image_version}" in profile
-    assert "image_header_size_bytes: 12288" in profile
+    import yaml
+    profile = yaml.safe_load(_read("configs/secure_boot/integrity_sha256.yaml"))
+    target = yaml.safe_load(_read("configs/targets/stm32l4r5_st67.yaml"))
+    assert profile["id"] == "integrity_sha256"
+    assert profile["wolfboot"]["config"]["SIGN"] == "NONE"
+    assert profile["wolfboot"]["packaging_option"] == "--no-sign --sha256"
+    assert profile["signing"]["requires_private_key"] is False
+    assert profile["signature_size_bytes"] == 0
+    assert target["wolfboot"]["image_header_size_bytes"] == 12288
 
 
-def test_mldsa87_profile_and_wolfboot_config_are_present():
-    profile = _read("configs/algorithms/mldsa87.yaml")
-    config = _read("configs/wolfboot/stm32l4r5_mldsa87.config")
-    assert "signature_algorithm: mldsa87" in profile
-    assert "mldsa_level: 5" in profile
-    assert "signature_size_bytes: 4627" in profile
+def test_mldsa87_profile_and_generated_wolfboot_config_are_present():
+    import sys
+    import yaml
+    repo_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from framework.config_resolver import render_wolfboot_config
+    profile = yaml.safe_load(_read("configs/secure_boot/mldsa87.yaml"))
+    target = yaml.safe_load(_read("configs/targets/stm32l4r5_st67.yaml"))
+    config = render_wolfboot_config(target, profile)
+    assert profile["id"] == "mldsa87"
+    assert profile["wolfboot"]["config"]["ML_DSA_LEVEL"] == 5
+    assert profile["signature_size_bytes"] == 4627
     assert "ML_DSA_LEVEL=5" in config
     assert "IMAGE_SIGNATURE_SIZE=4627" in config
     assert "IMAGE_HEADER_SIZE=12288" in config

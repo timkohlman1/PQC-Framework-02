@@ -69,7 +69,7 @@ The project will not claim that the upstream STM32L4 target is directly runnable
 ## Consequences
 
 - The direct-flash baseline remains the only runnable boot mode.
-- At the time of this decision, the algorithm-specific wolfBoot boot profile remained non-runnable. That wrapper was later removed; current configuration is composed from `configs/targets/stm32l4r5_wolfboot.yaml`, `configs/algorithms/ecdsa_p256.yaml`, and `configs/experiments/secure_boot_uart.yaml`.
+- At the time of this decision, the algorithm-specific wolfBoot boot profile remained non-runnable. That wrapper was later removed; current configuration is composed from `configs/targets/stm32l4r5_wolfboot.yaml`, `configs/secure_boot/ecdsa_p256.yaml`, and `.pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml`.
 - Phase 10d should define the STM32L4R5 flash layout explicitly before linker relocation.
 - Phase 10e should relocate the HAL application to the selected signed-image entry address.
 - Phase 10f should add an explicit wolfBoot build profile using the selected project-local target values.
@@ -86,7 +86,7 @@ The project will not claim that the upstream STM32L4 target is directly runnable
 
 ## Phase 10f.1 Follow-Up
 
-Phase 10f.1 implements the previously planned project-local STM32L4R5 wolfBoot build adaptation. The selected dependency strategy is a Git submodule at `tools/wolfboot`. The project-local config template is tracked at `configs/wolfboot/stm32l4r5_ecdsa_p256.config` and is copied to `tools/wolfboot/.config` by the framework before invoking the wolfBoot build command.
+Phase 10f.1 implements the previously planned project-local STM32L4R5 wolfBoot build adaptation. The selected dependency strategy is a Git submodule at `tools/wolfboot`. The project-local config template is tracked at `resolver-generated tools/wolfboot/.config` and is copied to `tools/wolfboot/.config` by the framework before invoking the wolfBoot build command.
 
 This resolves the documented HAL/CMSIS integration direction for build attempts by pointing wolfBoot `STM32CUBE` at the repository root and adding STM32L4R5 HAL/CMSIS include paths. It does not validate signing, flashing, UART boot evidence, or runtime secure-boot success.
 

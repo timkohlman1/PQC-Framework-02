@@ -9,7 +9,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = REPO_ROOT / "scripts" / "provision_certificates.py"
-CONFIG_DIR = REPO_ROOT / "configs" / "certificate_profile"
+CONFIG_DIR = REPO_ROOT / "configs" / "tls_auth"
 
 
 def _load_module():

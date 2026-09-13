@@ -151,7 +151,7 @@ The repository-local ignored generated-state hierarchy remains authoritative for
 
 ## Certificate provisioning and wolfBoot key separation
 
-`scripts/provision_certificates.py` owns offline X.509 generation. Profile definitions live under `configs/certificate_profile/`; the provisioner reads those YAML files and writes each generated profile directly under ignored `secrets/certificates/<profile-id>/`. Experiments never generate, renew, or stage certificates. If the selected profile is absent or incomplete, prerequisite preparation fails and instructs the user to run the one-time provisioning command. No online CA, Vault, KMS, ACME, OCSP, or continuously running certificate service is required.
+`scripts/provision_certificates.py` owns offline X.509 generation. Profile definitions live under `configs/tls_auth/`; the provisioner reads those YAML files and writes each generated profile directly under ignored `secrets/certificates/<profile-id>/`. Experiments never generate, renew, or stage certificates. If the selected profile is absent or incomplete, prerequisite preparation fails and instructs the user to run the one-time provisioning command. No online CA, Vault, KMS, ACME, OCSP, or continuously running certificate service is required.
 
 wolfBoot signing keys are not X.509 identities and must not be issued by the X.509 provisioner. The wolfBoot tooling remains responsible for algorithm-compatible generation and public-key export. The historical `framework/certs` Step CA/Vault/KMS/ML-DSA provisioning subsystem has been removed. wolfBoot signing state remains independent of X.509 certificate profiles.
 

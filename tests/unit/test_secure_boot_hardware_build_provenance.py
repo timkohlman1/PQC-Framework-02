@@ -7,10 +7,8 @@ def test_secure_boot_hardware_uses_runnable_experiment_for_build_provenance():
         repo_root / "tests/hardware/test_secure_boot_flash_workflow_hw.py"
     ).read_text(encoding="utf-8")
 
-    assert (
-        'BUILD_PROVENANCE_EXPERIMENT_CONFIG = '
-        '"configs/experiments/baseline_direct_uart.yaml"'
-    ) in source
+    assert '_BASELINE_ROOT = _RESOLVER.materialize_campaign("baseline")' in source
+    assert "BUILD_PROVENANCE_EXPERIMENT_CONFIG" in source
     helper_start = source.index(
         "def _prepare_signed_secure_boot_application"
     )
