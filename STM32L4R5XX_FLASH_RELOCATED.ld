@@ -79,7 +79,7 @@ __ram3_region_end__ = ORIGIN(RAM3) + LENGTH(RAM3);
 _estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
 /* Generate a link error if heap and stack don't fit into RAM */
 _Min_Heap_Size = 0x200;      /* required amount of heap  */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+_Min_Stack_Size = 0x500; /* required amount of stack */
 
 /* Define output sections */
 SECTIONS
