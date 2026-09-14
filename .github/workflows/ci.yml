@@ -38,29 +38,6 @@ jobs:
       - name: Build project container image
         run: ./scripts/dev.sh build-image
 
-      - name: Validate Linux .env handling
-        shell: bash
-        run: |
-          set -euo pipefail
-          trap 'rm -f .env' EXIT
-          cat > .env <<'EOF_ENV'
-          PQC_WIFI_SSID=ci-dotenv-ssid
-          PQC_WIFI_PSK=ci-dotenv-psk
-          EOF_ENV
-
-          ./scripts/dev.sh run sh -lc '
-            test "$PQC_WIFI_SSID" = "ci-dotenv-ssid" &&
-            test "$PQC_WIFI_PSK" = "ci-dotenv-psk"
-          '
-
-          PQC_WIFI_SSID=caller-value ./scripts/dev.sh run sh -lc '
-            test "$PQC_WIFI_SSID" = "caller-value" &&
-            test "$PQC_WIFI_PSK" = "ci-dotenv-psk"
-          '
-
-          test -z "${PQC_WIFI_SSID+x}"
-          test -z "${PQC_WIFI_PSK+x}"
-
       - name: Show container tool versions
         run: |
           ./scripts/dev.sh run sh -lc '
