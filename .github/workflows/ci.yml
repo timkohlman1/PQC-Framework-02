@@ -63,6 +63,17 @@ jobs:
           set -euo pipefail
           BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
           test -n "$BASELINE_CASE"
+          test -f "$BASELINE_CASE"
+
+      - name: Provision ephemeral MQTT certificate profiles
+        run: ./scripts/dev.sh python scripts/provision_certificates.py
+
+      - name: Run baseline framework status
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
+          test -n "$BASELINE_CASE"
           ./scripts/dev.sh experiment status --experiment "$BASELINE_CASE"
 
       - name: Build direct-flash Debug firmware
