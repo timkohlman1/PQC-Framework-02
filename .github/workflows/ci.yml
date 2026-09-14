@@ -17,10 +17,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: Legacy runner unit tests
+  container-non-hardware:
+    name: Containerised non-hardware validation
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
+
+    env:
+      PQC_DOCKER_IMAGE: pqc-framework-stm32-build:ci
+      DOCKER_BUILDKIT: "1"
 
     steps:
       - name: Check out repository
@@ -28,137 +32,96 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
+      - name: Validate Linux development wrapper syntax
+        run: sh -n scripts/dev.sh
 
-      - name: Install Python test dependencies
+      - name: Build project container image
+        run: ./scripts/dev.sh build-image
+
+      - name: Validate Linux .env handling
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
+          set -euo pipefail
+          trap 'rm -f .env' EXIT
+          cat > .env <<'EOF_ENV'
+          PQC_WIFI_SSID=ci-dotenv-ssid
+          PQC_WIFI_PSK=ci-dotenv-psk
+          EOF_ENV
+
+          ./scripts/dev.sh run sh -lc '
+            test "$PQC_WIFI_SSID" = "ci-dotenv-ssid" &&
+            test "$PQC_WIFI_PSK" = "ci-dotenv-psk"
+          '
+
+          PQC_WIFI_SSID=caller-value ./scripts/dev.sh run sh -lc '
+            test "$PQC_WIFI_SSID" = "caller-value" &&
+            test "$PQC_WIFI_PSK" = "ci-dotenv-psk"
+          '
+
+          test -z "${PQC_WIFI_SSID+x}"
+          test -z "${PQC_WIFI_PSK+x}"
+
+      - name: Show container tool versions
+        run: |
+          ./scripts/dev.sh run sh -lc '
+            python --version &&
+            cmake --version &&
+            ninja --version &&
+            arm-none-eabi-gcc --version | head -n 1 &&
+            make --version | head -n 1
+          '
 
       - name: Run unit tests
-        run: python -m pytest tests/unit
+        run: ./scripts/dev.sh pytest tests/unit
 
-  firmware-builds:
-    name: Legacy runner firmware CMake builds
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+      - name: Resolve baseline campaign
+        run: ./scripts/dev.sh python scripts/resolve_campaign.py baseline.yaml
 
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Install build toolchain
+      - name: Validate baseline campaign resolution
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
+          set -euo pipefail
+          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
+          test -n "$BASELINE_CASE"
+          ./scripts/dev.sh experiment status --experiment "$BASELINE_CASE"
 
-      - name: Configure and build Debug preset
+      - name: Build direct-flash Debug firmware
         run: |
-          cmake --preset Debug
-          cmake --build --preset Debug
+          ./scripts/dev.sh cmake --preset Debug
+          ./scripts/dev.sh cmake --build --preset Debug
 
-      - name: Configure and build Release preset (Release is the default relocated layout; `--debug` selects Debug)
+      - name: Build relocated firmware with framework provenance in container
+        shell: bash
         run: |
-          cmake --preset Release
-          cmake --build --preset Release
+          set -euo pipefail
+          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
+          ./scripts/dev.sh experiment build \
+            --experiment "$BASELINE_CASE" \
+            --configure-preset Release \
+            --build-preset Release \
+            --artifact build/Release/stm32_basic_hal1.elf
 
-  wolfboot-build-integration:
-    name: Legacy runner wolfBoot build integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs:
-      - unit-tests
+      - name: Build wolfBoot profile
+        run: ./scripts/dev.sh experiment build-wolfboot --boot-algorithm ecdsa_p256
 
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
+      - name: Sign relocated application
+        run: ./scripts/dev.sh experiment sign-application --boot-algorithm ecdsa_p256
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install wolfBoot build toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            make \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
-
-      - name: Install Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
-
-      - name: Run wolfBoot build integration test
-        env:
-          PQC_RUN_WOLFBOOT_BUILD_INTEGRATION: "1"
-        run: python -m pytest tests/integration/test_wolfboot_build_integration.py -m integration
-
-  integration-tests:
-    name: Legacy runner-compatible integration tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs:
-      - unit-tests
-      - firmware-builds
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install build toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            cmake \
-            ninja-build \
-            gcc-arm-none-eabi \
-            libnewlib-arm-none-eabi
-
-      - name: Install Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
-
-      - name: Check Docker Compose availability
-        run: docker compose version
-
-      - name: Run local integration tests
-        run: python -m pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
+      - name: Run non-hardware integration tests
+        run: ./scripts/dev.sh pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
 
   mqtt-broker-docker-runtime:
     name: MQTT broker Docker runtime
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs:
-      - unit-tests
+      - container-non-hardware
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -179,84 +142,8 @@ jobs:
       - name: Pull MQTT broker runtime image
         run: docker pull eclipse-mosquitto:2.0
 
-      - name: Run MQTT broker Docker runtime tests
-        run: python -m pytest tests/integration/test_mqtt_broker_docker_runtime.py -m docker_runtime
-
-  container-non-hardware:
-    name: Default containerised non-hardware checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    env:
-      IMAGE_NAME: pqc-framework-stm32-build
-      DOCKER_BUILDKIT: "1"
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Build project container image
-        run: docker build -f docker/python/Dockerfile -t "${IMAGE_NAME}:ci" .
-
-      - name: Record containerised CI scope
+      - name: Run MQTT broker Docker configuration/runtime tests
         run: |
-          cat <<'EOF_SCOPE'
-          Containerised CI scope: default reproducible non-hardware build/test checks inside the project container.
-          This job does not use GitHub Actions secrets, SSH keys, VPN keys, private certificates, private signing keys, board flashing, UART devices, Wi-Fi modules, or gateway access.
-          Existing runner-compatible and MQTT broker Docker runtime jobs remain compatibility coverage.
-          EOF_SCOPE
-
-      - name: Show container tool versions
-        run: |
-          docker run --rm "${IMAGE_NAME}:ci" sh -lc '
-            python --version && \
-            cmake --version && \
-            ninja --version && \
-            arm-none-eabi-gcc --version | head -n 1 && \
-            make --version | head -n 1
-          '
-
-      - name: Run Python unit tests in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit
-
-      - name: Run lwIP/ST67 compile-only static validation in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python -m pytest tests/unit/test_stm32_lwip_st67_compile_only.py
-
-      - name: Resolve baseline campaign and run safe framework status command in container
-        run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/resolve_campaign.py baseline.yaml
-          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py status --experiment "$BASELINE_CASE"
-
-      - name: Build direct-flash firmware preset in container
-        run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --preset Debug
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" cmake --build --preset Debug
-
-      - name: Build relocated firmware with framework provenance in container
-        run: |
-          BASELINE_CASE=$(find .pqc-generated-state/campaigns/baseline/cases -name '*.yaml' | sort | head -n 1)
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
-            python scripts/experiment.py build \
-              --experiment "$BASELINE_CASE" \
-              --configure-preset Release \
-              --build-preset Release \
-              --artifact build/Release/stm32_basic_hal1.elf
-
-      - name: Build wolfBoot profile in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py build-wolfboot --boot-algorithm ecdsa_p256
-
-      - name: Sign relocated application in container
-        run: docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
-
-      - name: Run non-hardware local-build integration tests in container
-        run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${IMAGE_NAME}:ci" \
-            python -m pytest \
-              tests/integration/test_local_build.py \
-              tests/integration/test_wolfboot_build_integration.py \
-              tests/integration/test_mqtt_experiment_completion_markers.py \
-              -m integration \
-              --pqc-require-local-build
+          python -m pytest \
+            tests/integration/test_mqtt_broker_docker_config_in.py \
+            tests/integration/test_mqtt_broker_docker_runtime_in.py

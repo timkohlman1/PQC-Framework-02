@@ -98,7 +98,7 @@ $path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
 
 The POSIX wrapper is `./scripts/dev.sh` with corresponding subcommands.
 
-For PowerShell wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. `scripts/dev.ps1` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must remove any variables it loaded when the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
+For wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. Both `scripts/dev.ps1` and `scripts/dev.sh` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must ensure wrapper-loaded values do not persist after the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
 
 Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `.\scripts\dev.ps1 python ...` unless both wrappers implement that subcommand.
 

@@ -5,33 +5,135 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 image_name=${PQC_DOCKER_IMAGE:-pqc-framework-stm32-build}
 ssh_source=${PQC_DOCKER_SSH_DIR:-${HOME}/.ssh}
 
-run_container() {
+strip_optional_quotes() {
+  value=$1
+  case "$value" in
+    \"*\") value=${value#\"}; value=${value%\"} ;;
+    \'*\') value=${value#\'}; value=${value%\'} ;;
+  esac
+  printf '%s' "$value"
+}
+
+load_local_dotenv() {
+  env_path="$repo_root/.env"
+  [ -f "$env_path" ] || return 0
+
+  # Only the two supported local Wi-Fi values are imported. Existing caller
+  # environment variables take precedence. run_container executes in a
+  # subshell, so values imported here cannot persist after the invocation.
+  while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+    line=$(printf '%s' "$raw_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+
+    case "$line" in
+      *=*) ;;
+      *)
+        echo "Invalid .env entry. Expected NAME=value." >&2
+        exit 2
+        ;;
+    esac
+
+    name=$(printf '%s' "${line%%=*}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    value=$(printf '%s' "${line#*=}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    value=$(strip_optional_quotes "$value")
+
+    case "$name" in
+      PQC_WIFI_SSID)
+        if [ -z "${PQC_WIFI_SSID+x}" ]; then
+          PQC_WIFI_SSID=$value
+          export PQC_WIFI_SSID
+        fi
+        ;;
+      PQC_WIFI_PSK)
+        if [ -z "${PQC_WIFI_PSK+x}" ]; then
+          PQC_WIFI_PSK=$value
+          export PQC_WIFI_PSK
+        fi
+        ;;
+      *)
+        # Ignore unsupported names rather than sourcing arbitrary shell content.
+        ;;
+    esac
+  done < "$env_path"
+}
+
+run_container() (
   gateway=0
   if [ "${1:-}" = "--gateway" ]; then
     gateway=1
     shift
   fi
 
+  load_local_dotenv
+
+  wifi_args=""
+  if [ -n "${PQC_WIFI_SSID:-}" ]; then
+    wifi_args="$wifi_args PQC_WIFI_SSID"
+  fi
+  if [ -n "${PQC_WIFI_PSK:-}" ]; then
+    wifi_args="$wifi_args PQC_WIFI_PSK"
+  fi
+
+  # Build the docker invocation explicitly so secret values are inherited from
+  # this temporary process environment (-e NAME), not exposed on the command
+  # line as -e NAME=value.
   if [ "$gateway" -eq 1 ]; then
     if [ ! -d "$ssh_source" ]; then
       echo "Gateway mode requires an SSH directory. Set PQC_DOCKER_SSH_DIR or create $ssh_source." >&2
       exit 2
     fi
-    docker run --rm \
-      -v "$repo_root:/workspace" \
-      -w /workspace \
-      -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
-      -v "$ssh_source:/host-ssh:ro" \
-      "$image_name" \
-      sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
+
+    if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
+      docker run --rm \
+        -v "$repo_root:/workspace" \
+        -w /workspace \
+        -e PQC_WIFI_SSID \
+        -e PQC_WIFI_PSK \
+        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
+        -v "$ssh_source:/host-ssh:ro" \
+        "$image_name" \
+        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
+    elif [ -n "${PQC_WIFI_SSID:-}" ]; then
+      docker run --rm \
+        -v "$repo_root:/workspace" \
+        -w /workspace \
+        -e PQC_WIFI_SSID \
+        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
+        -v "$ssh_source:/host-ssh:ro" \
+        "$image_name" \
+        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
+    elif [ -n "${PQC_WIFI_PSK:-}" ]; then
+      docker run --rm \
+        -v "$repo_root:/workspace" \
+        -w /workspace \
+        -e PQC_WIFI_PSK \
+        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
+        -v "$ssh_source:/host-ssh:ro" \
+        "$image_name" \
+        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
+    else
+      docker run --rm \
+        -v "$repo_root:/workspace" \
+        -w /workspace \
+        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
+        -v "$ssh_source:/host-ssh:ro" \
+        "$image_name" \
+        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
+    fi
   else
-    docker run --rm \
-      -v "$repo_root:/workspace" \
-      -w /workspace \
-      "$image_name" \
-      "$@"
+    if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
+      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
+    elif [ -n "${PQC_WIFI_SSID:-}" ]; then
+      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_SSID "$image_name" "$@"
+    elif [ -n "${PQC_WIFI_PSK:-}" ]; then
+      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_PSK "$image_name" "$@"
+    else
+      docker run --rm -v "$repo_root:/workspace" -w /workspace "$image_name" "$@"
+    fi
   fi
-}
+)
 
 if [ "$#" -eq 0 ]; then
   echo "Usage: scripts/dev.sh <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2

@@ -39,7 +39,7 @@ For local Wi-Fi credentials, copy the committed sample file once and edit the lo
 Copy-Item .env.sample .env
 ```
 
-Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. `scripts/dev.ps1` loads only those two values for the duration of each Docker invocation and removes them again afterwards; environment variables that already exist in the caller take precedence and are left unchanged. Secret values are never written into generated campaign YAML.
+Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. Both `scripts/dev.ps1` and `scripts/dev.sh` load only those two values for the duration of each Docker invocation; caller-supplied environment variables take precedence and are left unchanged. The wrapper-scoped values do not persist after the invocation, and secret values are never written into generated campaign YAML.
 
 All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
 
