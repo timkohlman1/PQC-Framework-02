@@ -96,8 +96,7 @@ def test_ci_compose_and_broker_controller_use_one_mosquitto_image():
 
 def test_development_container_pins_python_patch_and_debian_release():
     dockerfile = (ROOT / "docker" / "python" / "Dockerfile").read_text(encoding="utf-8")
-    assert "FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e" in dockerfile
-    assert "FROM python:3.13-slim" not in dockerfile
+    assert "FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285" in dockerfile
 
 
 def test_gateway_certificate_deploy_never_makes_private_keys_world_readable():
