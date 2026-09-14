@@ -32,6 +32,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Prepare CI environment file
+        run: cp .env.sample .env
+
       - name: Validate Linux development wrapper syntax
         run: sh -n scripts/dev.sh
 
@@ -86,6 +89,10 @@ jobs:
 
       - name: Run non-hardware integration tests
         run: ./scripts/dev.sh pytest tests/integration -m "integration and not docker_runtime" --pqc-require-local-build
+
+      - name: Remove CI environment file
+        if: always()
+        run: rm -f .env
 
   mqtt-broker-docker-runtime:
     name: MQTT broker Docker runtime
