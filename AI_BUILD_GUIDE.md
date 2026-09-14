@@ -97,6 +97,9 @@ $path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
 ```
 
 The POSIX wrapper is `./scripts/dev.sh` with corresponding subcommands.
+
+For PowerShell wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. `scripts/dev.ps1` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must remove any variables it loaded when the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
+
 Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `.\scripts\dev.ps1 python ...` unless both wrappers implement that subcommand.
 
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.

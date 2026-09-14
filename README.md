@@ -33,6 +33,14 @@ The default development path is Docker-hosted Linux execution through the projec
 .\scripts\dev.ps1 python-gateway scripts/experiment.py --help
 ```
 
+For local Wi-Fi credentials, copy the committed sample file once and edit the local copy:
+
+```powershell
+Copy-Item .env.sample .env
+```
+
+Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. `scripts/dev.ps1` loads only those two values for the duration of each Docker invocation and removes them again afterwards; environment variables that already exist in the caller take precedence and are left unchanged. Secret values are never written into generated campaign YAML.
+
 All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
 
 Resolve a campaign before using the experiment runner. Generated cases are the only operational experiment inputs:
@@ -161,7 +169,7 @@ Preview/materialise a campaign without hardware access:
 .\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange
 ```
 
-Generated cases are written below `.pqc-generated-state/campaigns/` and contain profile identities, non-secret resolved choices, content hashes, configuration identity, and firmware identity. Wi-Fi secret values are resolved only when a generated case is consumed for execution; set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in the local execution environment. They are not written into generated case YAML.
+Generated cases are written below `.pqc-generated-state/campaigns/` and contain profile identities, non-secret resolved choices, content hashes, configuration identity, and firmware identity. Wi-Fi secret values are resolved only when a generated case is consumed for execution. Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in the local execution environment or in the Git-ignored repository-root `.env` copied from `.env.sample`. They are not written into generated case YAML.
 
 Ready Metrics 2 defaults are owned by `configs/workloads/ready_metrics_2.yaml`: `payload_bytes=204800` and `chunk_bytes=400`. Campaigns may vary them using matrix keys `workload.transfer.payload_bytes` and `workload.transfer.chunk_bytes` without duplicating the workload profile.
 

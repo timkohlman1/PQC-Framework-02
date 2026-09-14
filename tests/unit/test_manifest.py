@@ -5,6 +5,7 @@ import json
 import struct
 from argparse import Namespace
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 
@@ -247,6 +248,41 @@ def test_next_run_id_uses_date_and_next_sequence(tmp_path):
     assert run_id == "2026-06-25_003_baseline_direct_uart"
 
 
+
+def test_next_run_id_uses_melbourne_calendar_date_across_utc_boundary(tmp_path):
+    manifest = load_manifest_module()
+    results_root = tmp_path / "results"
+    results_root.mkdir()
+
+    # 23:30 UTC on 13 September is already 09:30 AEST on 14 September.
+    run_id = manifest.next_run_id(
+        "ready_metrics_2",
+        results_root,
+        datetime(2026, 9, 13, 23, 30, tzinfo=timezone.utc),
+    )
+
+    assert run_id == "2026-09-14_001_ready_metrics_2"
+
+
+def test_manifest_timestamp_is_normalized_to_melbourne_time():
+    manifest = load_manifest_module()
+
+    formatted = manifest.format_manifest_timestamp(
+        datetime(2026, 9, 13, 23, 30, tzinfo=timezone.utc)
+    )
+
+    assert formatted == "2026-09-14T09:30:00+10:00"
+
+
+def test_manifest_timestamp_handles_melbourne_daylight_saving():
+    manifest = load_manifest_module()
+
+    formatted = manifest.format_manifest_timestamp(
+        datetime(2026, 12, 1, 0, 0, tzinfo=timezone.utc)
+    )
+
+    assert formatted == "2026-12-01T11:00:00+11:00"
+
 def test_build_manifest_contains_initial_fields():
     manifest = load_manifest_module()
     timestamp = datetime(2026, 6, 25, 10, 30, tzinfo=timezone.utc)
@@ -255,7 +291,7 @@ def test_build_manifest_contains_initial_fields():
 
     assert data == {
         "run_id": "2026-06-25_001_baseline_direct_uart",
-        "timestamp": "2026-06-25T10:30:00+00:00",
+        "timestamp": "2026-06-25T20:30:00+10:00",
         "experiment": "baseline_direct_uart",
         "board": "board_a",
         "gateway": "gateway",

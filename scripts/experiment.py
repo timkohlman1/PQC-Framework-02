@@ -424,7 +424,7 @@ def _parse_ready_metrics_2_subscriber_output(
         and all(_valid_timing_record(record) for record in phase_values)
     )
 
-    primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 22)]
+    primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 24)]
     primitive_valid = len(primitive_messages) == 6 and primitive_parts == [1, 2, 3, 4, 5, 6]
     if primitive_valid:
         for part, (first_index, last_index) in enumerate(primitive_ranges, start=1):

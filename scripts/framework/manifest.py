@@ -12,6 +12,7 @@ import re
 import statistics
 import struct
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ RUN_ID_PATTERN = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<sequence>\d{3})_(
 DEFAULT_RESULT_STATUS = "pending"
 DEFAULT_TRANSPORT_MODE = "direct_uart"
 DEFAULT_NETWORK_PROFILE = "none"
+PROJECT_TIMEZONE = ZoneInfo("Australia/Melbourne")
 
 
 SECURE_BOOT_BENCHMARK_SCHEMA_VERSION = 1
@@ -807,11 +809,20 @@ def apply_repeated_run_samples_to_benchmark_model(
 
 
 def _coerce_timestamp(timestamp: datetime | None) -> datetime:
-    """Return a timestamp, using local time when one is not supplied."""
+    """Return a project-local Australia/Melbourne timestamp.
+
+    Framework commands normally run inside a Docker container whose local
+    timezone may be UTC. Run IDs and manifest timestamps must nevertheless use
+    the experiment project's local AEST/AEDT calendar date consistently.
+    """
 
     if timestamp is None:
-        return datetime.now().astimezone()
-    return timestamp
+        return datetime.now(PROJECT_TIMEZONE)
+
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=PROJECT_TIMEZONE)
+
+    return timestamp.astimezone(PROJECT_TIMEZONE)
 
 
 def format_manifest_timestamp(timestamp: datetime | None = None) -> str:
