@@ -63,4 +63,4 @@ def test_default_paths_are_repository_config_and_root_secrets():
     args = module.build_parser().parse_args([])
     assert Path(args.config_dir) == REPO_ROOT / "configs" / "tls_auth"
     assert Path(args.output) == REPO_ROOT / "secrets" / "certificates"
-    assert module.DOCKER_IMAGE == "alpine:3.23"
+    assert module.DOCKER_IMAGE == "alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"

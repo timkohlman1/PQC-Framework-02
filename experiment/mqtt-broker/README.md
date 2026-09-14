@@ -290,7 +290,7 @@ Run the provisioner once after cloning, after deliberately changing a certificat
 
 ### Container-local TLS key staging
 
-The selected repository-root `secrets/certificates/<certificate-profile>/` directory is mounted read-only. On startup, each TLS broker copies `ca.crt`, `server.crt`, and `server.key` into `/tmp/mosquitto-certs`, assigns the broker runtime user, and applies mode `0640` to the private key. Mosquitto reads TLS material only from that container-local directory. This avoids host bind-mount permission differences on Windows and the gateway while preserving a read-only deployment source.
+The selected repository-root `secrets/certificates/<certificate-profile>/` directory is mounted read-only. Gateway deployment first normalises the staged certificate tree to owner-only directories (`0700`), private `*.key` files (`0600`), and public/non-key files (`0644`); it does not apply a recursive world-readable mode to private material. On startup, each TLS broker copies `ca.crt`, `server.crt`, and `server.key` into `/tmp/mosquitto-certs`, assigns the broker runtime user, and applies mode `0640` to the private key. Mosquitto reads TLS material only from that container-local directory. This avoids host bind-mount permission differences on Windows and the gateway while preserving a read-only deployment source.
 
 
 ### mTLS identity mapping
@@ -358,7 +358,7 @@ Mosquitto debug output records packet direction, client ID, topic, QoS, and pack
 
 ## TLS traffic decryption key log
 
-All broker profiles use the pinned `eclipse-mosquitto:2.1.2-alpine` image. The hybrid profiles select `SecP256r1MLKEM768` through the native OpenSSL 3.5 TLS group configuration; no external OQS provider is loaded. TLS broker processes start with Mosquitto's `--tls-keylog` option.
+All broker profiles use the immutable digest-qualified `eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797` image, and CI pulls that exact same image. Tag-only external Docker dependencies are rejected by the CI dependency-pin policy. Broker orchestration queries the gateway image with the `runtime-version` command and records the effective Mosquitto version alongside the configured image in experiment evidence. The hybrid profiles select `SecP256r1MLKEM768` through the native OpenSSL 3.5 TLS group configuration; no external OQS provider is loaded. TLS broker processes start with Mosquitto's `--tls-keylog` option.
 
 Recorded TLS firmware experiments retain `mqtt-broker-tls-keylog.log` in the same result directory as `gateway-network-capture.pcap`. The manifest records the key-log filename, byte count, SHA-256 digest, collection return code, and failure status. Plaintext experiments mark TLS key logging as not applicable.
 

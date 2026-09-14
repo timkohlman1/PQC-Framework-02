@@ -28,9 +28,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
+
+      - name: Enforce immutable dependency pins
+        run: python scripts/check_dependency_pins.py
 
       - name: Prepare CI environment file
         run: cp .env.sample .env
@@ -114,12 +117,15 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
 
+      - name: Enforce immutable dependency pins
+        run: python scripts/check_dependency_pins.py
+
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
 
@@ -135,7 +141,7 @@ jobs:
           openssl version
 
       - name: Pull MQTT broker runtime image
-        run: docker pull eclipse-mosquitto:2.0
+        run: docker pull eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797
 
       - name: Run MQTT broker Docker configuration/runtime tests
         run: |

@@ -18,7 +18,7 @@ def test_python_container_definition_supports_stm32_builds_and_runtime_gateway_a
     dockerfile = _read(DOCKERFILE)
     normalised = dockerfile.lower()
 
-    assert "FROM python:3.13-slim" in dockerfile
+    assert "FROM python:3.13.15-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e" in dockerfile
     assert "COPY requirements-dev.txt" in dockerfile
     assert '["python", "-m", "pytest", "tests/unit"]' in dockerfile
 

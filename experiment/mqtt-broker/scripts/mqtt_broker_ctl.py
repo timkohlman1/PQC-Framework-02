@@ -21,7 +21,7 @@ DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
 DEFAULT_SERVER_ALIAS = "pqc-gateway1"
 DEFAULT_CLIENT_NAME = "stm32-mqtt-client"
 DEFAULT_HEALTHCHECK_NAME = "pqc-mqtt-server-healthcheck"
-MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
+MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
 CLASSICAL_IMAGE = MOSQUITTO_IMAGE
 OQS_IMAGE = MOSQUITTO_IMAGE
 OQS_KEM_GROUP = "SecP256r1MLKEM768"
@@ -228,10 +228,19 @@ def deploy(args: argparse.Namespace) -> None:
     for source_path, remote_target_dir in directory_copies:
         run_command(["scp", "-r", str(source_path), f"{target}:{remote_target_dir}"], dry_run=args.dry_run)
 
-    permission_targets = [f"{remote_dir}/config"]
+    # Configuration is public deployment state, but staged certificate trees can
+    # contain private keys. Never apply a broad world-readable mode to them.
+    permission_commands = [
+        f"chmod -R a+rX {remote_shell_path(remote_dir + '/config')}"
+    ]
     if secrets_mqtt_dir.exists():
-        permission_targets.append(f"{remote_root}/secrets/certificates")
-    run_command(["ssh", target, "chmod -R a+rX " + " ".join(remote_shell_path(item) for item in permission_targets)], dry_run=args.dry_run)
+        certificate_root = remote_shell_path(f"{remote_root}/secrets/certificates")
+        permission_commands.extend([
+            f"find {certificate_root} -type d -exec chmod 0700 {{}} \\;",
+            f"find {certificate_root} -type f -name '*.key' -exec chmod 0600 {{}} \\;",
+            f"find {certificate_root} -type f ! -name '*.key' -exec chmod 0644 {{}} \\;",
+        ])
+    run_command(["ssh", target, " && ".join(permission_commands)], dry_run=args.dry_run)
 
 
 def remote_cleanup_command(remote_dir: str) -> str:
@@ -530,6 +539,17 @@ def validate_oqs_mtls_mqtt(args: argparse.Namespace) -> None:
     )
 
 
+
+def runtime_version(args: argparse.Namespace) -> None:
+    """Print the effective Mosquitto version from the configured runtime image on the gateway."""
+    host = load_host_config(repo_root() / args.gateway_config)
+    target = ssh_target(host)
+    command = (
+        f"docker run --rm --entrypoint mosquitto {shlex.quote(args.image)} -h 2>&1 "
+        "| sed -n '1p'"
+    )
+    run_command(["ssh", target, command], dry_run=args.dry_run)
+
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/certificates")
     parser.add_argument("--gateway-config", default=str(DEFAULT_GATEWAY_CONFIG), help="repository-relative canonical gateway config path")
@@ -566,6 +586,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_remote_options(status_parser)
     add_port_options(status_parser)
     status_parser.set_defaults(func=status)
+
+    version_parser = sub.add_parser("runtime-version", help="report the effective Mosquitto version from the gateway runtime image")
+    add_common_remote_options(version_parser)
+    version_parser.add_argument("--image", default=MOSQUITTO_IMAGE)
+    version_parser.set_defaults(func=runtime_version)
 
     logs_parser = sub.add_parser("logs", help="show gateway broker logs")
     add_common_remote_options(logs_parser)

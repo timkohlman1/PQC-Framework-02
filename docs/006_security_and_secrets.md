@@ -56,9 +56,15 @@ Representative capability-gated command:
 
 The command’s success proves only the evidence asserted by that test. Gateway SSH reachability is not board runtime, UART, broker, MQTT/TLS, timing, memory, benchmark, or end-to-end evidence.
 
+## Local secret references
+
+Source-controlled experiment, campaign, target, and profile YAML must contain only named secret references for local credentials. The maintained Wi-Fi references are `env:PQC_WIFI_SSID` and `env:PQC_WIFI_PSK`; their values come from the caller environment or ignored local `.env` state at execution preparation time. Resolved campaign cases retain profile identities, hashes, and the non-secret configuration identity only. Secret values are resolved only into the in-memory execution bundle and generated build inputs that require them; they must not be written to resolved case YAML, manifests, logs, provenance records, or other reproducibility evidence.
+
+The reference name is reproducibility evidence: it identifies which local input must be supplied without recording the credential value. Secret-bearing fields written through framework JSON provenance remain subject to redaction and result-material collection must continue to use explicit allow-listed files rather than broad directory sweeps.
+
 ## Broker TLS material
 
-The classical and experimental OQS broker profiles use generated development TLS material under ignored runtime directories. Gateway deployment may copy that material only to the intended temporary or configured remote broker directory.
+The classical and experimental OQS broker profiles use generated development TLS material under ignored runtime directories. Gateway deployment may copy that material only to the intended temporary or configured remote broker directory. Staged certificate directories remain owner-only (`0700`); private `*.key` files remain owner-readable/writable only (`0600`). Public certificates and other non-key profile files may be `0644`. Deployment must never apply recursive `a+rX` or another broad world-readable mode to a certificate tree containing private keys. Containers mount the gateway tree read-only and copy only required TLS files into container-local runtime state, where private-key permissions remain restrictive.
 
 Do not commit broker private keys, client private keys, CA private keys, password files, private certificates, real `.env` files, or production credentials. The OQS profile is protocol-evaluation infrastructure, not production TLS.
 

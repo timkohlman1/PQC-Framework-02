@@ -26,7 +26,7 @@ try:
 except ImportError as exc:  # pragma: no cover - host path normally uses Docker
     raise SystemExit("PyYAML is required; use the normal Docker-backed invocation") from exc
 
-DOCKER_IMAGE = "alpine:3.23"
+DOCKER_IMAGE = "alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
 DEFAULT_CONFIG_DIR = Path("configs/tls_auth")
 DEFAULT_OUTPUT_DIR = Path("secrets/certificates")
 

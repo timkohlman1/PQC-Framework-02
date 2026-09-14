@@ -32,7 +32,7 @@ from framework.provenance import (
     reserve_test_build_identity,
     write_json_atomic,
 )
-from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.source import GitCommandExecution, GitRunner, capture_reproducibility_provenance
 from framework.tls_algorithms import cmake_boolean, resolve_tls_algorithm_set
 
 ARTIFACT_MISSING_RETURN_CODE = 3
@@ -535,9 +535,9 @@ def execute_build(
     build_purpose = requested_build_purpose if runner is default_runner else "experiment"
     test_result_dir = current_test_result_dir()
     source = (
-        capture_git_provenance(repo_root_path)
+        capture_reproducibility_provenance(repo_root_path)
         if git_runner is None
-        else capture_git_provenance(repo_root_path, git_runner)
+        else capture_reproducibility_provenance(repo_root_path, git_runner=git_runner)
     )
     log_path = result_dir_path / "build.log"
     artifact_relative_path = Path(str(bundle["experiment"]["firmware"]["artifact"]))
