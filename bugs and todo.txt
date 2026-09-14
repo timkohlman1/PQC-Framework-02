@@ -1,6 +1,6 @@
 
-$env:PQC_WIFI_SSID = "pqc"
-$env:PQC_WIFI_PSK  = "lukeisadog"
+$env:PQC_WIFI_SSID = "<set locally; do not commit>"
+$env:PQC_WIFI_PSK  = "<set locally; do not commit>"
 
 
 
@@ -47,7 +47,7 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 | -----: | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 |  **1** | **10 — Configuration profiles and versioned resolver**       | This establishes the final configuration model: targets, workloads, TLS KEX/auth, secure boot, instruments, services and campaigns. Almost everything else should target this model rather than the old YAML structure.                                  |
 |  **2** | **9 — Reproducibility, provenance and credential hardening** | Once configuration is rationalised, lock down source/submodule/tool identities, secrets and dependency provenance. This supplies information needed by the final evidence model.                                                                         |
-|  **3** | **16 — Run-evidence manifest and artefact lineage**          | Establish the final evidence contract early. New features can then emit evidence into the final schema instead of being retrofitted later.                                                                                                               |
+|  **3** | **16 — Run-capture manifest and artefact provenance**          | Establish the final capture/provenance contract early. New features can then retain raw evidence through the stable artefact envelope while ingestion/analysis evolves independently.                                                                                                               |
 |  **4** | **15 — Reporting broker and buffered result publication**    | This creates the common STM32/ESP32 result transport and separates reporting from the measured/impairment path. TLS instrumentation, repeated handshakes and energy should all use this rather than inventing their own reporting mechanisms.            |
 |  **5** | **11 — General campaign executor**                           | At this point configuration, evidence and result transport are stable enough for the campaign layer. Getting this in early also makes subsequent hardware validation much easier because repetitions/build reuse/condition retention become first-class. |
 |  **6** | **5 — Dual-bank wolfBoot / OTA architecture**                | Establish the final Flash and boot architecture before adding more wolfBoot timing/memory instrumentation. Otherwise you risk instrumenting the old primary/update/swap design and then changing it again.                                               |
@@ -62,7 +62,12 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 | **15** | **8 — Live gateway/network-degradation validation**          | Now validate the complete final topology: experiment broker impaired, reporting broker exempt, campaign conditions retained, STM32 results working and ESP32 energy results still working under impairment.                                              |
 | **16** | **7 — Automated PCAP analysis and correlation**              | Do this last because it is an analysis consumer of the evidence produced by the completed framework. At this point PCAP ownership, timing terminology, TLS key logs, impairment semantics and artefact hashes are all stable.                            |
 
-
+Architecture rule for Requests 15 onward:
+- experiment execution is responsible for orchestration, completion/end-point detection, raw evidence capture and provenance only;
+- `manifest.json` is the immutable run-capture/provenance index and must not become a scientific metric database;
+- timing, memory, TLS, energy, packet and benchmark values stay in raw structured records/logs until an offline ingestion layer parses them;
+- ingestion/analysis outputs live separately (for example under `analysis/`) and carry parser/tool version, direct input hashes, parameters and output hashes without mutating the finalized run manifest; and
+- new producers should extend the common artefact envelope/semantic-role vocabulary rather than add metric-specific top-level manifest fields.
 
 
 -----------
@@ -234,7 +239,7 @@ The analyser should operate on the retained PCAP and, where available, the broke
 
 Correlate packet-derived observations with the existing UART, broker/subscriber, manifest, and firmware timing evidence where a defensible mapping exists. Do not invent clock alignment or infer firmware-internal state from network traffic alone. Where precise cross-clock correlation is not possible, preserve the independent time domains and state that limitation explicitly.
 
-Store the derived analysis as a result-local artefact with clear source references to the PCAP/key-log hashes. Preserve the original PCAP as authoritative raw evidence. Add tests using deterministic captures/fixtures for retransmission, fragmentation/MTU, TLS/MQTT traffic, and failure cases.
+Store derived analysis under the result-local analysis namespace with a separate lineage record containing analyser/version identity, direct PCAP/key-log hashes, analysis parameters and output hash. Do not reopen or mutate the finalized run-capture manifest to insert parsed packet metrics. Preserve the original PCAP/key log as authoritative raw evidence. Add tests using deterministic captures/fixtures for retransmission, fragmentation/MTU, TLS/MQTT traffic, and failure cases.
 
 ------
 
@@ -633,7 +638,7 @@ Implement the STM32 application result path as deferred buffered publication:
 
 Do not use UART as the normal structured-result transport. Retain UART for early boot, fault, recovery and network-reporting failure diagnostics so evidence is still available when the MQTT reporting path cannot be established.
 
-Implement a gateway result collector that subscribes before target execution, associates every record with the expected run ID, stores the raw device result stream in the run directory, validates sequence/count/hash/completion state, and exposes parsed result records to the normal manifest/evidence-validation path. The collector must support both STM32 result topics and measurement-instrument result topics using the same collection mechanism.
+Implement a gateway result collector that subscribes before target execution, associates every record with the expected run ID, stores the raw device result stream in the run directory, and validates sequence/count/hash/completion state. The run manifest must register the raw stream plus collector/completion integrity only; it must not mirror timing, memory, TLS or energy values into metric-specific manifest fields. Scientific parsing and normalisation belong to the later ingestion/analysis layer. The collector must support both STM32 result topics and measurement-instrument result topics using the same collection mechanism.
 
 Use a stable reporting topic namespace, for example:
 - pqc/result/stm32/<run-id>/...
@@ -663,65 +668,49 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 
 -----------
 
-IMPLEMENTATION REQUEST 16 — Versioned run-evidence manifest, artefact integrity, and derived-output lineage
+IMPLEMENTATION REQUEST 16 — Versioned run-capture manifest and artefact provenance
 
-Implement the final-state run evidence model specified by Chapter 4 so every accepted result can be traced from resolved configuration through build/deployment to raw observations and derived analysis.
+Implement the final run-capture/provenance baseline so every retained experiment can be traced from resolved configuration through build/deployment to the exact raw artefacts captured during execution.
 
-Introduce a versioned run-evidence manifest schema. Create the run record before execution and incrementally record stage status, while retaining a final immutable index of the evidence required by the resolved experiment class.
+The execution framework must capture and preserve evidence; it must not be responsible for scientific interpretation. Timing, memory, TLS-instrumentation, energy, packet and benchmark values remain in raw structured records/logs for a later ingestion/analysis layer. Do not mirror those metrics into metric-specific top-level manifest fields merely because a runtime parser can currently extract them.
 
-For every retained artefact, record at minimum:
-- evidence/source class and semantic role;
+Introduce/maintain a versioned `pqc-run-evidence` schema. Create the run record before side effects, record compact lifecycle/completion state during execution, and finalise an immutable run-capture index. Schema-v1 evidence manifests may remain readable for history, but must not be silently upgraded or accepted as schema-v2 capture records.
+
+Persist `resolved-case.json` as an immutable non-secret snapshot containing selected profile identities, profile-content hashes, resolver/schema version, configuration identity, firmware identity and all effective non-secret experiment parameters. Secret values remain excluded; retain only named secret references and permitted public identities.
+
+For every retained raw artefact, record at minimum:
+- stable artefact identity plus extensible semantic role/source class;
 - result-relative path;
-- producing stage/tool identity;
+- producing/collecting stage and tool identity;
 - size and SHA-256;
-- required/optional/not-applicable status;
+- required/optional/not-applicable capture requirement;
 - acquisition/production result; and
-- an explicit reason when required evidence is unavailable or invalid.
+- an explicit reason when required capture is unavailable or invalid.
 
-Do not represent unavailable metrics as numeric zero.
+Finalisation should inventory retained result files that producers did not explicitly register, without parsing their scientific contents. Exclude the manifest itself, mutable manual notes and the later `analysis/` namespace from the self-inventory. New feature requests should normally add raw artefacts/roles, not new metric-specific manifest schema branches.
 
-Persist an immutable resolved-case snapshot containing selected profile identities, profile-content hashes, resolver/schema version and all effective non-secret experiment parameters. Secret values must remain excluded; retain only named secret references and permitted public identities.
-
-Extend build/dependency linkage so a run can resolve:
-- parent repository commit and dirty state;
+Retain build/dependency/deployment provenance sufficient to resolve:
+- parent repository commit, branch where available, dirty state and content fingerprint;
 - recursive submodule revisions/dirty state;
 - relevant compiler/CMake/Ninja/Python/OpenSSL versions;
-- container/runtime image identities and immutable digests where available;
-- final application ELF/binary/signed-image SHA-256;
+- container/runtime image identities/digests where available;
+- final ELF/binary/signed-image SHA-256 identities;
 - wolfBoot image/configuration identity;
-- cryptographic material inventory; and
-- referenced preparation/build identity when firmware is reused.
+- cryptographic material inventory;
+- referenced preparation/build identity for reused firmware; and
+- the exact artefact re-hashed and selected for gateway programming before target access.
 
-Integrate flash provenance so the artefact selected for gateway programming is re-hashed and matched to the preparation/build record before target access. Runtime-only/repeated cases must reference the exact successful preparation manifest and firmware identities they reuse.
+Raw capture is immutable after collection. Re-hash retained raw files at finalisation and reject/hash-mark changed or missing files. Keep STM32 reporting records, diagnostic UART, broker/observer logs, PCAP/key logs, secure-boot/OTA records, ESP32 traces and future benchmark records distinct as raw sources.
 
-Make raw evidence immutable after collection. Keep raw STM32 MQTT result records, diagnostic UART, experiment-broker/observer logs, PCAP/key logs, secure-boot/OTA records and ESP32 energy traces distinct from parsed or aggregated outputs.
+Separate `execution_outcome` from `capture_acceptance`. `execution_outcome` records orchestration/SUT completion facts only (for example completed, failed, not executed or not applicable, plus the failure stage/end-point basis). `capture_acceptance` means only that all raw artefacts required by the resolved capture contract were retained and pass integrity checks. It must not claim that every scientific metric is parseable or valid.
 
-Every derived output must record:
-- parser/analyser/tool version;
-- direct input artefact SHA-256 identities;
-- relevant analysis parameters; and
-- output SHA-256.
+Generate minimum raw-capture contracts for build-only, MQTT plaintext/runtime, TLS runtime, network degradation, secure boot, OTA and energy-enabled cases. Later Request-15/Request-6 collectors should satisfy structured-result roles by retaining raw streams and validating run/source identity, sequence/chunk counts, completion and logical-content hashes. They must not parse scientific values into the authoritative run manifest.
 
-Re-running analysis must create/update a derived record without modifying the raw source artefacts.
+Define the offline ingestion/analysis boundary now. Derived outputs must not mutate/reseal the finalized run manifest. Store them separately (for example `analysis/<role>...`) with lineage containing parser/analyser/tool version, direct input SHA-256 identities, relevant parameters, output size and output SHA-256. Reanalysis may create/update derived outputs while original raw capture and the finalized run manifest remain unchanged.
 
-Generate the required-evidence contract from the resolved experiment class. Distinguish system-under-test completion from evidence-complete acceptance. The final run state may be accepted for analysis only when all required evidence items pass their class-specific validation; otherwise preserve the SUT outcome but mark the run rejected/incomplete with a reason.
+Keep tests behavioural and stable. Cover schema compatibility, path normalisation, automatic retained-file inventory, required/optional/not-applicable capture states, missing/hash-changed raw files, preparation reuse, dirty/submodule provenance, raw immutability, separate derived-lineage files and execution-success/capture-failure separation. Avoid whole-manifest equality and metric-field assertions that will regress whenever later instrumentation evolves.
 
-Integrate the STM32/ESP32 reporting-broker collectors with this manifest model, including run ID, source identity, sequence/chunk count, completion record and logical-content hash validation.
-
-Define minimum evidence contracts for at least:
-- build-only;
-- MQTT plaintext/runtime;
-- TLS runtime;
-- network-degradation;
-- secure-boot;
-- OTA; and
-- energy-enabled runs.
-
-Add migration/compatibility handling for older manifest versions where practical, but never silently reinterpret an older incomplete evidence record as satisfying a newer contract.
-
-Add unit/integration tests covering schema validation, required/optional/not-applicable states, missing evidence, hash mismatch, reused preparation linkage, dirty/submodule provenance, raw-versus-derived immutability, derived-input lineage and SUT-success/evidence-failure separation.
-
-The implementation is complete when an accepted experiment result can be mechanically traced from its resolved case to the exact built/flashed artefacts, raw observations and any reported derived metrics without relying on undocumented directory conventions or manual inference.
+The implementation is complete when a run can be mechanically traced from the resolved case to exact source/build/flashed identities and immutable raw artefacts, while scientific interpretation can be rerun independently from those raw inputs without modifying the capture record.
 
 
 -----------

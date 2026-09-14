@@ -101,12 +101,12 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert manifest["build"]["build_preset"] == "Release"
     assert manifest["build"]["return_code"] == 0
     assert manifest["build"]["log"] == "build.log"
-    assert manifest["evidence_acceptance"]["accepted"] is True
+    assert manifest["capture_acceptance"]["accepted"] is True
     assert manifest["final_index"]["status"] == "finalized"
-    evidence_by_role = {item["role"]: item for item in manifest["evidence"]}
-    assert evidence_by_role["resolved_case_snapshot"]["acquisition"]["status"] == "available"
-    assert evidence_by_role["build_log"]["acquisition"]["status"] == "available"
-    assert evidence_by_role["application_elf"]["sha256"] == manifest["firmware"]["sha256"]
+    artifacts_by_role = {item["role"]: item for item in manifest["artifacts"] if item.get("artifact_id") == item.get("role")}
+    assert artifacts_by_role["resolved_case_snapshot"]["acquisition"]["status"] == "available"
+    assert artifacts_by_role["build_log"]["acquisition"]["status"] == "available"
+    assert artifacts_by_role["application_elf"]["sha256"] == manifest["firmware"]["sha256"]
 
     build_record_dir = Path(manifest["build"]["record_path"])
     build_record_manifest_path = Path(manifest["build"]["record_manifest"])

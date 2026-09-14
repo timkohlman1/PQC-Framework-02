@@ -299,8 +299,8 @@ def test_build_manifest_contains_initial_fields():
     assert data["network_profile"] == "none"
     assert data["result"] == "pending"
     assert data["schema"]["name"] == "pqc-run-evidence"
-    assert data["schema"]["version"] == 1
-    assert data["evidence_contract"]["version"] == 1
+    assert data["schema"]["version"] == 2
+    assert data["capture_contract"]["version"] == 1
 
 
 def test_create_result_folder_writes_manifest_and_notes(tmp_path):
@@ -721,73 +721,24 @@ def test_build_mqtt_tls_result_model_records_unavailable_metrics_and_evidence_bo
     assert result["evidence_boundaries"]["claims_mqtt_success"] is False
 
 
-def test_build_manifest_embeds_mqtt_tls_schema_when_experiment_configures_mqtt():
+def test_build_manifest_does_not_embed_interpreted_mqtt_metrics():
     manifest = load_manifest_module()
     bundle = sample_bundle()
     bundle["experiment"]["id"] = "mqtt_tls_schema_build_only"
     bundle["experiment"]["mqtt"] = {
-        "schema_version": 1,
         "evidence_class": "stm32_build_only",
         "transport_backend": "stm32_build_only",
-        "tls": {
-            "mode": "unavailable",
-        },
-        "result_schema": {
-            "unavailable_metrics": {
-                "wifi_association": "STM32 build-only evidence does not include Wi-Fi hardware.",
-                "ip_address": "STM32 build-only evidence does not include IP assignment.",
-                "tcp_connect": "STM32 build-only evidence does not include TCP connection evidence.",
-                "tls_handshake": "STM32 build-only evidence does not include TLS runtime evidence.",
-                "mqtt_connect": "STM32 build-only evidence does not include MQTT connection evidence.",
-                "mqtt_publish": "STM32 build-only evidence does not include MQTT publish evidence.",
-                "mqtt_reconnect": "STM32 build-only evidence does not include reconnect evidence.",
-                "latency_ms": "STM32 build-only evidence does not include latency evidence.",
-                "throughput_bytes_per_second": "STM32 build-only evidence does not include throughput evidence.",
-            }
-        },
+        "tls": {"mode": "classical_tls_server_auth"},
+        "broker": {"host": "example"},
+        "result_schema": {"unavailable_metrics": {"tls_handshake": "build only"}},
     }
-
     data = manifest.build_manifest(
         bundle,
         "2026-07-08_001_mqtt_tls_schema_build_only",
-        datetime(2026, 7, 8, 10, 30, tzinfo=timezone.utc),
     )
-
-    assert data["mqtt_tls"]["model_phase"] == "phase_m2_mqtt_tls_config_result_schema"
-    assert data["mqtt_tls"]["evidence_class"] == "stm32_build_only"
-    assert data["mqtt_tls"]["metrics"]["tls_handshake"]["status"] == "unavailable"
-    assert data["mqtt_tls"]["evidence_boundaries"]["claims_mqtt_success"] is False
-
-
-def test_build_mqtt_fake_transport_manifest_evidence_labels_simulated_evidence():
-    manifest = load_manifest_module()
-
-    fake_result = {
-        "scenario_id": "publish_timeout",
-        "events": [
-            {
-                "index": 1,
-                "operation": "publish",
-                "outcome": "timeout",
-                "simulated": True,
-            }
-        ],
-        "summary": {
-            "timeout_operations": ["publish"],
-        },
-    }
-
-    evidence = manifest.build_mqtt_fake_transport_manifest_evidence(fake_result)
-
-    assert evidence["model_phase"] == "phase_m3_fake_no_network_transport_harness"
-    assert evidence["evidence_class"] == "fake_no_network"
-    assert evidence["evidence_label"] == "fake/no-network transport evidence"
-    assert evidence["transport_backend"] == "fake_no_network"
-    assert evidence["simulated"] is True
-    assert evidence["evidence_boundaries"]["claims_network_success"] is False
-    assert evidence["evidence_boundaries"]["claims_tls_success"] is False
-    assert evidence["evidence_boundaries"]["claims_mqtt_runtime_success"] is False
-
+    assert "mqtt_tls" not in data
+    assert data["capture_contract"]["scope"] == "capture_integrity_only"
+    assert "artifacts" in data
 
 def test_build_mqtt_tls_result_model_can_embed_fake_transport_without_runtime_claims():
     manifest = load_manifest_module()

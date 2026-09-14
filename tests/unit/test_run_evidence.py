@@ -49,8 +49,8 @@ def test_versioned_manifest_and_contract_use_requirement_states():
     manifest, _ = _modules()
     data = manifest.build_manifest(_bundle(), "2026-09-14_001_case")
     assert data["schema"]["name"] == "pqc-run-evidence"
-    assert data["schema"]["version"] == 1
-    requirements = {item["role"]: item["requirement"] for item in data["evidence"]}
+    assert data["schema"]["version"] == 2
+    requirements = {item["role"]: item["requirement"] for item in data["artifacts"]}
     assert requirements["resolved_case_snapshot"] == "required"
     assert requirements["network_condition_record"] == "not_applicable"
     assert requirements["energy_result_stream"] == "not_applicable"
@@ -65,9 +65,9 @@ def test_required_missing_evidence_rejects_without_changing_sut_outcome(tmp_path
         {"result": "baseline_run_passed", "run": {"failure_stage": "none"}},
     )
     final = manifest.finalize_run_evidence(result_dir / "manifest.json")
-    assert final["sut_outcome"]["status"] == "succeeded"
-    assert final["evidence_acceptance"]["accepted"] is False
-    assert any("experiment_broker_log" in reason for reason in final["evidence_acceptance"]["reasons"])
+    assert final["execution_outcome"]["status"] == "completed"
+    assert final["capture_acceptance"]["accepted"] is False
+    assert any("experiment_broker_log" in reason for reason in final["capture_acceptance"]["reasons"])
 
 
 def test_hash_mismatch_cannot_replace_collected_raw_evidence(tmp_path):
@@ -76,7 +76,7 @@ def test_hash_mismatch_cannot_replace_collected_raw_evidence(tmp_path):
     result_dir.mkdir()
     artifact = result_dir / "uart.log"
     artifact.write_text("first", encoding="utf-8")
-    manifest = {"evidence": evidence.initial_evidence_index({"items": [{"role": "diagnostic_uart", "requirement": "required", "source_class": "stm32_runtime", "reason": None}]})}
+    manifest = {"artifacts": evidence.initial_capture_index({"items": [{"role": "diagnostic_uart", "requirement": "required", "source_class": "stm32_runtime", "reason": None}]})}
     evidence.register_artifact(manifest, result_dir=result_dir, role="diagnostic_uart", path=artifact, stage="uart", tool="collector")
     artifact.write_text("second", encoding="utf-8")
     with pytest.raises(ValueError, match="immutable"):
@@ -91,9 +91,7 @@ def test_derived_output_records_direct_inputs_parameters_and_output_hash(tmp_pat
     raw.write_bytes(b"raw")
     derived = result_dir / "packet-analysis.json"
     derived.write_text('{"packets": 1}\n', encoding="utf-8")
-    manifest = {"derived": []}
-    evidence.register_derived(
-        manifest,
+    record = evidence.build_derived_record(
         result_dir=result_dir,
         role="packet_analysis",
         path=derived,
@@ -102,7 +100,6 @@ def test_derived_output_records_direct_inputs_parameters_and_output_hash(tmp_pat
         input_sha256=[evidence.sha256_file(raw)],
         parameters={"window": "handshake"},
     )
-    record = manifest["derived"][0]
     assert record["producer"] == {"tool": "packet-analyser", "version": "1.2.3"}
     assert record["inputs"][0]["sha256"] == evidence.sha256_file(raw)
     assert record["parameters"] == {"window": "handshake"}
@@ -157,7 +154,7 @@ def test_reused_preparation_linkage_keeps_exact_manifest_and_firmware_identity(t
         (lambda b: b.update({"experiment": {**b["experiment"], "mqtt": {"evidence_class": "stm32_st67_plaintext_e2e", "transport_backend": "st67w61m1_lwip_wolfssl", "tls": {"mode": "not_applicable"}}}}), "experiment_broker_log"),
         (lambda b: b.update({"experiment": {**b["experiment"], "mqtt": {"evidence_class": "stm32_st67_classical_tls_e2e", "transport_backend": "st67w61m1_lwip_wolfssl", "tls": {"mode": "classical_tls_server_auth"}}}}), "tls_key_log"),
         (lambda b: b["experiment"].update({"network": {"degradation": {"rtt_ms": 40}}}), "network_condition_record"),
-        (lambda b: (b.update({"boot": {"mode": "wolfboot"}}), b["experiment"].update({"mqtt": {"evidence_class": "secure_boot", "transport_backend": "not_applicable", "tls": {"mode": "not_applicable"}}})), "secure_boot_record"),
+        (lambda b: (b.update({"boot": {"mode": "wolfboot"}}), b["experiment"].update({"mqtt": {"evidence_class": "secure_boot", "transport_backend": "not_applicable", "tls": {"mode": "not_applicable"}}})), "wolfboot_image"),
         (lambda b: b["experiment"]["firmware"].update({"application": "ota_update"}), "ota_record"),
         (lambda b: b["experiment"].update({"instruments": {"energy": {"profile": "esp32_ina228"}}}), "energy_result_stream"),
     ],
@@ -166,11 +163,12 @@ def test_minimum_contracts_expand_by_resolved_experiment_features(bundle_mutator
     _, evidence = _modules()
     bundle = _bundle()
     bundle_mutator(bundle)
-    contract = evidence.build_evidence_contract(bundle)
+    contract = evidence.build_capture_contract(bundle)
     requirements = {item["role"]: item["requirement"] for item in contract["items"]}
     assert requirements[required_role] == "required"
-    if required_role == "secure_boot_record":
+    if required_role == "wolfboot_image":
         assert requirements["diagnostic_uart"] == "required"
+        assert requirements["secure_boot_record"] == "optional"
 
 
 def test_dirty_and_recursive_submodule_provenance_are_recorded_without_rejection(tmp_path):
@@ -208,7 +206,7 @@ def test_dirty_and_recursive_submodule_provenance_are_recorded_without_rejection
     assert entry["checkout_state"] == "different_from_recorded"
     assert entry["dirty"] is True
 
-def test_derived_rerun_reseals_index_without_changing_raw_evidence(tmp_path):
+def test_derived_lineage_sidecar_does_not_mutate_finalized_run_manifest(tmp_path):
     manifest_module, evidence = _modules()
     result_dir, _ = manifest_module.create_result_folder(_bundle(), tmp_path / "results", operation="build_only")
     build_log = result_dir / "build.log"
@@ -221,10 +219,10 @@ def test_derived_rerun_reseals_index_without_changing_raw_evidence(tmp_path):
         "firmware": {"result_artifacts": {"elf": {"copied": True, "path": "firmware.elf"}}},
     })
     final = manifest_module.finalize_run_evidence(result_dir / "manifest.json")
-    raw_before = [(item["role"], item.get("sha256")) for item in final["evidence"]]
+    manifest_before = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     derived = result_dir / "summary.json"
     derived.write_text('{"value": 1}\n', encoding="utf-8")
-    updated = manifest_module.register_derived_output(
+    lineage = manifest_module.register_derived_output(
         result_dir / "manifest.json",
         role="summary",
         path=derived,
@@ -233,11 +231,47 @@ def test_derived_rerun_reseals_index_without_changing_raw_evidence(tmp_path):
         input_sha256=[evidence.sha256_file(elf)],
         parameters={"mode": "test"},
     )
-    raw_after = [(item["role"], item.get("sha256")) for item in updated["evidence"]]
-    assert raw_after == raw_before
-    assert updated["final_index"]["status"] == "finalized"
-    assert updated["derived"][0]["sha256"] == evidence.sha256_file(derived)
+    manifest_after = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_after == manifest_before
+    assert final["final_index"]["status"] == "finalized"
+    assert lineage["sha256"] == evidence.sha256_file(derived)
+    assert (result_dir / lineage["lineage_path"]).is_file()
 
+
+def test_finalization_discovers_unregistered_retained_files_without_parsing_them(tmp_path):
+    manifest_module, evidence = _modules()
+    result_dir, _ = manifest_module.create_result_folder(_bundle(), tmp_path / "results", operation="build_only")
+    (result_dir / "build.log").write_text("build\n", encoding="utf-8")
+    (result_dir / "firmware.elf").write_bytes(b"elf")
+    extra = result_dir / "custom-device-records.jsonl"
+    extra.write_text('{"raw": true}\n', encoding="utf-8")
+    manifest_module.update_manifest(result_dir / "manifest.json", {
+        "result": "build_passed",
+        "build": {"log": "build.log"},
+        "firmware": {"result_artifacts": {"elf": {"copied": True, "path": "firmware.elf"}}},
+    })
+    final = manifest_module.finalize_run_evidence(result_dir / "manifest.json")
+    item = next(item for item in final["artifacts"] if item.get("path") == "custom-device-records.jsonl")
+    assert item["role"] == "structured_record"
+    assert item["sha256"] == evidence.sha256_file(extra)
+    assert final["capture_acceptance"]["accepted"] is True
+
+
+def test_result_relative_path_already_prefixed_with_results_is_not_doubled(tmp_path, monkeypatch):
+    _, evidence = _modules()
+    monkeypatch.chdir(tmp_path)
+    result_dir = Path("results/run")
+    result_dir.mkdir(parents=True)
+    artifact = result_dir / "resolved-case.json"
+    artifact.write_text("{}\n", encoding="utf-8")
+    manifest = {"artifacts": evidence.initial_capture_index({"items": [{"role": "resolved_case_snapshot", "requirement": "required", "source_class": "configuration", "reason": None}]})}
+    evidence.register_artifact(
+        manifest, result_dir=result_dir, role="resolved_case_snapshot", path=artifact,
+        stage="configuration_resolution", tool="resolver",
+    )
+    item = manifest["artifacts"][0]
+    assert item["path"] == "resolved-case.json"
+    assert item["acquisition"]["status"] == "available"
 
 def test_finalization_rehashes_raw_files_and_rejects_post_collection_mutation(tmp_path):
     manifest_module, _ = _modules()
@@ -262,10 +296,10 @@ def test_finalization_rehashes_raw_files_and_rejects_post_collection_mutation(tm
     )
     elf.write_bytes(b"elf-v2")
     final = manifest_module.finalize_run_evidence(result_dir / "manifest.json")
-    elf_evidence = next(item for item in final["evidence"] if item["role"] == "application_elf")
+    elf_evidence = next(item for item in final["artifacts"] if item["role"] == "application_elf")
     assert elf_evidence["acquisition"]["status"] == "invalid"
-    assert final["sut_outcome"]["status"] == "not_applicable"
-    assert final["evidence_acceptance"]["accepted"] is False
+    assert final["execution_outcome"]["status"] == "not_applicable"
+    assert final["capture_acceptance"]["accepted"] is False
 
 
 def test_container_runtime_identity_retains_immutable_digest_when_available():
@@ -302,4 +336,4 @@ def test_stage_run_updates_preserve_run_identity_metadata(tmp_path):
     assert updated["run"]["created_at"]
     assert updated["run"]["return_code"] == 9
     assert updated["run"]["state"] == "running"
-    assert updated["sut_outcome"]["status"] == "failed"
+    assert updated["execution_outcome"]["status"] == "failed"

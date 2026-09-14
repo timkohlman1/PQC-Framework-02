@@ -18,10 +18,11 @@ from typing import Any
 
 from framework.run_evidence import (
     build_resolved_case_snapshot,
+    build_derived_record,
+    discover_retained_artifacts,
     finalize_manifest as finalize_evidence_manifest,
     initialize_manifest_evidence,
     register_artifact as register_evidence_artifact_in_manifest,
-    register_derived as register_derived_in_manifest,
     register_identity as register_evidence_identity_in_manifest,
     update_sut_outcome,
     validate_manifest_schema,
@@ -947,32 +948,9 @@ def build_manifest(
     if isinstance(services, dict):
         manifest["runtime_services"] = services
 
-    mqtt_config = experiment.get("mqtt")
-    if isinstance(mqtt_config, dict):
-        tls_config = mqtt_config.get("tls", {})
-        result_schema = mqtt_config.get("result_schema", {})
-        transfer_config = mqtt_config.get("transfer")
-        if isinstance(transfer_config, dict):
-            manifest["workload_transfer"] = {
-                "payload_bytes": transfer_config.get("payload_bytes"),
-                "chunk_bytes": transfer_config.get("chunk_bytes"),
-            }
-        manifest["mqtt_tls"] = build_mqtt_tls_result_model(
-            experiment_id=experiment["id"],
-            evidence_class=mqtt_config.get("evidence_class", "unknown"),
-            transport_backend=mqtt_config.get("transport_backend", "unknown"),
-            tls_mode=tls_config.get("mode", "unavailable") if isinstance(tls_config, dict) else "unavailable",
-            broker=mqtt_config.get("broker", {}) if isinstance(mqtt_config.get("broker", {}), dict) else {},
-            certificate_refs=tls_config.get("certificate_refs", {}) if isinstance(tls_config, dict) else {},
-            unavailable_metrics=(
-                result_schema.get("unavailable_metrics", {})
-                if isinstance(result_schema, dict) and isinstance(result_schema.get("unavailable_metrics", {}), dict)
-                else {}
-            ),
-            limitations=[
-                "Phase M2 records MQTT/TLS schema support only; no STM32 networking, broker deployment, UART capture, or hardware validation was performed by create-run/status schema handling."
-            ],
-        )
+    # Scientific/result interpretation is intentionally excluded from the run
+    # manifest. MQTT/TLS timing, memory and other measurement values remain in
+    # raw UART/MQTT/broker artefacts for later ingestion and analysis.
 
     return manifest
 
@@ -994,7 +972,7 @@ def read_manifest(path: Path | str) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if isinstance(manifest, dict):
         compatible, reason = validate_manifest_schema(manifest)
-        if not compatible and "evidence_acceptance" not in manifest:
+        if not compatible and "capture_acceptance" not in manifest:
             manifest["compatibility"] = {
                 "legacy_manifest": True,
                 "accepted_under_current_contract": False,
@@ -1149,21 +1127,31 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
     if isinstance(secure, dict):
         build_evidence = secure.get("build_evidence") if isinstance(secure.get("build_evidence"), dict) else {}
         signing_evidence = secure.get("signing_evidence") if isinstance(secure.get("signing_evidence"), dict) else {}
+        flash_evidence = secure.get("flash_evidence") if isinstance(secure.get("flash_evidence"), dict) else {}
+        if isinstance(flash_evidence.get("log"), str):
+            artifact("flash_log", flash_evidence.get("log"), "secure_boot_flash", "STM32CubeProgrammer")
+        register_evidence_identity_in_manifest(
+            manifest, role="deployment_provenance", sha256=signing_evidence.get("signed_application_sha256"),
+            stage="secure_boot_flash", tool="framework.secure_boot_flash", acquisition_result="recorded",
+            path=flash_evidence.get("log"), source_class="deployment",
+        )
 
         def secure_artifact_or_identity(role: str, raw_path: Any, recorded_sha256: Any, stage: str, tool: str) -> None:
             if isinstance(raw_path, str):
                 candidate = Path(raw_path)
-                try:
-                    resolved = candidate.resolve() if candidate.is_absolute() else (result_dir / candidate).resolve()
-                    relative = resolved.relative_to(result_dir.resolve())
-                    if resolved.is_file():
-                        register_evidence_artifact_in_manifest(
-                            manifest, result_dir=result_dir, role=role, path=relative,
-                            stage=stage, tool=tool, acquisition_result="produced",
-                        )
-                        return
-                except (OSError, ValueError):
-                    pass
+                candidates = [candidate] if candidate.is_absolute() else [candidate, result_dir / candidate]
+                for possible in candidates:
+                    try:
+                        resolved = possible.resolve()
+                        relative = resolved.relative_to(result_dir.resolve())
+                        if resolved.is_file():
+                            register_evidence_artifact_in_manifest(
+                                manifest, result_dir=result_dir, role=role, path=relative,
+                                stage=stage, tool=tool, acquisition_result="produced",
+                            )
+                            return
+                    except (OSError, ValueError):
+                        continue
             register_evidence_identity_in_manifest(
                 manifest, role=role, sha256=recorded_sha256,
                 stage=stage, tool=tool, acquisition_result="produced",
@@ -1192,23 +1180,33 @@ def register_derived_output(
     manifest_path: Path | str, *, role: str, path: Path | str, tool: str, version: str,
     input_sha256: list[str], parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create/update one derived lineage record without modifying raw evidence."""
+    """Write offline-analysis lineage without mutating the finalized run manifest.
 
-    path_obj = Path(manifest_path)
-    manifest = read_manifest(path_obj)
-    if (manifest.get("final_index") or {}).get("status") == "finalized":
-        # Derived analysis is intentionally re-runnable after raw collection. Reopen only
-        # the derived/final-index portion; raw evidence entries remain immutable.
-        manifest["final_index"] = None
-    register_derived_in_manifest(
-        manifest, result_dir=path_obj.parent, role=role, path=path, tool=tool,
-        version=version, input_sha256=input_sha256, parameters=parameters,
+    Derived outputs belong to the analysis namespace. The immutable run manifest
+    remains a capture/provenance record and is never reopened to insert parsed
+    metrics.
+    """
+
+    manifest_path_obj = Path(manifest_path)
+    manifest = read_manifest(manifest_path_obj)
+    compatible, reason = validate_manifest_schema(manifest)
+    if not compatible:
+        raise ValueError(reason or "legacy manifest cannot be used for current derived lineage")
+    record = build_derived_record(
+        result_dir=manifest_path_obj.parent,
+        role=role,
+        path=path,
+        tool=tool,
+        version=version,
+        input_sha256=input_sha256,
+        parameters=parameters,
     )
-    verify_and_freeze_raw_artifacts(manifest, result_dir=path_obj.parent)
-    finalize_evidence_manifest(manifest, finalized_at=format_manifest_timestamp())
-    write_manifest(path_obj, manifest)
-    return manifest
-
+    analysis_dir = manifest_path_obj.parent / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    safe_role = re.sub(r"[^A-Za-z0-9_.-]+", "_", role).strip("._") or "derived"
+    lineage_path = analysis_dir / f"{safe_role}.lineage.json"
+    lineage_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {**record, "lineage_path": lineage_path.relative_to(manifest_path_obj.parent).as_posix()}
 
 def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None) -> dict[str, Any]:
     """Evaluate the class contract and seal the immutable raw-evidence index."""
@@ -1218,6 +1216,7 @@ def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None
     compatible, reason = validate_manifest_schema(manifest)
     if not compatible:
         raise ValueError(reason or "legacy manifest cannot satisfy the current evidence contract")
+    discover_retained_artifacts(manifest, result_dir=manifest_path.parent)
     material_inventory = manifest_path.parent / "material-inventory.json"
     if material_inventory.is_file():
         register_evidence_artifact_in_manifest(
@@ -1259,7 +1258,7 @@ def create_result_folder(
     )
     manifest["configuration"] = {
         "snapshot": snapshot_path.name,
-        "sha256": next(item["sha256"] for item in manifest["evidence"] if item["role"] == "resolved_case_snapshot"),
+        "sha256": next(item["sha256"] for item in manifest["artifacts"] if item["role"] == "resolved_case_snapshot"),
     }
     write_manifest(result_dir / "manifest.json", manifest)
     (result_dir / "notes.md").write_text(

@@ -1,8 +1,8 @@
-"""Versioned run-evidence contracts, artefact integrity, and derived lineage.
+"""Versioned run-capture provenance and artefact integrity.
 
-The run manifest is intentionally an index and acceptance record. Raw evidence and
-verbose stage records remain in dedicated result artefacts and are referenced here by
-result-relative path and SHA-256 identity.
+The run manifest records execution/capture provenance only. Scientific metrics are
+not interpreted here: raw observations are retained as immutable artefacts and later
+ingestion/analysis stages operate on those artefacts using their recorded hashes.
 """
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 RUN_EVIDENCE_SCHEMA_NAME = "pqc-run-evidence"
-RUN_EVIDENCE_SCHEMA_VERSION = 1
-EVIDENCE_CONTRACT_VERSION = 1
+RUN_EVIDENCE_SCHEMA_VERSION = 2
+CAPTURE_CONTRACT_VERSION = 1
+# Compatibility alias for code/tests written against the first Request-16 draft.
+EVIDENCE_CONTRACT_VERSION = CAPTURE_CONTRACT_VERSION
 
 REQUIREMENTS = {"required", "optional", "not_applicable"}
 ACQUISITION_STATES = {"pending", "available", "unavailable", "invalid", "not_applicable"}
@@ -37,12 +39,7 @@ def canonical_sha256(value: Any) -> str:
 
 
 def _nonsecret(value: Any, *, key: str | None = None) -> Any:
-    """Copy non-secret configuration while retaining named references.
-
-    Secret-bearing keys are omitted unless they are explicit references. This is a
-    conservative boundary for result snapshots; callers should still prefer public
-    resolver output over raw runtime bundles.
-    """
+    """Copy non-secret configuration while retaining named references."""
     if key == "secret_references":
         return deepcopy(value)
     if key and _SECRET_KEY_RE.search(key) and not _REFERENCE_KEY_RE.search(key):
@@ -112,7 +109,7 @@ def infer_experiment_features(bundle: dict[str, dict[str, Any]]) -> dict[str, bo
 
     build_only = evidence_class == "stm32_build_only" or str(mqtt.get("transport_backend", "")) == "stm32_build_only"
     mqtt_runtime = evidence_class.startswith("stm32_st67_") and not build_only
-    tls_runtime = mqtt_runtime and ("tls" in evidence_class or (tls_mode not in {"", "not_applicable", "plaintext"}))
+    tls_runtime = mqtt_runtime and ("tls" in evidence_class or tls_mode not in {"", "not_applicable", "plaintext"})
     network_degradation = bool(degradation) and any(
         degradation.get(key) not in (None, 0, 0.0, "", "none")
         for key in ("rate_kbit", "rtt_ms", "loss_percent", "mtu")
@@ -138,19 +135,31 @@ def infer_experiment_features(bundle: dict[str, dict[str, Any]]) -> dict[str, bo
 
 def _contract_item(role: str, requirement: str, source_class: str, *, reason: str | None = None) -> dict[str, Any]:
     if requirement not in REQUIREMENTS:
-        raise ValueError(f"unsupported evidence requirement: {requirement}")
-    return {
-        "role": role,
-        "requirement": requirement,
-        "source_class": source_class,
-        "reason": reason,
-    }
+        raise ValueError(f"unsupported capture requirement: {requirement}")
+    return {"role": role, "requirement": requirement, "source_class": source_class, "reason": reason}
 
 
-def build_evidence_contract(bundle: dict[str, dict[str, Any]], *, operation: str | None = None) -> dict[str, Any]:
+def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str | None = None) -> dict[str, Any]:
+    """Build the minimum raw-capture contract for this resolved experiment.
+
+    Contract items describe artefacts that must be retained, not scientific metrics
+    that must be parsed from them. Future producers may add roles without changing
+    the common artefact envelope.
+    """
     features = infer_experiment_features(bundle)
     if operation == "build_only":
-        features = {**features, "primary_class": "build_only", "build_only": True, "mqtt_runtime": False, "tls_runtime": False, "network_degradation": False, "secure_boot": False, "ota": False, "energy": False}
+        features = {
+            **features,
+            "primary_class": "build_only",
+            "build_only": True,
+            "mqtt_runtime": False,
+            "tls_runtime": False,
+            "network_degradation": False,
+            "secure_boot": False,
+            "ota": False,
+            "energy": False,
+        }
+
     items: list[dict[str, Any]] = [
         _contract_item("resolved_case_snapshot", "required", "configuration"),
         _contract_item("cryptographic_material_inventory", "optional", "provisioning"),
@@ -173,51 +182,50 @@ def build_evidence_contract(bundle: dict[str, dict[str, Any]], *, operation: str
                 "stm32_result_stream",
                 "required" if features["structured_reporting"] else "optional",
                 "stm32_runtime",
-                reason=None if features["structured_reporting"] else "Structured reporting is introduced by the reporting-broker implementation request.",
+                reason=None if features["structured_reporting"] else "Deferred structured reporting is introduced by Request 15.",
             ),
         ]
-        if features["tls_runtime"]:
-            items.append(_contract_item("tls_key_log", "required", "network"))
-        else:
-            items.append(_contract_item("tls_key_log", "not_applicable", "network", reason="Plaintext MQTT runtime."))
+        items.append(
+            _contract_item("tls_key_log", "required", "network")
+            if features["tls_runtime"]
+            else _contract_item("tls_key_log", "not_applicable", "network", reason="Plaintext MQTT runtime.")
+        )
     else:
         items += [
             _contract_item("build_log", "optional", "build"),
             _contract_item("application_elf", "optional", "build"),
-            _contract_item(
-                "diagnostic_uart",
-                "required" if features["secure_boot"] else "optional",
-                "stm32_runtime",
-                reason=None if features["secure_boot"] else "Diagnostic UART is supplemental for this experiment class.",
-            ),
+            _contract_item("diagnostic_uart", "required" if features["secure_boot"] else "optional", "stm32_runtime"),
         ]
 
-    if features["network_degradation"]:
-        items.append(_contract_item("network_condition_record", "required", "network_control"))
-    else:
-        items.append(_contract_item("network_condition_record", "not_applicable", "network_control", reason="No controlled network degradation selected."))
+    items.append(
+        _contract_item("network_condition_record", "required", "network_control")
+        if features["network_degradation"]
+        else _contract_item("network_condition_record", "not_applicable", "network_control", reason="No controlled network degradation selected.")
+    )
 
     if features["secure_boot"]:
         items += [
             _contract_item("wolfboot_image", "required", "secure_boot"),
             _contract_item("signed_application", "required", "secure_boot"),
-            _contract_item("secure_boot_record", "required", "secure_boot"),
+            _contract_item("secure_boot_record", "optional", "secure_boot", reason="Legacy structured secure-boot stage record; raw flash/UART artefacts are authoritative capture."),
         ]
     else:
-        for role in ("wolfboot_image", "signed_application", "secure_boot_record"):
-            items.append(_contract_item(role, "not_applicable", "secure_boot", reason="Secure boot is not selected."))
+        items += [
+            _contract_item(role, "not_applicable", "secure_boot", reason="Secure boot is not selected.")
+            for role in ("wolfboot_image", "signed_application", "secure_boot_record")
+        ]
 
-    if features["ota"]:
-        items.append(_contract_item("ota_record", "required", "ota"))
-    else:
-        items.append(_contract_item("ota_record", "not_applicable", "ota", reason="OTA workload is not selected."))
+    items.append(
+        _contract_item("ota_record", "required", "ota")
+        if features["ota"]
+        else _contract_item("ota_record", "not_applicable", "ota", reason="OTA workload is not selected.")
+    )
+    items.append(
+        _contract_item("energy_result_stream", "required", "energy")
+        if features["energy"]
+        else _contract_item("energy_result_stream", "not_applicable", "energy", reason="Energy measurement is not enabled.")
+    )
 
-    if features["energy"]:
-        items.append(_contract_item("energy_result_stream", "required", "energy"))
-    else:
-        items.append(_contract_item("energy_result_stream", "not_applicable", "energy", reason="Energy measurement is not enabled."))
-
-    # Preserve declaration order while rejecting accidental duplicate roles.
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for item in items:
@@ -226,19 +234,26 @@ def build_evidence_contract(bundle: dict[str, dict[str, Any]], *, operation: str
         seen.add(item["role"])
         unique.append(item)
     return {
-        "version": EVIDENCE_CONTRACT_VERSION,
+        "version": CAPTURE_CONTRACT_VERSION,
         "experiment_class": features["primary_class"],
         "features": features,
         "items": unique,
+        "scope": "capture_integrity_only",
     }
 
 
-def initial_evidence_index(contract: dict[str, Any]) -> list[dict[str, Any]]:
+# Backwards-compatible function name; semantics are capture-only in schema v2.
+def build_evidence_contract(bundle: dict[str, dict[str, Any]], *, operation: str | None = None) -> dict[str, Any]:
+    return build_capture_contract(bundle, operation=operation)
+
+
+def initial_capture_index(contract: dict[str, Any]) -> list[dict[str, Any]]:
     index: list[dict[str, Any]] = []
     for spec in contract.get("items", []):
         requirement = spec["requirement"]
         state = "not_applicable" if requirement == "not_applicable" else "pending"
         index.append({
+            "artifact_id": spec["role"],
             "source_class": spec["source_class"],
             "role": spec["role"],
             "path": None,
@@ -251,29 +266,50 @@ def initial_evidence_index(contract: dict[str, Any]) -> list[dict[str, Any]]:
     return index
 
 
+# Compatibility alias used by older tests/helpers.
+def initial_evidence_index(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    return initial_capture_index(contract)
+
+
 def initialize_manifest_evidence(manifest: dict[str, Any], bundle: dict[str, dict[str, Any]], *, operation: str | None = None) -> None:
-    contract = build_evidence_contract(bundle, operation=operation)
+    contract = build_capture_contract(bundle, operation=operation)
     manifest["schema"] = {"name": RUN_EVIDENCE_SCHEMA_NAME, "version": RUN_EVIDENCE_SCHEMA_VERSION}
-    manifest["evidence_contract"] = contract
-    manifest["evidence"] = initial_evidence_index(contract)
-    manifest["derived"] = []
-    manifest["sut_outcome"] = {"status": "pending", "result": None, "failure_stage": None}
-    manifest["evidence_acceptance"] = {"status": "pending", "accepted": False, "reasons": [], "contract_version": contract["version"]}
-    manifest["final_index"] = None
-    manifest["preparation"] = {
-        "mode": "in_run",
-        "manifest": None,
-        "firmware_sha256": None,
-        "verified": None,
+    manifest["capture_contract"] = contract
+    manifest["capture_policy"] = {
+        "scientific_interpretation": "offline_ingestion_only",
+        "manifest_metric_fields_authoritative": False,
+        "legacy_stage_payloads": "compatibility_only",
+        "analysis_namespace": "analysis/",
     }
+    manifest["artifacts"] = initial_capture_index(contract)
+    manifest["execution_outcome"] = {"status": "pending", "result": None, "failure_stage": None}
+    manifest["capture_acceptance"] = {
+        "status": "pending",
+        "accepted": False,
+        "reasons": [],
+        "contract_version": contract["version"],
+        "scope": "capture_integrity_only",
+    }
+    manifest["final_index"] = None
+    manifest["preparation"] = {"mode": "in_run", "manifest": None, "firmware_sha256": None, "verified": None}
+
+
+def _artifact_collection(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(manifest.get("artifacts"), list):
+        return manifest["artifacts"]
+    if isinstance(manifest.get("evidence"), list):  # schema-v1 helper compatibility
+        return manifest["evidence"]
+    manifest["artifacts"] = []
+    return manifest["artifacts"]
 
 
 def _entry(manifest: dict[str, Any], role: str) -> dict[str, Any]:
-    evidence = manifest.setdefault("evidence", [])
-    for item in evidence:
-        if item.get("role") == role:
+    artifacts = _artifact_collection(manifest)
+    for item in artifacts:
+        if item.get("role") == role and item.get("artifact_id", role) == role:
             return item
     item = {
+        "artifact_id": role,
         "source_class": "extension",
         "role": role,
         "path": None,
@@ -281,9 +317,9 @@ def _entry(manifest: dict[str, Any], role: str) -> dict[str, Any]:
         "size_bytes": None,
         "sha256": None,
         "requirement": "optional",
-        "acquisition": {"status": "pending", "reason": "Extension evidence role registered after contract generation."},
+        "acquisition": {"status": "pending", "reason": "Extension capture role registered after contract generation."},
     }
-    evidence.append(item)
+    artifacts.append(item)
     return item
 
 
@@ -291,17 +327,27 @@ def _result_relative(result_dir: Path, path: Path) -> str:
     try:
         return path.resolve().relative_to(result_dir.resolve()).as_posix()
     except ValueError as exc:
-        raise ValueError(f"evidence artefact must be retained beneath result directory: {path}") from exc
+        raise ValueError(f"captured artefact must be retained beneath result directory: {path}") from exc
+
+
+def _resolve_artifact_path(result_root: Path, path: Path | str) -> Path:
+    artifact = Path(path)
+    if artifact.is_absolute():
+        return artifact
+    # Existing framework stage records sometimes already carry a repository-relative
+    # path beginning with results/<run-id>. Prefer it when it exists so we do not
+    # accidentally prefix the result directory twice.
+    if artifact.is_file():
+        return artifact.resolve()
+    return (result_root / artifact).resolve()
 
 
 def register_artifact(
     manifest: dict[str, Any], *, result_dir: Path | str, role: str, path: Path | str,
     stage: str, tool: str, acquisition_result: str = "produced", source_class: str | None = None,
 ) -> None:
-    result_root = Path(result_dir)
-    artifact = Path(path)
-    if not artifact.is_absolute():
-        artifact = result_root / artifact
+    result_root = Path(result_dir).resolve()
+    artifact = _resolve_artifact_path(result_root, path)
     if not artifact.is_file():
         mark_evidence(manifest, role=role, status="unavailable", reason=f"Expected artefact is unavailable: {artifact}", stage=stage, tool=tool)
         return
@@ -311,10 +357,11 @@ def register_artifact(
     previous_digest = item.get("sha256")
     previous_status = (item.get("acquisition") or {}).get("status")
     if previous_status == "available" and previous_digest and previous_digest != digest:
-        raise ValueError(f"raw evidence role '{role}' is immutable once collected")
+        raise ValueError(f"raw capture role '{role}' is immutable once collected")
     if source_class:
         item["source_class"] = source_class
     item.update({
+        "artifact_id": role,
         "path": relative,
         "producer": {"stage": stage, "tool": tool},
         "size_bytes": artifact.stat().st_size,
@@ -332,13 +379,14 @@ def register_identity(
     if source_class:
         item["source_class"] = source_class
     if sha256 is None:
-        mark_evidence(manifest, role=role, status="unavailable", reason="Evidence identity has no SHA-256.", stage=stage, tool=tool)
+        mark_evidence(manifest, role=role, status="unavailable", reason="Capture identity has no SHA-256.", stage=stage, tool=tool)
         return
     previous_digest = item.get("sha256")
     previous_status = (item.get("acquisition") or {}).get("status")
     if previous_status == "available" and previous_digest and previous_digest != sha256:
-        raise ValueError(f"raw evidence role '{role}' is immutable once collected")
+        raise ValueError(f"raw capture role '{role}' is immutable once collected")
     item.update({
+        "artifact_id": role,
         "path": path,
         "producer": {"stage": stage, "tool": tool},
         "size_bytes": size_bytes,
@@ -349,7 +397,7 @@ def register_identity(
 
 def mark_evidence(manifest: dict[str, Any], *, role: str, status: str, reason: str, stage: str, tool: str) -> None:
     if status not in {"unavailable", "invalid", "not_applicable"}:
-        raise ValueError(f"unsupported evidence status: {status}")
+        raise ValueError(f"unsupported capture status: {status}")
     item = _entry(manifest, role)
     if item.get("requirement") == "not_applicable" and status != "not_applicable":
         return
@@ -357,20 +405,112 @@ def mark_evidence(manifest: dict[str, Any], *, role: str, status: str, reason: s
     item["acquisition"] = {"status": status, "reason": reason}
 
 
-def register_derived(
-    manifest: dict[str, Any], *, result_dir: Path | str, role: str, path: Path | str,
-    tool: str, version: str, input_sha256: Iterable[str], parameters: dict[str, Any] | None = None,
-) -> None:
-    output = Path(path)
-    root = Path(result_dir)
-    if not output.is_absolute():
-        output = root / output
+def _infer_discovered_metadata(relative: str) -> tuple[str, str]:
+    name = Path(relative).name.lower()
+    suffix = Path(relative).suffix.lower()
+    if name == "resolved-case.json":
+        return "configuration", "resolved_case_snapshot"
+    if name == "material-inventory.json":
+        return "provisioning", "cryptographic_material_inventory"
+    if name == "build.log":
+        return "build", "build_log"
+    if name in {"flash.log", "secure_boot_flash.log"}:
+        return "deployment", "flash_log"
+    if name.startswith("uart") and suffix == ".log":
+        return "stm32_runtime", "diagnostic_uart"
+    if suffix in {".pcap", ".pcapng"}:
+        return "network", "packet_capture"
+    if "keylog" in name:
+        return "network", "tls_key_log"
+    if name == "mqtt-broker-log.log":
+        return "broker", "experiment_broker_log"
+    if "reporting" in name and suffix == ".log":
+        return "broker", "reporting_broker_log"
+    if name == "mqtt-broker-message-evidence.json":
+        return "broker_observer", "observer_evidence"
+    if suffix == ".elf":
+        return "build", "application_elf"
+    if suffix in {".bin", ".hex"}:
+        return "build", "firmware_image"
+    if suffix == ".log":
+        return "diagnostic", "diagnostic_log"
+    if suffix in {".json", ".jsonl", ".ndjson"}:
+        return "structured_record", "structured_record"
+    return "retained_file", "retained_artifact"
+
+
+def discover_retained_artifacts(manifest: dict[str, Any], *, result_dir: Path | str) -> None:
+    """Hash every retained run artefact not already indexed.
+
+    `manifest.json`, mutable manual notes, and the later `analysis/` namespace are
+    intentionally excluded. The scan does not parse scientific content.
+    """
+    root = Path(result_dir).resolve()
+    artifacts = _artifact_collection(manifest)
+    indexed_paths = {
+        item.get("path") for item in artifacts
+        if isinstance(item.get("path"), str) and item.get("path")
+    }
+    for candidate in sorted(root.rglob("*")):
+        if not candidate.is_file():
+            continue
+        relative = candidate.relative_to(root).as_posix()
+        if relative in {"manifest.json", "notes.md"} or relative.startswith("analysis/"):
+            continue
+        if relative in indexed_paths:
+            continue
+        source_class, role = _infer_discovered_metadata(relative)
+        # If this file satisfies an outstanding declared role, fill that contract
+        # entry. Otherwise retain it as an optional discovered artefact with a
+        # path-derived stable artifact_id.
+        declared = next(
+            (
+                item for item in artifacts
+                if item.get("role") == role
+                and (item.get("acquisition") or {}).get("status") == "pending"
+            ),
+            None,
+        )
+        if declared is not None:
+            register_artifact(
+                manifest,
+                result_dir=root,
+                role=role,
+                path=candidate,
+                stage="final_capture_inventory",
+                tool="framework.run_evidence",
+                acquisition_result="discovered",
+                source_class=source_class,
+            )
+        else:
+            artifacts.append({
+                "artifact_id": f"file:{relative}",
+                "source_class": source_class,
+                "role": role,
+                "path": relative,
+                "producer": {"stage": "final_capture_inventory", "tool": "framework.run_evidence"},
+                "size_bytes": candidate.stat().st_size,
+                "sha256": sha256_file(candidate),
+                "requirement": "optional",
+                "acquisition": {"status": "available", "result": "discovered", "reason": None},
+            })
+        indexed_paths.add(relative)
+
+
+def build_derived_record(
+    *, result_dir: Path | str, role: str, path: Path | str, tool: str, version: str,
+    input_sha256: Iterable[str], parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build lineage for an offline derived output without mutating the run manifest."""
+    root = Path(result_dir).resolve()
+    output = _resolve_artifact_path(root, path)
     if not output.is_file():
         raise FileNotFoundError(f"derived output not found: {output}")
     direct_inputs = [value for value in input_sha256 if isinstance(value, str) and value]
     if not direct_inputs:
         raise ValueError("derived output must identify at least one direct input SHA-256")
-    record = {
+    return {
+        "schema": {"name": "pqc-derived-lineage", "version": 1},
         "role": role,
         "path": _result_relative(root, output),
         "producer": {"tool": tool, "version": version},
@@ -379,6 +519,27 @@ def register_derived(
         "size_bytes": output.stat().st_size,
         "sha256": sha256_file(output),
     }
+
+
+def register_derived(
+    manifest: dict[str, Any], *, result_dir: Path | str, role: str, path: Path | str,
+    tool: str, version: str, input_sha256: Iterable[str], parameters: dict[str, Any] | None = None,
+) -> None:
+    """Compatibility helper for old callers.
+
+    New run manifests must not use this path; derived lineage belongs in a separate
+    analysis sidecar. It remains available so historical/offline tooling can build
+    the same lineage record while it migrates.
+    """
+    record = build_derived_record(
+        result_dir=result_dir,
+        role=role,
+        path=path,
+        tool=tool,
+        version=version,
+        input_sha256=input_sha256,
+        parameters=parameters,
+    )
     records = manifest.setdefault("derived", [])
     for index, existing in enumerate(records):
         if existing.get("role") == role:
@@ -389,22 +550,11 @@ def register_derived(
 
 
 def update_sut_outcome(manifest: dict[str, Any], result: Any, failure_stage: Any = None) -> None:
-    """Update only the system-under-test outcome, not generic framework stages.
-
-    Build/flash/preparation commands can succeed or fail without the SUT workload
-    having executed.  The outcome therefore changes only for a build-only contract
-    (where SUT execution is not applicable) or an explicit runtime/secure-boot
-    experiment result.
-    """
-
+    """Record orchestration/SUT completion without interpreting scientific metrics."""
     text = str(result) if result is not None else ""
-    experiment_class = str((manifest.get("evidence_contract") or {}).get("experiment_class", ""))
+    experiment_class = str((manifest.get("capture_contract") or manifest.get("evidence_contract") or {}).get("experiment_class", ""))
     if experiment_class == "build_only":
-        manifest["sut_outcome"] = {
-            "status": "not_applicable",
-            "result": text or None,
-            "failure_stage": failure_stage,
-        }
+        manifest["execution_outcome"] = {"status": "not_applicable", "result": text or None, "failure_stage": failure_stage}
         return
     if not text:
         return
@@ -423,111 +573,90 @@ def update_sut_outcome(manifest: dict[str, Any], result: Any, failure_stage: Any
         "external_dependencies", "build", "application_build", "wolfboot_build",
         "application_signing", "artifact_copy", "flash", "secure_boot_flash",
         "profile_validation", "broker_start", "broker_readiness",
-        "gateway_packet_capture_start", "network_degradation_config",
-        "network_degradation_apply",
+        "gateway_packet_capture_start", "network_degradation_config", "network_degradation_apply",
     }
     stage = None if failure_stage is None else str(failure_stage)
     if any(token in lowered for token in ("fail", "error", "refused")):
         status = "not_executed" if stage in pre_sut_stages else "failed"
     elif lowered.endswith("_passed") or lowered in {"pass", "passed", "success", "succeeded"}:
-        status = "succeeded"
+        status = "completed"
     else:
         return
-    manifest["sut_outcome"] = {"status": status, "result": text, "failure_stage": stage}
+    manifest["execution_outcome"] = {"status": status, "result": text, "failure_stage": stage}
 
 
 def verify_and_freeze_raw_artifacts(manifest: dict[str, Any], *, result_dir: Path | str) -> None:
-    """Re-hash retained raw files and make them read-only before acceptance.
-
-    Logical immutability is enforced by the evidence registration API and sealed
-    final index.  Filesystem write bits are also removed on a best-effort basis so
-    normal framework/analysis paths cannot accidentally overwrite collected raw
-    evidence.
-    """
-
     root = Path(result_dir).resolve()
-    for item in manifest.get("evidence", []):
+    for item in _artifact_collection(manifest):
         if (item.get("acquisition") or {}).get("status") != "available":
             continue
         relative = item.get("path")
         if not isinstance(relative, str) or not relative:
-            # Identity-only evidence is bound by SHA-256 but has no retained file
-            # to freeze in this run directory.
             continue
         candidate = (root / relative).resolve()
         try:
             candidate.relative_to(root)
         except ValueError:
-            item["acquisition"] = {
-                "status": "invalid",
-                "reason": "Retained evidence path escapes the result directory.",
-            }
+            item["acquisition"] = {"status": "invalid", "reason": "Retained capture path escapes the result directory."}
             continue
         if not candidate.is_file():
-            item["acquisition"] = {
-                "status": "unavailable",
-                "reason": f"Retained evidence file is missing at finalization: {relative}",
-            }
+            item["acquisition"] = {"status": "unavailable", "reason": f"Retained capture file is missing at finalization: {relative}"}
             continue
         actual_size = candidate.stat().st_size
         actual_sha256 = sha256_file(candidate)
         if actual_size != item.get("size_bytes") or actual_sha256 != item.get("sha256"):
-            item["acquisition"] = {
-                "status": "invalid",
-                "reason": "Retained evidence size/SHA-256 changed after collection.",
-            }
-            item["observed_at_finalization"] = {
-                "size_bytes": actual_size,
-                "sha256": actual_sha256,
-            }
+            item["acquisition"] = {"status": "invalid", "reason": "Retained capture size/SHA-256 changed after collection."}
+            item["observed_at_finalization"] = {"size_bytes": actual_size, "sha256": actual_sha256}
             continue
         try:
             candidate.chmod(candidate.stat().st_mode & ~0o222)
             item["immutability"] = {"status": "enforced", "method": "read_only_mode"}
         except OSError as exc:
-            # The sealed hash/index and registration rules still provide logical
-            # immutability on filesystems that do not support mode changes.
-            item["immutability"] = {
-                "status": "logical_only",
-                "method": "sealed_index",
-                "reason": str(exc),
-            }
+            item["immutability"] = {"status": "logical_only", "method": "sealed_index", "reason": str(exc)}
 
-def evaluate_acceptance(manifest: dict[str, Any]) -> dict[str, Any]:
+
+def evaluate_capture_acceptance(manifest: dict[str, Any]) -> dict[str, Any]:
     reasons: list[str] = []
-    for item in manifest.get("evidence", []):
+    for item in _artifact_collection(manifest):
         if item.get("requirement") != "required":
             continue
         status = (item.get("acquisition") or {}).get("status")
         if status != "available":
-            reason = (item.get("acquisition") or {}).get("reason") or f"required evidence is {status or 'missing'}"
+            reason = (item.get("acquisition") or {}).get("reason") or f"required capture is {status or 'missing'}"
             reasons.append(f"{item.get('role')}: {reason}")
     accepted = not reasons
+    contract = manifest.get("capture_contract") or manifest.get("evidence_contract") or {}
     return {
-        "status": "accepted" if accepted else "rejected_incomplete",
+        "status": "accepted" if accepted else "incomplete",
         "accepted": accepted,
         "reasons": reasons,
-        "contract_version": (manifest.get("evidence_contract") or {}).get("version"),
+        "contract_version": contract.get("version"),
+        "scope": "capture_integrity_only",
     }
 
 
+# Compatibility alias.
+def evaluate_acceptance(manifest: dict[str, Any]) -> dict[str, Any]:
+    return evaluate_capture_acceptance(manifest)
+
+
 def finalize_manifest(manifest: dict[str, Any], *, finalized_at: str) -> None:
-    acceptance = evaluate_acceptance(manifest)
-    manifest["evidence_acceptance"] = acceptance
+    acceptance = evaluate_capture_acceptance(manifest)
+    manifest["capture_acceptance"] = acceptance
     immutable_index = {
         "schema": manifest.get("schema"),
         "configuration": manifest.get("configuration"),
         "preparation": manifest.get("preparation"),
-        "contract": manifest.get("evidence_contract"),
-        "evidence": manifest.get("evidence", []),
-        "derived": manifest.get("derived", []),
-        "sut_outcome": manifest.get("sut_outcome"),
-        "evidence_acceptance": acceptance,
+        "contract": manifest.get("capture_contract"),
+        "artifacts": _artifact_collection(manifest),
+        "execution_outcome": manifest.get("execution_outcome"),
+        "capture_acceptance": acceptance,
     }
     manifest["final_index"] = {
         "status": "finalized",
         "finalized_at": finalized_at,
         "sha256": canonical_sha256(immutable_index),
+        "scope": "run_capture_only",
     }
 
 
