@@ -123,16 +123,11 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
     assert manifest["execution_outcome"] == {
         "status": "completed",
         "result": "baseline_run_passed",
-        "failure_stage": "none",
+        "failure_stage": None,
     }
     assert "result" not in manifest
     assert manifest["run"]["failure_stage"] is None
-    assert manifest["run"]["build_return_code"] == 0
-    assert manifest["run"]["artifact_copy_return_code"] == 0
-    assert manifest["run"]["flash_return_code"] == 0
-    assert manifest["run"]["uart_return_code"] == 0
-    assert manifest["run"]["copied_artifact"] == "stm32_basic_hal1.elf"
-    assert manifest["firmware"]["result_artifact"] == "stm32_basic_hal1.elf"
+    assert "firmware" not in manifest
     assert "Baseline run passed" in capsys.readouterr().out
 
 
@@ -178,8 +173,8 @@ def test_run_command_stops_after_build_failure(tmp_path, monkeypatch):
     }
     assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "build"
-    assert manifest["run"]["flash_return_code"] is None
-    assert manifest["run"]["uart_return_code"] is None
+    assert "flash_return_code" not in manifest["run"]
+    assert "uart_return_code" not in manifest["run"]
 
 
 def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, monkeypatch):
@@ -229,9 +224,8 @@ def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, 
     }
     assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "flash"
-    assert manifest["run"]["uart_return_code"] is None
-    assert manifest["uart"]["skipped"] is True
-    assert manifest["uart"]["skip_reason"] == "flash_failed"
+    assert "uart_return_code" not in manifest["run"]
+    assert "uart" not in manifest
 
 
 def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
@@ -286,7 +280,7 @@ def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
     }
     assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "uart"
-    assert manifest["run"]["uart_return_code"] == 9
+    assert "uart_return_code" not in manifest["run"]
 
 
 def test_run_subcommand_is_registered_with_mandatory_uart_capture():

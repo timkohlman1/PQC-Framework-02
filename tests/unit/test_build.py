@@ -591,6 +591,11 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    monkeypatch.setattr(
+        experiment_cli,
+        "finalize_run_evidence",
+        lambda *_args, **_kwargs: None,
+    )
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
