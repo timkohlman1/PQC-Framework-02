@@ -1,0 +1,7 @@
+schema_version: 1
+profile_type: workload
+id: mqtt_validation
+firmware_application: mqtt_validation
+uart_log_level: info
+evidence:
+  deferred_reporting: true

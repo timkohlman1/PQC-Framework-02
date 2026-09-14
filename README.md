@@ -33,12 +33,25 @@ The default development path is Docker-hosted Linux execution through the projec
 .\scripts\dev.ps1 python-gateway scripts/experiment.py --help
 ```
 
-All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
+For local Wi-Fi credentials, copy the committed sample file once and edit the local copy:
 
 ```powershell
-.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+Copy-Item .env.sample .env
+```
+
+Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. Both `scripts/dev.ps1` and `scripts/dev.sh` load only those two values for the duration of each Docker invocation; caller-supplied environment variables take precedence and are left unchanged. The wrapper-scoped values do not persist after the invocation, and secret values are never written into generated campaign YAML.
+
+All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
+
+Resolve a campaign before using the experiment runner. Generated cases are the only operational experiment inputs:
+
+```powershell
+.\scripts\dev.ps1 python scripts/resolve_campaign.py baseline.yaml
+$case = Get-ChildItem ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | Select-Object -First 1
+$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
+.\scripts\dev.ps1 experiment status --experiment $path
+.\scripts\dev.ps1 experiment build --experiment $path
+.\scripts\dev.ps1 experiment-gateway run --experiment $path
 ```
 
 Host-native diagnostic fallback:
@@ -48,7 +61,7 @@ cmake --preset Release
 cmake --build --preset Release
 cmake --preset Debug
 cmake --build --preset Debug
-python -m pytest tests/integration/test_local_build.py -m integration --pqc-require-local-build
+python -m pytest tests/integration/test_local_build_in.py -m integration --pqc-require-local-build
 ```
 
 SSH/SCP uses runtime-mounted SSH access. Gateway and hardware workflows remain gateway-mediated; containers do not receive direct UART devices, ST-LINK/USB passthrough, or Wi-Fi-module passthrough.
@@ -65,10 +78,13 @@ When no secure-boot algorithm is specified, the framework uses wolfBoot with `in
 
 A named algorithm implies wolfBoot; `--boot-mode wolfboot` is not required.
 
+For secure-boot runs, resolve the `secure_boot` campaign and execute the selected generated case. The case already carries its secure-boot selection, so `--boot-algorithm` is normally unnecessary:
+
 ```powershell
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_plaintext_st67_e2e.yaml `
-    --boot-algorithm mldsa87
+.\scripts\dev.ps1 python scripts/resolve_campaign.py secure_boot.yaml
+$case = Get-ChildItem ".pqc-generated-state/campaigns/secure_boot/cases/0012_*.yaml" | Select-Object -First 1
+$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
+.\scripts\dev.ps1 experiment-gateway run --experiment $path
 ```
 
 ML-DSA-44, ML-DSA-65, and ML-DSA-87 are explicit non-default signing evaluation profiles. Release and Debug share the same relocated layout:
@@ -82,7 +98,7 @@ application vector table: 0x08023000
 For manual packaging, create the framework-recorded Release build before signing:
 
 ```powershell
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment build --experiment $path
 .\scripts\dev.ps1 experiment sign-application
 ```
 
@@ -98,7 +114,7 @@ Provision all configured X.509 research profiles once before running TLS experim
 .\scripts\dev.ps1 python scripts/provision_certificates.py
 ```
 
-Profiles are declared under `configs/certificate_profile/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
+Profiles are declared under `configs/tls_auth/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
 
 Networked profiles can retain `gateway-network-capture.pcap` and `gateway-network-capture.log`. Packet capture is supporting evidence only; correlate it with UART, broker, subscriber, and manifest evidence. Setup and inspection details are in `docs/002_host_gateway_setup.md` and `docs/005_remote_flash_workflow.md`.
 
@@ -114,7 +130,7 @@ Opt-in physical MQTT experiment matrix:
 
 ```powershell
 .\scripts\dev.ps1 pytest-hardware `
-    tests/hardware/test_mqtt_experiment_matrix.py `
+    tests/hardware/test_mqtt_experiment_matrix_hw.py `
     -m hardware `
     --pqc-require-hardware `
     --pqc-hardware-experiment-matrix
@@ -122,58 +138,39 @@ Opt-in physical MQTT experiment matrix:
 
 This long matrix covers direct-flash and wolfBoot execution for plaintext and classical mutual TLS, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot.
 
-## MQTT TLS key-exchange profile matrix
+## Canonical TLS and workload campaigns
 
-Each TLS group has server-authentication and mutual-authentication profiles. The selected group controls wolfSSL source inclusion and named-group advertisement; unrelated ECC, X25519, and ML-KEM implementations are excluded from that firmware build.
-
-Profiles are named `mqtt_tls_<group>_<server_auth|mutual_auth>_st67_e2e.yaml` under `configs/experiments/`, with groups `x25519`, `secp256r1`, `secp384r1`, `secp521r1`, `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024`. Run any profile with:
+TLS key exchange, authentication, secure boot, PQ-only TLS, Ready Metrics 2, and network-condition selection are expressed as canonical campaigns rather than concrete experiment-file Cartesian products. Resolve a campaign and run the generated case you need:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/<profile>.yaml
+.\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange.yaml
+$case = Get-ChildItem ".pqc-generated-state/campaigns/tls_key_exchange/cases/0006_*.yaml" | Select-Object -First 1
+$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
+.\scripts\dev.ps1 experiment-gateway run --experiment $path
 ```
 
-The same experiment profiles support `--boot-mode wolfboot --boot-algorithm <algorithm>`. Secure-boot selection is independent of the MQTT TLS key-exchange group.
+The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. `tls_authentication` varies the canonical certificate/authentication profile and server/mutual mode. `tls_pq_only` contains the two principal `ML_KEM_768` + `mldsa65` conditions. `secure_boot` contains the twelve wolfBoot selections.
 
-Do not increase task stacks or `configTOTAL_HEAP_SIZE` from compile-time expectations alone. Compare retained UART heap-boundary and task stack high-water markers for each group, especially `SecP384r1MLKEM1024`; increase memory only when recorded minimum headroom violates the project threshold or allocation failures occur.
-Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RAM_LINKER_ACCOUNTING` reports static/linker-region capacity and reservation, while `PQC_MEMORY_HIGH_WATERMARK` reports FreeRTOS heap, ML-DSA RAM3 workspace, newlib `_sbrk`, and application MSP high-water values. Treat statically backed heap/workspace reservations and their runtime peaks as two views of the same RAM rather than additive usage. MSP watermarking begins at early `main()` and paints the otherwise-unused primary-RAM interval above the static image, excluding any range already or subsequently used by `_sbrk`; this allows measured MSP demand to exceed the linker's `_Min_Stack_Size` reservation. The marker reports excess beyond that reservation and whether the observable watermark window saturated; when saturated, the derived observed-RAM requirement is explicitly a lower bound. Pre-`main()` startup stack depth remains outside this measurement.
+Ready Metrics 2 is owned by `configs/workloads/ready_metrics_2.yaml`. Its default transfer is 200 KiB with 400-byte chunks. Campaign matrix keys may override workload fields without creating duplicate experiment YAML.
 
-### Ready-metrics MQTT application profiles
+Network conditions are selected through `configs/network_conditions/` and the `network_degradation` campaign. Resolve that campaign, then execute generated cases through the normal experiment runner; impairment applies only to the dedicated experiment interface and must remain isolated from reporting/control traffic.
 
-The original profiles retain `mqtt_validation`. Matching persistent ready/timing/memory profiles are under `configs/experiments/applications/ready_metrics/`, prefixed with `ready_metrics_`; they preserve the corresponding transport, group, and authentication mode while selecting `mqtt_ready_metrics`. Ready Metrics 2 is a separate application-performance workload under `configs/experiments/applications/ready_metrics_2/`. It retains the MQTT connection TTFB (`TCP connect start -> first plaintext CONNACK byte`) and adds a paper-aligned broker-mediated download: after MQTT CONNECT/SUBSCRIBE the STM32 sends a small request, a gateway-side responder publishes the configured payload through the broker, application TTFB ends on the first requested payload byte, and TTLB ends on the last requested payload byte. Both application metrics use the same TCP-connect origin and exclude DNS. The default payload is 200 KiB and is profile-configurable. Absolute Web/EC2 and STM32/MQTT values are not assumed interchangeable because MQTT adds protocol setup and the platform/stack differ. Firmware-boot, TLS, phase, primitive, X.509, memory, application-TTFB, and TTLB evidence are published to the broker only after the measured transfer.
+Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RAM_LINKER_ACCOUNTING` reports static/linker-region capacity and reservation, while `PQC_MEMORY_HIGH_WATERMARK` reports FreeRTOS heap, ML-DSA RAM3 workspace, newlib `_sbrk`, and application MSP high-water values. The linker now reserves 1280 bytes (`0x500`) for the MSP; runtime evidence still reports the actual measured peak and remaining headroom. Pre-`main()` startup stack depth remains outside this measurement.
 
-### Controlled network-degradation grid
+## Canonical versioned configuration resolver
 
-Preview the 288-run TLS handshake/first-telemetry matrix without accessing hardware:
+The source-controlled experiment configuration is now organised by independently selectable profile domain under `configs/targets`, `configs/gateways`, `configs/instruments`, `configs/services`, `configs/workloads`, `configs/tls_kex`, `configs/tls_auth`, `configs/secure_boot`, `configs/network_conditions`, and `configs/campaigns`. Legacy concrete experiment, board/host/boot, algorithm, wolfBoot-template, certificate-profile, and experiment-grid trees have been retired. Generated campaign cases are the only operational experiment inputs.
+
+When `experiment.py run` consumes a canonical generated case, the case's `choices.secure_boot` selection is carried automatically into the wolfBoot build/sign/flash path. An explicit conflicting secure-boot selection is rejected before hardware side effects.
+
+Preview/materialise a campaign without hardware access:
 
 ```powershell
-.\scripts\dev.ps1 python scripts/network_degradation_grid.py `
-    --interface <DEDICATED_EXPERIMENT_INTERFACE> `
-    --plan-only
+.\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange
 ```
 
-Execute one repetition through the gateway:
+Generated cases are written below `.pqc-generated-state/campaigns/` and contain profile identities, non-secret resolved choices, content hashes, configuration identity, and firmware identity. Wi-Fi secret values are resolved only when a generated case is consumed for execution. Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in the local execution environment or in the Git-ignored repository-root `.env` copied from `.env.sample`. They are not written into generated case YAML.
 
-```powershell
-.\scripts\dev.ps1 python-gateway scripts/network_degradation_grid.py `
-    --interface <DEDICATED_EXPERIMENT_INTERFACE>
-```
+Ready Metrics 2 defaults are owned by `configs/workloads/ready_metrics_2.yaml`: `payload_bytes=204800` and `chunk_bytes=400`. Campaigns may vary them using matrix keys `workload.transfer.payload_bytes` and `workload.transfer.chunk_bytes` without duplicating the workload profile.
 
-The interface must be the dedicated STM32 experiment-facing interface and must not carry SSH or VPN management traffic. The runner groups selected cases by crypto profile. Each selected profile performs one normal build, flash, and smoke-test run; subsequent degradation cases use `--runtime-only`, reset the already-flashed STM32, and collect independent UART, packet-capture, MQTT broker-log, impairment, and timing evidence without rebuilding, reflashing, reprovisioning certificates, or copying firmware artifacts into every measurement result. Each measurement manifest references the successful profile-preparation manifest and firmware SHA-256.
-
-Select subsets without editing the canonical grid. Selectors may be repeated:
-
-```powershell
-.\scripts\dev.ps1 python-gateway scripts/network_degradation_grid.py `
-    --interface <DEDICATED_EXPERIMENT_INTERFACE> `
-    --profile secp256r1_server_auth `
-    --rate-kbit 40 `
-    --rtt-ms 200 `
-    --loss-percent 0 `
-    --loss-percent 1 `
-    --loss-percent 5 `
-    --loss-percent 10 `
-    --mtu 1280
-```
-
-`--case-offset` and `--case-limit` provide additional bounded chunking after filtering. The command writes its expanded plan under `.pqc-generated-state/network-degradation-grid/`.
+The TLS KEX catalogue contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. Standalone `ML_KEM_512`, `ML_KEM_768`, and `ML_KEM_1024` use wolfSSL standalone ML-KEM TLS support and are not treated as hybrid groups. The principal PQ-only TLS condition is `ML_KEM_768` with `mldsa65`; `auth_mode` remains independently selectable as `server` or `mutual`.

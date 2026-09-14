@@ -4,7 +4,7 @@
 
 This document owns the current Docker-wrapper direct-flash, secure-boot, and UART workflows. Run commands from the repository root. Host-native Python, CMake, Make, SCP, SSH, and toolchain commands are diagnostic fallback only; they are not the normal reproducible validation path.
 
-Gateway identity is owned by `configs/hosts/gateway.yaml` and explained in `docs/002_host_gateway_setup.md`. Board/ST-LINK/UART hardware identity is owned by `docs/003_stm32_board_setup.md`.
+Gateway identity is owned by `configs/gateways/pqc_gateway1.yaml` and explained in `docs/002_host_gateway_setup.md`. Board/ST-LINK/UART hardware identity is owned by `docs/003_stm32_board_setup.md`.
 
 All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` to select Debug compiler settings without changing the flash addresses.
 
@@ -13,32 +13,32 @@ All application builds use the fixed wolfBoot-relocated layout. Release is the d
 Build through the Docker wrapper:
 
 ```powershell
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
 ```
 
 Flash an explicitly recorded build:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway flash --experiment configs/experiments/baseline_direct_uart.yaml --build-run <run_id>
+.\scripts\dev.ps1 experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --build-run <run_id>
 ```
 
 The untracked-artifact escape hatch is limited to manual recovery or investigation:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway flash --experiment configs/experiments/baseline_direct_uart.yaml --allow-untracked-artifact
+.\scripts\dev.ps1 experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --allow-untracked-artifact
 ```
 
 Build and flash, with optional UART capture:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway build-flash --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment-gateway build-flash --experiment configs/experiments/baseline_direct_uart.yaml --capture-uart
+.\scripts\dev.ps1 experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
+.\scripts\dev.ps1 experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --capture-uart
 ```
 
 Run the normal build/flash/UART baseline workflow:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 experiment-gateway run --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
 ```
 
 The `flash` path refuses SCP/SSH unless the artifact matches recorded build provenance or the explicit recovery escape hatch is supplied.
@@ -49,19 +49,19 @@ Secure boot consumes the configured wolfBoot artifact and signed relocated appli
 
 ```powershell
 .\scripts\dev.ps1 experiment build-wolfboot --boot-algorithm <algorithm>
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
+.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
 .\scripts\dev.ps1 experiment sign-application --boot-algorithm <algorithm>
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm <algorithm> --repeat-count 5
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm <algorithm> --repeat-count 5
 ```
 
 Supported algorithm IDs are:
 
 ```text
-Classical: ecdsa_p256, ecc384, ecc521, ed25519, ed448, rsa2048, rsa3072, rsa4096
+Classical: integrity_sha256, ecdsa_p256, ecdsa_p384, ecdsa_p521, ed25519, ed448, rsa2048, rsa3072, rsa4096
 ML-DSA:   mldsa44, mldsa65, mldsa87
 ```
 
-ML-DSA-87 is not a supported profile under the current 12288-byte image-header reserve. `configs/targets/stm32l4r5_wolfboot.yaml` owns shared target configuration, `configs/algorithms/*.yaml` owns algorithm differences, `configs/experiments/secure_boot_uart.yaml` is the single secure-boot experiment entry point, and `configs/wolfboot/*.config` contains native wolfBoot build templates.
+`configs/targets/stm32l4r5_wolfboot.yaml` owns shared target configuration, `configs/secure_boot/*.yaml` owns the twelve supported secure-boot selections (including ML-DSA-87), `.pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml` is the single secure-boot experiment entry point, and resolver-generated wolfBoot configuration provides the native build settings.
 
 The relocated application build must run through the framework so generated-state provenance and the artifact hash are recorded before signing. `build-wolfboot`, `sign-application`, and `flash-secure-boot` use generated-state preflight as the primary compatibility, stale-output, and provenance mechanism.
 
@@ -77,7 +77,7 @@ Do not run wolfBoot `keysclean` or manually delete tuple members. Pytest startup
 Negative corrupted-application test:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --boot-algorithm ecdsa_p256 --negative-corrupt-application
+.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm ecdsa_p256 --negative-corrupt-application
 ```
 
 The workflow corrupts a result-local copy. It must not modify the canonical signed image or private key.
@@ -89,8 +89,8 @@ Direct-flash `flash` and `build-flash` capture UART only with `--capture-uart`; 
 Ad hoc bounded capture:
 
 ```powershell
-.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
-.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10 --restart
+.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
+.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10 --restart
 ```
 
 Monitor output is useful for diagnosis but has no result manifest and does not establish image provenance by itself.
@@ -155,7 +155,7 @@ domain separately:
 
 ```powershell
 .\scripts\dev.ps1 experiment-gateway run `
-    --experiment configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml `
+    --experiment .pqc-generated-state/campaigns/<campaign>/cases/<case>.yaml `
     --boot-mode wolfboot `
     --boot-algorithm ecdsa_p256
 ```

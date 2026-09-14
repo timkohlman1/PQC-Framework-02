@@ -162,9 +162,7 @@ def test_generated_state_preflight_is_primary_and_pytest_cleanup_is_supplementar
 
 
 def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
-    command_fragment = (
-        "experiment build --experiment configs/experiments/baseline_direct_uart.yaml"
-    )
+    command_fragment = "experiment build --experiment"
     for path in ("README.md", "docs/005_remote_flash_workflow.md"):
         content = _read(path).lower()
         build_index = content.find(command_fragment)
@@ -209,7 +207,7 @@ def test_certificate_provisioning_docs_use_config_driven_one_time_workflow() -> 
     broker_readme = _read("experiment/mqtt-broker/README.md")
 
     assert "python scripts/provision_certificates.py" in broker_readme
-    assert "configs/certificate_profile/" in broker_readme
+    assert "configs/tls_auth/" in broker_readme
     assert "secrets/certificates/<profile-id>/" in broker_readme
     assert "experiment execution never generates or renews certificates" in broker_readme
     assert "provision-certs --server-name" not in broker_readme
@@ -401,7 +399,7 @@ def test_operational_workflow_docs_use_canonical_owners_and_evidence_boundaries(
     combined = "\n".join(_read(path) for path in OPERATIONAL_WORKFLOW_DOCUMENTS)
 
     for canonical_path in (
-        "configs/hosts/gateway.yaml",
+        "configs/gateways/pqc_gateway1.yaml",
         "docs/002_host_gateway_setup.md",
         "docs/003_stm32_board_setup.md",
         "docs/005_remote_flash_workflow.md",
@@ -438,9 +436,10 @@ def test_operational_commands_use_docker_wrappers_by_default() -> None:
 def test_operational_secure_boot_profiles_match_tracked_config_inventory() -> None:
     workflow = _read("docs/005_remote_flash_workflow.md")
     expected_stems = (
+        "integrity_sha256",
         "ecdsa_p256",
-        "ecc384",
-        "ecc521",
+        "ecdsa_p384",
+        "ecdsa_p521",
         "ed25519",
         "ed448",
         "rsa2048",
@@ -448,19 +447,17 @@ def test_operational_secure_boot_profiles_match_tracked_config_inventory() -> No
         "rsa4096",
         "mldsa44",
         "mldsa65",
+        "mldsa87",
     )
 
     for stem in expected_stems:
         assert stem in workflow
-        assert (REPO_ROOT / f"configs/algorithms/{stem}.yaml").is_file()
-        assert (REPO_ROOT / f"configs/wolfboot/stm32l4r5_{stem}.config").is_file()
+        assert (REPO_ROOT / f"configs/secure_boot/{stem}.yaml").is_file()
 
     assert (REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml").is_file()
-    assert (REPO_ROOT / "configs/experiments/secure_boot_uart.yaml").is_file()
+    assert (REPO_ROOT / "configs/campaigns/secure_boot.yaml").is_file()
     assert not (REPO_ROOT / "configs/builds").exists()
     assert not (REPO_ROOT / "configs/signing").exists()
-
-    assert "ML-DSA-87 is not a supported profile" in workflow
 
 
 def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:

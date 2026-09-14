@@ -30,6 +30,16 @@ def test_hybrid_profile_selects_only_requested_hybrid_group():
     assert selected["mlkem_768"] is False
 
 
+
+
+def test_hybrid_rsa3072_accepts_canonical_rsa_pss_signature_scheme():
+    selected = resolve_tls_algorithm_set(
+        _bundle("pqc_hybrid_tls_server_auth", "X25519MLKEM768", "rsa_pss_rsae_sha256")
+    )
+    assert selected["rsa"] is True
+    assert selected["rsa_pss"] is True
+    assert selected["signature_schemes"] == ["rsa_pss_rsae_sha256"]
+
 def test_hybrid_profile_selects_mldsa65_server_signature_without_rsa():
     selected = resolve_tls_algorithm_set(
         _bundle("pqc_hybrid_tls_server_auth", "SecP256r1MLKEM768", "mldsa65")
@@ -57,8 +67,9 @@ def test_mode_and_group_family_must_match():
 
 def test_settings_expose_independent_group_capability_guards():
     settings = Path("Core/Inc/pqc_wolfssl_user_settings.h").read_text()
-    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ECC_MIN_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024"):
+    for marker in ("PQC_TLS_ENABLE_ECC", "PQC_TLS_ECC_BITS", "PQC_TLS_ECC_MIN_BITS", "PQC_TLS_ENABLE_CURVE25519", "PQC_TLS_ENABLE_MLKEM_512", "PQC_TLS_ENABLE_MLKEM_768", "PQC_TLS_ENABLE_MLKEM_1024", "PQC_TLS_MLKEM_STANDALONE"):
         assert marker in settings
+    assert "WOLFSSL_NO_ML_KEM_512" in settings
     assert "WOLFSSL_NO_ML_KEM_768" in settings
     assert "WOLFSSL_NO_ML_KEM_1024" in settings
 

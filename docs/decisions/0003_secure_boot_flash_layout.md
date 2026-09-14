@@ -88,7 +88,7 @@ All selected addresses and sizes are aligned to the working 4 KB wolfBoot STM32L
 
 ## Consequences
 
-- At the time of this decision, the algorithm-specific wolfBoot boot profile described the planned flash layout. That wrapper was later removed; the shared layout is now owned by `configs/targets/stm32l4r5_wolfboot.yaml` and combined with `configs/algorithms/ecdsa_p256.yaml`.
+- At the time of this decision, the algorithm-specific wolfBoot boot profile described the planned flash layout. That wrapper was later removed; the shared layout is now owned by `configs/targets/stm32l4r5_wolfboot.yaml` and combined with `configs/secure_boot/ecdsa_p256.yaml`.
 - The direct-flash baseline remains the only runnable boot mode.
 - The planned wolfBoot profile remains `runnable: false`.
 - Phase 10e should relocate the HAL application linker script and vector-table configuration to `0x08020100` when adding a relocated application build profile.
@@ -121,7 +121,7 @@ This decision does not:
 
 ## Phase 10f.1 Build Adaptation Use
 
-Phase 10f.1 carries the Phase 10d planned layout values into the project-local wolfBoot build configuration template at `configs/wolfboot/stm32l4r5_ecdsa_p256.config`. The build adaptation does not revise the selected bootloader, primary slot, update slot, swap/metadata, or image-header layout assumptions.
+Phase 10f.1 carries the Phase 10d planned layout values into the project-local wolfBoot build configuration template at `resolver-generated tools/wolfboot/.config`. The build adaptation does not revise the selected bootloader, primary slot, update slot, swap/metadata, or image-header layout assumptions.
 
 The planned image header remains 256 bytes. The project-local wolfBoot build config records it as `IMAGE_HEADER_SIZE=256` rather than `0x100` because wolfBoot shell tests compare that value as a decimal integer during the build. This does not change the relocated application entry at `0x08020100`.
 

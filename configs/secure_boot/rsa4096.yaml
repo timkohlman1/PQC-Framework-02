@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: rsa4096
+description: rsa4096 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: RSA4096
+  packaging_option: --rsa4096
+signature_size_bytes: 512
+signing:
+  requires_private_key: true
+  tuple_id: rsa4096-development

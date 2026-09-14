@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: ecdsa_p521
+description: ecdsa p521 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ECC521
+  packaging_option: --ecc521
+signature_size_bytes: 132
+signing:
+  requires_private_key: true
+  tuple_id: ecdsa_p521-development

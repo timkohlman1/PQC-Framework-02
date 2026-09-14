@@ -1,0 +1,11 @@
+schema_version: 1
+profile_type: tls_kex
+id: secp384r1
+class: classical
+tls_version: '1.3'
+wolfssl:
+  group_token: WOLFSSL_ECC_SECP384R1
+  ecc: true
+  ecc_bits: 384
+requirements:
+  target_capability: tls13

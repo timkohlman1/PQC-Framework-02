@@ -1,0 +1,13 @@
+schema_version: 1
+profile_type: workload
+id: tls_handshake_repeat
+firmware_application: tls_handshake_repeat
+uart_log_level: info
+evidence:
+  deferred_reporting: true
+iterations:
+  handshakes_per_run: 10
+  reset_between_handshakes: false
+  fresh_tcp_connection: true
+  fresh_tls_context: true
+  session_resumption: false

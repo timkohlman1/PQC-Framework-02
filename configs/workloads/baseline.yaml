@@ -1,0 +1,7 @@
+schema_version: 1
+profile_type: workload
+id: baseline
+firmware_application: baseline
+uart_log_level: info
+evidence:
+  deferred_reporting: true

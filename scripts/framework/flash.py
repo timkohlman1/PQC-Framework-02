@@ -18,6 +18,7 @@ from typing import Any, Callable
 from framework.artifacts import calculate_file_sha256
 from framework.manifest import read_manifest, update_manifest
 from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.ssh_target import gateway_ssh_target
 
 ARTIFACT_MISSING_RETURN_CODE = 3
 PROVENANCE_REFUSED_RETURN_CODE = 5
@@ -289,6 +290,7 @@ def execute_flash(
     )
     remote_artifact_path = str(PurePosixPath("/tmp") / artifact_path.name)
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     flash_helper = str(bundle["host"]["flash"]["helper"])
     stlink_serial = str(bundle["board"]["stlink"]["serial"])
 
@@ -330,13 +332,13 @@ def execute_flash(
         return_code = provenance.return_code
         if return_code == 0:
             scp_execution = runner(
-                construct_scp_command(artifact_path, gateway_alias, remote_artifact_path),
+                construct_scp_command(artifact_path, gateway_target, remote_artifact_path),
                 repo_root_path,
             )
             return_code = scp_execution.return_code
             if return_code == 0:
                 flash_execution = runner(
-                    construct_ssh_flash_command(gateway_alias, flash_helper, remote_artifact_path),
+                    construct_ssh_flash_command(gateway_target, flash_helper, remote_artifact_path),
                     repo_root_path,
                 )
                 return_code = flash_execution.return_code

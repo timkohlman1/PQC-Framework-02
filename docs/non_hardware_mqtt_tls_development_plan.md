@@ -118,7 +118,7 @@ Requirement: Implement Phase M2 of the attached development plan - MQTT Configur
 
 - **Status:** completed
 - **Implemented evidence boundary:** Experiment configuration and manifests support `fake_no_network`, `host_side`, `stm32_build_only`, `stm32_runtime`, and `st67w61m1_backed` evidence classes with explicit backend, TLS, broker, limitation, and unavailable-metric fields.
-- **Verification:** `tests/unit/test_config_validation.py`, `tests/unit/test_manifest.py`, and the representative `configs/experiments/mqtt_tls_schema_fake.yaml` configuration.
+- **Verification:** `tests/unit/test_config_validation.py`, `tests/unit/test_manifest.py`, and the representative `.pqc-generated-state/campaigns/<campaign>/cases/<case>.yaml` configuration.
 - **Remaining limitations:** Schema support records evidence and limitations; it does not create network, TLS, MQTT, gateway, UART, or hardware evidence.
 - **Deferred tests:** None; later runtime capabilities have their own phase-specific entries in the consolidated deferred-test register.
 - **Last reconciled:** 2026-07-12

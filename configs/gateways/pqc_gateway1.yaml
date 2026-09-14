@@ -1,0 +1,28 @@
+schema_version: 1
+profile_type: gateway
+id: pqc_gateway1
+description: Experiment gateway identity and hardware-control paths.
+identity:
+  alias: pqc-gateway1
+  fqdn: pqc-gateway1.pqcnet
+  ssh_user: timk
+  address: 10.1.1.18
+control:
+  flash_helper: flash-stm32a
+  reset_helper: reset-stm32a
+  stlink_serial: 066EFF3932504E3043111818
+uart:
+  device: /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
+  baud: 115200
+network:
+  address: 10.1.1.18
+  experiment_interface: enp0s31f6
+  capture_interface: enp0s31f6
+  reporting_interface: host_control
+  impairment_scope: experiment_interface_only
+tooling:
+  stm32cubeprogrammer: STM32_Programmer_CLI
+  packet_capture: tcpdump
+  impairment: tc/netem
+legacy:
+  host_id: gateway

@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: ecdsa_p256
+description: ecdsa p256 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ECC256
+  packaging_option: --ecc256
+signature_size_bytes: 64
+signing:
+  requires_private_key: true
+  tuple_id: ecdsa_p256-development

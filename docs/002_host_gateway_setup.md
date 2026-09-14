@@ -6,7 +6,7 @@ This document owns development-host access to the experiment gateway. Operationa
 
 ## Canonical gateway configuration
 
-Repository-owned gateway identity and helper configuration is stored in `configs/hosts/gateway.yaml`. Use its SSH alias for SSH/SCP orchestration and its `network.address` for MQTT/TLS client validation when the alias is not resolvable through DNS.
+Repository-owned gateway identity and helper configuration is stored in `configs/gateways/pqc_gateway1.yaml`. Use its SSH alias for SSH/SCP orchestration and its `network.address` for MQTT/TLS client validation when the alias is not resolvable through DNS.
 
 Current configured values are:
 
@@ -18,7 +18,7 @@ Flash helper: flash-stm32a
 Reset helper: reset-stm32a
 ```
 
-Do not duplicate these values in framework code or add private-key paths to repository configuration. Update `configs/hosts/gateway.yaml` and the relevant canonical documentation when the lab identity changes.
+Do not duplicate these values in framework code or add private-key paths to repository configuration. Update `configs/gateways/pqc_gateway1.yaml` and the relevant canonical documentation when the lab identity changes.
 
 ## Gateway role and evidence boundary
 
@@ -88,7 +88,7 @@ Representative checks from the repository root:
 ```powershell
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration
 .\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-.\scripts\dev.ps1 experiment-gateway monitor --experiment configs/experiments/baseline_direct_uart.yaml --duration-seconds 10
+.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
 ```
 
 `PQC_DOCKER_SSH_DIR` may override the host-side SSH directory. SSH keys, VPN material, broker credentials, or TLS private keys must never be copied into the image or committed. See `docs/006_security_and_secrets.md`.

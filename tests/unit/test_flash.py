@@ -36,6 +36,7 @@ def sample_bundle():
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
+            "user": "timk",
             "flash": {"helper": "flash-stm32a"},
         },
     }
@@ -50,9 +51,9 @@ def write_manifest(result_dir: Path):
 
 def write_build_fingerprint_inputs(repo_root: Path) -> None:
     files = {
-        "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
-        "configs/boards/board_a.yaml": "id: board_a\n",
-        "configs/hosts/gateway.yaml": "id: gateway\n",
+        "configs/targets/stm32l4r5_st67.yaml": "id: stm32l4r5_st67\nprofile_type: target\n",
+        "configs/gateways/pqc_gateway1.yaml": "id: pqc_gateway1\nprofile_type: gateway\n",
+        "configs/workloads/baseline.yaml": "id: baseline\nprofile_type: workload\n",
         "CMakeLists.txt": "cmake minimum\n",
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",

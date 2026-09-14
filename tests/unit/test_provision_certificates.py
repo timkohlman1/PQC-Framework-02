@@ -9,7 +9,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = REPO_ROOT / "scripts" / "provision_certificates.py"
-CONFIG_DIR = REPO_ROOT / "configs" / "certificate_profile"
+CONFIG_DIR = REPO_ROOT / "configs" / "tls_auth"
 
 
 def _load_module():
@@ -61,6 +61,6 @@ def test_profile_parser_rejects_id_filename_mismatch(tmp_path: Path):
 def test_default_paths_are_repository_config_and_root_secrets():
     module = _load_module()
     args = module.build_parser().parse_args([])
-    assert Path(args.config_dir) == REPO_ROOT / "configs" / "certificate_profile"
+    assert Path(args.config_dir) == REPO_ROOT / "configs" / "tls_auth"
     assert Path(args.output) == REPO_ROOT / "secrets" / "certificates"
     assert module.DOCKER_IMAGE == "alpine:3.23"

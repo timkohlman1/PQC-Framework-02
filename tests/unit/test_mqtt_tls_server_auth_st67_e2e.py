@@ -7,6 +7,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MQTT_BROKER_CTL = REPO_ROOT / "experiment" / "mqtt-broker" / "scripts" / "mqtt_broker_ctl.py"
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from framework.config_resolver import ConfigResolver
+
+def _resolved_experiment():
+    resolver = ConfigResolver(REPO_ROOT)
+    case = next(c for c in resolver.expand_campaign("tls_key_exchange") if c["choices"]["tls_kex"] == "secp256r1")
+    return resolver.to_legacy_bundle(case, resolve_secrets=False)["experiment"]
 
 
 def _load_mqtt_broker_ctl_module():
@@ -43,7 +52,7 @@ def test_stm32_tls_path_uses_wolfssl_over_lwip_and_hardware_rng():
 
 def test_generated_header_keeps_client_credentials_mutual_tls_only():
     source = Path("scripts/framework/build.py").read_text(encoding="utf-8")
-    server_auth = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    server_auth = _resolved_experiment()
 
     assert "PQC_MQTT_TLS_CA_PEM" in source
     assert "ca_certificate" in source
@@ -53,18 +62,16 @@ def test_generated_header_keeps_client_credentials_mutual_tls_only():
     assert "if mutual_tls:" in source
     assert 'client_certificate_pem = ""' in source
     assert 'client_private_key_pem = ""' in source
-    assert "authentication: mutual" not in server_auth
-    assert "client_certificate:" not in server_auth
-    assert "client_private_key:" not in server_auth
+    assert server_auth["mqtt"]["tls"]["authentication"] == "server"
 
 
 def test_m11_config_selects_server_auth_profile_and_reconnect():
-    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert "evidence_class: stm32_st67_classical_tls_e2e" in config
-    assert "transport_backend: st67w61m1_lwip_wolfssl" in config
-    assert "broker_profile: classical-server-auth" in config
-    assert "mode: classical_tls_server_auth" in config
-    assert "reconnect_attempts: 1" in config
+    mqtt = _resolved_experiment()["mqtt"]
+    assert mqtt["evidence_class"] == "stm32_st67_classical_tls_e2e"
+    assert mqtt["transport_backend"] == "st67w61m1_lwip_wolfssl"
+    assert mqtt["broker_profile"] == "classical-server-auth"
+    assert mqtt["tls"]["mode"] == "classical_tls_server_auth"
+    assert mqtt["reconnect_attempts"] == 1
 
 
 def test_managed_broker_cleanup_receives_bundle_and_uses_selected_profile():
@@ -124,10 +131,10 @@ def test_tls_peer_ip_setup_precedes_ca_load_and_cannot_report_mqtt_success_on_fa
 
 
 def test_m11_config_uses_experiment_selected_fqdn_and_requires_dns():
-    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
-    assert "host: pqc-gateway1.pqcnet" in config
-    assert "server_name: pqc-gateway1.pqcnet" in config
-    assert "dns_required: true" in config
+    broker = _resolved_experiment()["mqtt"]["broker"]
+    assert broker["host"] == "pqc-gateway1.pqcnet"
+    assert broker["server_name"] == "pqc-gateway1.pqcnet"
+    assert broker["dns_required"] is True
 
 
 def test_firmware_reports_dns_server_and_resolution_and_selects_tls_identity_type():
@@ -145,20 +152,21 @@ def test_firmware_reports_dns_server_and_resolution_and_selects_tls_identity_typ
         assert marker in source
 
 
-def test_dns_required_controls_uart_pass_markers():
+def test_dns_required_uart_pass_markers_are_not_mandatory_for_tls():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert 'bool(broker.get("dns_required", False))' in source
+    assert 'and not is_tls' in source
     assert '"ST67 DNS: required=true"' in source
     assert '"ST67 DNS lookup: result=passed"' in source
 
 
 def test_gateway_orchestration_uses_explicit_transport_host_not_firmware_fqdn():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = _resolved_experiment()
     assert "def _mqtt_orchestration_host(" in source
     assert source.count("_mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)") == 2
     assert 'configured = str(orchestration.get("host", "")).strip()' in source
-    assert "orchestration:\n    host: 10.1.1.18" in config
+    assert config["mqtt"]["orchestration"]["host"] == "10.1.1.18"
 
 
 
@@ -237,7 +245,7 @@ def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
 
 def test_mqtt_uart_capture_uses_completion_marker_grace_and_hard_limit():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    config = Path("configs/experiments/mqtt_tls_secp256r1_server_auth_st67_e2e.yaml").read_text(encoding="utf-8")
+    config = _resolved_experiment()
     assert 'MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="' in source
     assert "_mqtt_completion_marker(bundle)" in source
     assert 'grep -Fq "$completion_marker" "$uart_file"' in source
@@ -245,7 +253,7 @@ def test_mqtt_uart_capture_uses_completion_marker_grace_and_hard_limit():
     assert 'termination_reason=hard_timeout' in source
     assert 'exit "$normalized_capture_rc"' in source
     assert '"capture_termination_reason"' in source
-    assert "completion_grace_seconds: 3" in config
+    assert config["mqtt"]["orchestration"]["completion_grace_seconds"] == 3
 
 def test_mqtt_uart_default_output_is_concise_and_emits_terminal_marker():
     main = Path("Core/Src/main.c").read_text(encoding="utf-8")

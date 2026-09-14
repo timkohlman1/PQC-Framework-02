@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: workload
+id: ready_metrics_2
+firmware_application: mqtt_ready_metrics_2
+uart_log_level: info
+evidence:
+  deferred_reporting: true
+transfer:
+  payload_bytes: 204800
+  chunk_bytes: 400
+  request_payload: send
+  responder: gateway_mqtt

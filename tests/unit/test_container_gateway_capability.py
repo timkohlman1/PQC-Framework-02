@@ -10,7 +10,13 @@ import conftest
 def test_gateway_capability_requires_explicit_container_enablement(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(conftest.CONTAINER_ENV, "1")
     monkeypatch.delenv(conftest.CONTAINER_GATEWAY_ENABLE_ENV, raising=False)
-    monkeypatch.setattr(conftest, "_host_config", lambda: {"alias": "pqc-gateway1"})
+    monkeypatch.setattr(conftest, "_host_config", lambda: {
+        "identity": {
+            "alias": "pqc-gateway1",
+            "fqdn": "pqc-gateway1.pqcnet",
+            "ssh_user": "timk",
+        }
+    })
     monkeypatch.setattr(Path, "exists", lambda self: False)
 
     checker = conftest.PqcCapabilityChecker()
@@ -27,7 +33,13 @@ def test_gateway_capability_uses_runtime_ssh_when_container_gateway_enabled(
 ) -> None:
     monkeypatch.setenv(conftest.CONTAINER_ENV, "1")
     monkeypatch.setenv(conftest.CONTAINER_GATEWAY_ENABLE_ENV, "1")
-    monkeypatch.setattr(conftest, "_host_config", lambda: {"alias": "pqc-gateway1"})
+    monkeypatch.setattr(conftest, "_host_config", lambda: {
+        "identity": {
+            "alias": "pqc-gateway1",
+            "fqdn": "pqc-gateway1.pqcnet",
+            "ssh_user": "timk",
+        }
+    })
     monkeypatch.setattr(Path, "exists", lambda self: False)
 
     probes: list[tuple[str, str]] = []
@@ -43,4 +55,4 @@ def test_gateway_capability_uses_runtime_ssh_when_container_gateway_enabled(
     result = checker.check("gateway")
 
     assert result.available
-    assert probes == [("pqc-gateway1", "true")]
+    assert probes == [("timk@pqc-gateway1.pqcnet", "true")]

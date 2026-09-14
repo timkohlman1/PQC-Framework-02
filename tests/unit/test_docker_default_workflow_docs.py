@@ -51,9 +51,10 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
     signing = workflow.index("Sign relocated application in container")
 
     assert relocated_build < signing
-    assert "python scripts/experiment.py build" in workflow
-    assert "Release is the default" in workflow
-    assert "`--debug`" in workflow
+    assert "./scripts/dev.sh experiment build" in workflow
+    assert "./scripts/dev.sh experiment sign-application" in workflow
+    assert "--configure-preset Release" in workflow
+    assert "--build-preset Release" in workflow
     assert "RelocatedDebug" not in workflow
     assert "--artifact build/Release/stm32_basic_hal1.elf" in workflow
 

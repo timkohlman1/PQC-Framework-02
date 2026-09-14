@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 BROKER_RELATIVE_DIR = Path("experiment/mqtt-broker")
-DEFAULT_HOST_CONFIG = Path("configs/hosts/gateway.yaml")
+DEFAULT_GATEWAY_CONFIG = Path("configs/gateways/pqc_gateway1.yaml")
 DEFAULT_REMOTE_DIR = "~/pqc-framework-02/experiment/mqtt-broker"
 DEFAULT_PROJECT_NAME = "pqc-framework-mqtt-broker"
 DEFAULT_SERVER_NAME = "pqc-gateway1.pqcnet"
@@ -32,6 +32,7 @@ BROKER_PROFILE_SERVICES = {
     "classical-server-auth": "mqtt-classical-server-auth",
     "oqs": "mqtt-oqs",
     "oqs-mtls": "mqtt-oqs-mtls",
+    "reporting": "mqtt-reporting",
 }
 BROKER_PROFILES = tuple(BROKER_PROFILE_SERVICES)
 TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"
@@ -115,17 +116,20 @@ def _nested(data: dict[str, Any], *keys: str) -> Any:
 
 
 def load_host_config(path: Path) -> HostConfig:
+    """Load the canonical gateway profile into the broker's SSH view."""
     if not path.is_file():
-        raise SystemExit(f"host config not found: {path}")
+        raise SystemExit(f"gateway config not found: {path}")
     data = load_simple_yaml(path)
-    alias = data.get("alias")
+    alias = _nested(data, "identity", "fqdn") or _nested(data, "identity", "alias")
+    user = _nested(data, "identity", "ssh_user")
+    address = _nested(data, "network", "address") or _nested(data, "identity", "address")
     if not isinstance(alias, str) or not alias:
-        raise SystemExit(f"host config is missing alias: {path}")
-    user = data.get("user")
-    address = _nested(data, "network", "address") or data.get("address")
+        raise SystemExit(f"gateway config is missing identity.fqdn/identity.alias: {path}")
+    if not isinstance(user, str) or not user:
+        raise SystemExit(f"gateway config is missing identity.ssh_user: {path}")
     return HostConfig(
         alias=alias,
-        user=user if isinstance(user, str) and user else None,
+        user=user,
         address=address if isinstance(address, str) and address else None,
     )
 
@@ -189,7 +193,7 @@ def remote_repo_root(remote_dir: str) -> str:
 
 
 def deploy(args: argparse.Namespace) -> None:
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     remote_dir = args.remote_dir
     source_root = broker_root()
     file_copies = [
@@ -256,7 +260,7 @@ def _compose_environment(args: argparse.Namespace) -> list[str]:
 
 
 def compose_remote(args: argparse.Namespace, compose_args: list[str]) -> None:
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     env = _compose_environment(args)
     env_prefix = " ".join(shlex.quote(item) for item in env)
     compose = ["docker", "compose", "--project-name", args.project_name, *compose_args]
@@ -287,14 +291,16 @@ def stop(args: argparse.Namespace) -> None:
             "oqs",
             "--profile",
             "oqs-mtls",
+            "--profile",
+            "reporting",
             "down",
             "--remove-orphans",
         ],
     )
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     cleanup_command = (
         "docker rm -f pqc-mqtt-classical pqc-mqtt-classical-server-auth "
-        "pqc-mqtt-oqs pqc-mqtt-oqs-mtls >/dev/null 2>&1 || true"
+        "pqc-mqtt-oqs pqc-mqtt-oqs-mtls pqc-mqtt-reporting >/dev/null 2>&1 || true"
     )
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 
@@ -310,7 +316,7 @@ def logs(args: argparse.Namespace) -> None:
 
 def collect_tls_keylog(args: argparse.Namespace) -> None:
     """Copy the selected broker profile TLS key log from the live container."""
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     target = ssh_target(host)
     service = BROKER_PROFILE_SERVICES[args.profile]
     remote_command = (
@@ -339,7 +345,7 @@ def collect_tls_keylog(args: argparse.Namespace) -> None:
     print(f"TLS key log copied: {output}")
 
 def validate_oqs_tls(args: argparse.Namespace) -> None:
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     target = ssh_target(host)
     cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/certificates/{args.certificate_profile}"
     port = str(args.oqs_port or 8884)
@@ -404,7 +410,7 @@ def validate_mqtt_pubsub(
     mutual_tls: bool,
     oqs_client: bool = False,
 ) -> None:
-    host = load_host_config(repo_root() / args.host_config)
+    host = load_host_config(repo_root() / args.gateway_config)
     target = ssh_target(host)
     cert_dir = f"{remote_repo_root(args.remote_dir)}/secrets/certificates/{certificate_profile}"
     topic = args.topic
@@ -526,7 +532,7 @@ def validate_oqs_mtls_mqtt(args: argparse.Namespace) -> None:
 
 def add_common_remote_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--certificate-profile", help="resolved MQTT certificate profile under secrets/certificates")
-    parser.add_argument("--host-config", default=str(DEFAULT_HOST_CONFIG), help="repository-relative host config path")
+    parser.add_argument("--gateway-config", default=str(DEFAULT_GATEWAY_CONFIG), help="repository-relative canonical gateway config path")
     parser.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR, help="remote gateway directory for the broker compose project")
     parser.add_argument("--project-name", default=DEFAULT_PROJECT_NAME, help="Docker Compose project name")
     parser.add_argument("--dry-run", action="store_true", help="print commands without executing them")

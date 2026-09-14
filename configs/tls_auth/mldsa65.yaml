@@ -1,0 +1,57 @@
+schema_version: 1
+id: mldsa65
+description: Controlled ML-DSA-65 X.509 hierarchy for MQTT/TLS experiments.
+key:
+  algorithm: mldsa65
+  display_name: ML-DSA-65
+  openssl_algorithm: ML-DSA-65
+  genpkey_args:
+  - -algorithm
+  - ML-DSA-65
+certificate:
+  organization: PQC Framework Research
+  digest: null
+  expected_signature_algorithm: ML-DSA-65
+  tls_signature_scheme: mldsa65
+  validity_days:
+    root: 7300
+    intermediate: 5475
+    leaf: 3650
+hierarchy:
+  intermediate: true
+  root_common_name: PQC Framework mldsa65 Root CA
+  intermediate_common_name: PQC Framework mldsa65 Intermediate CA
+identities:
+  server:
+    common_name: pqc-gateway1.pqcnet
+    extended_key_usage:
+    - serverAuth
+    dns_names:
+    - pqc-gateway1.pqcnet
+    - pqc-gateway1
+    - mqtt-broker
+    - localhost
+    ip_addresses:
+    - 127.0.0.1
+    - 10.1.1.18
+  client:
+    common_name: stm32-mqtt-client
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - stm32-mqtt-client
+    ip_addresses: []
+  healthcheck:
+    common_name: pqc-mqtt-server-healthcheck
+    extended_key_usage:
+    - clientAuth
+    dns_names:
+    - pqc-mqtt-server-healthcheck
+    ip_addresses: []
+profile_type: tls_auth
+supported_modes:
+- server
+- mutual
+thesis_profile: true
+tls:
+  signature_scheme: mldsa65

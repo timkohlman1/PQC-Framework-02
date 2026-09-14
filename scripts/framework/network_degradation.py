@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from framework.uart import CommandExecution
+from framework.ssh_target import gateway_ssh_target
 
 NETWORK_DEGRADATION_LOG_NAME = "gateway-network-degradation.log"
 
@@ -67,6 +68,7 @@ class NetworkDegradationConfig:
 @dataclass(frozen=True)
 class GatewayNetworkDegradation:
     gateway_alias: str
+    gateway_target: str
     config: NetworkDegradationConfig
     original_mtu: int
     apply: CommandExecution
@@ -193,7 +195,8 @@ def apply_gateway_network_degradation(
     if config is None:
         return None, None
     gateway_alias = str(bundle["host"]["alias"])
-    command = ["ssh", gateway_alias, f"sh -c {shlex.quote(_remote_script(config))}"]
+    gateway_target = gateway_ssh_target(bundle["host"])
+    command = ["ssh", gateway_target, f"sh -c {shlex.quote(_remote_script(config))}"]
     execution = runner(command, cwd=repo_root)
     log_path = result_dir / NETWORK_DEGRADATION_LOG_NAME
     log_path.write_text(
@@ -223,6 +226,7 @@ def apply_gateway_network_degradation(
         return None, invalid
     return GatewayNetworkDegradation(
         gateway_alias=gateway_alias,
+        gateway_target=gateway_target,
         config=config,
         original_mtu=original_mtu,
         apply=execution,
@@ -249,7 +253,7 @@ def remove_gateway_network_degradation(
         + "actual_mtu=$(cat /sys/class/net/$iface/mtu 2>/dev/null); "
         + f"[ \"$actual_mtu\" = \"{degradation.original_mtu}\" ]"
     )
-    command = ["ssh", degradation.gateway_alias, f"sh -c {shlex.quote(script)}"]
+    command = ["ssh", degradation.gateway_target, f"sh -c {shlex.quote(script)}"]
     execution = runner(command, cwd=repo_root)
     with degradation.log_path.open("a", encoding="utf-8") as stream:
         stream.write("\nCleanup command: " + shlex.join(command) + "\n")

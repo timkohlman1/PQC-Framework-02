@@ -3,10 +3,27 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import sys
 from argparse import Namespace
 from pathlib import Path
 
+
+
+def materialize_baseline_case(tmp_path: Path, monkeypatch) -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    shutil.copytree(repo_root / "configs", tmp_path / "configs")
+    monkeypatch.setenv("PQC_WIFI_SSID", "pqc")
+    monkeypatch.setenv("PQC_WIFI_PSK", "test-psk")
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
+    resolver = ConfigResolver(tmp_path)
+    root = resolver.materialize_campaign(
+        "baseline", tmp_path / ".pqc-generated-state" / "campaigns" / "baseline"
+    )
+    return sorted((root / "cases").glob("*.yaml"))[0]
 
 def load_build_module():
     repo_root = Path(__file__).resolve().parents[2]
@@ -109,10 +126,9 @@ def write_build_fingerprint_inputs(repo_root: Path) -> None:
     """Create the required fingerprint input set without invoking toolchains."""
 
     files = {
-        "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
-        "configs/boards/board_a.yaml": "id: board_a\n",
-        "configs/hosts/gateway.yaml": "id: gateway\n",
-        "configs/boot/direct_flash.yaml": "id: direct_flash\nmode: direct_flash\nrunnable: true\n",
+        "configs/targets/stm32l4r5_st67.yaml": "id: stm32l4r5_st67\nprofile_type: target\n",
+        "configs/gateways/pqc_gateway1.yaml": "id: pqc_gateway1\nprofile_type: gateway\n",
+        "configs/workloads/baseline.yaml": "id: baseline\nprofile_type: workload\n",
         "CMakeLists.txt": "add_executable(stm32_basic_hal1 Core/Src/main.c startup_stm32l4r5xx.s)\n",
         "cmake/stm32cubemx/CMakeLists.txt": "target_sources(stm32cubemx INTERFACE Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal.c)\n",
         "CMakePresets.json": "{\"version\": 3}\n",
@@ -149,80 +165,8 @@ def test_build_command_construction_uses_cmake_presets():
 
 def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(experiment_cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    experiment_path = materialize_baseline_case(tmp_path, monkeypatch)
 
     class FakeBuildResult:
         return_code = 0
@@ -259,80 +203,8 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
 
 def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(experiment_cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    experiment_path = materialize_baseline_case(tmp_path, monkeypatch)
 
     seen_result_dirs = []
 
@@ -397,80 +269,8 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
 
 def test_run_build_flash_command_returns_flash_failure_after_successful_build(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(experiment_cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    experiment_path = materialize_baseline_case(tmp_path, monkeypatch)
 
     seen_result_dirs = []
 
@@ -531,80 +331,8 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
 
 def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(experiment_cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    experiment_path = materialize_baseline_case(tmp_path, monkeypatch)
 
     seen_result_dirs = []
 
@@ -650,80 +378,8 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
 
 def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
-    experiment_path = tmp_path / "configs" / "experiments" / "baseline_direct_uart.yaml"
-    board_path = tmp_path / "configs" / "boards" / "board_a.yaml"
-    host_path = tmp_path / "configs" / "hosts" / "gateway.yaml"
-    boot_path = tmp_path / "configs" / "boot" / "direct_flash.yaml"
-    experiment_path.parent.mkdir(parents=True)
-    board_path.parent.mkdir(parents=True)
-    host_path.parent.mkdir(parents=True)
-    boot_path.parent.mkdir(parents=True)
-
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    board_path.write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    boot_path.write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    host_path.write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(experiment_cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    experiment_path = materialize_baseline_case(tmp_path, monkeypatch)
 
     seen_result_dirs = []
 
@@ -922,7 +578,7 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
-            experiment=Path("configs/experiments/baseline_direct_uart.yaml"),
+            experiment=Path(".pqc-generated-state/campaigns/baseline/cases/0001_baseline.yaml"),
             results_dir=tmp_path / "results",
             configure_preset="Release",
             build_preset="Release",
@@ -1036,6 +692,46 @@ def test_pqc_hybrid_wifi_header_rejects_falcon_leaf_profile(tmp_path):
         assert "classical" in str(error)
     else:
         raise AssertionError("incompatible Falcon server signature algorithm was accepted")
+
+
+def test_pqc_hybrid_wifi_header_accepts_canonical_rsa_pss_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_hybrid_tls_server_auth",
+                    "server_signature_algorithm": "rsa_pss_rsae_sha256",
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "rsa_pss_rsae_sha256"' in text
+
+
+def test_pqc_standalone_wifi_header_accepts_canonical_rsa_pss_signature_algorithm(tmp_path):
+    from framework.build import _write_wifi_config_header
+
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "enabled": True,
+                "tls": {
+                    "mode": "pqc_tls_server_auth",
+                    "server_signature_algorithm": "rsa_pss_rsae_sha256",
+                },
+            }
+        }
+    }
+
+    path = _write_wifi_config_header(bundle, tmp_path, "Debug")
+    text = path.read_text(encoding="utf-8")
+    assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "rsa_pss_rsae_sha256"' in text
 
 
 def test_pqc_hybrid_wifi_header_records_ca_hash_and_signature_algorithm(tmp_path):

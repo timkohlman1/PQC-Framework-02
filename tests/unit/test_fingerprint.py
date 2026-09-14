@@ -21,9 +21,9 @@ def load_fingerprint_module():
 
 def write_required_inputs(repo_root: Path) -> None:
     files = {
-        "configs/experiments/baseline_direct_uart.yaml": "id: baseline_direct_uart\nboard: board_a\nhost: gateway\n",
-        "configs/boards/board_a.yaml": "id: board_a\n",
-        "configs/hosts/gateway.yaml": "id: gateway\n",
+        "configs/targets/stm32l4r5_st67.yaml": "id: stm32l4r5_st67\nprofile_type: target\n",
+        "configs/gateways/pqc_gateway1.yaml": "id: pqc_gateway1\nprofile_type: gateway\n",
+        "configs/workloads/baseline.yaml": "id: baseline\nprofile_type: workload\n",
         "CMakeLists.txt": """cmake_minimum_required(VERSION 3.22)\nset(PQC_WOLFSSL_SOURCE_DIR ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/wolfSSL)\ntarget_sources(app PRIVATE Core/Src/main.c)\n""",
         "CMakePresets.json": "{\"version\": 3}\n",
         "STM32L4R5XX_FLASH.ld": "flash linker script\n",
@@ -83,9 +83,11 @@ def test_secure_boot_existing_inputs_fingerprint_records_exact_coverage(tmp_path
     (repo_root / "scripts" / "framework").mkdir(parents=True)
     (repo_root / "scripts" / "framework" / "wolfboot_build.py").write_text("patch source\n", encoding="utf-8")
     (repo_root / "configs" / "targets").mkdir(parents=True)
-    (repo_root / "configs" / "algorithms").mkdir(parents=True)
+    (repo_root / "configs" / "secure_boot").mkdir(parents=True)
     (repo_root / "configs" / "targets" / "stm32l4r5_wolfboot.yaml").write_text("target\n", encoding="utf-8")
-    (repo_root / "configs" / "algorithms" / "ecdsa_p256.yaml").write_text("algorithm\n", encoding="utf-8")
+    (repo_root / "configs" / "targets" / "stm32l4r5_st67.yaml").write_text("target runtime\n", encoding="utf-8")
+    (repo_root / "configs" / "secure_boot" / "ecdsa_p256.yaml").write_text("secure boot\n", encoding="utf-8")
+    (repo_root / "scripts" / "framework" / "config_resolver.py").write_text("resolver\n", encoding="utf-8")
 
     requested = fingerprint.default_wolfboot_fingerprint_inputs(
         profile_id="wolfboot_stm32l4_ecdsa_p256",
@@ -97,8 +99,10 @@ def test_secure_boot_existing_inputs_fingerprint_records_exact_coverage(tmp_path
     assert result.algorithm == "sha256-secure-boot-inputs-v1"
     assert len(result.fingerprint) == 64
     assert result.inputs == [
-        "configs/algorithms/ecdsa_p256.yaml",
+        "configs/secure_boot/ecdsa_p256.yaml",
+        "configs/targets/stm32l4r5_st67.yaml",
         "configs/targets/stm32l4r5_wolfboot.yaml",
+        "scripts/framework/config_resolver.py",
         "scripts/framework/wolfboot_build.py",
     ]
 
@@ -110,7 +114,7 @@ def test_signing_fingerprint_inputs_cover_relocated_linker_script():
         profile_id="wolfboot_ecdsa_p256_app"
     )
 
-    assert "configs/algorithms/ecdsa_p256.yaml" in inputs
+    assert "configs/secure_boot/ecdsa_p256.yaml" in inputs
     assert "scripts/framework/signing.py" in inputs
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in inputs
     assert "STM32L4R5XX_FLASH.ld" not in inputs
@@ -127,9 +131,10 @@ def test_secure_boot_flash_fingerprint_inputs_cover_artifact_producers():
     assert "scripts/framework/secure_boot_flash.py" in inputs
     assert "scripts/framework/wolfboot_build.py" in inputs
     assert "scripts/framework/signing.py" in inputs
-    assert "configs/algorithms/ecdsa_p256.yaml" in inputs
-    assert "configs/algorithms/ecdsa_p256.yaml" in inputs
-    assert "configs/wolfboot/stm32l4r5_ecdsa_p256.config" in inputs
+    assert "configs/secure_boot/ecdsa_p256.yaml" in inputs
+    assert "configs/secure_boot/ecdsa_p256.yaml" in inputs
+    assert "configs/targets/stm32l4r5_st67.yaml" in inputs
+    assert "configs/targets/stm32l4r5_wolfboot.yaml" in inputs
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in inputs
     assert "tools/wolfboot/src/image.c" in inputs
 

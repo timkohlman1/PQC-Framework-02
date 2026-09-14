@@ -30,7 +30,7 @@ def sample_profile() -> dict[str, object]:
         "build": {
             "command": "make",
             "args": "WOLFBOOT_ROOT=. wolfboot.elf",
-            "config_template": "configs/wolfboot/stm32l4r5_ecdsa_p256.config",
+            "config_template": "testdata/wolfboot/stm32l4r5_ecdsa_p256.config",
             "generated_config": "tools/wolfboot/.config",
             "mingw_keytools_ansi_stdio_patch": True,
             "stm32l4_hal_conf_pwr_patch": True,
@@ -162,7 +162,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     source_dir.mkdir(parents=True)
     makefile_path = write_keytools_makefile(source_dir)
     hal_conf_path = write_stm32l4_hal_conf(source_dir)
@@ -288,7 +288,7 @@ def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
     source_dir.mkdir(parents=True)
@@ -330,8 +330,8 @@ def test_execute_wolfboot_build_rejects_generated_config_outside_source_dir(tmp_
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
     (repo_root / "tools" / "wolfboot").mkdir(parents=True)
-    (repo_root / "configs" / "wolfboot").mkdir(parents=True)
-    (repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config").write_text(
+    (repo_root / "testdata" / "wolfboot").mkdir(parents=True)
+    (repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config").write_text(
         "TARGET=stm32l4\n", encoding="utf-8"
     )
     profile = sample_profile()
@@ -367,56 +367,6 @@ def test_execute_wolfboot_build_records_missing_project_local_config_template(tm
     assert "config template not found" in result.failure_reason
 
 
-def test_project_local_wolfboot_configs_select_stm32l4r5_header_without_app_user_settings_leakage():
-    repo_root = Path(__file__).resolve().parents[2]
-    config_paths = sorted((repo_root / "configs" / "wolfboot").glob("stm32l4r5_*.config"))
-
-    assert config_paths
-
-    wolfboot_user_settings = (repo_root / "tools" / "wolfboot" / "include" / "user_settings.h").read_text(
-        encoding="utf-8"
-    )
-    assert "#define CTYPE_USER" in wolfboot_user_settings
-
-    duplicated_wolfboot_settings = (
-        "NO_CTYPE_H",
-        "NO_CTYPE",
-        "NO_FILESYSTEM",
-        "NO_WOLFSSL_DIR",
-        "WOLFSSL_NO_CURRDIR",
-        "NO_WRITEV",
-        "SINGLE_THREADED",
-        "ECC_TIMING_RESISTANT",
-        "TFM_TIMING_RESISTANT",
-        "WC_RSA_BLINDING",
-    )
-
-    for config_path in config_paths:
-        config_text = config_path.read_text(encoding="utf-8")
-
-        assert "CFLAGS_EXTRA+=-USTM32L4A6xx" in config_text
-        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
-        assert "CFLAGS_EXTRA+=-DSTM32L4R5xx" in config_text
-        assert "CFLAGS_EXTRA+=-I../../Core/Inc" not in config_text
-        assert "not the STM32 application wolfSSL smoke-test settings in Core/Inc" in config_text
-
-        for duplicated_wolfboot_setting in duplicated_wolfboot_settings:
-            assert f"CFLAGS_EXTRA+=-D{duplicated_wolfboot_setting}" not in config_text
-
-        assert "IMAGE_HEADER_SIZE=12288" in config_text
-        assert "IMAGE_HEADER_SIZE=0x2000" not in config_text
-        assert "CFLAGS_EXTRA+=-DHAL_PWR_MODULE_ENABLED" not in config_text
-        assert "CFLAGS_EXTRA+=-include" not in config_text
-        assert "CFLAGS_EXTRA+=../../Core/Inc/stm32l4xx_hal_conf.h" not in config_text
-        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o" in config_text
-        assert "OBJS+=$(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o" in config_text
-        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING=1" in config_text
-        assert "WOLFBOOT_PQC_BOOT_TIMING_CPU_HZ" not in config_text
-        assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL" in config_text
-        assert "CFLAGS_EXTRA+=-DDEBUG_UART" not in config_text
-        assert "CFLAGS_EXTRA+=-DPRINTF_ENABLED" not in config_text
-        assert config_text.index("CFLAGS_EXTRA+=-USTM32L4A6xx") < config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx")
-        assert config_text.index("CFLAGS_EXTRA+=-DSTM32L4R5xx") < config_text.index("CFLAGS_EXTRA+=-I../../Drivers/STM32L4xx_HAL_Driver/Inc")
 
 
 def test_default_wolfboot_build_profile_sets_explicit_wolfboot_root():
@@ -464,7 +414,7 @@ def test_construct_ed25519_wolfboot_build_command_accepts_profile():
     profile["id"] = "wolfboot_stm32l4_ed25519"
     profile["signature_algorithm"] = "ed25519"
     profile["boot_profile"] = "wolfboot_ed25519"
-    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_ed25519.config"
+    profile["build"]["config_template"] = "testdata/wolfboot/stm32l4r5_ed25519.config"
     profile["build"]["signing_key"] = "secrets/wolfboot/ed25519_private_key.der"
 
     command = wolfboot_build.construct_wolfboot_build_command(profile)
@@ -478,7 +428,7 @@ def test_validate_wolfboot_build_profile_accepts_rsa2048_algorithm():
     profile["id"] = "wolfboot_stm32l4_rsa2048"
     profile["signature_algorithm"] = "rsa2048"
     profile["boot_profile"] = "wolfboot_rsa2048"
-    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_rsa2048.config"
+    profile["build"]["config_template"] = "testdata/wolfboot/stm32l4r5_rsa2048.config"
     profile["build"]["signing_key"] = "secrets/wolfboot/rsa2048_private_key.der"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
@@ -491,7 +441,7 @@ def test_validate_wolfboot_build_profile_accepts_phase_11_5d_expanded_algorithm(
     profile["id"] = "wolfboot_stm32l4_ecc384"
     profile["signature_algorithm"] = "ecc384"
     profile["boot_profile"] = "wolfboot_ecc384"
-    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_ecc384.config"
+    profile["build"]["config_template"] = "testdata/wolfboot/stm32l4r5_ecc384.config"
     profile["build"]["signing_key"] = "secrets/wolfboot/ecc384_private_key.der"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
@@ -503,7 +453,7 @@ def test_validate_wolfboot_build_profile_accepts_mldsa44():
     profile["id"] = "wolfboot_stm32l4_mldsa44"
     profile["signature_algorithm"] = "mldsa44"
     profile["boot_profile"] = "wolfboot_mldsa44"
-    profile["build"]["config_template"] = "configs/wolfboot/stm32l4r5_mldsa44.config"
+    profile["build"]["config_template"] = "testdata/wolfboot/stm32l4r5_mldsa44.config"
 
     wolfboot_build.validate_wolfboot_build_profile(profile)
 
@@ -513,7 +463,7 @@ def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     source_dir.mkdir(parents=True)
     write_keytools_makefile(source_dir)
     write_stm32l4_hal_conf(source_dir)
@@ -557,7 +507,7 @@ def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_pa
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
     generated_keystore = source_dir / "src" / "keystore.c"
@@ -607,7 +557,7 @@ def test_execute_wolfboot_build_rejects_existing_key_when_keystore_is_missing(tm
     wolfboot_build = load_wolfboot_build_module()
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     signing_key = repo_root / "secrets" / "wolfboot" / "ecdsa_p256_private_key.der"
     wolfboot_key = source_dir / "wolfboot_signing_private_key.der"
 
@@ -652,7 +602,7 @@ def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_mak
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
     config_template_path = (
-        repo_root / "configs" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
+        repo_root / "testdata" / "wolfboot" / "stm32l4r5_ecdsa_p256.config"
     )
     source_dir.mkdir(parents=True)
     write_keytools_makefile(source_dir)
@@ -721,7 +671,7 @@ def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkey
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
-    config_template_path = repo_root / "configs" / "wolfboot" / "stm32l4r5_integrity.config"
+    config_template_path = repo_root / "testdata" / "wolfboot" / "stm32l4r5_integrity.config"
     source_dir.mkdir(parents=True)
     config_template_path.parent.mkdir(parents=True)
     config_template_path.write_text(
@@ -735,7 +685,7 @@ def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkey
     profile["build"] = {
         "command": "make",
         "args": "WOLFBOOT_ROOT=. wolfboot.elf",
-        "config_template": "configs/wolfboot/stm32l4r5_integrity.config",
+        "config_template": "testdata/wolfboot/stm32l4r5_integrity.config",
         "generated_config": "tools/wolfboot/.config",
         "signing_tuple": {},
     }

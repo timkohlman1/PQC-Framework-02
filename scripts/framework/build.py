@@ -25,7 +25,7 @@ from framework.generated_state import (
     detect_execution_identity,
     record_generated_state_success,
 )
-from framework.test_provenance import (
+from framework.provenance import (
     TEST_BUILD_PURPOSE,
     current_build_purpose,
     current_test_result_dir,
@@ -391,8 +391,10 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ECC_BITS {selected["ecc_bits"]})\n'
         f'set(PQC_TLS_ECC_MIN_BITS {selected["ecc_min_bits"]})\n'
         f'set(PQC_TLS_ENABLE_CURVE25519 {cmake_boolean(selected["curve25519"])})\n'
+        f'set(PQC_TLS_ENABLE_MLKEM_512 {cmake_boolean(selected["mlkem_512"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'
+        f'set(PQC_TLS_MLKEM_STANDALONE {cmake_boolean(selected["mlkem_standalone"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65 {cmake_boolean(selected["mldsa_65"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65_SIGN {cmake_boolean(selected["mldsa_65_sign"])})\n'
         f'set(PQC_TLS_GROUP_ID {selected["group_token"]})\n'
@@ -422,14 +424,15 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     authentication = str(tls.get("authentication", "server")).strip().lower()
     mutual_tls = authentication == "mutual" or str(tls.get("mode", "")).endswith("_mutual")
     server_signature_algorithm = str(tls.get("server_signature_algorithm", "")).strip().lower()
-    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual"}:
+    if tls.get("mode") in {"pqc_hybrid_tls_server_auth", "pqc_hybrid_tls_mutual", "pqc_tls_server_auth", "pqc_tls_mutual"}:
         if not server_signature_algorithm:
             raise ValueError(
-                "MQTT PQC hybrid TLS configuration is missing tls.server_signature_algorithm. "
+                "MQTT PQC TLS configuration is missing tls.server_signature_algorithm. "
                 "The STM32 wolfSSL profile requires an explicit server-authentication algorithm."
             )
         supported_server_signature_algorithms = {
             "classical",
+            "rsa_pss_rsae_sha256",
             "ecdsa_secp256r1_sha256",
             "ecdsa_secp384r1_sha384",
             "mldsa65",

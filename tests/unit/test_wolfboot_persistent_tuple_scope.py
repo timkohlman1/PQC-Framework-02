@@ -23,7 +23,7 @@ def _profile() -> dict[str, object]:
         "build": {
             "command": "make",
             "args": "WOLFBOOT_ROOT=. wolfboot.elf",
-            "config_template": "configs/wolfboot/missing.config",
+            "config_template": "testdata/wolfboot/missing.config",
             "generated_config": "tools/wolfboot/.config",
             "signing_key": (
                 "secrets/wolfboot/tuples/"

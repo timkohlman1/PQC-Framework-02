@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: ed448
+description: ed448 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ED448
+  packaging_option: --ed448
+signature_size_bytes: 114
+signing:
+  requires_private_key: true
+  tuple_id: ed448-development

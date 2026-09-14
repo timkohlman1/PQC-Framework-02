@@ -1,0 +1,69 @@
+schema_version: 1
+profile_type: target
+id: stm32l4r5_st67
+description: NUCLEO-L4R5ZI-P with ST67W611M1 network interface.
+hardware:
+  board: NUCLEO-L4R5ZI-P
+  mcu: STM32L4R5ZI-P
+  cpu: Arm Cortex-M4
+  flash_bytes: 2097152
+  sram_bytes: 655360
+  network_adapter: ST67W611M1
+build:
+  preset: Release
+  artifact: build/Release/stm32_basic_hal1.elf
+capabilities:
+  tls13: true
+  standalone_mlkem_tls: true
+  wolfboot: true
+  energy_sync_gpio: true
+network:
+  ipv4_mode: dhcp
+  wifi:
+    ssid_ref: env:PQC_WIFI_SSID
+    psk_ref: env:PQC_WIFI_PSK
+uart:
+  baud: 115200
+  expected_boot_message: stm32-basic_hal1 boot v0.1.0
+  expected_tick_message: tick
+legacy:
+  board_id: board_a
+wolfboot:
+  source_dir: tools/wolfboot
+  generated_config: tools/wolfboot/.config
+  image_header_size_bytes: 12288
+  integrity: sha256
+  config:
+    TARGET: stm32l4
+    HASH: SHA256
+    VTOR: 1
+    DEBUG?: 0
+    NO_ASM?: 0
+    SPMATH?: 1
+    RAM_CODE?: 0
+    NVM_FLASH_WRITEONCE: 1
+    DUALBANK_SWAP?: 0
+    ALLOW_DOWNGRADE?: 0
+    WOLFBOOT_VERSION?: 0
+    V?: 0
+    STM32CUBE: ../..
+    WOLFBOOT_SECTOR_SIZE: '0x4000'
+    WOLFBOOT_PARTITION_BOOT_ADDRESS: '0x08020000'
+    WOLFBOOT_PARTITION_SIZE: '0x000E0000'
+    WOLFBOOT_PARTITION_UPDATE_ADDRESS: '0x08100000'
+    WOLFBOOT_PARTITION_SWAP_ADDRESS: '0x081E0000'
+    IMAGE_HEADER_SIZE: 12288
+    CFLAGS_EXTRA:
+    - -mcpu=cortex-m4
+    - -mthumb
+    - -USTM32L4A6xx
+    - -DSTM32L4R5xx
+    - -DUSE_HAL_DRIVER
+    - -I../../Drivers/STM32L4xx_HAL_Driver/Inc
+    - -I../../Drivers/CMSIS/Device/ST/STM32L4xx/Include
+    - -I../../Drivers/CMSIS/Include
+    - -DWOLFBOOT_PQC_BOOT_TIMING=1
+    - -DWOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR=0x10000000UL
+    OBJS:
+    - $(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr.o
+    - $(STM32CUBE)/Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.o

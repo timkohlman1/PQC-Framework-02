@@ -1,0 +1,7 @@
+schema_version: 1
+profile_type: workload
+id: ready_metrics
+firmware_application: mqtt_ready_metrics
+uart_log_level: info
+evidence:
+  deferred_reporting: true

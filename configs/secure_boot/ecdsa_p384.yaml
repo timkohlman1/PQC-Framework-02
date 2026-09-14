@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: secure_boot
+id: ecdsa_p384
+description: ecdsa p384 wolfBoot authentication profile.
+wolfboot:
+  config:
+    SIGN: ECC384
+  packaging_option: --ecc384
+signature_size_bytes: 96
+signing:
+  requires_private_key: true
+  tuple_id: ecdsa_p384-development

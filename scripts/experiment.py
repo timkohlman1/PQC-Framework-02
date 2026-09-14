@@ -1,25 +1,13 @@
 #!/usr/bin/env python3
-"""Minimal experiment framework CLI.
+"""Experiment framework CLI.
 
-The initial supported commands are:
+Operational experiment input is resolver-generated state. Source-controlled
+campaigns under ``configs/campaigns`` are expanded with
+``scripts/resolve_campaign.py`` and the resulting case YAML under
+``.pqc-generated-state/campaigns/<campaign>/cases`` is supplied to this CLI.
+Secure-boot algorithm selection is resolved from canonical target and
+``configs/secure_boot`` profiles.
 
-    python scripts/experiment.py status --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py create-run --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py build --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py flash --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py build-flash --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py run --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py monitor --experiment configs/experiments/baseline_direct_uart.yaml
-    python scripts/experiment.py sign-application --boot-algorithm ecdsa_p256
-    python scripts/experiment.py sign-application --profile configs/algorithms/ed25519.yaml
-    python scripts/experiment.py sign-application --profile configs/algorithms/rsa2048.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --repeat-count 5
-    python scripts/experiment.py flash-secure-boot --experiment configs/experiments/secure_boot_uart.yaml --negative-corrupt-application
-    python scripts/experiment.py mqtt-fake-transport --experiment configs/experiments/mqtt_tls_schema_fake.yaml
-    python scripts/experiment.py aggregate-benchmarks
 
 The status command loads an experiment config, resolves the referenced board, host, and boot configs, validates required fields, and prints a summary.
 
@@ -69,6 +57,7 @@ from framework.artifacts import copy_artifact_to_result
 from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
 from framework.flash import execute_flash
+from framework.ssh_target import gateway_ssh_target
 from framework.manifest import (
     apply_repeated_run_samples_to_benchmark_model,
     build_secure_boot_benchmark_model,
@@ -106,6 +95,7 @@ from framework.network_degradation import (
     remove_gateway_network_degradation,
 )
 from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
+from framework.config_resolver import ConfigResolver, ResolutionError, render_wolfboot_config
 from framework.signing import execute_application_signing
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
@@ -434,7 +424,7 @@ def _parse_ready_metrics_2_subscriber_output(
         and all(_valid_timing_record(record) for record in phase_values)
     )
 
-    primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 22)]
+    primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 24)]
     primitive_valid = len(primitive_messages) == 6 and primitive_parts == [1, 2, 3, 4, 5, 6]
     if primitive_valid:
         for part, (first_index, last_index) in enumerate(primitive_ranges, start=1):
@@ -606,7 +596,19 @@ def _crypto_progress_lines(bundle: dict[str, dict[str, Any]]) -> list[str]:
             selected = resolve_tls_algorithm_set(bundle)
             groups = ", ".join(selected.get("key_exchange_groups", [])) or "none"
             signatures = ", ".join(selected.get("signature_schemes", [])) or "none"
-            lines.append(f"MQTT TLS mode={mode}; key exchange={groups}; signatures={signatures}")
+            resolved = experiment.get("resolved_configuration", {})
+            choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
+            if not isinstance(choices, dict):
+                choices = {}
+            auth_profile = (
+                tls.get("certificate_profile")
+                if isinstance(tls, dict)
+                else None
+            ) or choices.get("tls_auth") or "none"
+            lines.append(
+                f"MQTT TLS mode={mode}; key exchange={groups}; "
+                f"auth profile={auth_profile}; signature scheme={signatures}"
+            )
         except ValueError as exc:
             lines.append(f"MQTT TLS mode={mode}; algorithm resolution failed: {exc}")
     boot_crypto = experiment.get("boot_crypto") if isinstance(experiment, dict) else None
@@ -743,7 +745,7 @@ def _mqtt_gateway_client_host(
 
 def _is_st67_mqtt_e2e(bundle: dict[str, dict[str, Any]]) -> bool:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
-    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+    return isinstance(mqtt, dict) and mqtt.get("evidence_class") in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
 
 
 
@@ -794,13 +796,18 @@ def _wait_for_plaintext_mqtt_broker(
     mqtt = bundle["experiment"]["mqtt"]
     broker = mqtt["broker"]
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     port = int(broker["port"])
     evidence_class = mqtt.get("evidence_class")
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
-    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    pqc_oqs = evidence_class in {
+        "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
+    }
     host = shlex.quote(
         _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
     )
@@ -808,7 +815,7 @@ def _wait_for_plaintext_mqtt_broker(
     topic = "pqc/framework/readiness"
     message = "ready"
 
-    if pqc_hybrid:
+    if pqc_oqs:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
         oqs_config = (
             "$HOME/pqc-framework-02/experiment/mqtt-broker/"
@@ -821,39 +828,39 @@ def _wait_for_plaintext_mqtt_broker(
             f"-v {certificate_dir}:/certs:ro "
         )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
-        subscriber_name = "pqc-mqtt-readiness-sub"
         script = (
-            f'attempt=0; subscriber={subscriber_name}; '
-            'cleanup() { docker rm -f "$subscriber" >/dev/null 2>&1 || true; }; '
-            'trap cleanup EXIT; '
-            f'while [ "$attempt" -lt {retries} ]; do '
-            'attempt=$((attempt + 1)); cleanup; '
-            f'docker run -d {container_options}'
-            '--name "$subscriber" --entrypoint mosquitto_sub '
-            'eclipse-mosquitto:2.1.2-alpine '
-            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 >/dev/null; sub_start_rc=$?; '
-            'if [ "$sub_start_rc" -ne 0 ]; then '
-            'echo "subscriber_start_failed attempt=$attempt rc=$sub_start_rc"; '
-            f'sleep {delay_seconds}; continue; fi; '
-            'sleep 2; '
-            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
-            'if [ "$subscriber_state" != running ]; then '
-            'echo "subscriber_not_running attempt=$attempt state=$subscriber_state"; '
-            'docker logs "$subscriber" 2>&1 || true; '
-            f'sleep {delay_seconds}; continue; fi; '
+            f'attempt=0; while [ "$attempt" -lt {retries} ]; do '
+            'attempt=$((attempt + 1)); '
+            'response_file=/tmp/pqc-mqtt-ready.$$; '
+            'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
+            'rm -f "$response_file" "$publisher_file"; '
             f'docker run --rm {container_options}'
             '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
-            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} >/tmp/pqc-mqtt-ready-pub.$$ 2>&1; pub_rc=$?; '
-            'found=0; poll=0; while [ "$poll" -lt 10 ]; do '
-            'poll=$((poll + 1)); response=$(docker logs "$subscriber" 2>&1 || true); '
-            f'if printf "%s\n" "$response" | grep -Fx -- {message} >/dev/null; then found=1; break; fi; '
-            'subscriber_state=$(docker inspect -f "{{.State.Status}}" "$subscriber" 2>/dev/null || true); '
-            'if [ "$subscriber_state" != running ]; then break; fi; sleep 1; done; '
-            'if [ "$found" -eq 1 ] && [ "$pub_rc" -eq 0 ]; then '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -m {message} -r '
+            '>"$publisher_file" 2>&1; pub_rc=$?; '
+            'if [ "$pub_rc" -eq 0 ]; then '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -C 1 -W 4 '
+            '>"$response_file" 2>&1; sub_rc=$?; '
+            'else sub_rc=1; fi; '
+            'response=$(paste -sd, "$response_file" 2>/dev/null || true); '
+            f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] && [ "$response" = {message} ]; then '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            'rm -f "$response_file" "$publisher_file"; '
             'echo "broker_ready attempt=$attempt"; exit 0; fi; '
-            'echo "subscriber_output:"; printf "%s\n" "$response"; '
-            'echo "publisher_output:"; cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
+            'echo "subscriber_output:"; cat "$response_file" 2>/dev/null || true; '
+            'echo "publisher_output:"; cat "$publisher_file" 2>/dev/null || true; '
             f'sleep {delay_seconds}; done; '
+            f'docker run --rm {container_options}'
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
+            'rm -f /tmp/pqc-mqtt-ready.$$ /tmp/pqc-mqtt-ready-pub.$$; '
             'echo "broker_not_ready attempts=$attempt"; exit 1'
         )
     else:
@@ -889,7 +896,7 @@ def _wait_for_plaintext_mqtt_broker(
             'cat /tmp/pqc-mqtt-ready-pub.$$ 2>/dev/null || true; '
             'echo "broker_not_ready attempts=$attempt"; exit 1'
         )
-    command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+    command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
     start = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -924,9 +931,17 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
     certificate_profile = str(tls.get("certificate_profile", "")).strip() if isinstance(tls, dict) else ""
-    common = ["--host-config", "configs/hosts/gateway.yaml"]
+    broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
+    broker_port = int(broker.get("port", 0) or 0) if isinstance(broker, dict) else 0
+    common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     if certificate_profile:
         common.extend(["--certificate-profile", certificate_profile])
+    start_args = [*common, "--profile", profile]
+    if broker_port:
+        if profile in {"oqs", "oqs-mtls"}:
+            start_args.extend(["--oqs-port", str(broker_port)])
+        elif profile in {"classical", "classical-server-auth"}:
+            start_args.extend(["--classical-port", str(broker_port)])
     broker_messages = {
         "stop-existing": "Stopping any existing managed broker",
         "deploy": "Deploying MQTT broker framework",
@@ -936,7 +951,7 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
-        ("start", "start", [*common, "--profile", profile]),
+        ("start", "start", start_args),
         ("status", "status", common),
     ):
         emit_progress("broker", broker_messages[step_name], detail=f"Profile: {profile}.")
@@ -948,6 +963,15 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
             emit_progress("broker", f"{broker_messages[step_name]} failed", detail=f"Return code: {result.return_code}; log: mqtt-broker-{step_name}.log")
             update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": f"broker_{step_name}"}})
             return False, f"broker_{step_name}"
+    emit_progress("broker", "Starting mandatory reporting broker", detail="Plaintext impairment-exempt reporting service.")
+    reporting_start = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="reporting-start", subcommand="start",
+        extra_args=[*common, "--profile", "reporting"],
+    )
+    steps["reporting-start"] = {"return_code": reporting_start.return_code, "log": "mqtt-broker-reporting-start.log"}
+    if reporting_start.return_code != 0:
+        update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": "reporting_broker_start"}})
+        return False, "reporting_broker_start"
     emit_progress("broker", "Waiting for MQTT broker readiness", detail="Gateway-side publish/subscribe readiness probe.")
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
     emit_progress("broker", "MQTT broker readiness probe complete" if readiness.return_code == 0 else "MQTT broker readiness probe failed", detail=f"Return code: {readiness.return_code}; log: mqtt-broker-readiness.log")
@@ -968,8 +992,9 @@ def _collect_and_stop_managed_mqtt_broker(
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
-    common = ["--host-config", "configs/hosts/gateway.yaml"]
+    common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
@@ -1006,7 +1031,11 @@ def _collect_and_stop_managed_mqtt_broker(
     else:
         keylog_evidence.update({"status": "not_applicable", "return_code": None, "failure_reason": None})
 
-    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}.")
+    reporting_logs_result = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="reporting-log", subcommand="logs",
+        extra_args=[*common, "--profile", "reporting", "--tail", "100000"],
+    )
+    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}; reporting profile: reporting.")
     stop_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
     )
@@ -1016,6 +1045,9 @@ def _collect_and_stop_managed_mqtt_broker(
         "image": MQTT_BROKER_IMAGE,
         "log": "mqtt-broker-log.log",
         "log_return_code": logs_result.return_code,
+        "reporting_profile": "reporting",
+        "reporting_log": "mqtt-broker-reporting-log.log",
+        "reporting_log_return_code": reporting_logs_result.return_code,
         "tls_keylog": keylog_evidence,
         "stop_log": "mqtt-broker-stop.log",
         "stop_return_code": stop_result.return_code,
@@ -1212,6 +1244,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         if evidence_class in {
             "stm32_st67_classical_tls_e2e",
             "stm32_st67_pqc_hybrid_tls_e2e",
+            "stm32_st67_pqc_tls_e2e",
         }:
             markers.extend((
                 "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1",
@@ -1240,6 +1273,7 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
             is_tls = evidence_class in {
                 "stm32_st67_classical_tls_e2e",
                 "stm32_st67_pqc_hybrid_tls_e2e",
+                "stm32_st67_pqc_tls_e2e",
             }
             # Plaintext runs retain explicit DNS UART evidence. TLS runs suppress
             # successful DNS diagnostics so formatting/UART cannot perturb the
@@ -1286,12 +1320,17 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
                         "PQC_TLS_PRIMITIVE name=x25519_shared_secret",
                     ))
 
-                if "mlkem768" in group:
+                if "mlkem512" in group or "ml_kem_512" in group:
+                    markers.extend((
+                        "PQC_TLS_PRIMITIVE name=mlkem512_keygen",
+                        "PQC_TLS_PRIMITIVE name=mlkem512_decapsulate",
+                    ))
+                if "mlkem768" in group or "ml_kem_768" in group:
                     markers.extend((
                         "PQC_TLS_PRIMITIVE name=mlkem768_keygen",
                         "PQC_TLS_PRIMITIVE name=mlkem768_decapsulate",
                     ))
-                if "mlkem1024" in group:
+                if "mlkem1024" in group or "ml_kem_1024" in group:
                     markers.extend((
                         "PQC_TLS_PRIMITIVE name=mlkem1024_keygen",
                         "PQC_TLS_PRIMITIVE name=mlkem1024_decapsulate",
@@ -1325,7 +1364,10 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
                 if authentication == "mutual":
                     markers.append(sign_marker)
 
-            if evidence_class == "stm32_st67_pqc_hybrid_tls_e2e":
+            if evidence_class in {
+                "stm32_st67_pqc_hybrid_tls_e2e",
+                "stm32_st67_pqc_tls_e2e",
+            }:
                 markers.extend(("key_exchange_group=passed",))
         return tuple(markers)
 
@@ -1336,9 +1378,20 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
     ]
     if isinstance(mqtt, dict):
         broker = mqtt.get("broker", {})
-        if isinstance(broker, dict) and bool(broker.get("dns_required", False)):
+        evidence_class = mqtt.get("evidence_class")
+        is_tls = evidence_class in {
+            "stm32_st67_classical_tls_e2e",
+            "stm32_st67_pqc_hybrid_tls_e2e",
+            "stm32_st67_pqc_tls_e2e",
+        }
+        # Successful TLS/MQTT completion is sufficient evidence that the configured
+        # broker hostname was usable. Do not require legacy DNS success diagnostics
+        # as a separate UART contract for TLS workloads. Keep them only for
+        # plaintext profiles that explicitly require DNS.
+        if (isinstance(broker, dict) and bool(broker.get("dns_required", False))
+                and not is_tls):
             markers.extend(("ST67 DNS: required=true", "ST67 DNS lookup: result=passed"))
-        if mqtt.get("evidence_class") in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
+        if is_tls:
             markers.extend(("tls_handshake=passed", "reconnect=passed",
                             "reconnect_tls_handshake=passed", "reconnect_publish=passed"))
         if mqtt.get("evidence_class") == "stm32_st67_pqc_hybrid_tls_e2e":
@@ -1498,6 +1551,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     boot_marker = str(experiment["uart"]["expected_boot_message"])
 
     gateway_alias = str(bundle["host"]["alias"])
+    gateway_target = gateway_ssh_target(bundle["host"])
     device = shlex.quote(str(bundle["host"]["uart"]["device"]))
     baud = int(bundle["host"]["uart"]["baud"])
     broker_port = int(broker["port"])
@@ -1505,14 +1559,18 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     tls_enabled = evidence_class in {
         "stm32_st67_classical_tls_e2e",
         "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
     }
-    pqc_hybrid = evidence_class == "stm32_st67_pqc_hybrid_tls_e2e"
+    pqc_oqs = evidence_class in {
+        "stm32_st67_pqc_hybrid_tls_e2e",
+        "stm32_st67_pqc_tls_e2e",
+    }
     broker_host = shlex.quote(
         _mqtt_gateway_client_host(bundle, tls_enabled=tls_enabled)
     )
 
     oqs_subscriber_name = ""
-    if pqc_hybrid:
+    if pqc_oqs:
         certificate_dir = _mqtt_remote_certificate_dir(bundle)
         oqs_config = (
             "$HOME/pqc-framework-02/experiment/mqtt-broker/"
@@ -1624,14 +1682,14 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     )
     subscriber_cleanup = (
         f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
-        if pqc_hybrid
+        if pqc_oqs
         else ''
     )
     transfer_responder_cleanup = ""
     if ready_metrics_2_application:
         transfer_container_cleanup = (
             f'docker rm -f "{transfer_responder_subscriber_name}" >/dev/null 2>&1 || true; '
-            if pqc_hybrid
+            if pqc_oqs
             else ""
         )
         transfer_responder_cleanup = (
@@ -1692,7 +1750,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
-    ssh_command = ["ssh", gateway_alias, f"sh -c {shlex.quote(script)}"]
+    ssh_command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
 
     def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
         start = time.perf_counter()
@@ -2154,25 +2212,220 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 def load_secure_boot_profile_section(
     *, target_profile: Path | str, algorithm: str, section: str
 ) -> tuple[dict[str, Any], Path]:
-    """Resolve one secure-boot section from the canonical target and algorithm profiles."""
+    """Resolve a secure-boot compatibility section from canonical profiles.
 
+    The existing build/sign/flash helpers still consume established compatibility
+    section shapes. Those shapes are derived in memory from the canonical target
+    and secure-boot profiles rather than loaded from duplicate source YAML.
+    """
+
+    aliases = {"ecc384": "ecdsa_p384", "ecc521": "ecdsa_p521"}
+    canonical_id = aliases.get(algorithm, algorithm)
+    compat_id = {"ecdsa_p384": "ecc384", "ecdsa_p521": "ecc521"}.get(
+        canonical_id, canonical_id
+    )
     target_path = Path(target_profile)
-    target = _load_config_mapping(target_path)
+    target_defaults = _load_config_mapping(target_path)
     repo_root = _repository_path_from_config(target_path, ".").resolve()
-    algorithm_path = repo_root / "configs" / "algorithms" / f"{algorithm}.yaml"
-    algorithm_config = _load_config_mapping(algorithm_path)
-    if algorithm_config.get("target") != target.get("id"):
-        raise ConfigError(
-            f"{algorithm_path}: target must be {target.get('id')} for {target_path}"
-        )
-    target_profiles = target.get("profiles")
-    algorithm_profiles = algorithm_config.get("profiles")
-    if not isinstance(target_profiles, dict) or not isinstance(target_profiles.get(section), dict):
-        raise ConfigError(f"{target_path} missing profiles.{section} mapping")
-    if not isinstance(algorithm_profiles, dict) or not isinstance(algorithm_profiles.get(section), dict):
-        raise ConfigError(f"{algorithm_path} missing profiles.{section} mapping")
-    return _merge_config(target_profiles[section], algorithm_profiles[section]), repo_root
+    try:
+        resolver = ConfigResolver(repo_root)
+        canonical_target = resolver.load_profile("target", "stm32l4r5_st67").data
+        secure_boot = resolver.load_profile("secure_boot", canonical_id).data
+    except ResolutionError as exc:
+        raise ConfigError(f"canonical secure-boot resolution failed: {exc}") from exc
 
+    profiles = target_defaults.get("profiles")
+    if not isinstance(profiles, dict) or not isinstance(profiles.get(section), dict):
+        raise ConfigError(f"{target_path} missing profiles.{section} mapping")
+    resolved = dict(profiles[section])
+
+    packaging_option = str(secure_boot["wolfboot"].get("packaging_option", "")).strip()
+    signature_size = int(secure_boot.get("signature_size_bytes", 0) or 0)
+    signing = secure_boot.get("signing", {})
+    requires_private_key = bool(signing.get("requires_private_key"))
+    tuple_id = signing.get("tuple_id")
+    tuple_dir = None if not tuple_id else f"secrets/wolfboot/tuples/{tuple_id}"
+    private_key = None if tuple_dir is None else f"{tuple_dir}/private_key.der"
+    boot_profile = f"wolfboot_{compat_id}" if compat_id != "integrity_sha256" else "wolfboot_integrity"
+    mode = boot_profile
+    image_stem = "integrity" if compat_id == "integrity_sha256" else compat_id
+    input_image = f"build/Release/stm32_basic_hal1_{image_stem}.bin"
+    signed_image = f"build/Release/stm32_basic_hal1_{image_stem}_v1_signed.bin"
+    if compat_id == "ecdsa_p256":
+        input_image = "build/Release/stm32_basic_hal1.bin"
+        signed_image = "build/Release/stm32_basic_hal1_v1_signed.bin"
+
+    benchmark_algorithms = {
+        "ecdsa_p256": ("ECC256", "P-256", 256),
+        "ecc384": ("ECC384", "P-384", 384),
+        "ecc521": ("ECC521", "P-521", 521),
+        "ed25519": ("ED25519", None, 256),
+        "ed448": ("ED448", None, 456),
+        "rsa2048": ("RSA2048", None, 2048),
+        "rsa3072": ("RSA3072", None, 3072),
+        "rsa4096": ("RSA4096", None, 4096),
+        "mldsa44": ("ML-DSA-44", None, None),
+        "mldsa65": ("ML-DSA-65", None, None),
+        "mldsa87": ("ML-DSA-87", None, None),
+        "integrity_sha256": ("INTEGRITY-SHA256", None, None),
+    }
+    benchmark_algorithm, curve, key_bits = benchmark_algorithms[compat_id]
+    benchmark_profile = {
+        "schema_version": 1,
+        "profile_model": "configs/benchmarks/classical_signing_profiles.yaml",
+        "profile_id": canonical_id,
+        "algorithm": benchmark_algorithm,
+        "wolfboot_sign": benchmark_algorithm,
+        "signature_algorithm": compat_id,
+        "signature_size_bytes": signature_size,
+        "image_version": 1,
+        "runnable": True,
+        "status": "canonical_request10_profile",
+        "board": canonical_target["hardware"]["board"],
+        "application_payload": "same_relocated_hal_application_payload",
+        "measurement_method": "uart_explicit_wolfboot_mailbox_markers",
+        "repeated_run_model": "phase_11_2_repeat_count_samples",
+        "static_metrics_model": "phase_11_3_elf_and_artifact_metrics",
+        "runtime_memory_model": "phase_11_4_firmware_side_stack_high_water_marker",
+    }
+    if curve is not None:
+        benchmark_profile["curve"] = curve
+    if key_bits is not None:
+        benchmark_profile["key_size_bits"] = key_bits
+    if compat_id.startswith("mldsa"):
+        benchmark_profile["mldsa_level"] = int(secure_boot["wolfboot"]["config"]["ML_DSA_LEVEL"])
+        benchmark_profile["image_header_size_bytes"] = int(canonical_target["wolfboot"]["image_header_size_bytes"])
+
+    if section == "build":
+        resolved.update({
+            "id": f"wolfboot_stm32l4_{compat_id}",
+            "description": f"Canonical wolfBoot build profile for {canonical_id}.",
+            "signature_algorithm": compat_id,
+            "boot_profile": boot_profile,
+            "status": "canonical_request10_profile",
+        })
+        build = dict(resolved.get("build", {}))
+        build.pop("config_template", None)
+        build["config_content"] = render_wolfboot_config(canonical_target, secure_boot)
+        build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
+        if requires_private_key and private_key and tuple_dir and tuple_id:
+            build["signing_key"] = private_key
+            signing_tuple = dict(build.get("signing_tuple", {}))
+            signing_tuple.update({
+                "tuple_id": tuple_id,
+                "directory": tuple_dir,
+            })
+            build["signing_tuple"] = signing_tuple
+            # Preserve the raw ECC256 public-key export contract used by the
+            # existing persistent-tuple implementation.
+            if canonical_id == "ecdsa_p256":
+                build["signing_tuple"].update({
+                    "public_key": "public_key.der",
+                    "public_key_export_format": "wolfboot_raw_ecc_xy",
+                    "public_key_size": 64,
+                })
+        resolved["build"] = build
+        return resolved, repo_root
+
+    if section == "signing":
+        resolved.update({
+            "id": f"wolfboot_{compat_id}_app",
+            "description": f"Canonical application packaging profile for {canonical_id}.",
+            "boot_profile": boot_profile,
+            "input_elf": "build/Release/stm32_basic_hal1.elf",
+            "input_image": input_image,
+            "signed_image": signed_image,
+            "signature_algorithm": compat_id,
+            "signature_size_bytes": signature_size,
+            "image_version": 1,
+            "image_header_size_bytes": int(canonical_target["wolfboot"]["image_header_size_bytes"]),
+            "require_input_build_provenance": True,
+            "retained_signed_image": f"application_{image_stem}.bin",
+            "status": "canonical_request10_profile",
+        })
+        binary = dict(resolved.get("binary_conversion", {}))
+        binary.update({
+            "enabled": True,
+            "command": "arm-none-eabi-objcopy",
+            "args": "-O binary {input_elf} {input_image}",
+        })
+        resolved["binary_conversion"] = binary
+        sign_section = dict(resolved.get("sign", {}))
+        sign_section.update({
+            "command": "tools/keytools/sign",
+            "working_dir": "tools/wolfboot",
+            "environment": {"IMAGE_HEADER_SIZE": str(canonical_target["wolfboot"]["image_header_size_bytes"])},
+        })
+        if requires_private_key:
+            sign_section["args"] = f"{packaging_option} {{input_image}} {{private_key}} {{image_version}}"
+            resolved["private_key"] = private_key
+            keygen = {
+                "enabled": False,
+                "command": "tools/keytools/keygen",
+                "working_dir": "tools/wolfboot",
+                "args": f"{packaging_option} -g {{private_key}}",
+            }
+            if tuple_id and tuple_dir:
+                signing_tuple = dict(resolved.get("signing_tuple", {}))
+                signing_tuple.update({
+                    "tuple_id": tuple_id,
+                    "directory": tuple_dir,
+                    "public_key": "public_key.der" if canonical_id == "ecdsa_p256" else "keystore.c",
+                })
+                resolved["signing_tuple"] = signing_tuple
+        else:
+            sign_section["args"] = f"{packaging_option} {{input_image}} {{image_version}}"
+            keygen = {"enabled": False}
+        ml_level = secure_boot["wolfboot"]["config"].get("ML_DSA_LEVEL")
+        if ml_level is not None:
+            ml_env = {
+                "ML_DSA_LEVEL": str(ml_level),
+                "IMAGE_SIGNATURE_SIZE": str(signature_size),
+            }
+            sign_section["environment"].update(ml_env)
+            keygen["environment"] = ml_env
+        resolved["sign"] = sign_section
+        resolved["keygen"] = keygen
+        return resolved, repo_root
+
+    if section == "experiment":
+        resolved.update({
+            "id": f"wolfboot_{compat_id}_uart",
+            "description": f"Canonical wolfBoot runtime profile for {canonical_id}.",
+            "boot": boot_profile,
+            "boot_crypto": compat_id,
+            "firmware": {
+                "mode": mode,
+                "artifact": signed_image,
+            },
+            "secure_boot_benchmark_profile": benchmark_profile,
+            "secure_boot_flash": {
+                **dict(resolved.get("secure_boot_flash", {})),
+                "signature_algorithm": compat_id,
+                "signature_size_bytes": signature_size,
+                "boot_timing_source": "framework_derived_from_uart_cycles_and_reported_hclk",
+                "image_version": 1,
+                "wolfboot_offset": "0x08000000",
+                "unsigned_application_artifact": input_image,
+                "signed_application_artifact": signed_image,
+                "signed_application_offset": "0x08020000",
+                "signing_private_key": private_key,
+            },
+        })
+        return resolved, repo_root
+
+    if section == "boot":
+        resolved.update({
+            "id": boot_profile,
+            "mode": mode,
+            "description": f"Canonical wolfBoot {canonical_id} compatibility view.",
+            "runnable": True,
+            "intended_signature_algorithm": compat_id,
+            "status": "canonical_request10_profile",
+        })
+        return resolved, repo_root
+
+    raise ConfigError(f"unsupported secure-boot profile section: {section}")
 
 def load_config(path: Path | str) -> dict[str, Any]:
     """Load a simple YAML mapping and resolve thin composed profiles."""
@@ -2209,6 +2462,7 @@ MQTT_TLS_EVIDENCE_CLASSES = {
     "stm32_st67_plaintext_e2e",
     "stm32_st67_classical_tls_e2e",
     "stm32_st67_pqc_hybrid_tls_e2e",
+    "stm32_st67_pqc_tls_e2e",
 }
 MQTT_TLS_TRANSPORT_BACKENDS = {
     "fake_no_network",
@@ -2226,7 +2480,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "stm32_runtime": {"stm32_runtime"},
     "st67w61m1": {"st67w61m1_backed"},
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
-    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"},
+    "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"},
 }
 SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
@@ -2243,6 +2497,8 @@ MQTT_TLS_MODES = {
     "classical_tls_mutual",
     "pqc_hybrid_tls_server_auth",
     "pqc_hybrid_tls_mutual",
+    "pqc_tls_server_auth",
+    "pqc_tls_mutual",
 }
 MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "wifi_association",
@@ -2255,8 +2511,8 @@ MQTT_TLS_UNAVAILABLE_METRIC_FIELDS = {
     "latency_ms",
     "throughput_bytes_per_second",
 }
-MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
-MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}
+MQTT_TLS_RUNTIME_EVIDENCE_CLASSES = {"stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
+MQTT_TLS_NETWORK_EVIDENCE_CLASSES = {"host_side", "stm32_runtime", "st67w61m1_backed", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}
 
 
 def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
@@ -2332,7 +2588,8 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
         if key_exchange_group not in TLS_GROUPS:
             raise ConfigError("TLS experiments must declare mqtt.tls.key_exchange_group as one of: " + ", ".join(TLS_GROUPS))
         group_is_hybrid = bool(TLS_GROUPS[key_exchange_group].get("hybrid", False))
-        if tls_mode.startswith("pqc_hybrid_") != group_is_hybrid:
+        group_is_standalone = bool(TLS_GROUPS[key_exchange_group].get("standalone_mlkem", False))
+        if tls_mode.startswith("pqc_hybrid_") != group_is_hybrid or tls_mode.startswith("pqc_tls_") != group_is_standalone:
             raise ConfigError("mqtt.tls.mode is incompatible with mqtt.tls.key_exchange_group")
         certificate_profile = tls_config.get("certificate_profile")
         if not isinstance(certificate_profile, str) or not certificate_profile.strip():
@@ -2356,7 +2613,7 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
     broker = mqtt_config.get("broker", {})
     if broker and not isinstance(broker, dict):
         raise ConfigError("experiment config mqtt.broker field must be a mapping")
-    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e"}:
+    if evidence_class in {"host_side", "stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}:
         require_field(config, "mqtt.broker.host", "experiment config")
         require_field(config, "mqtt.broker.port", "experiment config")
         broker_host = str(broker.get("host", "")).strip()
@@ -2654,11 +2911,18 @@ def validate_wolfboot_build_profile_config(config: dict[str, Any]) -> None:
         raise ConfigError("wolfBoot build profile build field must be a mapping")
 
     has_config_template = bool(build_config.get("config_template"))
+    has_config_content = bool(build_config.get("config_content"))
     has_generated_config = bool(build_config.get("generated_config"))
-    if has_config_template != has_generated_config:
+    if has_generated_config:
+        if has_config_template == has_config_content:
+            raise ConfigError(
+                "wolfBoot build profile must pair build.generated_config with exactly one of "
+                "build.config_template or build.config_content"
+            )
+    elif has_config_template or has_config_content:
         raise ConfigError(
-            "wolfBoot build profile must set both build.config_template and "
-            "build.generated_config, or neither"
+            "wolfBoot build profile must set build.generated_config when "
+            "build.config_template or build.config_content is configured"
         )
 
 
@@ -2738,220 +3002,222 @@ def validate_boot_config(config: dict[str, Any]) -> None:
 
 
 def _configs_root_from_experiment_path(experiment_path: Path) -> Path:
-    """Resolve the configs root from configs/experiments/<name>.yaml."""
+    """Resolve the repository configs root for a generated canonical case."""
 
     resolved_path = experiment_path.resolve()
-
-    experiments_root = next(
-        (parent for parent in resolved_path.parents if parent.name == "experiments"),
-        None,
-    )
-    if experiments_root is not None and experiments_root.parent.name == "configs":
-        return experiments_root.parent
-
     generated_state_root = next(
         (parent for parent in resolved_path.parents if parent.name == ".pqc-generated-state"),
         None,
     )
-    if generated_state_root is not None:
-        configs_root = generated_state_root.parent / "configs"
-        if (configs_root / "experiments").is_dir():
-            return configs_root
-
-    raise ConfigError(
-        "Experiment config must live under configs/experiments/ or the repository-owned "
-        ".pqc-generated-state/ network-grid path for automatic board and host resolution"
-    )
+    if generated_state_root is None:
+        raise ConfigError(
+            "Operational experiment inputs must be resolver-generated cases under "
+            ".pqc-generated-state/. Resolve a source-controlled campaign first."
+        )
+    configs_root = generated_state_root.parent / "configs"
+    if not configs_root.is_dir():
+        raise ConfigError(f"Canonical configs directory not found: {configs_root}")
+    return configs_root
 
 
 def repo_root_from_experiment_path(experiment_path: Path | str) -> Path:
-    """Resolve the repository root from configs/experiments/<name>.yaml."""
+    """Resolve the repository root from a generated canonical case path."""
 
-    configs_root = _configs_root_from_experiment_path(Path(experiment_path))
-    return configs_root.parent
-
-
-def resolve_related_config_paths(experiment_path: Path | str) -> tuple[Path, Path, Path]:
-    """Resolve board, host, and boot config paths referenced by an experiment config."""
-
-    experiment_config_path = Path(experiment_path)
-    experiment_config = load_config(experiment_config_path)
-    validate_experiment_config(experiment_config)
-
-    configs_root = _configs_root_from_experiment_path(experiment_config_path)
-    board_id = require_field(experiment_config, "board", "experiment config")
-    host_id = require_field(experiment_config, "host", "experiment config")
-    boot_id = require_field(experiment_config, "boot", "experiment config")
-
-    board_path = configs_root / "boards" / f"{board_id}.yaml"
-    host_path = configs_root / "hosts" / f"{host_id}.yaml"
-    boot_path = configs_root / "boot" / f"{boot_id}.yaml"
-
-    return board_path, host_path, boot_path
+    return _configs_root_from_experiment_path(Path(experiment_path)).parent
 
 
 def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, Any]]:
-    """Load and validate an experiment plus its referenced board and host configs."""
+    """Load a generated canonical case and derive the runtime compatibility bundle."""
 
     experiment_config_path = Path(experiment_path)
+    try:
+        resolver = ConfigResolver(repo_root_from_experiment_path(experiment_config_path))
+        case = resolver.load_resolved_case(experiment_config_path)
+        bundle = resolver.to_legacy_bundle(case, resolve_secrets=True)
+    except ResolutionError as exc:
+        raise ConfigError(str(exc)) from exc
 
-    experiment_config = load_config(experiment_config_path)
+    experiment_config = bundle["experiment"]
+    board_config = bundle["board"]
+    host_config = bundle["host"]
+    boot_config = bundle["boot"]
+
     validate_experiment_config(experiment_config)
-
-    board_path, host_path, boot_path = resolve_related_config_paths(experiment_config_path)
-
-    board_config = load_config(board_path)
-    host_config = load_config(host_path)
-    boot_config = load_config(boot_path)
-
     validate_board_config(board_config)
     validate_host_config(host_config)
     validate_boot_config(boot_config)
-
-    expected_board_id = require_field(experiment_config, "board", "experiment config")
-    actual_board_id = require_field(board_config, "id", "board config")
-
-    if actual_board_id != expected_board_id:
-        raise ConfigError(
-            f"board config id mismatch: experiment references '{expected_board_id}' "
-            f"but {board_path} contains '{actual_board_id}'"
-        )
-
-    expected_host_id = require_field(experiment_config, "host", "experiment config")
-    actual_host_id = require_field(host_config, "id", "host config")
-
-    if actual_host_id != expected_host_id:
-        raise ConfigError(
-            f"host config id mismatch: experiment references '{expected_host_id}' "
-            f"but {host_path} contains '{actual_host_id}'"
-        )
-
-    expected_boot_id = require_field(experiment_config, "boot", "experiment config")
-    actual_boot_id = require_field(boot_config, "id", "boot config")
-
-    if actual_boot_id != expected_boot_id:
-        raise ConfigError(
-            f"boot config id mismatch: experiment references '{expected_boot_id}' "
-            f"but {boot_path} contains '{actual_boot_id}'"
-        )
-
-    boot_mode = require_field(boot_config, "mode", "boot config")
-    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
-
-    if firmware_mode != boot_mode:
-        raise ConfigError(
-            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
-            f"but boot config mode is '{boot_mode}'"
-        )
-
-    return {
-        "experiment": experiment_config,
-        "board": board_config,
-        "host": host_config,
-        "boot": boot_config,
-    }
+    return bundle
 
 
 def load_secure_boot_experiment_bundle(
-    experiment_path: Path | str, *, algorithm: str, target_profile: Path | str = Path("configs/targets/stm32l4r5_wolfboot.yaml")
+    experiment_path: Path | str,
+    *,
+    algorithm: str,
+    target_profile: Path | str = Path("configs/targets/stm32l4r5_wolfboot.yaml"),
 ) -> dict[str, dict[str, Any]]:
-    """Load a wolfBoot secure-boot flash experiment without enabling generic execution.
+    """Compose a generated canonical case with the selected wolfBoot runtime settings."""
 
-    Phase 10h uses the planned wolfBoot boot config explicitly for the
-    two-artifact flash workflow. The generic experiment loader still rejects
-    non-runnable boot configs so normal direct-flash commands cannot
-    accidentally treat the wolfBoot profile as a validated boot path.
-    """
-
-    experiment_config_path = Path(experiment_path)
-    local_experiment = _load_config_mapping(experiment_config_path)
+    bundle = load_experiment_bundle(experiment_path)
     experiment_defaults, _ = load_secure_boot_profile_section(
         target_profile=target_profile, algorithm=algorithm, section="experiment"
     )
     boot_config, _ = load_secure_boot_profile_section(
         target_profile=target_profile, algorithm=algorithm, section="boot"
     )
-    experiment_config = _merge_config(experiment_defaults, local_experiment)
+    experiment_config = _merge_config(bundle["experiment"], experiment_defaults)
     validate_experiment_config(experiment_config)
-
-    configs_root = _configs_root_from_experiment_path(experiment_config_path)
-    board_path = configs_root / "boards" / f"{require_field(experiment_config, 'board', 'experiment config')}.yaml"
-    host_path = configs_root / "hosts" / f"{require_field(experiment_config, 'host', 'experiment config')}.yaml"
-    board_config = load_config(board_path)
-    host_config = load_config(host_path)
-
-    validate_board_config(board_config)
-    validate_host_config(host_config)
     validate_boot_config_for_inspection(boot_config)
-
-    expected_board_id = require_field(experiment_config, "board", "experiment config")
-    actual_board_id = require_field(board_config, "id", "board config")
-    if actual_board_id != expected_board_id:
-        raise ConfigError(
-            f"board config id mismatch: experiment references '{expected_board_id}' "
-            f"but {board_path} contains '{actual_board_id}'"
-        )
-
-    expected_host_id = require_field(experiment_config, "host", "experiment config")
-    actual_host_id = require_field(host_config, "id", "host config")
-    if actual_host_id != expected_host_id:
-        raise ConfigError(
-            f"host config id mismatch: experiment references '{expected_host_id}' "
-            f"but {host_path} contains '{actual_host_id}'"
-        )
-
-    boot_mode = require_field(boot_config, "mode", "boot config")
-    firmware_mode = require_field(experiment_config, "firmware.mode", "experiment config")
-    if firmware_mode != boot_mode:
-        raise ConfigError(
-            f"boot mode mismatch: experiment firmware.mode is '{firmware_mode}' "
-            f"but boot config mode is '{boot_mode}'"
-        )
-
     return {
         "experiment": experiment_config,
-        "board": board_config,
-        "host": host_config,
+        "board": bundle["board"],
+        "host": bundle["host"],
         "boot": boot_config,
     }
 
+def _status_cipher_policy(tls: dict[str, Any]) -> str:
+    """Return a declarative cipher-suite policy description for status output."""
+
+    suites = tls.get("cipher_suites")
+    if isinstance(suites, (list, tuple)) and suites:
+        return ", ".join(str(item) for item in suites)
+    suite = tls.get("cipher_suite")
+    if suite:
+        return str(suite)
+    return "not pinned by resolver; negotiated at runtime"
+
 
 def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
-    """Format a human-readable status summary."""
+    """Format a human-readable status summary without performing side effects."""
 
     experiment = bundle["experiment"]
     board = bundle["board"]
     host = bundle["host"]
     boot = bundle["boot"]
 
-    return "\n".join(
-        [
-            "Experiment status",
-            "-----------------",
-            f"Experiment ID: {experiment['id']}",
-            f"Description: {experiment['description']}",
-            f"Board: {board['id']} ({board['name']}, {board['mcu']})",
-            f"ST-LINK serial: {board['stlink']['serial']}",
-            f"Host: {host['id']} ({host['alias']}, user {host['user']})",
-            f"Flash helper: {host['flash']['helper']}",
-            f"Boot config: {boot['id']}",
-            f"Boot mode: {boot['mode']}",
-            f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
-            f"Firmware mode: {experiment['firmware']['mode']}",
-            f"Firmware artifact: {experiment['firmware']['artifact']}",
-            f"UART device: {host['uart']['device']}",
-            f"UART baud: {host['uart']['baud']}",
-            f"Expected boot message: {experiment['uart']['expected_boot_message']}",
-            (
-                f"Expected tick prefix: {experiment['uart']['expected_tick_prefix']}"
-                if experiment["uart"].get("expected_tick_prefix")
-                else f"Expected tick message: {experiment['uart']['expected_tick_message']}"
-            ),
+    lines = [
+        "Experiment status",
+        "-----------------",
+        f"Experiment ID: {experiment['id']}",
+        f"Description: {experiment['description']}",
+    ]
+
+    resolved = experiment.get("resolved_configuration")
+    if isinstance(resolved, dict):
+        selections = resolved.get("selected_profiles", {})
+        choices = resolved.get("choices", {})
+        if not isinstance(selections, dict):
+            selections = {}
+        if not isinstance(choices, dict):
+            choices = {}
+
+        lines.extend([
             "",
-            "Actions performed: status only.",
-            "No build, flash, UART access, SSH, hardware access, or network access was performed.",
-        ]
-    )
+            "Resolved configuration",
+            "----------------------",
+            f"Schema version: {resolved.get('schema_version', 'unavailable')}",
+            f"Resolver version: {resolved.get('resolver_version', 'unavailable')}",
+            f"Configuration identity: {resolved.get('configuration_identity', 'unavailable')}",
+            f"Firmware identity: {resolved.get('firmware_identity', 'unavailable')}",
+            f"Target profile: {selections.get('target', 'unavailable')}",
+            f"Gateway profile: {selections.get('gateway', 'unavailable')}",
+            f"Workload profile: {selections.get('workload', 'unavailable')}",
+            f"Secure-boot profile: {choices.get('secure_boot', 'unavailable')}",
+            f"Network condition: {choices.get('network_condition', 'unavailable')}",
+        ])
+
+        mqtt = experiment.get("mqtt", {})
+        if isinstance(mqtt, dict) and mqtt.get("enabled"):
+            tls = mqtt.get("tls", {})
+            if isinstance(tls, dict) and tls:
+                broker = mqtt.get("broker", {})
+                if not isinstance(broker, dict):
+                    broker = {}
+                tls_version = str(tls.get("tls_version", "unavailable"))
+                lines.extend([
+                    "",
+                    "TLS",
+                    "---",
+                    f"Mode: {tls.get('mode', 'unavailable')}",
+                    f"Version: {tls_version}",
+                    f"Authentication mode: {tls.get('authentication', choices.get('auth_mode', 'unavailable'))}",
+                    f"KEX profile/group: {tls.get('key_exchange_group', choices.get('tls_kex', 'unavailable'))}",
+                    f"TLS-auth profile: {tls.get('certificate_profile', choices.get('tls_auth', 'unavailable'))}",
+                    f"Signature scheme: {tls.get('server_signature_algorithm', 'unavailable')}",
+                    f"Cipher suite policy: {_status_cipher_policy(tls)}",
+                    "Runtime negotiation: not available from status; verify UART/broker evidence after execution.",
+                    "",
+                    "Experiment broker",
+                    "-----------------",
+                    f"Service profile: {selections.get('services', {}).get('experiment_broker', 'unavailable') if isinstance(selections.get('services'), dict) else 'unavailable'}",
+                    f"Runtime profile: {mqtt.get('broker_profile', 'unavailable')}",
+                    f"Endpoint: {broker.get('host', 'unavailable')}:{broker.get('port', 'unavailable')}",
+                    f"TLS server name: {broker.get('server_name', 'unavailable')}",
+                ])
+
+        services = selections.get("services", {})
+        reporting_profile = services.get("reporting_broker") if isinstance(services, dict) else None
+        lines.extend([
+            "",
+            "Reporting service",
+            "-----------------",
+            f"Reporting broker profile: {reporting_profile or 'unavailable'}",
+        ])
+
+        transfer = experiment.get("mqtt", {}).get("transfer", {}) if isinstance(experiment.get("mqtt"), dict) else {}
+        lines.extend([
+            "",
+            "Workload",
+            "--------",
+            f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
+        ])
+        if isinstance(transfer, dict) and transfer:
+            lines.extend([
+                f"Payload bytes: {transfer.get('payload_bytes', 'unavailable')}",
+                f"Chunk bytes: {transfer.get('chunk_bytes', 'unavailable')}",
+            ])
+
+        instruments = selections.get("instruments", {})
+        lines.extend([
+            "",
+            "Instruments",
+            "-----------",
+        ])
+        if isinstance(instruments, dict) and instruments:
+            for instrument_type, profile_id in sorted(instruments.items()):
+                lines.append(f"{instrument_type}: {profile_id}")
+        else:
+            lines.append("Selected instruments: none")
+
+        lines.extend([
+            "",
+            "Target and gateway",
+            "------------------",
+        ])
+
+    lines.extend([
+        f"Board: {board['id']} ({board['name']}, {board['mcu']})",
+        f"ST-LINK serial: {board['stlink']['serial']}",
+        f"Host: {host['id']} ({host['alias']}, user {host['user']})",
+        f"Flash helper: {host['flash']['helper']}",
+        f"Boot config: {boot['id']}",
+        f"Boot mode: {boot['mode']}",
+        f"Firmware application: {experiment['firmware'].get('application', DEFAULT_STM32_MQTT_APPLICATION)}",
+        f"Firmware mode: {experiment['firmware']['mode']}",
+        f"Firmware artifact: {experiment['firmware']['artifact']}",
+        f"UART device: {host['uart']['device']}",
+        f"UART baud: {host['uart']['baud']}",
+        f"Expected boot message: {experiment['uart']['expected_boot_message']}",
+        (
+            f"Expected tick prefix: {experiment['uart']['expected_tick_prefix']}"
+            if experiment["uart"].get("expected_tick_prefix")
+            else f"Expected tick message: {experiment['uart']['expected_tick_message']}"
+        ),
+        "",
+        "Actions performed: status only.",
+        "No build, flash, UART access, SSH, hardware access, or network access was performed.",
+    ])
+
+    return "\n".join(lines)
 
 
 def run_status_command(args: argparse.Namespace) -> int:
@@ -3700,7 +3966,7 @@ def _compose_wolfboot_run_bundle(
 
     direct_bundle = load_experiment_bundle(experiment_path)
     secure_bundle = load_secure_boot_experiment_bundle(
-        Path("configs/experiments/secure_boot_uart.yaml"),
+        experiment_path,
         algorithm=boot_algorithm,
         target_profile=target_profile,
     )
@@ -4214,12 +4480,37 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
     return final_return_code
 
 
+def _resolved_case_secure_boot_choice(experiment_path: Path | str) -> str | None:
+    """Return the secure-boot choice embedded in a canonical resolved case."""
+
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return None
+
+    choices = raw.get("choices")
+    if not isinstance(choices, dict):
+        return None
+
+    secure_boot = choices.get("secure_boot")
+    if not isinstance(secure_boot, str) or not secure_boot.strip():
+        return None
+    return secure_boot.strip()
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
-    wolfBoot is the default. Supplying a secure-boot algorithm implies wolfBoot;
-    omitting both boot options selects the integrity_sha256 baseline. Direct flash
-    remains available only as an explicit override.
+    wolfBoot is the default. An explicit ``--boot-algorithm`` takes precedence;
+    otherwise canonical resolved cases use their selected secure-boot profile.
+    Legacy experiments without a canonical selection retain the
+    ``integrity_sha256`` baseline. Direct flash remains available only as an
+    explicit override.
     """
 
     from time import perf_counter
@@ -4241,7 +4532,12 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             return 2
     else:
         args.boot_mode = "wolfboot"
-        args.boot_algorithm = explicit_boot_algorithm or "integrity_sha256"
+        canonical_boot_algorithm = _resolved_case_secure_boot_choice(args.experiment)
+        args.boot_algorithm = (
+            explicit_boot_algorithm
+            or canonical_boot_algorithm
+            or "integrity_sha256"
+        )
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)
@@ -5165,7 +5461,7 @@ def _mqtt_broker_script_path(repo_root: Path) -> Path:
 def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list[str]:
     repo_root = Path.cwd()
     command = [sys.executable, str(_mqtt_broker_script_path(repo_root)), subcommand]
-    _append_option(command, "--host-config", args.host_config)
+    _append_option(command, "--gateway-config", args.gateway_config)
 
     remote_subcommands = {
         "deploy",
@@ -5338,7 +5634,7 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
         "status": "running",
         "profile": args.profile,
         "broker": {
-            "host_config": str(args.host_config),
+            "gateway_config": str(args.gateway_config),
             "remote_dir": args.remote_dir,
             "project_name": args.project_name,
             "classical_port": args.classical_port,
@@ -5822,7 +6118,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--boot-algorithm",
         dest="boot_algorithm",
         default=None,
-        help="Secure-boot mode from configs/algorithms/. Supplying one implies wolfBoot; omitting it uses integrity_sha256.",
+        help="Secure-boot profile from configs/secure_boot/. Supplying one implies wolfBoot; omitting it uses integrity_sha256.",
     )
     run_parser.add_argument(
         "--target-profile",
@@ -5848,7 +6144,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "build-wolfboot",
         help="Build wolfBoot from a configured build profile without signing, flashing, or UART access.",
     )
-    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    wolfboot_build_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     wolfboot_build_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -5865,7 +6161,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "sign-application",
         help="Sign the relocated application image from a configured signing profile without flashing or UART access.",
     )
-    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    sign_application_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     sign_application_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -5888,7 +6184,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a wolfBoot secure-boot experiment YAML config.",
     )
-    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot mode from configs/algorithms/. Defaults to integrity_sha256.")
+    secure_boot_flash_parser.add_argument("--boot-algorithm", dest="boot_algorithm", default="integrity_sha256", help="Secure-boot profile from configs/secure_boot/. Defaults to integrity_sha256.")
     secure_boot_flash_parser.add_argument(
         "--target-profile", default=Path("configs/targets/stm32l4r5_wolfboot.yaml"), type=Path,
         help="Canonical secure-boot target profile.",
@@ -5957,7 +6253,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     mqtt_parser.add_argument("--profile", choices=("classical", "oqs"), required=True, help="Broker profile to orchestrate.")
     mqtt_parser.add_argument("--results-dir", default=Path("results"), type=Path, help="Directory where MQTT broker experiment result folders are created.")
-    mqtt_parser.add_argument("--host-config", default=Path("configs/hosts/gateway.yaml"), type=Path, help="Repository-relative gateway host config path.")
+    mqtt_parser.add_argument("--gateway-config", default=Path("configs/gateways/pqc_gateway1.yaml"), type=Path, help="Repository-relative canonical gateway config path.")
     mqtt_parser.add_argument("--remote-dir", default="~/pqc-framework-02/experiment/mqtt-broker", help="Remote gateway broker compose directory.")
     mqtt_parser.add_argument("--project-name", default="pqc-framework-mqtt-broker", help="Docker Compose project name.")
     mqtt_parser.add_argument("--classical-port", type=int, default=None, help="Host TLS port for the classical profile.")

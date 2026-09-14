@@ -26,6 +26,7 @@ results*
 .last_successful_build.json
 
 # Local secrets / credentials
+.env
 secrets/
 *.key
 *.p12
@@ -35,6 +36,7 @@ secrets/
 *.password
 *.env
 !.env.example
+!.env.sample
 
 # python env
 .venv/

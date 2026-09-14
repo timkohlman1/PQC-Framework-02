@@ -1,0 +1,47 @@
+schema_version: 1
+profile_type: instrument
+instrument_type: energy
+id: esp32_ina228
+description: Persistent ESP32 + INA228 external target-energy acquisition instrument.
+lifecycle:
+  provisioning: manual_once
+  runtime: persistent
+  campaign_reset: false
+  campaign_flash: false
+endpoint:
+  transport: mqtt
+  broker_service: reporting_gateway1
+  client_id: pqc-energy-esp32-ina228
+clock:
+  frequency_hz: 1000000
+sensor:
+  type: INA228
+  shunt_resistance_ohms: 0.01
+  max_current_amps: 5.0
+  averaging: 1
+sampling:
+  rate_hz: 2000
+  conversion_ready_alert: true
+synchronisation:
+  source: stm32_gpio
+  rising_edge: interval_start
+  falling_edge: interval_end
+  drift_compensation: per_interval
+calibration:
+  reference: calibration/esp32_ina228.yaml
+buffering:
+  mode: local_until_session_complete
+  max_samples: 250000
+  overflow: fail_session
+result_transfer:
+  transport: mqtt
+  publish_while_interval_active: false
+  policy: bounded_sequenced_records_then_completion_hash
+  topic_namespace: pqc/results/{run_id}/energy
+evidence:
+  required:
+  - session_metadata
+  - sync_pairs
+  - energy_trace
+  - calibration_identity
+  - completion_hash

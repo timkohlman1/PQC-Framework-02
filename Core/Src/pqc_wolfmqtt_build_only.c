@@ -380,7 +380,9 @@ static bool PQC_WolfMQTT_TLSRequested(void)
     return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_server_auth") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_server_auth") == 0) ||
-           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_tls_server_auth") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_tls_mutual") == 0);
 #else
     return false;
 #endif
@@ -392,11 +394,18 @@ static bool PQC_WolfMQTT_PQCHybridRequested(void)
            (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
 }
 
+static bool PQC_WolfMQTT_PQCStandaloneRequested(void)
+{
+    return (strcmp(PQC_MQTT_TLS_MODE, "pqc_tls_server_auth") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_tls_mutual") == 0);
+}
+
 #if PQC_TLS_COMPILED
 static bool PQC_WolfMQTT_MutualTLSRequested(void)
 {
     return (strcmp(PQC_MQTT_TLS_MODE, "classical_tls_mutual") == 0) ||
-           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0);
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_hybrid_tls_mutual") == 0) ||
+           (strcmp(PQC_MQTT_TLS_MODE, "pqc_tls_mutual") == 0);
 }
 #endif
 
@@ -1693,7 +1702,7 @@ bool PQC_WolfMQTT_RuntimeStatusLine(char *buffer,size_t size,const char *context
 #endif
     written=snprintf(buffer,size,
       "wolfMQTT runtime: context=%s scheduler=%s evidence=%s backend=%s result=%d transport=%s tcp=%s tls_context=%s tls_session=%s tls_peer_identity=%s tls_handshake=%s pqc_group_config=%s ca_load=%s pqc_group=%s tls_connect_result=%d tls_error=%d tls_io_error=%d mqtt_connect=%s mqtt_subscribe=%s mqtt_receive=%s mqtt_publish=%s reconnect=%s reconnect_tls_handshake=%s reconnect_pqc_group=%s reconnect_publish=%s end_to_end=%s broker=%s:%u correlation=%s\r\n",
-      context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e"),
+      context,scheduler_running?"running":"not_started",PQC_WolfMQTT_PQCHybridRequested()?"stm32-st67-pqc-hybrid-tls-e2e":(PQC_WolfMQTT_PQCStandaloneRequested()?"stm32-st67-pqc-tls-e2e":(PQC_WolfMQTT_TLSRequested()?"stm32-st67-classical-tls-e2e":"stm32-st67-plaintext-mqtt-e2e")),
       PQC_WolfMQTT_BackendName(first.backend),result,first.transport_available?"available":"unavailable",first.tcp_connected?"passed":"failed",
       PQC_WolfMQTT_TLSRequested()?(first.tls_context_created?"passed":"failed"):"not_required",
       PQC_WolfMQTT_TLSRequested()?(first.tls_session_created?"passed":(first.tls_context_created?"failed":"not_run")):"not_required",

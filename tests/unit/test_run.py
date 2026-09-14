@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import sys
 from argparse import Namespace
 from pathlib import Path
@@ -21,80 +23,19 @@ def load_experiment_module():
 
 
 def write_sample_configs(configs_root: Path) -> Path:
-    (configs_root / "boards").mkdir(parents=True)
-    (configs_root / "hosts").mkdir(parents=True)
-    (configs_root / "boot").mkdir(parents=True)
-    (configs_root / "experiments").mkdir(parents=True)
-
-    (configs_root / "boards" / "board_a.yaml").write_text(
-        "\n".join(
-            [
-                "id: board_a",
-                "name: NUCLEO-L4R5ZI-P",
-                "mcu: STM32L4R5",
-                "description: Test board.",
-                "stlink:",
-                '  serial: "123"',
-                "uart:",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    repo_root = configs_root.parent
+    source_repo = Path(__file__).resolve().parents[2]
+    shutil.copytree(source_repo / "configs", configs_root, dirs_exist_ok=True)
+    os.environ.setdefault("PQC_WIFI_SSID", "pqc")
+    os.environ.setdefault("PQC_WIFI_PSK", "test-psk")
+    scripts_path = source_repo / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from framework.config_resolver import ConfigResolver
+    generated = ConfigResolver(repo_root).materialize_campaign(
+        "baseline", repo_root / ".pqc-generated-state" / "campaigns" / "baseline"
     )
-    (configs_root / "boot" / "direct_flash.yaml").write_text(
-        "\n".join(
-            [
-                "id: direct_flash",
-                "mode: direct_flash",
-                "description: Direct-flash test boot config.",
-                "runnable: true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    (configs_root / "hosts" / "gateway.yaml").write_text(
-        "\n".join(
-            [
-                "id: gateway",
-                "alias: pqc-gateway1",
-                "user: timk",
-                "description: Test gateway.",
-                "flash:",
-                "  helper: flash-stm32a",
-                "reset:",
-                "  helper: reset-stm32a",
-                "uart:",
-                "  device: /dev/example",
-                "  baud: 115200",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    experiment_path = configs_root / "experiments" / "baseline_direct_uart.yaml"
-    experiment_path.write_text(
-        "\n".join(
-            [
-                "id: baseline_direct_uart",
-                "description: Test experiment.",
-                "board: board_a",
-                "host: gateway",
-                "boot: direct_flash",
-                "firmware:",
-                "  mode: direct_flash",
-                "  artifact: build/Release/stm32_basic_hal1.elf",
-                "uart:",
-                "  expected_boot_message: stm32-basic_hal1 boot v0.1.0",
-                "  expected_tick_message: tick",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return experiment_path
+    return sorted((generated / "cases").glob("*.yaml"))[0]
 
 
 def args_for(experiment_path: Path, results_dir: Path) -> Namespace:
@@ -116,6 +57,17 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
     tmp_path, monkeypatch, capsys
 ):
     cli = load_experiment_module()
+    monkeypatch.setattr(cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    monkeypatch.setattr(cli, "_is_st67_mqtt_e2e", lambda bundle: False)
+    monkeypatch.setattr(
+        cli,
+        "_execute_uart_capture_with_optional_gateway_packet_capture",
+        lambda **kwargs: (
+            (r := cli.execute_uart_capture(**{k: v for k, v in kwargs.items() if k in {"bundle", "repo_root", "result_dir", "duration_seconds", "restart_command"}})),
+            r.return_code,
+            None if r.return_code == 0 else "uart",
+        ),
+    )
     experiment_path = write_sample_configs(tmp_path / "configs")
     results_dir = tmp_path / "results"
     seen_result_dirs = []
@@ -169,7 +121,7 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
     assert all(path == seen_result_dirs[0] for path in seen_result_dirs)
     manifest = json.loads((seen_result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["result"] == "baseline_run_passed"
-    assert manifest["run"]["failure_stage"] == "none"
+    assert manifest["run"]["failure_stage"] is None
     assert manifest["run"]["build_return_code"] == 0
     assert manifest["run"]["artifact_copy_return_code"] == 0
     assert manifest["run"]["flash_return_code"] == 0
@@ -181,6 +133,17 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
 
 def test_run_command_stops_after_build_failure(tmp_path, monkeypatch):
     cli = load_experiment_module()
+    monkeypatch.setattr(cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    monkeypatch.setattr(cli, "_is_st67_mqtt_e2e", lambda bundle: False)
+    monkeypatch.setattr(
+        cli,
+        "_execute_uart_capture_with_optional_gateway_packet_capture",
+        lambda **kwargs: (
+            (r := cli.execute_uart_capture(**{k: v for k, v in kwargs.items() if k in {"bundle", "repo_root", "result_dir", "duration_seconds", "restart_command"}})),
+            r.return_code,
+            None if r.return_code == 0 else "uart",
+        ),
+    )
     experiment_path = write_sample_configs(tmp_path / "configs")
     result_dirs = []
 
@@ -211,6 +174,17 @@ def test_run_command_stops_after_build_failure(tmp_path, monkeypatch):
 
 def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, monkeypatch):
     cli = load_experiment_module()
+    monkeypatch.setattr(cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    monkeypatch.setattr(cli, "_is_st67_mqtt_e2e", lambda bundle: False)
+    monkeypatch.setattr(
+        cli,
+        "_execute_uart_capture_with_optional_gateway_packet_capture",
+        lambda **kwargs: (
+            (r := cli.execute_uart_capture(**{k: v for k, v in kwargs.items() if k in {"bundle", "repo_root", "result_dir", "duration_seconds", "restart_command"}})),
+            r.return_code,
+            None if r.return_code == 0 else "uart",
+        ),
+    )
     experiment_path = write_sample_configs(tmp_path / "configs")
     result_dirs = []
 
@@ -247,6 +221,17 @@ def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, 
 
 def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
     cli = load_experiment_module()
+    monkeypatch.setattr(cli, "_prepare_dependencies_for_result", lambda **kwargs: kwargs["bundle"])
+    monkeypatch.setattr(cli, "_is_st67_mqtt_e2e", lambda bundle: False)
+    monkeypatch.setattr(
+        cli,
+        "_execute_uart_capture_with_optional_gateway_packet_capture",
+        lambda **kwargs: (
+            (r := cli.execute_uart_capture(**{k: v for k, v in kwargs.items() if k in {"bundle", "repo_root", "result_dir", "duration_seconds", "restart_command"}})),
+            r.return_code,
+            None if r.return_code == 0 else "uart",
+        ),
+    )
     experiment_path = write_sample_configs(tmp_path / "configs")
     result_dirs = []
 
@@ -291,7 +276,7 @@ def test_run_subcommand_is_registered_with_mandatory_uart_capture():
         [
             "run",
             "--experiment",
-            "configs/experiments/baseline_direct_uart.yaml",
+            ".pqc-generated-state/campaigns/baseline/cases/case.yaml",
         ]
     )
 
@@ -373,7 +358,7 @@ def test_run_subcommand_accepts_explicit_wolfboot_selection():
         [
             "run",
             "--experiment",
-            "configs/experiments/mqtt_tls_server_auth_st67_e2e.yaml",
+            ".pqc-generated-state/campaigns/tls_key_exchange/cases/case.yaml",
             "--boot-mode",
             "wolfboot",
             "--boot-algorithm",
@@ -416,6 +401,68 @@ def test_run_defaults_to_integrity_wolfboot(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
     assert cli.run_full_baseline_command(args) == 0
     assert observed == {"mode": "wolfboot", "algorithm": "integrity_sha256"}
+
+
+def test_run_uses_canonical_resolved_case_secure_boot_selection(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = tmp_path / "0002_secure_boot.yaml"
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "kind: resolved_case",
+                "id: secure_boot-0002-test",
+                "choices:",
+                "  secure_boot: ecdsa_p256",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = None
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "ecdsa_p256"}
+
+
+def test_explicit_boot_algorithm_overrides_canonical_resolved_case(monkeypatch, tmp_path):
+    cli = load_experiment_module()
+    experiment_path = tmp_path / "0011_secure_boot.yaml"
+    experiment_path.write_text(
+        "\n".join(
+            [
+                "schema_version: 1",
+                "kind: resolved_case",
+                "id: secure_boot-0011-test",
+                "choices:",
+                "  secure_boot: mldsa65",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = args_for(experiment_path, tmp_path / "results")
+    args.boot_mode = None
+    args.boot_algorithm = "rsa3072"
+    observed = {}
+
+    def fake_wolfboot(run_args):
+        observed["mode"] = run_args.boot_mode
+        observed["algorithm"] = run_args.boot_algorithm
+        return 0
+
+    monkeypatch.setattr(cli, "_run_full_wolfboot_command", fake_wolfboot)
+    assert cli.run_full_baseline_command(args) == 0
+    assert observed == {"mode": "wolfboot", "algorithm": "rsa3072"}
 
 
 def test_run_algorithm_implies_wolfboot(monkeypatch, tmp_path):
@@ -670,3 +717,36 @@ def test_authenticated_signing_profile_still_requires_resolved_tuple(tmp_path, m
     assert observed == {"profile": profile, "repo_root": tmp_path}
     assert prepared["private_key"] == "secrets/wolfboot/tuples/mldsa65-development/private_key.der"
     assert prepared["resolved_signing_context"] == {"tuple_id": "mldsa65-development"}
+
+
+def test_crypto_progress_lines_show_auth_profile_and_derived_signature_scheme(monkeypatch):
+    cli = load_experiment_module()
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "tls": {
+                    "mode": "classical_tls_server_auth",
+                    "certificate_profile": "rsa3072",
+                }
+            },
+            "resolved_configuration": {
+                "choices": {
+                    "tls_auth": "rsa3072",
+                }
+            },
+        }
+    }
+
+    monkeypatch.setattr(
+        cli,
+        "resolve_tls_algorithm_set",
+        lambda _bundle: {
+            "key_exchange_groups": ["secp256r1"],
+            "signature_schemes": ["rsa_pss_rsae_sha256"],
+        },
+    )
+
+    assert cli._crypto_progress_lines(bundle) == [
+        "MQTT TLS mode=classical_tls_server_auth; key exchange=secp256r1; "
+        "auth profile=rsa3072; signature scheme=rsa_pss_rsae_sha256"
+    ]

@@ -94,10 +94,10 @@ def sample_bundle():
                 "image_version": 1,
                 "runnable": True,
                 "status": "reference_existing_phase_10_11_profile",
-                "signing_profile": "configs/algorithms/ecdsa_p256.yaml",
-                "wolfboot_build_profile": "configs/algorithms/ecdsa_p256.yaml",
-                "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
-                "boot_profile": "configs/algorithms/ecdsa_p256.yaml",
+                "signing_profile": "configs/secure_boot/ecdsa_p256.yaml",
+                "wolfboot_build_profile": "configs/secure_boot/ecdsa_p256.yaml",
+                "experiment_profile": "configs/campaigns/secure_boot.yaml",
+                "boot_profile": "configs/secure_boot/ecdsa_p256.yaml",
                 "minimum_scope_status": "defined_phase_11_5a_minimum_classical_scope",
                 "ed25519_status": "planned_phase_11_5b_not_implemented",
                 "rsa2048_status": "planned_phase_11_5c_not_implemented",
@@ -129,6 +129,7 @@ def sample_bundle():
         "host": {
             "id": "gateway",
             "alias": "pqc-gateway1",
+            "user": "timk",
             "flash": {"helper": "flash-stm32a"},
         },
         "boot": {
@@ -243,10 +244,10 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert result.return_code == 0
     assert result.failure_stage == "none"
     assert calls == [
-        ["scp", str(wolfboot_artifact), f"pqc-gateway1:/tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
-        ["ssh", "pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
-        ["scp", str(signed_artifact), f"pqc-gateway1:/tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin"],
-        ["ssh", "pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin 0x08020000"],
+        ["scp", str(wolfboot_artifact), f"timk@pqc-gateway1:/tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
+        ["ssh", "timk@pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_wolfboot_wolfboot.elf"],
+        ["scp", str(signed_artifact), f"timk@pqc-gateway1:/tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin"],
+        ["ssh", "timk@pqc-gateway1", f"flash-stm32a /tmp/{result_dir.name}_signed_application_stm32_basic_hal1_v1_signed.bin 0x08020000"],
     ]
 
     log = (result_dir / "secure_boot_flash.log").read_text(encoding="utf-8")
@@ -283,7 +284,7 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert "scripts/framework/wolfboot_build.py" in freshness["requested_fingerprint_inputs"]
     assert "scripts/framework/signing.py" in freshness["requested_fingerprint_inputs"]
     assert "configs/targets/stm32l4r5_wolfboot.yaml" in freshness["requested_fingerprint_inputs"]
-    assert "configs/algorithms/ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
+    assert "configs/secure_boot/ecdsa_p256.yaml" in freshness["requested_fingerprint_inputs"]
     assert "STM32L4R5XX_FLASH_RELOCATED.ld" in freshness["requested_fingerprint_inputs"]
     assert list(freshness["fingerprint_file_hashes"]) == freshness["fingerprint_inputs"]
     evidence = manifest["secure_boot_evidence"]
@@ -492,7 +493,7 @@ def test_execute_secure_boot_flash_negative_test_flashes_corrupted_copy_without_
     assert calls[2] == [
         "scp",
         str(corrupted_path),
-        f"pqc-gateway1:/tmp/{result_dir.name}_signed_application_corrupted_application_signed.bin",
+        f"timk@pqc-gateway1:/tmp/{result_dir.name}_signed_application_corrupted_application_signed.bin",
     ]
 
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -561,10 +562,10 @@ def test_classical_profile_metadata_marks_ed25519_runnable_for_phase_11_5b():
             "wolfboot_sign": "ED25519",
             "signature_algorithm": "ed25519",
             "status": "configured_phase_11_5b_ed25519_profile",
-            "signing_profile": "configs/algorithms/ed25519.yaml",
-            "wolfboot_build_profile": "configs/algorithms/ed25519.yaml",
-            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
-            "boot_profile": "configs/algorithms/ed25519.yaml",
+            "signing_profile": "configs/secure_boot/ed25519.yaml",
+            "wolfboot_build_profile": "configs/secure_boot/ed25519.yaml",
+            "experiment_profile": "configs/campaigns/secure_boot.yaml",
+            "boot_profile": "configs/secure_boot/ed25519.yaml",
             "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
         }
     )
@@ -596,10 +597,10 @@ def test_classical_profile_metadata_marks_rsa2048_runnable_for_phase_11_5c():
             "key_size_bits": 2048,
             "signature_size_bytes": 256,
             "status": "configured_phase_11_5c_rsa2048_profile",
-            "signing_profile": "configs/algorithms/rsa2048.yaml",
-            "wolfboot_build_profile": "configs/algorithms/rsa2048.yaml",
-            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
-            "boot_profile": "configs/algorithms/rsa2048.yaml",
+            "signing_profile": "configs/secure_boot/rsa2048.yaml",
+            "wolfboot_build_profile": "configs/secure_boot/rsa2048.yaml",
+            "experiment_profile": "configs/campaigns/secure_boot.yaml",
+            "boot_profile": "configs/secure_boot/rsa2048.yaml",
             "ed25519_status": "configured_phase_11_5b_runnable_profile_not_hardware_validated",
             "rsa2048_status": "configured_phase_11_5c_rsa2048_profile_not_hardware_validated",
         }
@@ -636,10 +637,10 @@ def test_classical_profile_metadata_marks_phase_11_5d_expanded_profile_runnable(
             "key_size_bits": 4096,
             "signature_size_bytes": 512,
             "status": "configured_phase_11_5d_expanded_classical_profile",
-            "signing_profile": "configs/algorithms/rsa4096.yaml",
-            "wolfboot_build_profile": "configs/algorithms/rsa4096.yaml",
-            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
-            "boot_profile": "configs/algorithms/rsa4096.yaml",
+            "signing_profile": "configs/secure_boot/rsa4096.yaml",
+            "wolfboot_build_profile": "configs/secure_boot/rsa4096.yaml",
+            "experiment_profile": "configs/campaigns/secure_boot.yaml",
+            "boot_profile": "configs/secure_boot/rsa4096.yaml",
             "expanded_scope_status": "phase_11_5d_expanded_classical_profile_added",
         }
     )
@@ -675,10 +676,10 @@ def test_classical_profile_metadata_marks_mldsa65_and_mldsa87_runnable():
             "security_category": 3,
             "signature_size_bytes": 3309,
             "status": "configured_post_phase_11_mldsa_profile_not_hardware_validated",
-            "signing_profile": "configs/algorithms/mldsa65.yaml",
-            "wolfboot_build_profile": "configs/algorithms/mldsa65.yaml",
-            "experiment_profile": "configs/experiments/secure_boot_uart.yaml",
-            "boot_profile": "configs/algorithms/mldsa65.yaml",
+            "signing_profile": "configs/secure_boot/mldsa65.yaml",
+            "wolfboot_build_profile": "configs/secure_boot/mldsa65.yaml",
+            "experiment_profile": "configs/campaigns/secure_boot.yaml",
+            "boot_profile": "configs/secure_boot/mldsa65.yaml",
         }
     )
 

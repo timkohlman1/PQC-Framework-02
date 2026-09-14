@@ -59,7 +59,7 @@ Use stable directory-level ownership rather than exhaustive file lists:
 
 ```text
 Core/, Drivers/, Middlewares/     STM32 firmware and generated/vendor integration
-configs/                          board, host, build, signing, experiment, and benchmark configuration
+configs/                          canonical target, gateway, service, workload, crypto, network-condition, campaign, and benchmark configuration
 scripts/                          Docker wrappers, experiment CLI, and framework implementation
 tests/                            unit, integration, gateway-capable, and hardware tests
 docs/                             project documentation, decisions, and plans
@@ -87,13 +87,19 @@ Use the repository wrappers from the repository root:
 .\scripts\dev.ps1 python <repository-script.py> [args...]
 .\scripts\dev.ps1 python-gateway <script> [arguments...]
 .\scripts\dev.ps1 pytest
-.\scripts\dev.ps1 experiment status --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment build --experiment configs/experiments/baseline_direct_uart.yaml
-.\scripts\dev.ps1 experiment-gateway run --experiment configs/experiments/baseline_direct_uart.yaml
+.\scripts\dev.ps1 python scripts/resolve_campaign.py baseline.yaml
+$case = Get-ChildItem ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | Select-Object -First 1
+$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
+.\scripts\dev.ps1 experiment status --experiment $path
+.\scripts\dev.ps1 experiment build --experiment $path
+.\scripts\dev.ps1 experiment-gateway run --experiment $path
 .\scripts\dev.ps1 pytest-hardware
 ```
 
 The POSIX wrapper is `./scripts/dev.sh` with corresponding subcommands.
+
+For wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. Both `scripts/dev.ps1` and `scripts/dev.sh` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must ensure wrapper-loaded values do not persist after the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
+
 Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `.\scripts\dev.ps1 python ...` unless both wrappers implement that subcommand.
 
 Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
@@ -147,11 +153,12 @@ Testing rules:
 1. Add or update tests for framework, firmware-integration, configuration, documentation, or workflow changes.
 2. Unit tests must not require hardware, SSH, UART devices, broker access, VPN access, network-impairment privileges, or private credentials.
 3. Keep hardware-dependent tests separate, marked, bounded, and capability-gated.
-4. Integration tests may use real local toolchains or gateway probes but must skip cleanly when capabilities are unavailable unless a strict `--pqc-require-*` control is intentionally supplied.
-5. A plain full pytest run may skip unavailable gateway or hardware capabilities. A skip is not evidence that the capability succeeded.
-6. Do not stop at unit tests when a feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries.
-7. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/007_framework_architecture.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
-8. Future related changes must inspect the deferred-test register and implement, update, or explicitly retire applicable entries with justification.
+4. Test-module filenames must identify their layer: integration tests under `tests/integration/` end in `_in.py`, and hardware tests under `tests/hardware/` end in `_hw.py`. Unit tests keep the normal `test_*.py` form. Do not reuse the same Python module basename across test directories.
+5. Integration tests may use real local toolchains or gateway probes but must skip cleanly when capabilities are unavailable unless a strict `--pqc-require-*` control is intentionally supplied.
+6. A plain full pytest run may skip unavailable gateway or hardware capabilities. A skip is not evidence that the capability succeeded.
+7. Do not stop at unit tests when a feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries.
+8. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/007_framework_architecture.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
+9. Future related changes must inspect the deferred-test register and implement, update, or explicitly retire applicable entries with justification.
 
 For documentation-only changes, run the targeted documentation tests and the full unit suite. The normal minimum gate is:
 

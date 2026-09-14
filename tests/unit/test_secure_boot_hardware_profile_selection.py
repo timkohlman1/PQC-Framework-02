@@ -1,52 +1,60 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
-import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "tests" / "hardware" / "test_secure_boot_algorithm_benchmarks.py"
+CAMPAIGN_PATH = REPO_ROOT / "configs" / "campaigns" / "secure_boot.yaml"
+SECURE_BOOT_DIR = REPO_ROOT / "configs" / "secure_boot"
+
+EXPECTED_SECURE_BOOT_PROFILES = [
+    "integrity_sha256",
+    "ecdsa_p256",
+    "ecdsa_p384",
+    "ecdsa_p521",
+    "ed25519",
+    "ed448",
+    "rsa2048",
+    "rsa3072",
+    "rsa4096",
+    "mldsa44",
+    "mldsa65",
+    "mldsa87",
+]
 
 
-def _load_module():
-    spec = importlib.util.spec_from_file_location("secure_boot_hw_profiles", MODULE_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def _campaign() -> dict:
+    return yaml.safe_load(CAMPAIGN_PATH.read_text(encoding="utf-8"))
 
 
-def test_mldsa65_is_the_default_selected_profile() -> None:
-    module = _load_module()
-    assert module._selected_benchmark_profile_names({}) == {"mldsa65"}
+def test_secure_boot_campaign_selects_complete_canonical_matrix() -> None:
+    campaign = _campaign()
+    assert campaign["matrix"]["secure_boot"] == EXPECTED_SECURE_BOOT_PROFILES
 
 
-def test_named_profiles_are_added_to_default_mldsa65() -> None:
-    module = _load_module()
-    selected = module._selected_benchmark_profile_names(
-        {"PQC_HARDWARE_SECURE_BOOT_PROFILES": "ecc256, mldsa44"}
-    )
-    assert selected == {"mldsa65", "ecc256", "mldsa44"}
+def test_secure_boot_campaign_matrix_has_no_duplicate_profiles() -> None:
+    selected = _campaign()["matrix"]["secure_boot"]
+    assert len(selected) == len(set(selected))
 
 
-def test_all_profiles_environment_selects_complete_matrix() -> None:
-    module = _load_module()
-    selected = module._selected_benchmark_profile_names(
-        {"PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES": "1"}
-    )
-    assert selected == {profile.name for profile in module.BENCHMARK_PROFILES}
+def test_secure_boot_campaign_profiles_exist_and_match_ids() -> None:
+    for profile_id in _campaign()["matrix"]["secure_boot"]:
+        path = SECURE_BOOT_DIR / f"{profile_id}.yaml"
+        assert path.is_file(), f"missing canonical secure-boot profile: {path}"
+        profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert profile["id"] == profile_id
+        assert profile["profile_type"] == "secure_boot"
 
 
-def test_unknown_profile_is_rejected() -> None:
-    module = _load_module()
-    with pytest.raises(pytest.UsageError, match="Unknown secure-boot hardware profile"):
-        module._selected_benchmark_profile_names(
-            {"PQC_HARDWARE_SECURE_BOOT_PROFILES": "not-a-profile"}
-        )
+def test_secure_boot_campaign_uses_canonical_generated_case_execution_model() -> None:
+    campaign = _campaign()
+    assert campaign["id"] == "secure_boot"
+    assert campaign["execution"]["evidence"] == "per_run"
+    assert campaign["execution"]["reset_between_runs"] == "hardware_reset"
+    assert campaign["execution"]["build"] == "once_per_firmware_identity"
+    assert campaign["execution"]["flash"] == "once_per_firmware_identity"
 
 
 def test_pytest_startup_cleanup_does_not_delete_wolfboot_tuple_keys() -> None:
