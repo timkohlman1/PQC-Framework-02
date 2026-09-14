@@ -19,6 +19,7 @@ from typing import Any
 from framework.run_evidence import (
     build_resolved_case_snapshot,
     build_derived_record,
+    compact_final_manifest,
     discover_retained_artifacts,
     finalize_manifest as finalize_evidence_manifest,
     initialize_manifest_evidence,
@@ -27,6 +28,8 @@ from framework.run_evidence import (
     update_sut_outcome,
     validate_manifest_schema,
     verify_and_freeze_raw_artifacts,
+    verify_retained_files,
+    write_run_provenance_snapshot,
 )
 
 RUN_ID_PATTERN = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<sequence>\d{3})_(?P<experiment>[A-Za-z0-9_.-]+)$")
@@ -972,7 +975,7 @@ def read_manifest(path: Path | str) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if isinstance(manifest, dict):
         compatible, reason = validate_manifest_schema(manifest)
-        if not compatible and "capture_acceptance" not in manifest:
+        if not compatible:
             manifest["compatibility"] = {
                 "legacy_manifest": True,
                 "accepted_under_current_contract": False,
@@ -1216,6 +1219,9 @@ def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None
     compatible, reason = validate_manifest_schema(manifest)
     if not compatible:
         raise ValueError(reason or "legacy manifest cannot satisfy the current evidence contract")
+    # Snapshot the reproducibility/deployment metadata before discarding the verbose
+    # runtime manifest payloads. The snapshot is itself hashed as required evidence.
+    write_run_provenance_snapshot(manifest, result_dir=manifest_path.parent)
     discover_retained_artifacts(manifest, result_dir=manifest_path.parent)
     material_inventory = manifest_path.parent / "material-inventory.json"
     if material_inventory.is_file():
@@ -1225,6 +1231,10 @@ def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None
             acquisition_result="produced",
         )
     verify_and_freeze_raw_artifacts(manifest, result_dir=manifest_path.parent)
+    verify_retained_files(manifest, result_dir=manifest_path.parent)
+    # Strip transient stage/metric payloads before sealing so the final-index digest
+    # is mechanically reproducible from the persisted compact manifest itself.
+    compact_final_manifest(manifest)
     finalize_evidence_manifest(manifest, finalized_at=format_manifest_timestamp(timestamp))
     if isinstance(manifest.get("run"), dict):
         manifest["run"]["state"] = "finalized"

@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 RUN_EVIDENCE_SCHEMA_NAME = "pqc-run-evidence"
-RUN_EVIDENCE_SCHEMA_VERSION = 2
-CAPTURE_CONTRACT_VERSION = 1
+RUN_EVIDENCE_SCHEMA_VERSION = 3
+CAPTURE_CONTRACT_VERSION = 2
 # Compatibility alias for code/tests written against the first Request-16 draft.
 EVIDENCE_CONTRACT_VERSION = CAPTURE_CONTRACT_VERSION
 
@@ -162,6 +162,7 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
 
     items: list[dict[str, Any]] = [
         _contract_item("resolved_case_snapshot", "required", "configuration"),
+        _contract_item("run_provenance", "required", "provenance"),
         _contract_item("cryptographic_material_inventory", "optional", "provisioning"),
     ]
 
@@ -282,6 +283,7 @@ def initialize_manifest_evidence(manifest: dict[str, Any], bundle: dict[str, dic
         "analysis_namespace": "analysis/",
     }
     manifest["artifacts"] = initial_capture_index(contract)
+    manifest["retained_files"] = []
     manifest["execution_outcome"] = {"status": "pending", "result": None, "failure_stage": None}
     manifest["capture_acceptance"] = {
         "status": "pending",
@@ -440,13 +442,20 @@ def _infer_discovered_metadata(relative: str) -> tuple[str, str]:
 
 
 def discover_retained_artifacts(manifest: dict[str, Any], *, result_dir: Path | str) -> None:
-    """Hash every retained run artefact not already indexed.
+    """Hash every retained run file without turning incidental files into verbose evidence records.
 
-    `manifest.json`, mutable manual notes, and the later `analysis/` namespace are
-    intentionally excluded. The scan does not parse scientific content.
+    Contract/semantic artefacts stay in ``artifacts``. Everything else is listed once in
+    the compact ``retained_files`` inventory as path, size and SHA-256. No scientific
+    content is parsed. ``manifest.json``, mutable manual notes and the later ``analysis/``
+    namespace are intentionally excluded.
     """
     root = Path(result_dir).resolve()
     artifacts = _artifact_collection(manifest)
+    retained = manifest.setdefault("retained_files", [])
+    retained_by_path = {
+        item.get("path"): item for item in retained
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
     indexed_paths = {
         item.get("path") for item in artifacts
         if isinstance(item.get("path"), str) and item.get("path")
@@ -460,9 +469,6 @@ def discover_retained_artifacts(manifest: dict[str, Any], *, result_dir: Path | 
         if relative in indexed_paths:
             continue
         source_class, role = _infer_discovered_metadata(relative)
-        # If this file satisfies an outstanding declared role, fill that contract
-        # entry. Otherwise retain it as an optional discovered artefact with a
-        # path-derived stable artifact_id.
         declared = next(
             (
                 item for item in artifacts
@@ -482,20 +488,122 @@ def discover_retained_artifacts(manifest: dict[str, Any], *, result_dir: Path | 
                 acquisition_result="discovered",
                 source_class=source_class,
             )
-        else:
-            artifacts.append({
-                "artifact_id": f"file:{relative}",
-                "source_class": source_class,
-                "role": role,
-                "path": relative,
-                "producer": {"stage": "final_capture_inventory", "tool": "framework.run_evidence"},
-                "size_bytes": candidate.stat().st_size,
-                "sha256": sha256_file(candidate),
-                "requirement": "optional",
-                "acquisition": {"status": "available", "result": "discovered", "reason": None},
-            })
-        indexed_paths.add(relative)
+            indexed_paths.add(relative)
+            continue
 
+        record = {
+            "path": relative,
+            "size_bytes": candidate.stat().st_size,
+            "sha256": sha256_file(candidate),
+        }
+        existing = retained_by_path.get(relative)
+        if existing is None:
+            retained.append(record)
+            retained_by_path[relative] = record
+        else:
+            existing.update(record)
+
+
+def build_run_provenance_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return provenance needed to reproduce/deploy the run without scientific results."""
+    keep = (
+        "source",
+        "external_dependencies",
+        "build",
+        "build_number",
+        "build_reference",
+        "firmware",
+        "preparation",
+        "boot_selection",
+        "application_signing",
+        "wolfboot_build",
+        "runtime_services",
+        "measurement_instruments",
+    )
+    payload = {
+        "schema": {"name": "pqc-run-provenance", "version": 1},
+        "records": {key: deepcopy(manifest[key]) for key in keep if key in manifest},
+    }
+    return payload
+
+
+def write_run_provenance_snapshot(manifest: dict[str, Any], *, result_dir: Path | str) -> Path:
+    root = Path(result_dir).resolve()
+    path = root / "run-provenance.json"
+    path.write_text(json.dumps(build_run_provenance_snapshot(manifest), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    register_artifact(
+        manifest,
+        result_dir=root,
+        role="run_provenance",
+        path=path,
+        stage="run_finalization",
+        tool="framework.run_evidence",
+        acquisition_result="snapshotted",
+        source_class="provenance",
+    )
+    return path
+
+
+def verify_retained_files(manifest: dict[str, Any], *, result_dir: Path | str) -> None:
+    root = Path(result_dir).resolve()
+    for item in manifest.get("retained_files", []):
+        if not isinstance(item, dict):
+            continue
+        relative = item.get("path")
+        if not isinstance(relative, str) or not relative:
+            continue
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            item["integrity"] = "invalid_path"
+            continue
+        if not candidate.is_file():
+            item["integrity"] = "missing"
+            continue
+        actual_size = candidate.stat().st_size
+        actual_sha = sha256_file(candidate)
+        if actual_size != item.get("size_bytes") or actual_sha != item.get("sha256"):
+            item["integrity"] = "mismatch"
+            continue
+        item.pop("integrity", None)
+        try:
+            candidate.chmod(candidate.stat().st_mode & ~0o222)
+        except OSError:
+            pass
+
+
+def compact_final_manifest(manifest: dict[str, Any]) -> None:
+    """Discard runtime/metric payloads after they have served orchestration.
+
+    The finalized manifest is intentionally a small index. Reproducibility detail is
+    retained in ``run-provenance.json`` and raw/diagnostic files are retained through
+    the compact file inventory. Parsed metrics are not preserved as authoritative run
+    state.
+    """
+    resolved = manifest.get("resolved_configuration") if isinstance(manifest.get("resolved_configuration"), dict) else {}
+    configuration = dict(manifest.get("configuration") or {})
+    for key in ("configuration_identity", "firmware_identity", "resolver_version", "schema_version"):
+        if resolved.get(key) is not None:
+            configuration[key] = resolved.get(key)
+
+    run = dict(manifest.get("run") or {})
+    # Keep only stable lifecycle fields; verbose step data belongs in logs.
+    run = {k: run[k] for k in ("id", "created_at", "state", "return_code", "failure_stage") if k in run}
+
+    compact = {
+        "schema": manifest.get("schema"),
+        "run": run,
+        "configuration": configuration,
+        "capture_contract": manifest.get("capture_contract"),
+        "execution_outcome": manifest.get("execution_outcome"),
+        "capture_acceptance": manifest.get("capture_acceptance"),
+        "artifacts": _artifact_collection(manifest),
+        "retained_files": manifest.get("retained_files", []),
+        "final_index": manifest.get("final_index"),
+    }
+    manifest.clear()
+    manifest.update(compact)
 
 def build_derived_record(
     *, result_dir: Path | str, role: str, path: Path | str, tool: str, version: str,
@@ -624,6 +732,9 @@ def evaluate_capture_acceptance(manifest: dict[str, Any]) -> dict[str, Any]:
         if status != "available":
             reason = (item.get("acquisition") or {}).get("reason") or f"required capture is {status or 'missing'}"
             reasons.append(f"{item.get('role')}: {reason}")
+    for item in manifest.get("retained_files", []):
+        if isinstance(item, dict) and item.get("integrity"):
+            reasons.append(f"retained file {item.get('path')}: integrity {item.get('integrity')}")
     accepted = not reasons
     contract = manifest.get("capture_contract") or manifest.get("evidence_contract") or {}
     return {
@@ -646,9 +757,9 @@ def finalize_manifest(manifest: dict[str, Any], *, finalized_at: str) -> None:
     immutable_index = {
         "schema": manifest.get("schema"),
         "configuration": manifest.get("configuration"),
-        "preparation": manifest.get("preparation"),
         "contract": manifest.get("capture_contract"),
         "artifacts": _artifact_collection(manifest),
+        "retained_files": manifest.get("retained_files", []),
         "execution_outcome": manifest.get("execution_outcome"),
         "capture_acceptance": acceptance,
     }

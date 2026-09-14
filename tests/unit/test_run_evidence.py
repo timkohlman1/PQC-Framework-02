@@ -49,7 +49,7 @@ def test_versioned_manifest_and_contract_use_requirement_states():
     manifest, _ = _modules()
     data = manifest.build_manifest(_bundle(), "2026-09-14_001_case")
     assert data["schema"]["name"] == "pqc-run-evidence"
-    assert data["schema"]["version"] == 2
+    assert data["schema"]["version"] == 3
     requirements = {item["role"]: item["requirement"] for item in data["artifacts"]}
     assert requirements["resolved_case_snapshot"] == "required"
     assert requirements["network_condition_record"] == "not_applicable"
@@ -251,9 +251,9 @@ def test_finalization_discovers_unregistered_retained_files_without_parsing_them
         "firmware": {"result_artifacts": {"elf": {"copied": True, "path": "firmware.elf"}}},
     })
     final = manifest_module.finalize_run_evidence(result_dir / "manifest.json")
-    item = next(item for item in final["artifacts"] if item.get("path") == "custom-device-records.jsonl")
-    assert item["role"] == "structured_record"
+    item = next(item for item in final["retained_files"] if item.get("path") == "custom-device-records.jsonl")
     assert item["sha256"] == evidence.sha256_file(extra)
+    assert set(item) == {"path", "size_bytes", "sha256"}
     assert final["capture_acceptance"]["accepted"] is True
 
 
@@ -337,3 +337,57 @@ def test_stage_run_updates_preserve_run_identity_metadata(tmp_path):
     assert updated["run"]["return_code"] == 9
     assert updated["run"]["state"] == "running"
     assert updated["execution_outcome"]["status"] == "failed"
+
+
+def test_finalized_manifest_is_compact_index_and_moves_provenance_to_sidecar(tmp_path):
+    manifest_module, evidence = _modules()
+    bundle = _bundle()
+    result_dir, _ = manifest_module.create_result_folder(bundle, tmp_path / "results", operation="build_only")
+    (result_dir / "build.log").write_text("build\n", encoding="utf-8")
+    (result_dir / "firmware.elf").write_bytes(b"elf")
+    manifest_module.update_manifest(result_dir / "manifest.json", {
+        "result": "build_passed",
+        "build": {"log": "build.log", "duration_seconds": 12.3, "return_code": 0},
+        "firmware": {"result_artifacts": {"elf": {"copied": True, "path": "firmware.elf"}}},
+        "uart": {"log": "uart.log", "application_clock_hz": {"hclk_hz": 120000000}},
+        "runtime_memory": {"application_checkpoints": [{"heap_peak_used_bytes": 99}]},
+        "secure_boot_benchmark": {"samples": [{"verification_time_ms": 1.23}]},
+    })
+    final = manifest_module.finalize_run_evidence(result_dir / "manifest.json")
+    assert final["schema"]["version"] == 3
+    assert "build" not in final
+    assert "firmware" not in final
+    assert "uart" not in final
+    assert "runtime_memory" not in final
+    assert "secure_boot_benchmark" not in final
+    assert "resolved_configuration" not in final
+    assert final["configuration"]["configuration_identity"] == "config-sha"
+    provenance = json.loads((result_dir / "run-provenance.json").read_text(encoding="utf-8"))
+    assert provenance["records"]["build"]["return_code"] == 0
+    prov_item = next(item for item in final["artifacts"] if item["role"] == "run_provenance")
+    assert prov_item["sha256"] == evidence.sha256_file(result_dir / "run-provenance.json")
+    assert final["final_index"]["scope"] == "run_capture_only"
+    recomputed = evidence.canonical_sha256({
+        "schema": final["schema"],
+        "configuration": final["configuration"],
+        "contract": final["capture_contract"],
+        "artifacts": final["artifacts"],
+        "retained_files": final["retained_files"],
+        "execution_outcome": final["execution_outcome"],
+        "capture_acceptance": final["capture_acceptance"],
+    })
+    assert final["final_index"]["sha256"] == recomputed
+
+
+def test_schema_v2_manifest_is_explicitly_legacy_under_schema_v3(tmp_path):
+    manifest_module, _ = _modules()
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({
+        "schema": {"name": "pqc-run-evidence", "version": 2},
+        "capture_acceptance": {"accepted": True},
+    }), encoding="utf-8")
+    data = manifest_module.read_manifest(path)
+    assert data["compatibility"]["legacy_manifest"] is True
+    assert data["compatibility"]["accepted_under_current_contract"] is False
+    with pytest.raises(ValueError, match="unsupported run-evidence schema version"):
+        manifest_module.finalize_run_evidence(path)

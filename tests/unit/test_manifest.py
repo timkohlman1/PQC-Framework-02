@@ -299,8 +299,8 @@ def test_build_manifest_contains_initial_fields():
     assert data["network_profile"] == "none"
     assert data["result"] == "pending"
     assert data["schema"]["name"] == "pqc-run-evidence"
-    assert data["schema"]["version"] == 2
-    assert data["capture_contract"]["version"] == 1
+    assert data["schema"]["version"] == 3
+    assert data["capture_contract"]["version"] == 2
 
 
 def test_create_result_folder_writes_manifest_and_notes(tmp_path):
