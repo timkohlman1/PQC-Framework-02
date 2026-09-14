@@ -1000,8 +1000,26 @@ def update_manifest(path: Path | str, updates: dict[str, Any]) -> dict[str, Any]
     if isinstance(manifest.get("run"), dict):
         manifest["run"]["state"] = "running"
     failure_stage = updates.get("failure_stage")
+    summary_update = None
     if failure_stage is None and run_update is not None:
         failure_stage = run_update.get("failure_stage")
+    if failure_stage is None:
+        # Some orchestration commands historically recorded their terminal summary
+        # in a transient stage block (for example ``build_flash``). Preserve only
+        # the stable lifecycle facts needed by the compact final manifest.
+        for value in updates.values():
+            if not isinstance(value, dict):
+                continue
+            if value.get("failure_stage") is not None:
+                failure_stage = value.get("failure_stage")
+                summary_update = value
+                break
+    if summary_update is not None:
+        current_run = dict(manifest.get("run") or {})
+        current_run["failure_stage"] = failure_stage
+        if summary_update.get("return_code") is not None:
+            current_run["return_code"] = summary_update.get("return_code")
+        manifest["run"] = current_run
     update_sut_outcome(manifest, updates.get("result"), failure_stage)
     _sync_legacy_evidence(manifest_path, manifest, updates)
     write_manifest(manifest_path, manifest)

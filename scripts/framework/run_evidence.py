@@ -673,6 +673,10 @@ def update_sut_outcome(manifest: dict[str, Any], result: Any, failure_stage: Any
         or lowered.startswith("secure_boot_")
         or lowered.startswith("mqtt_run_")
         or lowered.startswith("runtime_")
+        or lowered.startswith("build_flash_")
+        or lowered.startswith("flash_")
+        or lowered.startswith("preparation_")
+        or lowered.startswith("fake_mqtt_transport_")
     )
     if not explicit_runtime_result:
         return
@@ -686,7 +690,11 @@ def update_sut_outcome(manifest: dict[str, Any], result: Any, failure_stage: Any
     stage = None if failure_stage is None else str(failure_stage)
     if any(token in lowered for token in ("fail", "error", "refused")):
         status = "not_executed" if stage in pre_sut_stages else "failed"
-    elif lowered.endswith("_passed") or lowered in {"pass", "passed", "success", "succeeded"}:
+    elif (
+        lowered.endswith("_passed")
+        or lowered.endswith("_completed")
+        or lowered in {"pass", "passed", "success", "succeeded", "completed"}
+    ):
         status = "completed"
     else:
         return

@@ -391,3 +391,25 @@ def test_schema_v2_manifest_is_explicitly_legacy_under_schema_v3(tmp_path):
     assert data["compatibility"]["accepted_under_current_contract"] is False
     with pytest.raises(ValueError, match="unsupported run-evidence schema version"):
         manifest_module.finalize_run_evidence(path)
+
+
+def test_build_flash_terminal_result_survives_compaction_as_execution_outcome(tmp_path):
+    manifest, _ = _modules()
+    result_dir, _ = manifest.create_result_folder(_bundle(evidence_class="generic"), tmp_path / "results")
+    manifest.update_manifest(
+        result_dir / "manifest.json",
+        {
+            "result": "build_flash_failed",
+            "build_flash": {"return_code": 7, "failure_stage": "flash"},
+        },
+    )
+    final = manifest.finalize_run_evidence(result_dir / "manifest.json")
+    assert final["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "build_flash_failed",
+        "failure_stage": "flash",
+    }
+    assert final["run"]["return_code"] == 7
+    assert final["run"]["failure_stage"] == "flash"
+    assert "build_flash" not in final
+    assert "result" not in final

@@ -120,7 +120,12 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
     assert len(seen_result_dirs) == 4
     assert all(path == seen_result_dirs[0] for path in seen_result_dirs)
     manifest = json.loads((seen_result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["result"] == "baseline_run_passed"
+    assert manifest["execution_outcome"] == {
+        "status": "completed",
+        "result": "baseline_run_passed",
+        "failure_stage": "none",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] is None
     assert manifest["run"]["build_return_code"] == 0
     assert manifest["run"]["artifact_copy_return_code"] == 0
@@ -166,7 +171,12 @@ def test_run_command_stops_after_build_failure(tmp_path, monkeypatch):
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 4
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "baseline_run_failed",
+        "failure_stage": "build",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "build"
     assert manifest["run"]["flash_return_code"] is None
     assert manifest["run"]["uart_return_code"] is None
@@ -212,7 +222,12 @@ def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, 
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 7
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "baseline_run_failed",
+        "failure_stage": "flash",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "flash"
     assert manifest["run"]["uart_return_code"] is None
     assert manifest["uart"]["skipped"] is True
@@ -264,7 +279,12 @@ def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 9
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "failed",
+        "result": "baseline_run_failed",
+        "failure_stage": "uart",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "uart"
     assert manifest["run"]["uart_return_code"] == 9
 
