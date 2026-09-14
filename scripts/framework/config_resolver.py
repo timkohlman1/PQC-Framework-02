@@ -414,10 +414,19 @@ class ConfigResolver:
             "uart": {"expected_boot_message": target["uart"]["expected_boot_message"], "expected_tick_message": target["uart"]["expected_tick_message"]},
             "services": {"experiment_broker": s["services"]["experiment_broker"], "reporting_broker": s["services"]["reporting_broker"]},
             "instruments": resolved_instruments,
-            "resolved_configuration": {"schema_version": SCHEMA_VERSION, "resolver_version": RESOLVER_VERSION,
-                                       "configuration_identity": case["provenance"]["configuration_identity"],
-                                       "firmware_identity": case["provenance"]["firmware_identity"],
-                                       "selected_profiles": s, "choices": c},
+            "resolved_configuration": {
+                "schema_version": SCHEMA_VERSION,
+                "resolver_version": RESOLVER_VERSION,
+                "configuration_identity": case["provenance"]["configuration_identity"],
+                "firmware_identity": case["provenance"]["firmware_identity"],
+                "selected_profiles": s,
+                "choices": c,
+                "profile_hashes": dict(case.get("provenance", {}).get("profile_hashes", {})),
+                "secret_references": {
+                    "wifi_ssid": wifi.get("ssid_ref"),
+                    "wifi_psk": wifi.get("psk_ref"),
+                },
+            },
         }
         return {"experiment": experiment, "board": board, "host": host, "boot": boot}
 

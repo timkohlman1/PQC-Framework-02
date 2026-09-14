@@ -1,0 +1,203 @@
+Treat this as a fresh thesis-editing request. I will supply the current LaTeX source for the chapter(s) to update. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+IMPLEMENTATION FOLLOW-UP — REQUEST 16 THESIS UPDATE
+
+Please update the supplied LaTeX so the thesis accurately describes the final-state run-evidence architecture established by Implementation Request 16, while preserving valid future-state descriptions for later implementation requests.
+
+Important sequencing context
+----------------------------
+The framework is being completed through these requests in order:
+
+1. Request 10 — Configuration profiles and versioned resolver
+2. Request 9 — Reproducibility, provenance and credential hardening
+3. Request 16 — Run-evidence manifest and artefact lineage
+4. Request 15 — Reporting broker and buffered result publication
+5. Request 11 — General campaign executor
+6. Request 5 — Dual-bank wolfBoot / OTA architecture
+7. Request 13 — 1 MHz timing timebase and reset-origin support
+8. Request 2 — Ready Metrics 2 timing definitions
+9. Request 3 — Hierarchical TLS instrumentation
+10. Request 12 — Repeated full TLS 1.3 workload
+11. Request 14 — wolfBoot integrity-only baseline
+12. Request 4 — wolfBoot runtime stack high-water measurement
+13. Request 1 — Bare-metal cryptographic benchmark
+14. Request 6 — ESP32/INA228 energy instrument
+15. Request 8 — Live gateway/network-degradation validation
+16. Request 7 — Automated PCAP analysis and correlation
+
+The thesis is a draft and describes the intended final framework, not merely the repository state immediately after Request 16. Therefore:
+
+- Do not remove a sound final-state capability merely because its producer is implemented by a later request.
+- Do not falsely claim that a later-request capability is already implemented at the Request-16 point in the repository.
+- Where the thesis wording describes a historical/current implementation detail that conflicts with the stronger final architecture, revise the thesis toward the coherent final design.
+- Where an obvious final-state requirement is missing from the draft, add it even if the implementation producer belongs to a later request, but make the ownership/boundary clear.
+- Preserve the thesis terminology, academic tone and chapter structure unless a structural change is clearly required.
+
+Implemented Request-16 architecture to reflect
+-----------------------------------------------
+
+1. Versioned run-evidence schema
+
+New runs use a versioned run-evidence manifest schema named `pqc-run-evidence`. The run record is created before execution. The root manifest is primarily an evidence index, lifecycle/acceptance record and compatibility surface; it should not be described as the storage location for every detailed stage record or metric.
+
+2. Compact manifest plus referenced artefacts
+
+Verbose raw observations and detailed stage outputs remain in dedicated result artefacts. The manifest indexes those artefacts by semantic role and integrity identity rather than duplicating their full contents. This is also intended to keep the manifest manageable as the framework grows.
+
+For each retained artefact, the common evidence envelope records at minimum:
+
+- evidence/source class;
+- semantic role;
+- result-relative path where applicable;
+- producing stage/tool identity;
+- size;
+- SHA-256;
+- required / optional / not-applicable status;
+- acquisition/production result; and
+- explicit reason for unavailable or invalid evidence.
+
+Unavailable measurements must never be represented as numeric zero.
+
+3. Immutable resolved-case snapshot
+
+Each run retains `resolved-case.json` as an immutable non-secret experiment specification. It includes the selected profile identities, profile-content hashes, configuration and firmware identities, resolver/schema versions, effective non-secret parameters, and named secret references. Resolved Wi-Fi credentials and other secret values are excluded.
+
+The top-level manifest retains only compact configuration identity/reference information rather than duplicating the full effective configuration.
+
+4. Extensible evidence contracts
+
+The required-evidence contract is generated from the resolved experiment class and enabled features. Requirement states are `required`, `optional`, and `not_applicable`.
+
+The contract model is intentionally extensible rather than a closed enumeration. Later features can register new evidence roles without redesigning the common evidence envelope.
+
+Minimum contract families include:
+
+- build-only;
+- plaintext MQTT runtime;
+- TLS runtime;
+- network-degradation runs;
+- secure-boot runs;
+- OTA runs; and
+- energy-enabled runs.
+
+Build-only command execution uses a build-only evidence contract even when the resolved firmware configuration is runtime-capable.
+
+Feature-specific requirements are overlays. For example, TLS adds the TLS key-log requirement; network degradation adds the applied-condition record; secure boot adds wolfBoot, signed-image and secure-boot records; OTA and energy evidence are required only when those features are enabled.
+
+5. Reporting-broker boundary
+
+Request 16 defines the manifest-facing role and contract for structured STM32/ESP32 result streams, but Request 15 implements the reporting broker, buffered result publication and collector. Do not rewrite the final Chapter 4 architecture to remove the reporting broker merely because Request 15 follows Request 16.
+
+The final-state design should still state that structured result collectors validate run ID, source identity, sequence/chunk count, completion record and logical-content hash. The Request-16 schema is deliberately designed so Request 15 can supply that producer without another schema redesign.
+
+Until structured reporting is enabled by the resolved configuration, the STM32 result-stream role can remain optional. Once that capability is enabled, it becomes required by the relevant runtime contract.
+
+The same final-state principle applies to ESP32/INA228 evidence, which is implemented later by Request 6.
+
+6. Raw versus derived evidence
+
+Raw evidence is immutable after successful collection through the evidence API. Re-registering the same raw semantic role with different bytes is rejected. At run finalisation the framework re-hashes retained raw files against their indexed size/SHA-256 before acceptance and makes them read-only where the result filesystem supports mode changes; the sealed evidence index and API provide the logical immutability boundary.
+
+Derived outputs are separate lineage records. Every derived output records:
+
+- parser/analyser/tool identity and version;
+- SHA-256 identities of direct input artefacts;
+- relevant analysis parameters;
+- output size; and
+- output SHA-256.
+
+Re-running analysis may create/update the derived record for the same semantic role and reseal the final index, but it must not alter the underlying raw source artefacts.
+
+This is the model that later automated packet analysis (Request 7) should consume.
+
+7. SUT outcome versus evidence acceptance
+
+The thesis should explicitly distinguish the system-under-test outcome from evidence completeness.
+
+A target workload can succeed while the result is rejected/incomplete for analysis because required evidence is unavailable, corrupt or hash-inconsistent.
+
+Conversely, a pertinent target failure can remain a valid reliability observation when the evidence required to classify that failure was collected completely.
+
+The run manifest therefore records `sut_outcome` separately from `evidence_acceptance`. The SUT state should distinguish successful/failed execution from `not_executed` preparation/deployment failures and `not_applicable` build-only workflows. Evidence acceptance is determined only from the resolved class-specific evidence contract.
+
+8. Final evidence index
+
+Finalisation records a SHA-256 over the evidence index and associated configuration/preparation/derived lineage. Normal stage mutation is refused after finalisation. The dedicated derived-analysis path may update derived lineage and reseal the final index without modifying raw evidence.
+
+9. Preparation/build reuse and flash provenance
+
+Runtime-only or repeated execution records the exact referenced successful preparation/build manifest and firmware SHA-256 it reuses. Flash code re-hashes the selected ELF before target access and refuses a mismatch against the referenced build record.
+
+Secure-boot evidence separately binds the exact wolfBoot image and signed application identity.
+
+10. Source and dependency provenance
+
+The final write-up should describe provenance as including:
+
+- parent repository commit;
+- branch when available;
+- dirty/clean state;
+- a SHA-256 source-state fingerprint derived from tracked changes and untracked file contents without retaining source text in the manifest;
+- recursive submodule revision, checkout state and dirty state;
+- compiler, CMake, Ninja, Python and OpenSSL versions;
+- container/runtime image identity and immutable digest where the owning workflow can expose them;
+- resolver/schema identity and profile-content hashes;
+- final application firmware identities;
+- wolfBoot image/configuration identity;
+- cryptographic material inventory; and
+- referenced preparation/build identity for reused firmware.
+
+Do not imply that an unavailable runtime container identity is fabricated; record it only where available.
+
+11. Cryptographic material inventory
+
+Retained experiment/build cryptographic material remains governed by the security policy. The inventory records result-relative path, role/classification, size, SHA-256, producer/acquisition metadata and required use while excluding prohibited external/control-plane secrets from result retention.
+
+12. Legacy manifests
+
+Older manifests remain readable where practical but are explicitly marked legacy. An old incomplete record must never be silently reinterpreted as satisfying the current evidence contract.
+
+Manifest-size / write-up cleanup
+--------------------------------
+Please review the supplied LaTeX for wording that implies `manifest.json` contains all detailed measurements, broker state, packet statistics or subprocess internals. Where appropriate, revise this so the manifest is described as the canonical index and acceptance record while detailed evidence remains in independently hashed artefacts.
+
+Do not over-document incidental JSON nesting or enumerate every possible future evidence role. Describe the stable semantic contract and give representative examples. This should remain maintainable as new evidence producers are added.
+
+Judgement rules for draft discrepancies
+---------------------------------------
+For each material discrepancy, use one of these classifications internally when deciding the edit:
+
+A. Required correction — Request 16 demonstrates that the existing draft is wrong or incomplete.
+B. Recommended clarification — existing wording is defensible but ambiguous or likely to become misleading.
+C. Future-state dependency — the thesis is describing a sound final capability intentionally implemented by a later request; preserve it and improve the boundary if necessary.
+
+Do not add speculative implementation details that are unsupported by the supplied source or this implementation summary.
+
+Areas of Chapter 4 that should receive particular attention
+------------------------------------------------------------
+
+- Section 4.1.2, experiment lifecycle and incremental/final run records.
+- Section 4.2.4-4.2.5, resolved cases and generated state.
+- Section 4.3.3, structured instrumentation recording/reporting boundaries.
+- Sections 4.5 and 4.8, reporting-broker and energy-result evidence, preserving them as final-state dependencies where appropriate.
+- Section 4.6, raw PCAP/key-log versus later derived packet analysis.
+- Section 4.7, secure-boot/OTA artefact identity and evidence linkage.
+- Section 4.9.1, run-evidence schema, evidence contracts, raw/derived immutability and SUT/evidence acceptance separation.
+- Section 4.9.2, build/dependency provenance and preparation reuse.
+- Section 4.10, validation and evidence-complete acceptance.
+
+Also review nearby Chapter 3 reproducibility/evidence passages if they conflict with the final model. Do not broadly rewrite unrelated methodology.
+
+Known draft issue to check
+--------------------------
+The current thesis draft previously contained a Chapter 3 reference stating that “Chapter 8” applies/refines the assessment method even though the thesis contents end at Chapter 7. If that wording remains in the supplied LaTeX, correct the cross-reference based on the actual final chapter structure rather than guessing a nonexistent chapter.
+
+Requested output
+----------------
+
+1. Inspect the supplied LaTeX before editing.
+2. Explain briefly which Request-16-specific changes are required and which relevant passages are intentionally preserved as later final-state dependencies.
+3. Return complete replacement LaTeX for every modified source file.
+4. Preserve unrelated thesis content.
+5. Do not invent experimental results or claim that later implementation requests have already been validated.
+6. Flag any additional obvious architectural omission you identify that would be necessary for a coherent final evidence/provenance model, with reasoning.

@@ -25,6 +25,9 @@ def test_reproducibility_provenance_records_parent_submodules_and_effective_tool
         outputs = {
             ("git", "rev-parse", "HEAD"): "parent123\n",
             ("git", "status", "--short"): " M README.md\n",
+            ("git", "branch", "--show-current"): "feature/request16\n",
+            ("git", "diff", "--binary", "HEAD"): "diff --git a/README.md b/README.md\n",
+            ("git", "ls-files", "--others", "--exclude-standard", "-z"): "",
             ("git", "submodule", "status", "--recursive"): (
                 " abc111 Middlewares/Third_Party/wolfSSL (heads/main)\n"
                 "+def222 tools/wolfboot (v2.9.0)\n"
@@ -57,7 +60,9 @@ def test_reproducibility_provenance_records_parent_submodules_and_effective_tool
     )
 
     assert result["git_commit"] == "parent123"
+    assert result["git_branch"] == "feature/request16"
     assert result["git_dirty"] is True
+    assert result["source_state_sha256"]
     assert result["submodules"]["available"] is True
     assert result["submodules"]["entries"] == [
         {

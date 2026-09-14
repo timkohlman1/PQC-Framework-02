@@ -326,7 +326,8 @@ def test_wolfboot_run_forwards_debug_build_presets(tmp_path, monkeypatch):
         "host": {},
         "boot": {},
     })
-    monkeypatch.setattr(cli, "create_result_folder", lambda bundle, results: (result_dir, {"run_id": "run"}))
+    monkeypatch.setattr(cli, "create_result_folder", lambda bundle, results, **kwargs: (result_dir, {"run_id": "run"}))
+    monkeypatch.setattr(cli, "finalize_run_evidence", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_report_experiment_start", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "update_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "emit_progress", lambda *args, **kwargs: None)

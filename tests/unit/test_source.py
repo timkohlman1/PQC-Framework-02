@@ -30,16 +30,19 @@ def test_capture_git_provenance_records_clean_state(tmp_path):
             return source.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
         if command == ["git", "status", "--short"]:
             return source.GitCommandExecution(command, 0, "", "", 0.01)
+        if command == ["git", "branch", "--show-current"]:
+            return source.GitCommandExecution(command, 0, "main\n", "", 0.01)
         raise AssertionError(f"unexpected command: {command}")
 
     result = source.capture_git_provenance(tmp_path, fake_runner)
 
-    assert result == {
-        "git_commit": "abc123",
-        "git_dirty": False,
-        "git_status_available": True,
-    }
-    assert calls == [["git", "rev-parse", "HEAD"], ["git", "status", "--short"]]
+    assert result["git_commit"] == "abc123"
+    assert result["git_branch"] == "main"
+    assert result["git_dirty"] is False
+    assert result["git_status_available"] is True
+    assert result["source_state_sha256"] is None
+    assert ["git", "rev-parse", "HEAD"] in calls
+    assert ["git", "status", "--short"] in calls
 
 
 def test_capture_git_provenance_records_dirty_state_without_file_contents(tmp_path):
@@ -56,15 +59,21 @@ def test_capture_git_provenance_records_dirty_state_without_file_contents(tmp_pa
                 "",
                 0.01,
             )
+        if command == ["git", "branch", "--show-current"]:
+            return source.GitCommandExecution(command, 0, "feature/request16\n", "", 0.01)
+        if command == ["git", "diff", "--binary", "HEAD"]:
+            return source.GitCommandExecution(command, 0, "diff --git a/file b/file\n", "", 0.01)
+        if command == ["git", "ls-files", "--others", "--exclude-standard", "-z"]:
+            return source.GitCommandExecution(command, 0, "", "", 0.01)
         raise AssertionError(f"unexpected command: {command}")
 
     result = source.capture_git_provenance(tmp_path, fake_runner)
 
-    assert result == {
-        "git_commit": "def456",
-        "git_dirty": True,
-        "git_status_available": True,
-    }
+    assert result["git_commit"] == "def456"
+    assert result["git_branch"] == "feature/request16"
+    assert result["git_dirty"] is True
+    assert result["git_status_available"] is True
+    assert result["source_state_sha256"]
 
 
 def test_capture_git_provenance_records_unavailable_state_when_git_fails(tmp_path):
@@ -75,11 +84,11 @@ def test_capture_git_provenance_records_unavailable_state_when_git_fails(tmp_pat
 
     result = source.capture_git_provenance(tmp_path, fake_runner)
 
-    assert result == {
-        "git_commit": None,
-        "git_dirty": None,
-        "git_status_available": False,
-    }
+    assert result["git_commit"] is None
+    assert result["git_branch"] is None
+    assert result["git_dirty"] is None
+    assert result["git_status_available"] is False
+    assert result["source_state_sha256"] is None
 
 
 def test_capture_git_provenance_records_status_unavailable_when_status_fails(tmp_path):
@@ -90,12 +99,14 @@ def test_capture_git_provenance_records_status_unavailable_when_status_fails(tmp
             return source.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
         if command == ["git", "status", "--short"]:
             return source.GitCommandExecution(command, 128, "", "status failed", 0.01)
+        if command == ["git", "branch", "--show-current"]:
+            return source.GitCommandExecution(command, 0, "main\n", "", 0.01)
         raise AssertionError(f"unexpected command: {command}")
 
     result = source.capture_git_provenance(tmp_path, fake_runner)
 
-    assert result == {
-        "git_commit": "abc123",
-        "git_dirty": None,
-        "git_status_available": False,
-    }
+    assert result["git_commit"] == "abc123"
+    assert result["git_branch"] == "main"
+    assert result["git_dirty"] is None
+    assert result["git_status_available"] is False
+    assert result["source_state_sha256"] is None

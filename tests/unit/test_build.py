@@ -181,6 +181,8 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    # This test covers build argument propagation, not evidence finalisation.
+    monkeypatch.setattr(experiment_cli, "finalize_run_evidence", lambda *args, **kwargs: None)
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
@@ -547,8 +549,9 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         ),
     )
     # The lambda above cannot return both values after setdefault cleanly; replace it.
-    def fake_create_result_folder(bundle, _results_dir):
+    def fake_create_result_folder(bundle, _results_dir, **kwargs):
         captured["bundle"] = bundle
+        captured["result_operation"] = kwargs.get("operation")
         result_dir = tmp_path / "results" / "run"
         result_dir.mkdir(parents=True, exist_ok=True)
         return result_dir, {"run_id": "run"}
@@ -575,6 +578,10 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    # This test isolates artifact override/build argument propagation. The fake
+    # result-folder helper intentionally does not create a real manifest, so
+    # final evidence sealing belongs to dedicated manifest/evidence tests.
+    monkeypatch.setattr(experiment_cli, "finalize_run_evidence", lambda *_args, **_kwargs: None)
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
@@ -591,6 +598,7 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
     expected = "build/Release/stm32_basic_hal1.elf"
     assert captured["bundle"]["experiment"]["firmware"]["artifact"] == expected
     assert captured["execute_bundle"]["experiment"]["firmware"]["artifact"] == expected
+    assert captured["result_operation"] == "build_only"
     assert original_bundle["experiment"]["firmware"]["artifact"] == (
         "build/Release/stm32_basic_hal1.elf"
     )

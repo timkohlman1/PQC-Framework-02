@@ -289,17 +289,18 @@ def test_build_manifest_contains_initial_fields():
 
     data = manifest.build_manifest(sample_bundle(), "2026-06-25_001_baseline_direct_uart", timestamp)
 
-    assert data == {
-        "run_id": "2026-06-25_001_baseline_direct_uart",
-        "timestamp": "2026-06-25T20:30:00+10:00",
-        "experiment": "baseline_direct_uart",
-        "board": "board_a",
-        "gateway": "gateway",
-        "boot_mode": "direct_flash",
-        "transport_mode": "direct_uart",
-        "network_profile": "none",
-        "result": "pending",
-    }
+    assert data["run_id"] == "2026-06-25_001_baseline_direct_uart"
+    assert data["timestamp"] == "2026-06-25T20:30:00+10:00"
+    assert data["experiment"] == "baseline_direct_uart"
+    assert data["board"] == "board_a"
+    assert data["gateway"] == "gateway"
+    assert data["boot_mode"] == "direct_flash"
+    assert data["transport_mode"] == "direct_uart"
+    assert data["network_profile"] == "none"
+    assert data["result"] == "pending"
+    assert data["schema"]["name"] == "pqc-run-evidence"
+    assert data["schema"]["version"] == 1
+    assert data["evidence_contract"]["version"] == 1
 
 
 def test_create_result_folder_writes_manifest_and_notes(tmp_path):

@@ -522,18 +522,22 @@ def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_pa
             duration_seconds=10.0,
         )
 
+    # A second capture is a separate raw observation. Use a distinct result
+    # record rather than overwriting the first run's immutable uart.log.
+    passed_result_dir = tmp_path / "results" / "run-passed"
+    write_initial_manifest(passed_result_dir)
     passed_result = uart.execute_uart_capture(
         bundle,
         repo_root,
-        result_dir,
+        passed_result_dir,
         runner=secure_marker_runner,
     )
-    passed_manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    passed_manifest = json.loads((passed_result_dir / "manifest.json").read_text(encoding="utf-8"))
 
     assert passed_result.return_code == 0
     assert passed_result.secure_boot_marker_present is True
     assert passed_manifest["uart"]["secure_boot_marker_present"] is True
-    assert "Secure-boot marker present: true" in (result_dir / "uart.log").read_text(encoding="utf-8")
+    assert "Secure-boot marker present: true" in (passed_result_dir / "uart.log").read_text(encoding="utf-8")
 
 
 def test_execute_uart_capture_fails_when_expected_marker_is_missing(tmp_path):

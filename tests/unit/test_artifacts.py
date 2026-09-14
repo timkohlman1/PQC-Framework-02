@@ -47,6 +47,9 @@ def test_copy_firmware_artifacts_uses_canonical_names_and_hashes(tmp_path):
     assert copied["elf"]["path"] == "firmware.elf"
     assert copied["elf"]["copied"] is True
     assert copied["elf"]["sha256"] == hashlib.sha256(b"elf bytes").hexdigest()
+    assert copied["elf"]["role"] == "application_elf"
+    assert copied["elf"]["requirement"] == "required"
+    assert copied["elf"]["acquisition"]["status"] == "available"
     assert copied["hex"]["path"] == "firmware.hex"
     assert copied["hex"]["copied"] is True
     assert copied["bin"]["path"] is None
@@ -69,6 +72,10 @@ def test_copy_material_to_result_records_private_material(tmp_path):
     assert (result_dir / entry["path"]).read_bytes() == b"disposable experiment key"
     assert entry["private"] is True
     assert entry["classification"] == "disposable_experiment_material"
+    assert entry["source_class"] == "cryptographic_material"
+    assert entry["requirement"] == "required"
+    assert entry["acquisition"]["status"] == "available"
+    assert entry["producer"]["stage"] == "provisioning"
     assert inventory.name == "material-inventory.json"
 
 
