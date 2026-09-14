@@ -114,7 +114,17 @@ def infer_experiment_features(bundle: dict[str, dict[str, Any]]) -> dict[str, bo
         degradation.get(key) not in (None, 0, 0.0, "", "none")
         for key in ("rate_kbit", "rtt_ms", "loss_percent", "mtu")
     )
-    secure_boot = str(boot.get("mode", firmware.get("mode", ""))) == "wolfboot" or "secure_boot" in workload
+    resolved = experiment.get("resolved_configuration") if isinstance(experiment.get("resolved_configuration"), dict) else {}
+    resolved_choices = resolved.get("choices") if isinstance(resolved.get("choices"), dict) else {}
+    secure_boot_choice = str(resolved_choices.get("secure_boot", "")).strip().lower()
+    boot_mode = str(boot.get("mode", "")).strip().lower()
+    firmware_mode = str(firmware.get("mode", "")).strip().lower()
+    secure_boot = (
+        boot_mode.startswith("wolfboot")
+        or firmware_mode.startswith("wolfboot")
+        or secure_boot_choice not in {"", "none", "not_applicable", "disabled", "false"}
+        or "secure_boot" in workload.lower()
+    )
     ota = "ota" in workload.lower() or "update" in workload.lower()
     energy = "energy" in instruments and instruments.get("energy") not in (None, {}, "")
     structured_reporting = bool(experiment.get("structured_reporting", {}).get("enabled")) if isinstance(experiment.get("structured_reporting"), dict) else False

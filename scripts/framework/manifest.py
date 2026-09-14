@@ -1050,8 +1050,15 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
                 record = result_artifacts.get(artifact_type)
                 if isinstance(record, dict) and record.get("copied"):
                     artifact(role, record.get("path") or record.get("artifact_path"), "build", "cmake/ninja")
-        elif firmware.get("result_artifact"):
-            artifact("application_elf", firmware.get("result_artifact"), "preparation_reuse", "framework.build_records", "reused")
+        elif firmware.get("result_artifact") or firmware.get("result_artifact_path"):
+            retained_artifact = firmware.get("result_artifact_path") or firmware.get("result_artifact")
+            suffix = Path(str(retained_artifact)).suffix.lower()
+            retained_role = {
+                ".elf": "application_elf",
+                ".hex": "application_hex",
+                ".bin": "application_binary",
+            }.get(suffix, "firmware_image")
+            artifact(retained_role, str(retained_artifact), "preparation_reuse", "framework.build_records", "reused")
 
     flash = updates.get("flash")
     if isinstance(flash, dict):
@@ -1059,7 +1066,7 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
         register_evidence_identity_in_manifest(
             manifest, role="deployment_provenance", sha256=flash.get("firmware_sha256"),
             stage="flash", tool="STM32CubeProgrammer", acquisition_result=str(flash.get("provenance_status") or "recorded"),
-            path=flash.get("log") or "flash.log", source_class="deployment",
+            path=None, source_class="deployment",
         )
 
     uart = updates.get("uart")
@@ -1131,7 +1138,7 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
         register_evidence_identity_in_manifest(
             manifest, role="deployment_provenance", sha256=preparation_reference.get("firmware_sha256"),
             stage="preparation_reuse", tool="framework.runtime_only", acquisition_result="reused",
-            path=str(preparation_reference.get("manifest")), source_class="deployment",
+            path=None, source_class="deployment",
         )
 
     build_reference = updates.get("build_reference")
@@ -1154,7 +1161,7 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
         register_evidence_identity_in_manifest(
             manifest, role="deployment_provenance", sha256=signing_evidence.get("signed_application_sha256"),
             stage="secure_boot_flash", tool="framework.secure_boot_flash", acquisition_result="recorded",
-            path=flash_evidence.get("log"), source_class="deployment",
+            path=None, source_class="deployment",
         )
 
         def secure_artifact_or_identity(role: str, raw_path: Any, recorded_sha256: Any, stage: str, tool: str) -> None:

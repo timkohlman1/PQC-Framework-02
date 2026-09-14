@@ -413,3 +413,96 @@ def test_build_flash_terminal_result_survives_compaction_as_execution_outcome(tm
     assert final["run"]["failure_stage"] == "flash"
     assert "build_flash" not in final
     assert "result" not in final
+
+
+def test_secure_boot_feature_is_detected_from_resolved_choice_and_wolfboot_firmware_mode():
+    _, evidence = _modules()
+    bundle = _bundle(
+        evidence_class="stm32_st67_classical_tls_e2e",
+        tls_mode="classical_tls_server_auth",
+    )
+    bundle["experiment"]["firmware"]["mode"] = "wolfboot_integrity"
+    bundle["experiment"]["resolved_configuration"]["choices"]["secure_boot"] = "integrity_sha256"
+    # The runtime bundle's legacy boot section can still describe direct flash; the
+    # resolved choice/firmware mode are the authoritative signals for this case.
+    bundle["boot"] = {"mode": "direct_flash"}
+
+    features = evidence.infer_experiment_features(bundle)
+    assert features["secure_boot"] is True
+
+    contract = evidence.build_capture_contract(bundle)
+    requirements = {item["role"]: item["requirement"] for item in contract["items"]}
+    assert requirements["wolfboot_image"] == "required"
+    assert requirements["signed_application"] == "required"
+    assert requirements["secure_boot_record"] == "optional"
+
+
+def test_secure_boot_registration_keeps_deployment_identity_separate_from_flash_log_and_elf(tmp_path):
+    manifest_module, evidence = _modules()
+    bundle = _bundle(
+        evidence_class="stm32_st67_classical_tls_e2e",
+        tls_mode="classical_tls_server_auth",
+    )
+    bundle["experiment"]["firmware"]["mode"] = "wolfboot_integrity"
+    bundle["experiment"]["resolved_configuration"]["choices"]["secure_boot"] = "integrity_sha256"
+
+    result_dir, _ = manifest_module.create_result_folder(bundle, tmp_path / "results")
+    elf = result_dir / "firmware.elf"
+    elf.write_bytes(b"elf")
+    flash_log = result_dir / "secure_boot_flash.log"
+    flash_log.write_text("flash complete\n", encoding="utf-8")
+    signed_dir = result_dir / "prerequisites" / "signing" / "run"
+    signed_dir.mkdir(parents=True)
+    signed = signed_dir / "application_integrity.bin"
+    signed.write_bytes(b"signed application")
+    signed_sha = evidence.sha256_file(signed)
+
+    manifest_module.update_manifest(
+        result_dir / "manifest.json",
+        {
+            "firmware": {
+                "result_artifacts": {
+                    "elf": {"copied": True, "path": "firmware.elf"},
+                }
+            }
+        },
+    )
+    manifest_module.update_manifest(
+        result_dir / "manifest.json",
+        {
+            "firmware": {
+                "result_artifact": "application_integrity.bin",
+                "result_artifact_path": signed.as_posix(),
+            },
+            "secure_boot_evidence": {
+                "build_evidence": {
+                    "wolfboot_artifact_path": "/outside/wolfboot.elf",
+                    "wolfboot_sha256": "a" * 64,
+                },
+                "signing_evidence": {
+                    "signed_application_artifact_path": "/outside/signed.bin",
+                    "signed_application_sha256": signed_sha,
+                },
+                "flash_evidence": {"log": "secure_boot_flash.log"},
+            },
+        },
+    )
+
+    current = manifest_module.read_manifest(result_dir / "manifest.json")
+    by_role = {item["role"]: item for item in current["artifacts"]}
+
+    assert by_role["application_elf"]["path"] == "firmware.elf"
+    assert by_role["application_elf"]["acquisition"]["status"] == "available"
+    assert by_role["application_binary"]["path"].endswith("application_integrity.bin")
+    assert by_role["application_binary"]["acquisition"]["status"] == "available"
+
+    assert by_role["flash_log"]["path"] == "secure_boot_flash.log"
+    assert by_role["flash_log"]["sha256"] == evidence.sha256_file(flash_log)
+    assert by_role["deployment_provenance"]["path"] is None
+    assert by_role["deployment_provenance"]["sha256"] == signed_sha
+    assert by_role["deployment_provenance"]["acquisition"]["status"] == "available"
+
+    assert by_role["wolfboot_image"]["requirement"] == "required"
+    assert by_role["wolfboot_image"]["acquisition"]["status"] == "available"
+    assert by_role["signed_application"]["requirement"] == "required"
+    assert by_role["signed_application"]["acquisition"]["status"] == "available"
