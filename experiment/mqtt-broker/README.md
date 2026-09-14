@@ -41,7 +41,7 @@ experiment/mqtt-broker/.env
 Certificate provisioning is a separate one-time setup action. From the repository root run:
 
 ```powershell
-.\scripts\dev.ps1 python scripts/provision_certificates.py
+python scripts/provision_certificates.py
 ```
 
 The provisioner reads `configs/tls_auth/*.yaml` and writes each generated profile directly under `secrets/certificates/<profile-id>/`. To regenerate selected material intentionally, use `--profile <id> --force`. Broker control and experiment orchestration never generate, renew, or synchronize certificates.
@@ -167,7 +167,7 @@ Local and gateway Docker success must be confirmed from command output or logs b
 The server SANs are declared in each `configs/tls_auth/<profile-id>.yaml`. The initial profiles include the maintained gateway address used by the supplied experiment configurations. If the gateway address or broker DNS names change, update the certificate-profile YAML and intentionally reprovision that profile:
 
 ```powershell
-.\scripts\dev.ps1 python scripts/provision_certificates.py --profile rsa3072 --force
+python scripts/provision_certificates.py --profile rsa3072 --force
 ```
 
 External TLS validation can use the configured IP address:

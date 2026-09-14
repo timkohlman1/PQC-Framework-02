@@ -69,7 +69,7 @@ jobs:
           test -f "$BASELINE_CASE"
 
       - name: Provision ephemeral MQTT certificate profiles
-        run: ./scripts/dev.sh python scripts/provision_certificates.py
+        run: python scripts/provision_certificates.py
 
       - name: Run baseline framework status
         shell: bash
