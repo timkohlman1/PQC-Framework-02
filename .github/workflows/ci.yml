@@ -104,7 +104,7 @@ jobs:
       - name: Build wolfBoot profile
         run: ./scripts/dev.sh experiment build-wolfboot --boot-algorithm ecdsa_p256
 
-      - name: Sign relocated application
+      - name: Sign relocated application in container
         run: ./scripts/dev.sh experiment sign-application --boot-algorithm ecdsa_p256
 
       - name: Run non-hardware integration tests
