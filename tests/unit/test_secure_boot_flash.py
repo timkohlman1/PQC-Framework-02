@@ -228,6 +228,8 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
             return secure_flash.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
         if command == ["git", "status", "--short"]:
             return secure_flash.GitCommandExecution(command, 0, "", "", 0.01)
+        if command == ["git", "submodule", "status", "--recursive"]:
+            return secure_flash.GitCommandExecution(command, 0, "", "", 0.01)
         raise AssertionError(f"unexpected git command: {command}")
 
     result = secure_flash.execute_secure_boot_flash(
@@ -334,11 +336,11 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
     assert benchmark["repeated_run_samples"]["samples"] == []
     assert benchmark["aggregate_statistics"]["status"] == "unavailable"
     assert benchmark["aggregate_statistics"]["derived_verification_time_ms"]["median"] is None
-    assert manifest["source"] == {
-        "git_commit": "abc123",
-        "git_dirty": False,
-        "git_status_available": True,
-    }
+    assert manifest["source"]["git_commit"] == "abc123"
+    assert manifest["source"]["git_dirty"] is False
+    assert manifest["source"]["git_status_available"] is True
+    assert manifest["source"]["submodules"] == {"available": True, "entries": []}
+    assert set(manifest["source"]["tools"]) == {"compiler", "cmake", "ninja", "python", "openssl"}
 
 
 def test_execute_secure_boot_flash_refuses_mismatched_local_signing_keys_before_network(tmp_path):

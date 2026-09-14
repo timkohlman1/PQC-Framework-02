@@ -47,7 +47,7 @@ def test_remote_repo_root_rejects_unrelated_directory():
 
 def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
     source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
-    assert 'MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine"' in source
+    assert 'MOSQUITTO_IMAGE = "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"' in source
     assert "openquantumsafe/mosquitto" not in source
     assert 'sub.add_parser("collect-tls-keylog"' in source
     assert 'TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"' in source

@@ -57,7 +57,7 @@ def test_mqtt_broker_compose_declares_classical_and_oqs_profiles():
     assert "mqtt-oqs:" in compose
     assert 'profiles: ["classical"]' in compose
     assert 'profiles: ["oqs"]' in compose
-    assert "eclipse-mosquitto:2.1.2-alpine" in compose
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in compose
     assert "eclipse-mosquitto" in compose
     assert "${MQTT_CLASSICAL_TLS_PORT:-8883}:8883" in compose
     assert "${MQTT_OQS_TLS_PORT:-8884}:8883" in compose
@@ -243,12 +243,17 @@ def test_mqtt_deploy_sets_remote_config_and_classical_runtime_read_permissions(t
     permission_commands = [
         command
         for command in commands
-        if command[:2] == ["ssh", "timk@pqc-gateway1.pqcnet"] and "chmod -R a+rX" in command[-1]
+        if command[:2] == ["ssh", "timk@pqc-gateway1.pqcnet"]
+        and "chmod -R a+rX" in command[-1]
     ]
     assert permission_commands
-    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_commands[-1][-1]
-    assert "$HOME/pqc-framework-02/secrets/certificates" in permission_commands[-1][-1]
-    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime" not in permission_commands[-1][-1]
+    permission_text = permission_commands[-1][-1]
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/config" in permission_text
+    assert "chmod -R a+rX $HOME/pqc-framework-02/secrets/certificates" not in permission_text
+    assert "-type d -exec chmod 0700" in permission_text
+    assert "-name '*.key' -exec chmod 0600" in permission_text
+    assert "-type f ! -name '*.key' -exec chmod 0644" in permission_text
+    assert "$HOME/pqc-framework-02/experiment/mqtt-broker/runtime" not in permission_text
 
 
 def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
@@ -268,7 +273,10 @@ def test_mqtt_deploy_does_not_chmod_remote_oqs_runtime(tmp_path, monkeypatch):
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "secrets/certificates" in command_text
-    assert "chmod -R a+rX $HOME/pqc-framework-02/experiment/mqtt-broker/config $HOME/pqc-framework-02/secrets/certificates" in command_text
+    assert "chmod -R a+rX $HOME/pqc-framework-02/secrets/certificates" not in command_text
+    assert "-type d -exec chmod 0700" in command_text
+    assert "-name '*.key' -exec chmod 0600" in command_text
+    assert "-type f ! -name '*.key' -exec chmod 0644" in command_text
     assert "runtime/oqs" not in command_text
 
 
@@ -373,7 +381,7 @@ def test_mqtt_remote_cleanup_command_removes_root_owned_mosquitto_paths():
     command = module.remote_cleanup_command("~/pqc-framework-02/experiment/mqtt-broker")
 
     assert "docker run --rm" in command
-    assert "eclipse-mosquitto:2.1.2-alpine" in command
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in command
     assert "-v $HOME/pqc-framework-02/experiment/mqtt-broker:/work" in command
     assert "rm -rf /work/data /work/log" in command
     assert "rm -rf $HOME/pqc-framework-02/experiment/mqtt-broker" in command
@@ -504,7 +512,7 @@ def test_mqtt_oqs_tls_validation_requires_complete_server_authenticated_handshak
     module.validate_oqs_tls(args)
 
     command_text = "\n".join(" ".join(command) for command in commands)
-    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in command_text
     assert "--network host" in command_text
     assert "-connect 127.0.0.1:28884" in command_text
     assert "-groups SecP256r1MLKEM768" in command_text
@@ -548,7 +556,7 @@ def test_mqtt_classical_mqtt_validation_uses_separate_pubsub_client_containers(t
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "timk@pqc-gateway1.pqcnet" in command_text
-    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in command_text
     assert "openquantumsafe/mosquitto" not in command_text
     assert "--entrypoint mosquitto_sub" in command_text
     assert "--entrypoint mosquitto_pub" in command_text
@@ -599,7 +607,7 @@ def test_mqtt_oqs_mqtt_validation_uses_separate_pubsub_client_containers(tmp_pat
 
     command_text = "\n".join(" ".join(command) for command in commands)
     assert "timk@pqc-gateway1.pqcnet" in command_text
-    assert "eclipse-mosquitto:2.1.2-alpine" in command_text
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in command_text
     assert "--entrypoint mosquitto_sub" in command_text
     assert "--entrypoint mosquitto_pub" in command_text
     assert "--network host" in command_text
@@ -724,7 +732,7 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
     assert "eclipse-mosquitto:latest" not in compose
     # Four workload/TLS services plus the mandatory plaintext reporting service use the
     # same pinned Mosquitto image. TLS key logging remains workload-broker-only.
-    assert compose.count("image: eclipse-mosquitto:2.1.2-alpine") == 5
+    assert compose.count("image: eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797") == 5
     assert compose.count("--tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log") == 4
     assert compose.count("chmod 0700 /mosquitto/keylog") == 4
     assert compose.count("umask 077") == 4

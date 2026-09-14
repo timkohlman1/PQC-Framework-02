@@ -73,7 +73,7 @@ def test_mqtt_broker_experiment_orchestrates_oqs_profile_and_writes_manifest(tmp
     def fake_run(command, *, text, stdin, stdout, stderr, check, timeout=None):
         commands.append(command)
         assert stdin == experiment_cli.subprocess.DEVNULL
-        return SimpleNamespace(returncode=0, stdout=f"ran {' '.join(command)}\n")
+        return SimpleNamespace(returncode=0, stdout=("mosquitto version 2.1.2\n" if command[2] == "runtime-version" else f"ran {' '.join(command)}\n"))
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(experiment_cli.subprocess, "run", fake_run)
@@ -107,6 +107,7 @@ def test_mqtt_broker_experiment_orchestrates_oqs_profile_and_writes_manifest(tmp
         "deploy",
         "start",
         "status",
+        "runtime-version",
         "validate-oqs-tls",
         "validate-oqs-mqtt",
         "logs",
@@ -125,8 +126,10 @@ def test_mqtt_broker_experiment_orchestrates_oqs_profile_and_writes_manifest(tmp
     assert manifest["status"] == "passed"
     assert manifest["stop_after"] is True
     assert manifest["mqtt_test"]["step_timeout_seconds"] == 300.0
-    assert len(manifest["steps"]) == 8
+    assert len(manifest["steps"]) == 9
     assert all(step["status"] == "passed" for step in manifest["steps"])
+    assert manifest["broker"]["image"] == "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
+    assert manifest["broker"]["effective_mosquitto_version"] == "2.1.2"
 
 
 def test_mqtt_broker_experiment_stops_after_failed_validation_when_requested(tmp_path, monkeypatch):
@@ -138,7 +141,8 @@ def test_mqtt_broker_experiment_stops_after_failed_validation_when_requested(tmp
         commands.append(command)
         assert stdin == experiment_cli.subprocess.DEVNULL
         return_code = 7 if command[2] == "validate-classical-mqtt" else 0
-        return SimpleNamespace(returncode=return_code, stdout="step output\n")
+        output = "mosquitto version 2.1.2\n" if command[2] == "runtime-version" else "step output\n"
+        return SimpleNamespace(returncode=return_code, stdout=output)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(experiment_cli.subprocess, "run", fake_run)
@@ -168,6 +172,7 @@ def test_mqtt_broker_experiment_stops_after_failed_validation_when_requested(tmp
         "deploy",
         "start",
         "status",
+        "runtime-version",
         "validate-classical-mqtt",
         "validate-classical-mqtt",
         "validate-classical-mqtt",
@@ -322,7 +327,7 @@ def test_pqc_experiment_uses_separate_foreground_oqs_client_containers():
     readiness = source[source.index("def _wait_for_plaintext_mqtt_broker"):source.index("def _start_managed_mqtt_broker")]
     pqc_branch = readiness[readiness.index("if pqc_oqs:"):readiness.index("    else:", readiness.index("if pqc_oqs:"))]
 
-    assert "eclipse-mosquitto:2.1.2-alpine" in pqc_branch
+    assert "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797" in pqc_branch
     assert "docker run --rm " in pqc_branch
     assert "docker run -d " not in pqc_branch
     assert "OPENSSL_CONF=/mosquitto/config/openssl.cnf" in pqc_branch
@@ -489,7 +494,7 @@ mqtt | Sending PUBLISH to pqc-host-e2e-subscriber (d0, q0, r0, m0, 'pqc/experime
 
 def test_managed_tls_experiments_collect_broker_keylog_into_result_directory():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine"' in source
+    assert 'MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"' in source
     assert 'MQTT_TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"' in source
     assert 'subcommand="collect-tls-keylog"' in source
     assert '"sha256": hashlib.sha256(data).hexdigest()' in source

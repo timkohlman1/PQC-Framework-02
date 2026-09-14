@@ -48,8 +48,13 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MQTT_BROKER_SCRIPT_RELATIVE_PATH = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py")
-MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine"
+MQTT_BROKER_IMAGE = "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
 MQTT_TLS_KEYLOG_FILENAME = "mqtt-broker-tls-keylog.log"
+
+
+def _extract_mosquitto_version(text: str) -> str | None:
+    match = re.search(r"mosquitto version\s+([^\s]+)", text, flags=re.IGNORECASE)
+    return match.group(1) if match else None
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -835,22 +840,22 @@ def _wait_for_plaintext_mqtt_broker(
             'publisher_file=/tmp/pqc-mqtt-ready-pub.$$; '
             'rm -f "$response_file" "$publisher_file"; '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797 '
             f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797 '
             f'-h {host} -p {port} {tls_args} -t {topic} -m {message} -r '
             '>"$publisher_file" 2>&1; pub_rc=$?; '
             'if [ "$pub_rc" -eq 0 ]; then '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine '
+            '--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797 '
             f'-h {host} -p {port} {tls_args} -t {topic} -C 1 -W 4 '
             '>"$response_file" 2>&1; sub_rc=$?; '
             'else sub_rc=1; fi; '
             'response=$(paste -sd, "$response_file" 2>/dev/null || true); '
             f'if [ "$sub_rc" -eq 0 ] && [ "$pub_rc" -eq 0 ] && [ "$response" = {message} ]; then '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797 '
             f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
             'rm -f "$response_file" "$publisher_file"; '
             'echo "broker_ready attempt=$attempt"; exit 0; fi; '
@@ -858,7 +863,7 @@ def _wait_for_plaintext_mqtt_broker(
             'echo "publisher_output:"; cat "$publisher_file" 2>/dev/null || true; '
             f'sleep {delay_seconds}; done; '
             f'docker run --rm {container_options}'
-            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine '
+            '--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797 '
             f'-h {host} -p {port} {tls_args} -t {topic} -n -r >/dev/null 2>&1 || true; '
             'rm -f /tmp/pqc-mqtt-ready.$$ /tmp/pqc-mqtt-ready-pub.$$; '
             'echo "broker_not_ready attempts=$attempt"; exit 1'
@@ -947,16 +952,21 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
         "deploy": "Deploying MQTT broker framework",
         "start": "Starting MQTT broker",
         "status": "Checking MQTT broker status",
+        "runtime-version": "Recording effective Mosquitto runtime version",
     }
+    effective_mosquitto_version: str | None = None
     for step_name, subcommand, extra in (
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
         ("start", "start", start_args),
         ("status", "status", common),
+        ("runtime-version", "runtime-version", common),
     ):
         emit_progress("broker", broker_messages[step_name], detail=f"Profile: {profile}.")
         result = _run_mqtt_broker_step(repo_root=repo_root, result_dir=result_dir, step_name=step_name, subcommand=subcommand, extra_args=extra)
         steps[step_name] = {"return_code": result.return_code, "log": f"mqtt-broker-{step_name}.log"}
+        if step_name == "runtime-version" and result.return_code == 0:
+            effective_mosquitto_version = _extract_mosquitto_version(result.stdout + "\n" + result.stderr)
         if result.return_code == 0:
             emit_progress("broker", f"{broker_messages[step_name]} complete", detail=f"Return code: 0; log: mqtt-broker-{step_name}.log")
         if result.return_code != 0:
@@ -976,7 +986,15 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
     emit_progress("broker", "MQTT broker readiness probe complete" if readiness.return_code == 0 else "MQTT broker readiness probe failed", detail=f"Return code: {readiness.return_code}; log: mqtt-broker-readiness.log")
     steps["readiness"] = {"return_code": readiness.return_code, "log": "mqtt-broker-readiness.log"}
-    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": readiness.return_code == 0, "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness"}})
+    update_manifest(result_dir / "manifest.json", {"mqtt_broker": {
+        "managed_by_experiment": True,
+        "profile": profile,
+        "image": MQTT_BROKER_IMAGE,
+        "effective_mosquitto_version": effective_mosquitto_version,
+        "steps": steps,
+        "readiness_passed": readiness.return_code == 0,
+        "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness",
+    }})
     return readiness.return_code == 0, ("none" if readiness.return_code == 0 else "broker_readiness")
 
 
@@ -1586,21 +1604,21 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         mqtt_sub = (
             f'docker run --rm --name "{oqs_subscriber_name}" '
             f"{common_container_options}"
-            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine"
+            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         mqtt_pub = (
             f"docker run --rm {common_container_options}"
-            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine"
+            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         mqtt_pub_stdin = (
             f"docker run --rm -i {common_container_options}"
-            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine"
+            "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         transfer_responder_subscriber_name = "pqc-mqtt-rm2-transfer-sub-$$"
         transfer_mqtt_sub = (
             f'docker run --rm --name "{transfer_responder_subscriber_name}" '
             f"{common_container_options}"
-            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine"
+            "--entrypoint mosquitto_sub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         tls_args = _mqtt_gateway_tls_args(bundle, container_paths=True)
     else:
@@ -5468,6 +5486,7 @@ def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list
         "start",
         "stop",
         "status",
+        "runtime-version",
         "logs",
         "validate-oqs-tls",
         "validate-classical-mqtt",
@@ -5477,6 +5496,7 @@ def _mqtt_broker_base_command(args: argparse.Namespace, subcommand: str) -> list
         "start",
         "stop",
         "status",
+        "runtime-version",
         "logs",
         "validate-oqs-tls",
         "validate-classical-mqtt",
@@ -5639,6 +5659,8 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
             "project_name": args.project_name,
             "classical_port": args.classical_port,
             "oqs_port": args.oqs_port,
+            "image": MQTT_BROKER_IMAGE,
+            "effective_mosquitto_version": None,
         },
         "mqtt_test": {
             "topic": args.topic,
@@ -5687,6 +5709,7 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
     planned_steps.extend([
         ("start_broker", "start"),
         ("status_after_start", "status"),
+        ("runtime_version", "runtime-version"),
     ])
     if not args.skip_validation:
         if args.profile == "classical":
@@ -5728,6 +5751,12 @@ def run_mqtt_broker_experiment_command(args: argparse.Namespace) -> int:
             manifest["status"] = "failed"
             manifest["failed_step"] = step_name
             break
+
+    version_log = result_dir / "runtime_version.log"
+    if version_log.is_file():
+        manifest["broker"]["effective_mosquitto_version"] = _extract_mosquitto_version(
+            version_log.read_text(encoding="utf-8", errors="replace")
+        )
 
     if broker_started and not logs_collected:
         _run_logged_mqtt_step(

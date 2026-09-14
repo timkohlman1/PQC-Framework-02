@@ -26,7 +26,7 @@ from framework.fingerprint import (
     default_secure_boot_flash_fingerprint_inputs,
 )
 from framework.manifest import build_secure_boot_benchmark_model, read_elf_alloc_section_metrics, read_manifest, update_manifest
-from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.source import GitCommandExecution, GitRunner, capture_reproducibility_provenance
 from framework.ssh_target import gateway_ssh_target
 
 SECURE_BOOT_ARTIFACT_MISSING_RETURN_CODE = 40
@@ -898,9 +898,9 @@ def execute_secure_boot_flash(
 
     duration_seconds = perf_counter() - start
     source = (
-        capture_git_provenance(repo_root_path)
+        capture_reproducibility_provenance(repo_root_path)
         if git_runner is None
-        else capture_git_provenance(repo_root_path, git_runner)
+        else capture_reproducibility_provenance(repo_root_path, git_runner=git_runner)
     )
 
     fingerprint_evidence = _fingerprint_evidence(

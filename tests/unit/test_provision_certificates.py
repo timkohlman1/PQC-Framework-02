@@ -63,4 +63,32 @@ def test_default_paths_are_repository_config_and_root_secrets():
     args = module.build_parser().parse_args([])
     assert Path(args.config_dir) == REPO_ROOT / "configs" / "tls_auth"
     assert Path(args.output) == REPO_ROOT / "secrets" / "certificates"
-    assert module.DOCKER_IMAGE == "alpine:3.23"
+    assert module.DOCKER_IMAGE == "alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+
+
+def test_pqc_container_does_not_force_local_openssl(monkeypatch):
+    module = _load_module()
+    calls = []
+    monkeypatch.setenv("PQC_CONTAINER", "1")
+    monkeypatch.setattr(module, "provision_with_docker", lambda args: calls.append("docker"))
+    monkeypatch.setattr(module, "provision_local", lambda args: calls.append("local"))
+    monkeypatch.setattr(sys, "argv", [str(MODULE_PATH)])
+    assert module.main() == 0
+    assert calls == ["docker"]
+
+
+def test_local_openssl_is_explicit_opt_in(monkeypatch):
+    module = _load_module()
+    calls = []
+    monkeypatch.setenv("PQC_CONTAINER", "1")
+    monkeypatch.setattr(module, "provision_with_docker", lambda args: calls.append("docker"))
+    monkeypatch.setattr(module, "provision_local", lambda args: calls.append("local"))
+    monkeypatch.setattr(sys, "argv", [str(MODULE_PATH), "--local-openssl"])
+    assert module.main() == 0
+    assert calls == ["local"]
+
+
+def test_ci_provisions_certificates_from_host_into_pinned_runtime():
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "run: python scripts/provision_certificates.py" in workflow
+    assert "./scripts/dev.sh python scripts/provision_certificates.py" not in workflow

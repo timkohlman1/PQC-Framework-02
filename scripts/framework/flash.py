@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from framework.artifacts import calculate_file_sha256
 from framework.manifest import read_manifest, update_manifest
-from framework.source import GitCommandExecution, GitRunner, capture_git_provenance
+from framework.source import GitCommandExecution, GitRunner, capture_reproducibility_provenance
 from framework.ssh_target import gateway_ssh_target
 
 ARTIFACT_MISSING_RETURN_CODE = 3
@@ -277,9 +277,9 @@ def execute_flash(
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
     source = (
-        capture_git_provenance(repo_root_path)
+        capture_reproducibility_provenance(repo_root_path)
         if git_runner is None
-        else capture_git_provenance(repo_root_path, git_runner)
+        else capture_reproducibility_provenance(repo_root_path, git_runner=git_runner)
     )
     log_path = result_dir_path / "flash.log"
     artifact_relative_path = Path(str(bundle["experiment"]["firmware"]["artifact"]))

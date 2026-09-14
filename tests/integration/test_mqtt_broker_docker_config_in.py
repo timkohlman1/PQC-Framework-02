@@ -102,8 +102,8 @@ def test_mqtt_broker_compose_config_renders_classical_and_oqs_services():
     classical = _service(config, "mqtt-classical")
     oqs = _service(config, "mqtt-oqs")
 
-    assert classical["image"] == "eclipse-mosquitto:2.1.2-alpine"
-    assert oqs["image"] == "eclipse-mosquitto:2.1.2-alpine"
+    assert classical["image"] == "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
+    assert oqs["image"] == "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
     assert classical["profiles"] == ["classical"]
     assert oqs["profiles"] == ["oqs"]
     assert classical["user"] == "0:0"

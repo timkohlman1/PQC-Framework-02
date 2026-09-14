@@ -120,3 +120,7 @@ tcpdump --version
 The expected `getcap` result includes `cap_net_admin,cap_net_raw=eip`. Site policy may instead provide an equivalent dedicated capture group or wrapper. The experiment workflow invokes `tcpdump` directly and does not issue interactive `sudo` commands.
 
 Packet-capture settings belong under `network.packet_capture` in the experiment profile. `interface` defaults to `any`. `stm32_mac_address` is optional but preferred when the ST67W61M1 MAC address is known because it limits the capture to Ethernet frames involving that device while retaining DHCP, DNS, TCP, TLS, MQTT, ARP, and related traffic. The address must use six colon-separated hexadecimal octets.
+
+## Gateway experiment certificate staging
+
+Broker deployment may stage ignored experiment certificate profiles under the repository-shaped gateway workspace. This state is not an alternate source of truth. Staged certificate directories must remain mode `0700`, private `*.key` files mode `0600`, and public/non-key certificate files may be `0644`. Do not use recursive `chmod a+rX` on a certificate tree containing private keys. The broker containers consume the staged tree through read-only mounts and create their own restricted runtime copies.

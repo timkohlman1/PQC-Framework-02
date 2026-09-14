@@ -3,8 +3,10 @@
 
 Certificate profiles are data under ``configs/tls_auth/*.yaml``.
 This script contains only generic provisioning, validation, and manifest logic.
-Normal host execution uses a short-lived Alpine/OpenSSL container.  The
-``--local-openssl`` switch is reserved for the repository development container.
+Normal host execution uses a short-lived, digest-pinned Alpine/OpenSSL container.
+The hidden ``--local-openssl`` switch is used only inside that provisioning
+container (or for deliberate local diagnostics); environment variables such as
+``PQC_CONTAINER`` never select the local OpenSSL path implicitly.
 """
 from __future__ import annotations
 
@@ -21,12 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - host path normally uses Docker
-    raise SystemExit("PyYAML is required; use the normal Docker-backed invocation") from exc
-
-DOCKER_IMAGE = "alpine:3.23"
+DOCKER_IMAGE = "alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
 DEFAULT_CONFIG_DIR = Path("configs/tls_auth")
 DEFAULT_OUTPUT_DIR = Path("secrets/certificates")
 
@@ -82,7 +79,16 @@ def _require_list(value: Any, label: str) -> list[Any]:
     return value
 
 
+def _yaml_module():
+    try:
+        import yaml
+    except ImportError as exc:
+        raise SystemExit("PyYAML is required in the certificate-provisioning runtime") from exc
+    return yaml
+
+
 def load_profile(path: Path) -> Profile:
+    yaml = _yaml_module()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     root = _require_mapping(data, str(path))
     if int(root.get("schema_version", 0)) != 1:
@@ -357,7 +363,7 @@ def provision_local(args: argparse.Namespace) -> None:
 
 def provision_with_docker(args: argparse.Namespace) -> None:
     if shutil.which("docker") is None:
-        raise SystemExit("Docker CLI is required for host provisioning; use the repository development container for --local-openssl")
+        raise SystemExit("Docker CLI is required for certificate provisioning; normal execution uses the pinned provisioning image")
     config_dir = Path(args.config_dir).resolve()
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -392,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.local_openssl or os.environ.get("PQC_CONTAINER") == "1":
+    if args.local_openssl:
         provision_local(args)
     else:
         provision_with_docker(args)
