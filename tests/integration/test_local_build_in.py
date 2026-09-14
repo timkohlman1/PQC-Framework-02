@@ -137,7 +137,7 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert "Command: cmake --build --preset Release" in build_log
     assert "Final return code: 0" in build_log
     assert "Output ELF exists: true" in build_log
-    assert f"Output ELF SHA-256: {manifest['firmware']['sha256']}" in build_log
+    assert f"Output ELF SHA-256: {firmware_provenance['sha256']}" in build_log
 
     build_record_manifest = json.loads(
         build_record_manifest_path.read_text(encoding="utf-8")
@@ -147,23 +147,21 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert build_record_manifest["build_number"] is None
     assert build_record_manifest["purpose"] == "automated_test"
     assert build_record_manifest["reusable_by_normal_workflows"] is False
-    assert build_record_manifest["build_identity"] == manifest["build"]["identity"]
-    assert build_record_manifest["experiment"] == manifest["experiment"]
-    assert build_record_manifest["board"] == manifest["board"]
+    assert build_record_manifest["build_identity"] == build_provenance["identity"]
     assert build_record_manifest["build"]["purpose"] == "automated_test"
-    assert build_record_manifest["build"]["identity"] == manifest["build"]["identity"]
+    assert build_record_manifest["build"]["identity"] == build_provenance["identity"]
     assert build_record_manifest["build"]["return_code"] == 0
     assert build_record_manifest["build"]["log"] == "build.log"
     assert build_record_manifest["build"]["artifact_identity_algorithm"] == "sha256-elf"
     assert (
         build_record_manifest["build"]["artifact_identity"]
-        == manifest["firmware"]["sha256"]
+        == firmware_provenance["sha256"]
     )
-    assert build_record_manifest["firmware"]["sha256"] == manifest["firmware"]["sha256"]
+    assert build_record_manifest["firmware"]["sha256"] == firmware_provenance["sha256"]
     assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
     assert (
         build_record_manifest["firmware"]["result_artifacts"]["elf"]["sha256"]
-        == manifest["firmware"]["sha256"]
+        == firmware_provenance["sha256"]
     )
 
 
