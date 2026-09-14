@@ -58,6 +58,33 @@ def test_python_container_definition_supports_stm32_builds_and_runtime_gateway_a
         assert term not in normalised
 
 
+
+def test_python_container_pins_debian_snapshot_and_toolchain_packages() -> None:
+    dockerfile = _read(DOCKERFILE)
+
+    assert "ARG DEBIAN_SNAPSHOT=20260914T040000Z" in dockerfile
+    assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" in dockerfile
+    assert "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" in dockerfile
+    assert dockerfile.count("Check-Valid-Until: no") == 2
+
+    expected_packages = [
+        "ca-certificates=20250419",
+        "git=1:2.47.3-0+deb13u1",
+        "openssh-client=1:10.0p1-7+deb13u4",
+        "openssl=3.5.7-1~deb13u2",
+        "build-essential=12.12",
+        "cmake=3.31.6-2",
+        "ninja-build=1.12.1-1",
+        "gcc-arm-none-eabi=15:14.2.rel1-1",
+        "binutils-arm-none-eabi=2.44-3+23+b1",
+        "libnewlib-arm-none-eabi=4.5.0.20241231-1",
+    ]
+    for package in expected_packages:
+        assert package in dockerfile
+
+    # The maintained build image must not silently return to live Debian mirrors.
+    assert "deb.debian.org" not in dockerfile
+
 def test_requirements_dev_keeps_python_test_dependencies_small() -> None:
     requirements = _read(REQUIREMENTS_DEV)
 

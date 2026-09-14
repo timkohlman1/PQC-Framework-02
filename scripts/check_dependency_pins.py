@@ -8,6 +8,8 @@ Policy:
 - docker:// action images must use @sha256:<64 hex>.
 - Literal Docker image references used by maintained orchestration/CI source must use
   @sha256:<64 hex> when they carry a tag.
+- The maintained Python build image must use a fixed Debian snapshot and exact APT
+  package versions for the framework compiler/toolchain dependencies.
 
 This is intentionally a CI/repository policy check rather than a pytest unit test.
 """
@@ -190,12 +192,45 @@ def _check_orchestration_literals(failures: list[str]) -> None:
                         )
 
 
+
+def _check_python_apt_pins(failures: list[str]) -> None:
+    dockerfile = ROOT / "docker" / "python" / "Dockerfile"
+    if not dockerfile.exists():
+        return
+    text = dockerfile.read_text(encoding="utf-8")
+    where = dockerfile.relative_to(ROOT)
+
+    required_fragments = [
+        "ARG DEBIAN_SNAPSHOT=20260914T040000Z",
+        "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/",
+        "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/",
+        "ca-certificates=20250419",
+        "git=1:2.47.3-0+deb13u1",
+        "openssh-client=1:10.0p1-7+deb13u4",
+        "openssl=3.5.7-1~deb13u2",
+        "build-essential=12.12",
+        "cmake=3.31.6-2",
+        "ninja-build=1.12.1-1",
+        "gcc-arm-none-eabi=15:14.2.rel1-1",
+        "binutils-arm-none-eabi=2.44-3+23+b1",
+        "libnewlib-arm-none-eabi=4.5.0.20241231-1",
+    ]
+    for fragment in required_fragments:
+        if fragment not in text:
+            failures.append(f"{where}: required Debian/APT pin missing: {fragment}")
+
+    if "deb.debian.org" in text:
+        failures.append(f"{where}: live Debian mirror reference is not permitted in the pinned build image")
+    if text.count("Check-Valid-Until: no") < 2:
+        failures.append(f"{where}: Debian snapshot sources must disable Valid-Until checks")
+
 def main() -> int:
     failures: list[str] = []
     _check_dockerfiles(failures)
     _check_compose(failures)
     _check_workflow_actions(failures)
     _check_orchestration_literals(failures)
+    _check_python_apt_pins(failures)
     if failures:
         print("Immutable dependency pin policy FAILED:", file=sys.stderr)
         for failure in sorted(set(failures)):
