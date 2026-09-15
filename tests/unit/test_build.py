@@ -181,6 +181,8 @@ def test_run_build_command_reports_no_flash_or_network_actions(tmp_path, monkeyp
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    # This test covers build argument propagation, not evidence finalisation.
+    monkeypatch.setattr(experiment_cli, "finalize_run_evidence", lambda *args, **kwargs: None)
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
@@ -261,10 +263,14 @@ def test_run_build_flash_command_uses_one_result_directory_for_build_and_flash(t
     assert "Build-flash completed" in output
     assert "Build log:" in output
     assert "Flash log:" in output
-    assert manifest["result"] == "build_flash_passed"
-    assert manifest["build_flash"]["build_return_code"] == 0
-    assert manifest["build_flash"]["flash_return_code"] == 0
-    assert manifest["build_flash"]["flash_skipped"] is False
+    assert manifest["execution_outcome"] == {
+        "status": "completed",
+        "result": "build_flash_passed",
+        "failure_stage": "none",
+    }
+    assert manifest["run"]["return_code"] == 0
+    assert manifest["run"]["failure_stage"] == "none"
+    assert "build_flash" not in manifest
 
 
 def test_run_build_flash_command_returns_flash_failure_after_successful_build(tmp_path, monkeypatch, capsys):
@@ -322,11 +328,14 @@ def test_run_build_flash_command_returns_flash_failure_after_successful_build(tm
     assert seen_result_dirs[0] == seen_result_dirs[1]
     assert "Build-flash failed during flash" in output
     assert "Flash log:" in output
-    assert manifest["result"] == "build_flash_failed"
-    assert manifest["build_flash"]["build_return_code"] == 0
-    assert manifest["build_flash"]["flash_return_code"] == 7
-    assert manifest["build_flash"]["flash_skipped"] is False
-    assert manifest["build_flash"]["failure_stage"] == "flash"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "build_flash_failed",
+        "failure_stage": "flash",
+    }
+    assert manifest["run"]["return_code"] == 7
+    assert manifest["run"]["failure_stage"] == "flash"
+    assert "build_flash" not in manifest
 
 
 def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypatch, capsys):
@@ -370,11 +379,14 @@ def test_run_build_flash_command_skips_flash_when_build_fails(tmp_path, monkeypa
     assert exit_code == 9
     assert "Build-flash failed during build" in output
     assert "Flash step skipped because the build failed." in output
-    assert manifest["result"] == "build_flash_failed"
-    assert manifest["build_flash"]["build_return_code"] == 9
-    assert manifest["build_flash"]["flash_return_code"] is None
-    assert manifest["build_flash"]["flash_skipped"] is True
-    assert manifest["build_flash"]["failure_stage"] == "build"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "build_flash_failed",
+        "failure_stage": "build",
+    }
+    assert manifest["run"]["return_code"] == 9
+    assert manifest["run"]["failure_stage"] == "build"
+    assert "build_flash" not in manifest
 
 def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, monkeypatch, capsys):
     experiment_cli = load_experiment_module()
@@ -443,11 +455,14 @@ def test_run_build_flash_command_captures_uart_after_successful_flash(tmp_path, 
     assert len(seen_result_dirs) == 3
     assert seen_result_dirs[0] == seen_result_dirs[1] == seen_result_dirs[2]
     assert "UART log:" in output
-    assert manifest["result"] == "build_flash_passed"
-    assert manifest["build_flash"]["uart_return_code"] == 0
-    assert manifest["build_flash"]["uart_log"] == "uart.log"
-    assert manifest["build_flash"]["uart_skipped"] is False
-    assert manifest["build_flash"]["failure_stage"] == "none"
+    assert manifest["execution_outcome"] == {
+        "status": "completed",
+        "result": "build_flash_passed",
+        "failure_stage": "none",
+    }
+    assert manifest["run"]["return_code"] == 0
+    assert manifest["run"]["failure_stage"] == "none"
+    assert "build_flash" not in manifest
 
 
 def _successful_runner_that_writes_artifact(build, artifact_path: Path, calls: list[list[str]]):
@@ -547,8 +562,9 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         ),
     )
     # The lambda above cannot return both values after setdefault cleanly; replace it.
-    def fake_create_result_folder(bundle, _results_dir):
+    def fake_create_result_folder(bundle, _results_dir, **kwargs):
         captured["bundle"] = bundle
+        captured["result_operation"] = kwargs.get("operation")
         result_dir = tmp_path / "results" / "run"
         result_dir.mkdir(parents=True, exist_ok=True)
         return result_dir, {"run_id": "run"}
@@ -575,6 +591,11 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
         return FakeBuildResult()
 
     monkeypatch.setattr(experiment_cli, "execute_build", fake_execute_build)
+    monkeypatch.setattr(
+        experiment_cli,
+        "finalize_run_evidence",
+        lambda *_args, **_kwargs: None,
+    )
 
     exit_code = experiment_cli.run_build_command(
         Namespace(
@@ -591,6 +612,7 @@ def test_run_build_command_applies_artifact_override_for_relocated_provenance(
     expected = "build/Release/stm32_basic_hal1.elf"
     assert captured["bundle"]["experiment"]["firmware"]["artifact"] == expected
     assert captured["execute_bundle"]["experiment"]["firmware"]["artifact"] == expected
+    assert captured["result_operation"] == "build_only"
     assert original_bundle["experiment"]["firmware"]["artifact"] == (
         "build/Release/stm32_basic_hal1.elf"
     )

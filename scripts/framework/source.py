@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -54,9 +56,36 @@ def _unavailable_source() -> dict[str, object]:
 
     return {
         "git_commit": None,
+        "git_branch": None,
         "git_dirty": None,
         "git_status_available": False,
+        "source_state_sha256": None,
     }
+
+
+def _source_state_fingerprint(repo_root: Path, runner: GitRunner) -> str | None:
+    """Hash tracked diff plus untracked file content without retaining source text."""
+
+    try:
+        diff = runner(["git", "diff", "--binary", "HEAD"], repo_root)
+        untracked = runner(["git", "ls-files", "--others", "--exclude-standard", "-z"], repo_root)
+    except (FileNotFoundError, OSError):
+        return None
+    if diff.return_code != 0 or untracked.return_code != 0:
+        return None
+    digest = hashlib.sha256()
+    digest.update(diff.stdout.encode("utf-8", errors="surrogateescape"))
+    for name in sorted(value for value in untracked.stdout.split("\0") if value):
+        digest.update(name.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        path = repo_root / name
+        try:
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            return None
+    return digest.hexdigest()
 
 
 def capture_git_provenance(
@@ -86,26 +115,37 @@ def capture_git_provenance(
 
     git_commit = commit_execution.stdout.strip().splitlines()[0] if commit_execution.stdout.strip() else None
 
+    # Determine dirty state before doing the more expensive source-state hash.
+    # A clean checkout is already identified exactly by its commit; the extra
+    # fingerprint is only needed to distinguish dirty source states.
     try:
         status_execution = runner(["git", "status", "--short"], repo_root_path)
     except (FileNotFoundError, OSError):
+        status_execution = None
+
+    try:
+        branch_execution = runner(["git", "branch", "--show-current"], repo_root_path)
+        git_branch = (branch_execution.stdout.strip() or None) if branch_execution.return_code == 0 else None
+    except (FileNotFoundError, OSError):
+        git_branch = None
+
+    if status_execution is None or status_execution.return_code != 0:
         return {
             "git_commit": git_commit,
+            "git_branch": git_branch,
             "git_dirty": None,
             "git_status_available": False,
+            "source_state_sha256": None,
         }
 
-    if status_execution.return_code != 0:
-        return {
-            "git_commit": git_commit,
-            "git_dirty": None,
-            "git_status_available": False,
-        }
-
+    git_dirty = bool(status_execution.stdout.strip())
+    source_state_sha256 = _source_state_fingerprint(repo_root_path, runner) if git_dirty else None
     return {
         "git_commit": git_commit,
-        "git_dirty": bool(status_execution.stdout.strip()),
+        "git_branch": git_branch,
+        "git_dirty": git_dirty,
         "git_status_available": True,
+        "source_state_sha256": source_state_sha256,
     }
 
 
@@ -202,6 +242,30 @@ def capture_submodule_provenance(
     return {"available": True, "entries": entries}
 
 
+def capture_container_runtime_identity(environment: dict[str, str] | None = None) -> dict[str, object]:
+    """Record configured container image identity when the wrapper exposes it."""
+
+    env = os.environ if environment is None else environment
+    marker = str(env.get("PQC_CONTAINER", "")).strip().lower()
+    image = (
+        env.get("PQC_CONTAINER_IMAGE")
+        or env.get("PQC_DEV_IMAGE")
+        or env.get("PQC_RUNTIME_IMAGE")
+    )
+    digest = None
+    if isinstance(image, str) and "@sha256:" in image:
+        digest = "sha256:" + image.split("@sha256:", 1)[1]
+    explicit_digest = env.get("PQC_CONTAINER_IMAGE_DIGEST")
+    if explicit_digest:
+        digest = explicit_digest
+    return {
+        "container": marker in {"1", "true", "yes", "on"},
+        "image": image,
+        "digest": digest,
+        "immutable_identity_available": bool(digest),
+    }
+
+
 def capture_reproducibility_provenance(
     repo_root: Path | str,
     *,
@@ -215,4 +279,5 @@ def capture_reproducibility_provenance(
         **source,
         "submodules": capture_submodule_provenance(repo_root, git_runner),
         "tools": capture_tool_versions(repo_root, tool_runner),
+        "container_runtime": capture_container_runtime_identity(),
     }

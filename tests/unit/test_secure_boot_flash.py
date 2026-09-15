@@ -228,6 +228,8 @@ def test_execute_secure_boot_flash_flashes_wolfboot_then_signed_application_and_
             return secure_flash.GitCommandExecution(command, 0, "abc123\n", "", 0.01)
         if command == ["git", "status", "--short"]:
             return secure_flash.GitCommandExecution(command, 0, "", "", 0.01)
+        if command == ["git", "branch", "--show-current"]:
+            return secure_flash.GitCommandExecution(command, 0, "main\n", "", 0.01)
         if command == ["git", "submodule", "status", "--recursive"]:
             return secure_flash.GitCommandExecution(command, 0, "", "", 0.01)
         raise AssertionError(f"unexpected git command: {command}")

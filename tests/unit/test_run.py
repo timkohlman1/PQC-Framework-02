@@ -120,14 +120,14 @@ def test_run_command_success_orchestrates_all_stages_in_one_result_directory(
     assert len(seen_result_dirs) == 4
     assert all(path == seen_result_dirs[0] for path in seen_result_dirs)
     manifest = json.loads((seen_result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["result"] == "baseline_run_passed"
+    assert manifest["execution_outcome"] == {
+        "status": "completed",
+        "result": "baseline_run_passed",
+        "failure_stage": None,
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] is None
-    assert manifest["run"]["build_return_code"] == 0
-    assert manifest["run"]["artifact_copy_return_code"] == 0
-    assert manifest["run"]["flash_return_code"] == 0
-    assert manifest["run"]["uart_return_code"] == 0
-    assert manifest["run"]["copied_artifact"] == "stm32_basic_hal1.elf"
-    assert manifest["firmware"]["result_artifact"] == "stm32_basic_hal1.elf"
+    assert "firmware" not in manifest
     assert "Baseline run passed" in capsys.readouterr().out
 
 
@@ -166,10 +166,15 @@ def test_run_command_stops_after_build_failure(tmp_path, monkeypatch):
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 4
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "baseline_run_failed",
+        "failure_stage": "build",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "build"
-    assert manifest["run"]["flash_return_code"] is None
-    assert manifest["run"]["uart_return_code"] is None
+    assert "flash_return_code" not in manifest["run"]
+    assert "uart_return_code" not in manifest["run"]
 
 
 def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, monkeypatch):
@@ -212,11 +217,15 @@ def test_run_command_stops_after_flash_failure_and_marks_uart_skipped(tmp_path, 
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 7
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "not_executed",
+        "result": "baseline_run_failed",
+        "failure_stage": "flash",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "flash"
-    assert manifest["run"]["uart_return_code"] is None
-    assert manifest["uart"]["skipped"] is True
-    assert manifest["uart"]["skip_reason"] == "flash_failed"
+    assert "uart_return_code" not in manifest["run"]
+    assert "uart" not in manifest
 
 
 def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
@@ -264,9 +273,14 @@ def test_run_command_returns_uart_marker_failure(tmp_path, monkeypatch):
     manifest = json.loads((result_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
 
     assert exit_code == 9
-    assert manifest["result"] == "baseline_run_failed"
+    assert manifest["execution_outcome"] == {
+        "status": "failed",
+        "result": "baseline_run_failed",
+        "failure_stage": "uart",
+    }
+    assert "result" not in manifest
     assert manifest["run"]["failure_stage"] == "uart"
-    assert manifest["run"]["uart_return_code"] == 9
+    assert "uart_return_code" not in manifest["run"]
 
 
 def test_run_subcommand_is_registered_with_mandatory_uart_capture():
@@ -326,7 +340,8 @@ def test_wolfboot_run_forwards_debug_build_presets(tmp_path, monkeypatch):
         "host": {},
         "boot": {},
     })
-    monkeypatch.setattr(cli, "create_result_folder", lambda bundle, results: (result_dir, {"run_id": "run"}))
+    monkeypatch.setattr(cli, "create_result_folder", lambda bundle, results, **kwargs: (result_dir, {"run_id": "run"}))
+    monkeypatch.setattr(cli, "finalize_run_evidence", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_report_experiment_start", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "update_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "emit_progress", lambda *args, **kwargs: None)

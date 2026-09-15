@@ -16,6 +16,22 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
+from framework.run_evidence import (
+    build_resolved_case_snapshot,
+    build_derived_record,
+    compact_final_manifest,
+    discover_retained_artifacts,
+    finalize_manifest as finalize_evidence_manifest,
+    initialize_manifest_evidence,
+    register_artifact as register_evidence_artifact_in_manifest,
+    register_identity as register_evidence_identity_in_manifest,
+    update_sut_outcome,
+    validate_manifest_schema,
+    verify_and_freeze_raw_artifacts,
+    verify_retained_files,
+    write_run_provenance_snapshot,
+)
+
 RUN_ID_PATTERN = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<sequence>\d{3})_(?P<experiment>[A-Za-z0-9_.-]+)$")
 DEFAULT_RESULT_STATUS = "pending"
 DEFAULT_TRANSPORT_MODE = "direct_uart"
@@ -884,6 +900,7 @@ def build_manifest(
     run_id: str,
     timestamp: datetime | None = None,
     result: str = DEFAULT_RESULT_STATUS,
+    operation: str | None = None,
 ) -> dict[str, Any]:
     """Build the initial manifest dictionary for an experiment bundle."""
 
@@ -906,11 +923,27 @@ def build_manifest(
         "transport_mode": transport.get("mode", DEFAULT_TRANSPORT_MODE),
         "network_profile": network.get("profile", DEFAULT_NETWORK_PROFILE),
         "result": result,
+        "run": {
+            "id": run_id,
+            "created_at": format_manifest_timestamp(timestamp),
+            "state": "created",
+        },
     }
+    initialize_manifest_evidence(manifest, bundle, operation=operation)
 
     resolved_configuration = experiment.get("resolved_configuration")
     if isinstance(resolved_configuration, dict):
-        manifest["resolved_configuration"] = dict(resolved_configuration)
+        # Keep only the compact public identity in the root manifest. The complete
+        # non-secret resolved state is retained as resolved-case.json.
+        manifest["resolved_configuration"] = {
+            key: resolved_configuration.get(key)
+            for key in (
+                "schema_version", "resolver_version", "configuration_identity",
+                "firmware_identity", "selected_profiles", "choices", "profile_hashes",
+                "secret_references",
+            )
+            if key in resolved_configuration
+        }
     instruments = experiment.get("instruments")
     if isinstance(instruments, dict) and instruments:
         manifest["measurement_instruments"] = instruments
@@ -918,32 +951,9 @@ def build_manifest(
     if isinstance(services, dict):
         manifest["runtime_services"] = services
 
-    mqtt_config = experiment.get("mqtt")
-    if isinstance(mqtt_config, dict):
-        tls_config = mqtt_config.get("tls", {})
-        result_schema = mqtt_config.get("result_schema", {})
-        transfer_config = mqtt_config.get("transfer")
-        if isinstance(transfer_config, dict):
-            manifest["workload_transfer"] = {
-                "payload_bytes": transfer_config.get("payload_bytes"),
-                "chunk_bytes": transfer_config.get("chunk_bytes"),
-            }
-        manifest["mqtt_tls"] = build_mqtt_tls_result_model(
-            experiment_id=experiment["id"],
-            evidence_class=mqtt_config.get("evidence_class", "unknown"),
-            transport_backend=mqtt_config.get("transport_backend", "unknown"),
-            tls_mode=tls_config.get("mode", "unavailable") if isinstance(tls_config, dict) else "unavailable",
-            broker=mqtt_config.get("broker", {}) if isinstance(mqtt_config.get("broker", {}), dict) else {},
-            certificate_refs=tls_config.get("certificate_refs", {}) if isinstance(tls_config, dict) else {},
-            unavailable_metrics=(
-                result_schema.get("unavailable_metrics", {})
-                if isinstance(result_schema, dict) and isinstance(result_schema.get("unavailable_metrics", {}), dict)
-                else {}
-            ),
-            limitations=[
-                "Phase M2 records MQTT/TLS schema support only; no STM32 networking, broker deployment, UART capture, or hardware validation was performed by create-run/status schema handling."
-            ],
-        )
+    # Scientific/result interpretation is intentionally excluded from the run
+    # manifest. MQTT/TLS timing, memory and other measurement values remain in
+    # raw UART/MQTT/broker artefacts for later ingestion and analysis.
 
     return manifest
 
@@ -959,18 +969,300 @@ def write_manifest(path: Path | str, manifest: dict[str, Any]) -> None:
 
 
 def read_manifest(path: Path | str) -> dict[str, Any]:
-    """Read a manifest JSON file."""
+    """Read a manifest JSON file without silently upgrading legacy evidence."""
 
     manifest_path = Path(path)
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if isinstance(manifest, dict):
+        compatible, reason = validate_manifest_schema(manifest)
+        if not compatible:
+            manifest["compatibility"] = {
+                "legacy_manifest": True,
+                "accepted_under_current_contract": False,
+                "reason": reason,
+            }
+    return manifest
 
 
 def update_manifest(path: Path | str, updates: dict[str, Any]) -> dict[str, Any]:
-    """Merge top-level updates into a manifest JSON file and rewrite it."""
+    """Merge top-level stage updates and keep the compact evidence index in sync."""
 
     manifest_path = Path(path)
     manifest = read_manifest(manifest_path)
-    manifest.update(updates)
+    if (manifest.get("final_index") or {}).get("status") == "finalized":
+        raise ValueError("finalized run-evidence manifests are immutable")
+    run_update = updates.get("run") if isinstance(updates.get("run"), dict) else None
+    manifest.update({key: value for key, value in updates.items() if key != "run"})
+    if run_update is not None:
+        current_run = dict(manifest.get("run") or {})
+        current_run.update(run_update)
+        manifest["run"] = current_run
+    if isinstance(manifest.get("run"), dict):
+        manifest["run"]["state"] = "running"
+    failure_stage = updates.get("failure_stage")
+    summary_update = None
+    if failure_stage is None and run_update is not None:
+        failure_stage = run_update.get("failure_stage")
+    if failure_stage is None:
+        # Some orchestration commands historically recorded their terminal summary
+        # in a transient stage block (for example ``build_flash``). Preserve only
+        # the stable lifecycle facts needed by the compact final manifest.
+        for value in updates.values():
+            if not isinstance(value, dict):
+                continue
+            if value.get("failure_stage") is not None:
+                failure_stage = value.get("failure_stage")
+                summary_update = value
+                break
+    if summary_update is not None:
+        current_run = dict(manifest.get("run") or {})
+        current_run["failure_stage"] = failure_stage
+        if summary_update.get("return_code") is not None:
+            current_run["return_code"] = summary_update.get("return_code")
+        manifest["run"] = current_run
+    update_sut_outcome(manifest, updates.get("result"), failure_stage)
+    _sync_legacy_evidence(manifest_path, manifest, updates)
+    write_manifest(manifest_path, manifest)
+    return manifest
+
+
+
+def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates: dict[str, Any]) -> None:
+    """Index existing stage artefacts without duplicating their verbose payloads."""
+
+    result_dir = manifest_path.parent
+
+    def artifact(role: str, relative: str | None, stage: str, tool: str, result: str = "produced") -> None:
+        if relative:
+            register_evidence_artifact_in_manifest(
+                manifest, result_dir=result_dir, role=role, path=relative,
+                stage=stage, tool=tool, acquisition_result=result,
+            )
+
+    build = updates.get("build")
+    firmware = updates.get("firmware")
+    if isinstance(build, dict):
+        artifact("build_log", build.get("log"), "build", "cmake/ninja")
+    if isinstance(firmware, dict):
+        result_artifacts = firmware.get("result_artifacts")
+        if isinstance(result_artifacts, dict):
+            for artifact_type, role in (("elf", "application_elf"), ("hex", "application_hex"), ("bin", "application_binary")):
+                record = result_artifacts.get(artifact_type)
+                if isinstance(record, dict) and record.get("copied"):
+                    artifact(role, record.get("path") or record.get("artifact_path"), "build", "cmake/ninja")
+        elif firmware.get("result_artifact") or firmware.get("result_artifact_path"):
+            retained_artifact = firmware.get("result_artifact_path") or firmware.get("result_artifact")
+            suffix = Path(str(retained_artifact)).suffix.lower()
+            retained_role = {
+                ".elf": "application_elf",
+                ".hex": "application_hex",
+                ".bin": "application_binary",
+            }.get(suffix, "firmware_image")
+            artifact(retained_role, str(retained_artifact), "preparation_reuse", "framework.build_records", "reused")
+
+    flash = updates.get("flash")
+    if isinstance(flash, dict):
+        artifact("flash_log", flash.get("log") or "flash.log", "flash", "STM32CubeProgrammer")
+        register_evidence_identity_in_manifest(
+            manifest, role="deployment_provenance", sha256=flash.get("firmware_sha256"),
+            stage="flash", tool="STM32CubeProgrammer", acquisition_result=str(flash.get("provenance_status") or "recorded"),
+            path=None, source_class="deployment",
+        )
+
+    uart = updates.get("uart")
+    if isinstance(uart, dict) and not uart.get("skipped"):
+        artifact("diagnostic_uart", uart.get("log"), "uart_capture", "gateway_uart")
+
+    capture = updates.get("gateway_packet_capture")
+    if isinstance(capture, dict):
+        artifact("packet_capture_log", capture.get("log"), "packet_capture", "tcpdump")
+        if capture.get("status") == "collected":
+            artifact("packet_capture", capture.get("artifact"), "packet_capture", "tcpdump")
+        elif capture.get("status") in {"failed", "start_failed"}:
+            from framework.run_evidence import mark_evidence
+            mark_evidence(manifest, role="packet_capture", status="unavailable", reason=str(capture.get("failure_reason") or capture.get("status")), stage="packet_capture", tool="tcpdump")
+
+    broker = updates.get("mqtt_broker")
+    if isinstance(broker, dict):
+        log_name = broker.get("log") or broker.get("broker_log")
+        if isinstance(log_name, str):
+            artifact("experiment_broker_log", log_name, "broker_collection", "mosquitto")
+        artifact("reporting_broker_log", broker.get("reporting_log"), "broker_collection", "mosquitto")
+        artifact("broker_stop_log", broker.get("stop_log"), "broker_cleanup", "mosquitto")
+        keylog = broker.get("tls_keylog")
+        if isinstance(keylog, dict):
+            artifact("tls_key_log_collection", keylog.get("collection_log"), "broker_collection", "mosquitto")
+            if keylog.get("status") == "collected":
+                artifact("tls_key_log", keylog.get("artifact"), "broker_collection", "mosquitto")
+
+    mqtt_e2e = updates.get("mqtt_e2e")
+    if isinstance(mqtt_e2e, dict):
+        artifact("mqtt_publisher_log", mqtt_e2e.get("publisher_log"), "mqtt_observer", "mosquitto_pub")
+        artifact("mqtt_subscriber_log", mqtt_e2e.get("subscriber_log"), "mqtt_observer", "mosquitto_sub")
+        artifact("mqtt_subscriber_raw_log", mqtt_e2e.get("subscriber_raw_log"), "mqtt_observer", "mosquitto_sub")
+        observer_path = mqtt_e2e.get("broker_message_evidence_log")
+        if isinstance(observer_path, str):
+            artifact("observer_evidence", observer_path, "mqtt_observer", "framework.mqtt_e2e")
+
+    degradation = updates.get("network_degradation")
+    if isinstance(degradation, dict) and degradation.get("enabled"):
+        log_name = degradation.get("log")
+        if isinstance(log_name, str):
+            artifact("network_condition_record", log_name, "network_condition", "tc/netem")
+
+    for stage_key, role, tool_name in (
+        ("wolfboot_build", "wolfboot_build_log", "wolfBoot build"),
+        ("application_signing", "application_signing_log", "wolfBoot sign"),
+    ):
+        stage_record = updates.get(stage_key)
+        if isinstance(stage_record, dict):
+            log_value = stage_record.get("log")
+            if isinstance(log_value, str):
+                try:
+                    candidate = Path(log_value)
+                    if candidate.is_absolute():
+                        candidate = candidate.resolve().relative_to(result_dir.resolve())
+                    artifact(role, candidate.as_posix(), stage_key, tool_name)
+                except ValueError:
+                    pass
+
+    preparation_reference = updates.get("profile_preparation_reference")
+    if isinstance(preparation_reference, dict) and preparation_reference.get("manifest"):
+        manifest["preparation"] = {
+            "mode": "reused",
+            "manifest": str(preparation_reference.get("manifest")),
+            "run_id": preparation_reference.get("run_id"),
+            "firmware_sha256": preparation_reference.get("firmware_sha256"),
+            "verified": preparation_reference.get("result") is not None,
+        }
+        register_evidence_identity_in_manifest(
+            manifest, role="deployment_provenance", sha256=preparation_reference.get("firmware_sha256"),
+            stage="preparation_reuse", tool="framework.runtime_only", acquisition_result="reused",
+            path=None, source_class="deployment",
+        )
+
+    build_reference = updates.get("build_reference")
+    if isinstance(build_reference, dict) and build_reference.get("record_manifest"):
+        manifest["preparation"] = {
+            "mode": "reused",
+            "manifest": str(build_reference.get("record_manifest")),
+            "firmware_sha256": build_reference.get("artifact_sha256"),
+            "build_number": build_reference.get("build_number"),
+            "verified": build_reference.get("status") in {None, "verified", "verified_build_match", "verified_build_record"},
+        }
+
+    secure = updates.get("secure_boot_evidence")
+    if isinstance(secure, dict):
+        build_evidence = secure.get("build_evidence") if isinstance(secure.get("build_evidence"), dict) else {}
+        signing_evidence = secure.get("signing_evidence") if isinstance(secure.get("signing_evidence"), dict) else {}
+        flash_evidence = secure.get("flash_evidence") if isinstance(secure.get("flash_evidence"), dict) else {}
+        if isinstance(flash_evidence.get("log"), str):
+            artifact("flash_log", flash_evidence.get("log"), "secure_boot_flash", "STM32CubeProgrammer")
+        register_evidence_identity_in_manifest(
+            manifest, role="deployment_provenance", sha256=signing_evidence.get("signed_application_sha256"),
+            stage="secure_boot_flash", tool="framework.secure_boot_flash", acquisition_result="recorded",
+            path=None, source_class="deployment",
+        )
+
+        def secure_artifact_or_identity(role: str, raw_path: Any, recorded_sha256: Any, stage: str, tool: str) -> None:
+            if isinstance(raw_path, str):
+                candidate = Path(raw_path)
+                candidates = [candidate] if candidate.is_absolute() else [candidate, result_dir / candidate]
+                for possible in candidates:
+                    try:
+                        resolved = possible.resolve()
+                        relative = resolved.relative_to(result_dir.resolve())
+                        if resolved.is_file():
+                            register_evidence_artifact_in_manifest(
+                                manifest, result_dir=result_dir, role=role, path=relative,
+                                stage=stage, tool=tool, acquisition_result="produced",
+                            )
+                            return
+                    except (OSError, ValueError):
+                        continue
+            register_evidence_identity_in_manifest(
+                manifest, role=role, sha256=recorded_sha256,
+                stage=stage, tool=tool, acquisition_result="produced",
+                path=None, source_class="secure_boot",
+            )
+
+        secure_artifact_or_identity(
+            "wolfboot_image", build_evidence.get("wolfboot_artifact_path"),
+            build_evidence.get("wolfboot_sha256"), "secure_boot_build", "wolfBoot",
+        )
+        secure_artifact_or_identity(
+            "signed_application", signing_evidence.get("signed_application_artifact_path"),
+            signing_evidence.get("signed_application_sha256"), "application_signing", "wolfBoot sign",
+        )
+        # The secure-boot stage record itself remains in manifest for compatibility;
+        # its canonical digest binds the structured observation without inventing a file.
+        from framework.run_evidence import canonical_sha256
+        register_evidence_identity_in_manifest(
+            manifest, role="secure_boot_record", sha256=canonical_sha256(secure),
+            stage="secure_boot_flash", tool="framework.secure_boot_flash", acquisition_result="recorded",
+            source_class="secure_boot",
+        )
+
+
+def register_derived_output(
+    manifest_path: Path | str, *, role: str, path: Path | str, tool: str, version: str,
+    input_sha256: list[str], parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write offline-analysis lineage without mutating the finalized run manifest.
+
+    Derived outputs belong to the analysis namespace. The immutable run manifest
+    remains a capture/provenance record and is never reopened to insert parsed
+    metrics.
+    """
+
+    manifest_path_obj = Path(manifest_path)
+    manifest = read_manifest(manifest_path_obj)
+    compatible, reason = validate_manifest_schema(manifest)
+    if not compatible:
+        raise ValueError(reason or "legacy manifest cannot be used for current derived lineage")
+    record = build_derived_record(
+        result_dir=manifest_path_obj.parent,
+        role=role,
+        path=path,
+        tool=tool,
+        version=version,
+        input_sha256=input_sha256,
+        parameters=parameters,
+    )
+    analysis_dir = manifest_path_obj.parent / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    safe_role = re.sub(r"[^A-Za-z0-9_.-]+", "_", role).strip("._") or "derived"
+    lineage_path = analysis_dir / f"{safe_role}.lineage.json"
+    lineage_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {**record, "lineage_path": lineage_path.relative_to(manifest_path_obj.parent).as_posix()}
+
+def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None) -> dict[str, Any]:
+    """Evaluate the class contract and seal the immutable raw-evidence index."""
+
+    manifest_path = Path(path)
+    manifest = read_manifest(manifest_path)
+    compatible, reason = validate_manifest_schema(manifest)
+    if not compatible:
+        raise ValueError(reason or "legacy manifest cannot satisfy the current evidence contract")
+    # Snapshot the reproducibility/deployment metadata before discarding the verbose
+    # runtime manifest payloads. The snapshot is itself hashed as required evidence.
+    write_run_provenance_snapshot(manifest, result_dir=manifest_path.parent)
+    discover_retained_artifacts(manifest, result_dir=manifest_path.parent)
+    material_inventory = manifest_path.parent / "material-inventory.json"
+    if material_inventory.is_file():
+        register_evidence_artifact_in_manifest(
+            manifest, result_dir=manifest_path.parent, role="cryptographic_material_inventory",
+            path="material-inventory.json", stage="provisioning", tool="framework.artifacts",
+            acquisition_result="produced",
+        )
+    verify_and_freeze_raw_artifacts(manifest, result_dir=manifest_path.parent)
+    verify_retained_files(manifest, result_dir=manifest_path.parent)
+    # Strip transient stage/metric payloads before sealing so the final-index digest
+    # is mechanically reproducible from the persisted compact manifest itself.
+    compact_final_manifest(manifest)
+    finalize_evidence_manifest(manifest, finalized_at=format_manifest_timestamp(timestamp))
+    if isinstance(manifest.get("run"), dict):
+        manifest["run"]["state"] = "finalized"
     write_manifest(manifest_path, manifest)
     return manifest
 
@@ -980,6 +1272,7 @@ def create_result_folder(
     results_root: Path | str = "results",
     timestamp: datetime | None = None,
     result: str = DEFAULT_RESULT_STATUS,
+    operation: str | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Create results/<run_id>/ with manifest.json and notes.md."""
 
@@ -990,7 +1283,18 @@ def create_result_folder(
 
     result_dir.mkdir(parents=True, exist_ok=False)
 
-    manifest = build_manifest(bundle, run_id, current_timestamp, result=result)
+    manifest = build_manifest(bundle, run_id, current_timestamp, result=result, operation=operation)
+    snapshot_path = result_dir / "resolved-case.json"
+    snapshot = build_resolved_case_snapshot(bundle)
+    snapshot_path.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    register_evidence_artifact_in_manifest(
+        manifest, result_dir=result_dir, role="resolved_case_snapshot", path=snapshot_path,
+        stage="configuration_resolution", tool="framework.config_resolver", acquisition_result="snapshotted",
+    )
+    manifest["configuration"] = {
+        "snapshot": snapshot_path.name,
+        "sha256": next(item["sha256"] for item in manifest["artifacts"] if item["role"] == "resolved_case_snapshot"),
+    }
     write_manifest(result_dir / "manifest.json", manifest)
     (result_dir / "notes.md").write_text(
         f"# Notes for {run_id}\n\n"

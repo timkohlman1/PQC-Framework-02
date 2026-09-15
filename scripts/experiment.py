@@ -69,6 +69,7 @@ from framework.manifest import (
     build_secure_boot_benchmark_sample,
     build_mqtt_fake_transport_manifest_evidence,
     create_result_folder,
+    finalize_run_evidence,
     format_manifest_timestamp,
     read_manifest,
     update_manifest,
@@ -3311,7 +3312,7 @@ def run_build_command(args: argparse.Namespace) -> int:
                 },
             },
         }
-    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    result_dir, manifest = create_result_folder(bundle, args.results_dir, operation="build_only")
     _report_experiment_start(bundle, manifest["run_id"])
     repo_root = repo_root_from_experiment_path(args.experiment)
     emit_progress("prereq", "Preparing experiment prerequisites")
@@ -3319,6 +3320,7 @@ def run_build_command(args: argparse.Namespace) -> int:
         bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     except ExternalDependencyError as exc:
         print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
 
@@ -3361,6 +3363,7 @@ def run_build_command(args: argparse.Namespace) -> int:
         print(f"Build record: {build_result.build_record_dir}")
     print(f"Build duration seconds: {build_result.duration_seconds:.3f}")
     print("No flash, UART access, SSH, hardware access, or network access was performed.")
+    finalize_run_evidence(result_dir / "manifest.json")
 
     return build_result.return_code
 
@@ -3462,6 +3465,7 @@ def run_flash_command(args: argparse.Namespace) -> int:
     else:
         print("No UART access was performed.")
     print(f"Return code: {final_return_code}")
+    finalize_run_evidence(result_dir / "manifest.json")
 
     return final_return_code
 
@@ -3514,6 +3518,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
         print(f"Return code: {build_result.return_code}")
         print("Flash step skipped because the build failed.")
         print("No flash, UART access, SSH, hardware access, or network access was performed.")
+        finalize_run_evidence(result_dir / "manifest.json")
         return build_result.return_code
 
     flash_result = execute_flash(
@@ -3602,6 +3607,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
     print(f"Flash return code: {flash_result.return_code}")
     print(f"Return code: {final_return_code}")
     print(f"Provenance status: {flash_result.provenance_status}")
+    finalize_run_evidence(result_dir / "manifest.json")
 
     return final_return_code
 
@@ -3806,6 +3812,7 @@ def _run_full_baseline_with_existing_build(
         print(f"Build number: {build_number}")
         print(f"Reason: {verification.message}")
         print(f"Return code: {verification.return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return verification.return_code
 
     assert verification.artifact_path is not None
@@ -3852,6 +3859,7 @@ def _run_full_baseline_with_existing_build(
         print(f"Build number: {build_number}")
         print(f"Error: {exc}")
         print(f"Return code: {artifact_copy_return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return artifact_copy_return_code
 
     update_manifest(
@@ -3926,6 +3934,7 @@ def _run_full_baseline_with_existing_build(
         print(f"Copied artifact: {copied_artifact_path}")
         print(f"Flash log: {flash_result.log_path}")
         print(f"Return code: {flash_result.return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return flash_result.return_code
 
     if _is_st67_mqtt_e2e(bundle):
@@ -3970,6 +3979,7 @@ def _run_full_baseline_with_existing_build(
         uart_log=None if uart_result is None else uart_result.log_path,
     )
     emit_progress("result", "Referenced reusable build", detail=f"Build number: {build_number}.")
+    finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 
 
@@ -4164,6 +4174,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         )
     except ExternalDependencyError as exc:
         print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
 
     build_profile, _ = load_secure_boot_profile_section(
@@ -4201,6 +4212,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             copied_artifact_path=None,
             duration_seconds=perf_counter() - start,
         )
+        finalize_run_evidence(result_dir / "manifest.json")
         return wolfboot_result.return_code
 
     signing_profile, _ = load_secure_boot_profile_section(
@@ -4244,6 +4256,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
             referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
+        finalize_run_evidence(result_dir / "manifest.json")
         return build_result.return_code
 
     try:
@@ -4252,7 +4265,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             repo_root=repo_root,
         )
     except ExternalDependencyError as exc:
+        update_manifest(
+            result_dir / "manifest.json",
+            {"result": "preparation_failed", "failure_stage": "application_signing"},
+        )
         print(f"Signing prerequisite preparation failed: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return 14
     emit_progress("sign", "Signing relocated experiment firmware")
     signing_result = execute_application_signing(
@@ -4287,6 +4305,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
             referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
+        finalize_run_evidence(result_dir / "manifest.json")
         return signing_result.return_code
 
     _select_signed_firmware_artifact(
@@ -4315,7 +4334,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             result_dir=result_dir,
         )
     except SecureBootFlashProfileError as exc:
+        update_manifest(
+            result_dir / "manifest.json",
+            {"result": "preparation_failed", "failure_stage": "profile_validation"},
+        )
         print(f"Secure-boot flash profile failed: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return 43
     if flash_result.return_code != 0:
         _record_run_summary(
@@ -4332,6 +4356,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
             referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
         )
+        finalize_run_evidence(result_dir / "manifest.json")
         return flash_result.return_code
 
     emit_progress("uart", "Running experiment validation through wolfBoot")
@@ -4379,6 +4404,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         flash_log=flash_result.log_path,
         uart_log=None if uart_result is None else uart_result.log_path,
     )
+    finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 
 
@@ -4495,6 +4521,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         uart_log=None if uart_result is None else uart_result.log_path,
     )
+    finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 
 
@@ -4567,6 +4594,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         bundle = _prepare_dependencies_for_result(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
     except ExternalDependencyError as exc:
         print(f"Experiment prerequisite preparation failed: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE
     configure_preset = args.configure_preset or args.build_preset
     start = perf_counter()
@@ -4623,6 +4651,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Result directory: {result_dir}")
         print(f"Build log: {build_result.log_path}")
         print(f"Return code: {build_result.return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return build_result.return_code
 
     copied_artifact_path: Path | None = None
@@ -4665,6 +4694,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Result directory: {result_dir}")
         print(f"Error: {exc}")
         print(f"Return code: {artifact_copy_return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return artifact_copy_return_code
 
     emit_progress("gateway", "Using configured gateway for flash and UART stages", detail=f"Host alias: {bundle["host"]["alias"]}")
@@ -4712,6 +4742,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         print(f"Copied artifact: {copied_artifact_path}")
         print(f"Flash log: {flash_result.log_path}")
         print(f"Return code: {flash_result.return_code}")
+        finalize_run_evidence(result_dir / "manifest.json")
         return flash_result.return_code
 
     emit_progress("uart", "Starting bounded UART capture and marker evaluation")
@@ -4757,6 +4788,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         flash_log=flash_result.log_path,
         uart_log=None if uart_result is None else uart_result.log_path,
     )
+    finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 
 def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | None) -> str:
@@ -4999,6 +5031,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             result_dir / "manifest.json",
             {
                 "result": "secure_boot_flash_failed",
+                "failure_stage": "profile_validation",
                 "secure_boot_flash": {
                     "return_code": 43,
                     "failure_stage": "profile_validation",
@@ -5008,6 +5041,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             },
         )
         print(f"Error: {exc}", file=sys.stderr)
+        finalize_run_evidence(result_dir / "manifest.json")
         return 43
 
     uart_results: list[Any] = []
@@ -5464,6 +5498,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, tick marker, and explicit verification timing evidence for benchmark-valid samples.")
     print(f"Return code: {final_return_code}")
 
+    finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 
 

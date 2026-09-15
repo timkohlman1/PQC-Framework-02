@@ -59,11 +59,24 @@ def copy_artifact_to_result(
 
 
 def _artifact_manifest_entry(source: Path, destination: Path | None, copied: bool) -> dict[str, Any]:
+    suffix = source.suffix.lower()
+    requirement = "required" if suffix == ".elf" else "optional"
+    role = {".elf": "application_elf", ".hex": "application_hex", ".bin": "application_binary"}.get(suffix, "firmware_artifact")
     return {
+        "source_class": "build",
+        "role": role,
         "source_path": str(source),
         "path": None if destination is None else destination.name,
         "artifact_path": None if destination is None else str(destination),
+        "size_bytes": destination.stat().st_size if copied and destination is not None else None,
         "sha256": calculate_file_sha256(destination) if copied and destination is not None else None,
+        "producer": {"stage": "build", "tool": "cmake/ninja"},
+        "requirement": requirement,
+        "acquisition": {
+            "status": "available" if copied else "unavailable",
+            "result": "copied" if copied else "not_generated",
+            "reason": None if copied else "source artifact not generated",
+        },
         "copied": copied,
         "missing_reason": None if copied else "source artifact not generated",
     }
@@ -128,7 +141,9 @@ def copy_material_to_result(
     destination = Path(result_dir) / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    required_for_values = list(required_for or [])
     return {
+        "source_class": "cryptographic_material",
         "path": relative.as_posix(),
         "source_path": str(source),
         "sha256": calculate_file_sha256(destination),
@@ -136,7 +151,10 @@ def copy_material_to_result(
         "role": role,
         "classification": classification,
         "private": private,
-        "required_for": list(required_for or []),
+        "required_for": required_for_values,
+        "producer": {"stage": "provisioning", "tool": "framework.artifacts"},
+        "requirement": "required" if required_for_values else "optional",
+        "acquisition": {"status": "available", "result": "copied", "reason": None},
     }
 
 

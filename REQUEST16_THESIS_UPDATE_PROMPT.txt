@@ -1,0 +1,131 @@
+Treat this as a fresh thesis-editing request. I will supply the current LaTeX source for the relevant thesis chapters. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state beyond the implementation summary below.
+
+The thesis is still a draft and describes the intended final framework, while the repository is being implemented through a sequence of requests. Use judgement rather than mechanically forcing the thesis to match a point-in-time repository snapshot. Distinguish:
+1. genuine architectural corrections required by the implemented Request 16 design;
+2. useful clarifications or omissions in the draft final-state description; and
+3. valid future-state capabilities that belong to later requests and should remain in the thesis even if not implemented yet.
+
+Request 16 has now established a deliberate separation between experiment execution/raw evidence capture and later ingestion/analysis. This separation must be made explicit and consistent throughout Chapters 3 and 4.
+
+IMPLEMENTED REQUEST-16 ARCHITECTURE
+
+The authoritative run-evidence schema is now `pqc-run-evidence` schema version 3. Its responsibility is run capture and provenance, not scientific result interpretation.
+
+The execution framework is responsible for:
+- resolving and snapshotting the exact experiment case before side effects;
+- recording source/dependency/tool/build/preparation/deployment provenance;
+- orchestrating execution and recording only completion/end-point/failure state needed to say what ran;
+- collecting raw artefacts;
+- assigning extensible semantic roles/source classes;
+- recording result-relative path, producer stage/tool, size and SHA-256;
+- recording required/optional/not-applicable capture requirements and acquisition status;
+- re-hashing raw files at finalisation and sealing an immutable capture index; and
+- recording whether the required raw capture package is complete/integrity-valid.
+
+It is explicitly NOT responsible for interpreting scientific measurements into the authoritative run manifest. Timing, memory, TLS/security-function/primitive, energy, packet-level and benchmark values remain in raw structured records/logs until a separate ingestion stage parses them.
+
+The main schema-v3 concepts are:
+- `resolved-case.json`: immutable non-secret resolved-case snapshot, including profile identities/content hashes, resolver/schema version, configuration identity, firmware identity and effective non-secret parameters; secrets remain excluded and only named secret references/public identities are retained.
+- `capture_contract`: minimum raw artefacts required by the resolved experiment class/features.
+- `artifacts`: extensible raw-artefact inventory using a stable common envelope rather than a closed metric schema.
+- `execution_outcome`: orchestration/SUT completion state only (for example completed, failed, not executed or not applicable, plus failure/completion basis). It is not a scientific validity judgement.
+- `capture_acceptance`: whether every capture-contract-required raw artefact was retained and passed integrity checks. It does not claim every metric is present, parseable or scientifically valid.
+- `final_index`: immutable digest over the run-capture/provenance state. Scientific derived outputs are deliberately excluded from this digest.
+
+At finalisation the framework aggressively compacts the root manifest. Verbose runtime/stage/metric payloads used during execution are removed from `manifest.json`. Reproducibility/deployment metadata is snapshotted once to hashed `run-provenance.json`. Semantically important contract artefacts remain in the richer `artifacts` index; every other retained run file is listed once in compact `retained_files` records containing only result-relative path, byte size and SHA-256. The inventory excludes `manifest.json`, mutable manual notes and the later `analysis/` namespace.
+
+Raw evidence remains immutable after collection. Examples include STM32 structured result streams, diagnostic UART, broker/observer logs, PCAP/TLS key logs, secure-boot/OTA records, ESP32 energy traces and future benchmark records.
+
+DERIVED/INGESTED OUTPUTS
+
+Scientific parsing, normalisation and analysis occur after capture. Derived outputs must not reopen, mutate or reseal the finalized run manifest.
+
+Derived/ingested outputs should live under a result-local analysis namespace (for example `analysis/`) with separate lineage records containing:
+- parser/analyser/tool identity and version;
+- direct input artefact SHA-256 identities;
+- relevant analysis/ingestion parameters;
+- output size; and
+- output SHA-256.
+
+Re-running ingestion or analysis may create/update derived outputs and lineage while the original run manifest and raw artefacts remain unchanged. This is intentional: improved parsers should be able to reprocess historical physical experiments without rerunning the hardware.
+
+The conceptual pipeline should therefore be described clearly as:
+
+resolved experiment
+→ build/deploy/execute
+→ immutable raw capture + provenance manifest
+→ ingestion/parsing
+→ normalised observations/dataset
+→ analysis/aggregation
+→ thesis figures/tables
+
+Do not collapse capture acceptance and analytical validity into a single status.
+
+MIGRATION / COMPATIBILITY
+
+Some older stage helpers may still create verbose stage/metric structures transiently while an experiment is running because orchestration code consumes them. Schema v3 removes those structures at finalisation. The persisted run manifest is therefore already the compact target design; do not describe the legacy metric branches as retained final-state compatibility fields.
+
+Schema-v1 and schema-v2 Request-16 manifests may remain readable as historical data but must not be silently upgraded or treated as satisfying the schema-v3 capture contract.
+
+IMPACT ON LATER REQUESTS
+
+Preserve the thesis's valid final-state descriptions for later implementation requests, but align them with this boundary:
+
+- Request 15 reporting broker: the gateway collector subscribes before target execution, validates run/source identity, sequence/chunk counts, completion and logical-content hash, and stores the raw STM32/ESP32 result stream. The run manifest registers the raw stream and collector/completion integrity. It does not parse timing, memory, TLS or energy values into metric-specific manifest fields.
+- Request 11 campaign executor: campaigns reference per-run immutable capture manifests; campaign-level aggregation/metric interpretation belongs downstream.
+- Requests 13/2 timing: firmware should emit the required timestamps/checkpoints/structured records. Ingestion derives/normalises RTFB, RTLB, TTFB, TTLB, ReqTFB and ReqTLB as appropriate; the run manifest need not duplicate these values.
+- Request 3 TLS instrumentation: the bounded structured TLS event stream is raw captured evidence. Ingestion can build event hierarchies/aggregates and validate analytical completeness separately from capture integrity.
+- Request 12 repeated TLS workload: retain all per-iteration raw records plus completion metadata; later ingestion extracts the per-handshake dataset.
+- Requests 14/4 wolfBoot timing/memory and Request 1 bare-metal benchmark: structured device records are raw evidence; derived comparison tables/statistics belong downstream.
+- Request 6 ESP32/INA228 energy instrument: retain the raw interval/sample trace, instrument/config/calibration identity and completion/hash records. Energy summaries can be present in the instrument stream, but the run manifest should only inventory/hash the raw trace; normalised energy observations belong to ingestion.
+- Request 8 network-degradation validation: requested/effective impairment/control logs are raw evidence; effects on transport/TLS/application metrics are interpreted downstream.
+- Request 7 PCAP analysis: this is explicitly an offline analysis consumer. Store outputs under `analysis/` with input PCAP/key-log hashes and tool/parameter/output lineage. Never mutate the finalized raw run manifest to insert packet metrics.
+
+THESIS AREAS TO REVIEW
+
+Review the supplied LaTeX carefully and update all relevant sections, particularly:
+- Chapter 3 measurement/evidence architecture, device result reporting and ESP32 energy acquisition;
+- Chapter 4 execution lifecycle and run creation/finalisation;
+- resolver/generated-case identity and preparation reuse;
+- reporting-broker/result-collector architecture;
+- packet capture and later PCAP analysis;
+- energy evidence collection;
+- the evidence/provenance/run-record section;
+- validation/test architecture; and
+- any tables/figures that currently imply the run manifest itself is the scientific results database.
+
+Chapter 4 should explicitly explain why separating capture from ingestion is beneficial for reproducibility: the immutable physical evidence can be reinterpreted by later parser versions without changing or rerunning the experiment.
+
+Where the draft currently says that a run is "accepted for analysis" only when all scientific evidence/metrics validate, revise the wording carefully. Schema-v3 `capture_acceptance` means raw capture completeness/integrity only. Analytical ingestion may later reject or flag individual observations without retroactively changing the original run-capture outcome.
+
+Keep unavailable measurements distinct from numeric zero, but place that rule primarily in the ingestion/normalised-observation model rather than requiring the run manifest to manufacture unavailable metric objects.
+
+Keep raw/derived separation strong. Raw PCAP, UART, reporting streams and energy traces remain authoritative observations. Derived outputs must identify direct input hashes and parser/analyser version/parameters.
+
+Check for historical terminology such as `evidence_acceptance`, `sut_outcome`, or schema-v1 `derived` records in the supplied LaTeX and migrate it to the implemented schema-v3 terms where appropriate: `capture_acceptance`, `execution_outcome`, raw `artifacts`, and separate analysis lineage.
+
+Also check the existing Chapter 3 reference to "Chapter 8" if it is still present. If the final thesis structure still ends before Chapter 8, correct that cross-reference to the intended chapter rather than preserving an obviously stale number.
+
+Do not remove descriptions of valid future-state functionality solely because the current repository has not yet reached that implementation request. If a thesis claim is final-state but not yet implemented, keep it as architecture/methodology unless it conflicts with this capture-versus-ingestion boundary. If uncertain, flag it explicitly as a judgement call in your response rather than silently rewriting it.
+
+STYLE / DELIVERY
+
+Preserve the thesis's existing terminology, academic tone, labels, citations and LaTeX conventions. Prefer cohesive architectural explanation over implementation trivia. Avoid describing temporary compatibility payloads as the desired final design.
+
+After editing, provide:
+1. the complete replacement LaTeX file(s);
+2. a concise summary of the architectural changes made;
+3. a list of any final-state thesis claims that remain intentionally ahead of the implementation sequence; and
+4. any unresolved ambiguities that require repository/source confirmation.
+
+AGGRESSIVE MANIFEST COMPACTION IMPLEMENTED IN REQUEST 16
+
+The finalised root `manifest.json` is now intentionally a compact index rather than a persistence location for every stage payload. The thesis must make the following distinction explicit:
+
+- transient execution state may temporarily contain detailed stage structures while the framework is orchestrating a run;
+- finalisation snapshots durable reproducibility/deployment metadata into `run-provenance.json`;
+- the final root manifest keeps only schema/run/configuration identity, capture contract, execution outcome, capture acceptance, semantic artefact entries, compact retained-file hashes and final-index sealing data;
+- parsed UART/TLS/memory/secure-boot benchmark values and verbose broker/flash/stage dictionaries are not retained as authoritative root-manifest content;
+- later ingestion obtains scientific observations from immutable raw files, not from legacy metric branches in the run manifest.
+
+Do not describe `run-provenance.json` as a scientific results file. It is a reproducibility/deployment provenance sidecar and is itself hashed by the run manifest.

@@ -203,6 +203,7 @@ def build_record_manifest(
         "gateway": host["id"],
         "result": "build_skipped" if build.get("skipped") is True else "build_passed",
         "source": source,
+        "configuration": dict(experiment.get("resolved_configuration", {})) if isinstance(experiment.get("resolved_configuration"), dict) else {},
         "build": build,
         "firmware": {
             "application": str(bundle["experiment"].get("firmware", {}).get("application", "mqtt_validation")),

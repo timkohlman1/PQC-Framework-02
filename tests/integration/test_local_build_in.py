@@ -88,22 +88,38 @@ def test_real_local_build_command_completes_without_flash_or_uart(
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    assert manifest["result"] == "build_passed"
-    assert manifest["build_number"] is None
-    assert manifest["build"]["purpose"] == "automated_test"
-    assert isinstance(manifest["build"]["identity"], str)
-    assert manifest["build"]["identity"]
-    assert manifest["firmware"]["artifact"] == "build/Release/stm32_basic_hal1.elf"
-    assert manifest["firmware"]["artifact_exists"] is True
-    assert isinstance(manifest["firmware"]["sha256"], str)
-    assert len(manifest["firmware"]["sha256"]) == 64
-    assert manifest["build"]["configure_preset"] == "Release"
-    assert manifest["build"]["build_preset"] == "Release"
-    assert manifest["build"]["return_code"] == 0
-    assert manifest["build"]["log"] == "build.log"
+    assert manifest["schema"]["version"] == 3
+    assert manifest["capture_acceptance"]["accepted"] is True
+    assert manifest["final_index"]["status"] == "finalized"
+    assert "build" not in manifest
+    assert "firmware" not in manifest
+    assert "result" not in manifest
 
-    build_record_dir = Path(manifest["build"]["record_path"])
-    build_record_manifest_path = Path(manifest["build"]["record_manifest"])
+    artifacts_by_role = {item["role"]: item for item in manifest["artifacts"] if item.get("artifact_id") == item.get("role")}
+    assert artifacts_by_role["resolved_case_snapshot"]["acquisition"]["status"] == "available"
+    assert artifacts_by_role["run_provenance"]["acquisition"]["status"] == "available"
+    assert artifacts_by_role["build_log"]["acquisition"]["status"] == "available"
+
+    provenance_path = result_dir / artifacts_by_role["run_provenance"]["path"]
+    assert provenance_path.is_file()
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    build_provenance = provenance["records"]["build"]
+    firmware_provenance = provenance["records"]["firmware"]
+    assert build_provenance["purpose"] == "automated_test"
+    assert isinstance(build_provenance["identity"], str)
+    assert build_provenance["identity"]
+    assert build_provenance["configure_preset"] == "Release"
+    assert build_provenance["build_preset"] == "Release"
+    assert build_provenance["return_code"] == 0
+    assert build_provenance["log"] == "build.log"
+    assert firmware_provenance["artifact"] == "build/Release/stm32_basic_hal1.elf"
+    assert firmware_provenance["artifact_exists"] is True
+    assert isinstance(firmware_provenance["sha256"], str)
+    assert len(firmware_provenance["sha256"]) == 64
+    assert artifacts_by_role["application_elf"]["sha256"] == firmware_provenance["sha256"]
+
+    build_record_dir = Path(build_provenance["record_path"])
+    build_record_manifest_path = Path(build_provenance["record_manifest"])
     build_record_log_path = build_record_dir / "build.log"
     build_record_elf_path = build_record_dir / "firmware.elf"
 
@@ -121,7 +137,7 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert "Command: cmake --build --preset Release" in build_log
     assert "Final return code: 0" in build_log
     assert "Output ELF exists: true" in build_log
-    assert f"Output ELF SHA-256: {manifest['firmware']['sha256']}" in build_log
+    assert f"Output ELF SHA-256: {firmware_provenance['sha256']}" in build_log
 
     build_record_manifest = json.loads(
         build_record_manifest_path.read_text(encoding="utf-8")
@@ -131,23 +147,21 @@ def test_real_local_build_command_completes_without_flash_or_uart(
     assert build_record_manifest["build_number"] is None
     assert build_record_manifest["purpose"] == "automated_test"
     assert build_record_manifest["reusable_by_normal_workflows"] is False
-    assert build_record_manifest["build_identity"] == manifest["build"]["identity"]
-    assert build_record_manifest["experiment"] == manifest["experiment"]
-    assert build_record_manifest["board"] == manifest["board"]
+    assert build_record_manifest["build_identity"] == build_provenance["identity"]
     assert build_record_manifest["build"]["purpose"] == "automated_test"
-    assert build_record_manifest["build"]["identity"] == manifest["build"]["identity"]
+    assert build_record_manifest["build"]["identity"] == build_provenance["identity"]
     assert build_record_manifest["build"]["return_code"] == 0
     assert build_record_manifest["build"]["log"] == "build.log"
     assert build_record_manifest["build"]["artifact_identity_algorithm"] == "sha256-elf"
     assert (
         build_record_manifest["build"]["artifact_identity"]
-        == manifest["firmware"]["sha256"]
+        == firmware_provenance["sha256"]
     )
-    assert build_record_manifest["firmware"]["sha256"] == manifest["firmware"]["sha256"]
+    assert build_record_manifest["firmware"]["sha256"] == firmware_provenance["sha256"]
     assert build_record_manifest["firmware"]["result_artifacts"]["elf"]["path"] == "firmware.elf"
     assert (
         build_record_manifest["firmware"]["result_artifacts"]["elf"]["sha256"]
-        == manifest["firmware"]["sha256"]
+        == firmware_provenance["sha256"]
     )
 
 
