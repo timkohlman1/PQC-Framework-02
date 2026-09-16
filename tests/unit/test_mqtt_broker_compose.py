@@ -741,6 +741,22 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
     assert "./runtime/tls-keylog/" not in compose
 
 
+def test_reporting_acl_matches_result_instrument_and_control_namespaces():
+    acl = _read(BROKER_ROOT / "config" / "reporting" / "aclfile")
+    lines = [
+        line.strip()
+        for line in acl.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+    assert lines == [
+        "topic readwrite pqc/result/#",
+        "topic readwrite pqc/instrument/#",
+        "topic readwrite pqc/control/#",
+    ]
+    assert "pqc/results/#" not in acl
+
+
 def test_reporting_broker_healthcheck_uses_deterministic_allowed_pubsub_probe():
     compose = _read(BROKER_ROOT / "compose.yaml")
     reporting = _service_block(compose, "mqtt-reporting")
