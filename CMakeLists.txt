@@ -110,6 +110,7 @@ message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${
 
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
 set(PQC_UART_LOG_LEVEL "info")
+set(PQC_UART_OUTPUT_MODE "minimal")
 set(PQC_APPLICATION_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake")
 if(EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
     include("${PQC_APPLICATION_SELECTION_FILE}")
@@ -321,6 +322,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfmqtt_build_only.c
     Core/Src/pqc_tls_instrumentation.c
+    Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
 )

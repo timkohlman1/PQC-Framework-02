@@ -315,7 +315,8 @@ def stop(args: argparse.Namespace) -> None:
 
 
 def status(args: argparse.Namespace) -> None:
-    compose_remote(args, ["ps"])
+    service = BROKER_PROFILE_SERVICES[args.profile]
+    compose_remote(args, ["ps", service])
 
 
 def logs(args: argparse.Namespace) -> None:
@@ -585,6 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = sub.add_parser("status", help="show gateway compose service status")
     add_common_remote_options(status_parser)
     add_port_options(status_parser)
+    status_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     status_parser.set_defaults(func=status)
 
     version_parser = sub.add_parser("runtime-version", help="report the effective Mosquitto version from the gateway runtime image")

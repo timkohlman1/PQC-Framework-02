@@ -42,6 +42,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "pqc_ram_accounting.h"
+#include "pqc_result_buffer.h"
+#include "pqc_tls_instrumentation.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -68,7 +70,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+#if PQC_UART_OUTPUT_MODE != 0
 UART_HandleTypeDef hlpuart1;
+#endif
 
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_tx;
@@ -96,7 +100,9 @@ const osThreadAttr_t networkTask_attributes = {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
+#if PQC_UART_OUTPUT_MODE != 0
 static void MX_LPUART1_UART_Init(void);
+#endif
 static void MX_SPI1_Init(void);
 void StartDefaultTask(void *argument);
 
@@ -129,6 +135,10 @@ void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapsho
 #define PQC_UART_LOG_LEVEL 1
 #endif
 
+#ifndef PQC_UART_OUTPUT_MODE
+#define PQC_UART_OUTPUT_MODE 1
+#endif
+
 #define APP_UART_LOG_LEVEL_OFF  (-1)
 #define APP_UART_LOG_LEVEL_ERROR 0
 #define APP_UART_LOG_LEVEL_INFO  1
@@ -137,6 +147,7 @@ void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapsho
 
 static char app_uart_line_buffer[APP_UART_LINE_BUFFER_SIZE];
 static uint32_t app_uart_line_length = 0U;
+static bool app_measurement_active = false;
 
 static bool APP_UART_LineContains(const char *line, const char *needle)
 {
@@ -197,6 +208,17 @@ static bool APP_UART_LineIsWhitespaceOnly(const char *line)
 
 static bool APP_UART_ShouldEmitLine(const char *line)
 {
+#if PQC_UART_OUTPUT_MODE == 0
+  (void)line;
+  return false;
+#elif PQC_UART_OUTPUT_MODE >= 2
+  (void)line;
+  return true;
+#else
+  if (app_measurement_active)
+  {
+    return false;
+  }
 #if PQC_UART_LOG_LEVEL <= APP_UART_LOG_LEVEL_OFF
   (void)line;
   return false;
@@ -291,14 +313,20 @@ static bool APP_UART_ShouldEmitLine(const char *line)
   return true;
 #endif
 #endif
+#endif
 }
 
 static void APP_UART_WriteRaw(const char *text, uint16_t length)
 {
+#if PQC_UART_OUTPUT_MODE != 0
   if (length > 0U)
   {
     HAL_UART_Transmit(&hlpuart1, (uint8_t *)text, length, HAL_MAX_DELAY);
   }
+#else
+  (void)text;
+  (void)length;
+#endif
 }
 
 static void APP_UART_WriteTickPrefix(void)
@@ -1422,7 +1450,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+#if PQC_UART_OUTPUT_MODE != 0
   MX_LPUART1_UART_Init();
+#endif
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
@@ -1570,6 +1600,7 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
+#if PQC_UART_OUTPUT_MODE != 0
 static void MX_LPUART1_UART_Init(void)
 {
 
@@ -1612,6 +1643,7 @@ static void MX_LPUART1_UART_Init(void)
   /* USER CODE END LPUART1_Init 2 */
 
 }
+#endif
 
 /**
   * @brief SPI1 Initialization Function
@@ -2261,6 +2293,67 @@ static void APP_MarkExperimentComplete(void)
   }
 }
 
+static void APP_ResultBufferWriteLine(const char *text)
+{
+  (void)PQC_ResultBufferAppendText(0U, "tls", text);
+}
+
+static void APP_BufferMemoryEvidence(void)
+{
+  char line[768];
+  const size_t heap_total_bytes = (size_t)configTOTAL_HEAP_SIZE;
+  const size_t heap_final_free_bytes = xPortGetFreeHeapSize();
+  const size_t heap_min_free_bytes = xPortGetMinimumEverFreeHeapSize();
+  const size_t heap_peak_used_bytes =
+      (heap_min_free_bytes <= heap_total_bytes)
+          ? (heap_total_bytes - heap_min_free_bytes)
+          : 0U;
+  PQC_RAMRuntimeSnapshot ram_runtime = {0};
+  size_t workspace_total_bytes = 0U;
+  size_t workspace_peak_used_bytes = 0U;
+  bool workspace_in_use = false;
+
+  PQC_RAM_RuntimeSnapshotGet(&ram_runtime);
+#if PQC_TLS_COMPILED
+  {
+    PQC_WolfSSLMemorySnapshot snapshot;
+    PQC_WolfSSL_MemorySnapshotGet(&snapshot);
+    workspace_total_bytes = snapshot.mldsa_workspace_size_bytes;
+    workspace_peak_used_bytes = snapshot.mldsa_workspace_peak_request_bytes;
+    workspace_in_use = snapshot.mldsa_workspace_in_use;
+  }
+#endif
+
+  (void)snprintf(
+      line, sizeof(line),
+      "freertos_heap_total_bytes=%lu freertos_heap_peak_used_bytes=%lu "
+      "freertos_heap_min_free_bytes=%lu freertos_heap_final_free_bytes=%lu "
+      "sbrk_capacity_bytes=%lu sbrk_peak_used_bytes=%lu sbrk_final_used_bytes=%lu "
+      "msp_reserved_bytes=%lu msp_peak_used_bytes=%lu msp_headroom_bytes=%lu "
+      "msp_excess_bytes=%lu msp_measurement_window_bytes=%lu "
+      "msp_reservation_exceeded=%u msp_measurement_saturated=%u "
+      "mldsa_workspace_total_bytes=%lu mldsa_workspace_peak_used_bytes=%lu "
+      "mldsa_workspace_in_use=%u",
+      (unsigned long)heap_total_bytes,
+      (unsigned long)heap_peak_used_bytes,
+      (unsigned long)heap_min_free_bytes,
+      (unsigned long)heap_final_free_bytes,
+      (unsigned long)ram_runtime.sbrk_capacity_bytes,
+      (unsigned long)ram_runtime.sbrk_peak_used_bytes,
+      (unsigned long)ram_runtime.sbrk_current_used_bytes,
+      (unsigned long)ram_runtime.msp_reserved_bytes,
+      (unsigned long)ram_runtime.msp_peak_used_bytes,
+      (unsigned long)ram_runtime.msp_headroom_bytes,
+      (unsigned long)ram_runtime.msp_excess_bytes,
+      (unsigned long)ram_runtime.msp_measurement_window_bytes,
+      ram_runtime.msp_reservation_exceeded ? 1U : 0U,
+      ram_runtime.msp_measurement_saturated ? 1U : 0U,
+      (unsigned long)workspace_total_bytes,
+      (unsigned long)workspace_peak_used_bytes,
+      workspace_in_use ? 1U : 0U);
+  (void)PQC_ResultBufferAppendText(0U, "memory", line);
+}
+
 void StartNetworkTask(void *argument)
 {
   const PQC_MQTTApplicationFixture fixture = {
@@ -2278,8 +2371,27 @@ void StartNetworkTask(void *argument)
   };
 
   (void)argument;
+  PQC_ResultBufferReset();
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
+  app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
+  app_measurement_active = false;
+  APP_BufferMemoryEvidence();
+  PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
+  (void)PQC_ResultBufferAppendText(0U, "application", "workload_complete");
+  {
+    PQC_ResultBufferStatus result_status;
+    char result_sha256[65];
+    PQC_ResultBufferStatusGet(&result_status);
+    PQC_ResultBufferSha256Hex(result_sha256);
+    if (PQC_WolfMQTT_PublishDeferredResults(
+            PQC_ResultBufferData(), PQC_ResultBufferSize(), result_sha256,
+            result_status.record_count, result_status.dropped_record_count,
+            result_status.overflowed != 0U) != 0)
+    {
+      APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_deferred_results\r\n");
+    }
+  }
   osThreadExit();
 }
 

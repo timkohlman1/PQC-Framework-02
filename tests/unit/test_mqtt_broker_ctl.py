@@ -81,3 +81,29 @@ def test_broker_ctl_has_no_certificate_provisioning_subcommand():
             pass
         else:
             raise AssertionError(f"legacy certificate provisioning command still exists: {command}")
+
+
+def test_status_accepts_reporting_profile_and_targets_reporting_service(monkeypatch):
+    module = load_module()
+    parser = module.build_parser()
+    args = parser.parse_args(["status", "--profile", "reporting"])
+    calls = []
+
+    monkeypatch.setattr(module, "compose_remote", lambda namespace, compose_args: calls.append(compose_args))
+    args.func(args)
+
+    assert args.profile == "reporting"
+    assert calls == [["ps", "mqtt-reporting"]]
+
+
+def test_status_defaults_to_classical_profile(monkeypatch):
+    module = load_module()
+    parser = module.build_parser()
+    args = parser.parse_args(["status"])
+    calls = []
+
+    monkeypatch.setattr(module, "compose_remote", lambda namespace, compose_args: calls.append(compose_args))
+    args.func(args)
+
+    assert args.profile == "classical"
+    assert calls == [["ps", "mqtt-classical"]]

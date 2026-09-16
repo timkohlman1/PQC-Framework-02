@@ -773,3 +773,70 @@ def test_build_mqtt_tls_result_model_can_embed_fake_transport_without_runtime_cl
     assert result["evidence_boundaries"]["claims_network_success"] is False
     assert result["evidence_boundaries"]["claims_tls_success"] is False
     assert result["evidence_boundaries"]["claims_mqtt_success"] is False
+
+
+def _minimal_evidence_manifest_for_network_condition() -> dict[str, object]:
+    return {
+        "artifacts": [
+            {
+                    "artifact_id": "network_condition_record",
+                    "source_class": "network_control",
+                    "role": "network_condition_record",
+                    "path": None,
+                    "producer": None,
+                    "size_bytes": None,
+                    "sha256": None,
+                    "requirement": "required",
+                    "acquisition": {"status": "pending", "reason": None},
+            }
+        ]
+    }
+
+
+def test_network_condition_record_is_not_frozen_while_impairment_is_active(tmp_path):
+    manifest_module = load_manifest_module()
+    manifest_path = tmp_path / "manifest.json"
+    log_path = tmp_path / "gateway-network-degradation.log"
+    log_path.write_text("applied-state\n", encoding="utf-8")
+    manifest = _minimal_evidence_manifest_for_network_condition()
+
+    manifest_module._sync_legacy_evidence(
+        manifest_path,
+        manifest,
+        {
+            "network_degradation": {
+                "enabled": True,
+                "status": "applied",
+                "log": log_path.name,
+            }
+        },
+    )
+
+    item = manifest["artifacts"][0]
+    assert item["acquisition"]["status"] == "pending"
+    assert item["sha256"] is None
+
+
+def test_network_condition_record_is_frozen_after_cleanup(tmp_path):
+    manifest_module = load_manifest_module()
+    manifest_path = tmp_path / "manifest.json"
+    log_path = tmp_path / "gateway-network-degradation.log"
+    log_path.write_text("applied-state\nrestored-state\n", encoding="utf-8")
+    manifest = _minimal_evidence_manifest_for_network_condition()
+
+    manifest_module._sync_legacy_evidence(
+        manifest_path,
+        manifest,
+        {
+            "network_degradation": {
+                "enabled": True,
+                "status": "removed",
+                "log": log_path.name,
+            }
+        },
+    )
+
+    item = manifest["artifacts"][0]
+    assert item["acquisition"]["status"] == "available"
+    assert item["path"] == log_path.name
+    assert item["sha256"]

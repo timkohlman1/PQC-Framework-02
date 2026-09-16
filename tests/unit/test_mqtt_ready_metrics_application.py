@@ -1,20 +1,19 @@
 from pathlib import Path
 
-def test_ready_metrics_application_is_profile_selected_and_persistent():
+def test_ready_metrics_application_is_profile_selected_and_returns_for_deferred_reporting():
     cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
     source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     app = Path("Core/Src/pqc_mqtt_application_ready_metrics.c").read_text(encoding="utf-8")
+    main = Path("Core/Src/main.c").read_text(encoding="utf-8")
     assert 'PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_ready_metrics"' in cmake
     assert 'run_ready_metrics_workload' in app
     assert 'before_tcp_connect' in source
     assert '"ready"' in source
     assert 'connect_timing' in source
-    assert 'vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U))' in source
-    assert 'uxTaskGetStackHighWaterMark(NULL)' in source
-    assert 'xPortGetFreeHeapSize()' in source
-    assert 'xPortGetMinimumEverFreeHeapSize()' in source
-    assert 'metrics_count == 2U' in source
-    assert 'for (;;) {' in source
+    assert 'vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U))' not in source
+    assert 'metrics_count == 2U' not in source
+    assert 'PQC_ResultBufferAppendText(0U, "memory", line)' in main
+    assert 'PQC_WolfMQTT_PublishDeferredResults' in main
 
 
 def test_application_entry_point_is_owned_only_by_root_cmake():
@@ -94,14 +93,15 @@ def test_ready_metrics_subscriber_contract_rejects_missing_metric():
     assert evidence["metrics_valid"] is False
 
 
-def test_ready_metrics_host_validator_is_device_initiated():
+def test_ready_metrics_host_validator_uses_workload_ready_plus_reporting_collector():
     cli_source = Path("scripts/experiment.py").read_text(encoding="utf-8")
 
-    assert 'expected_response_count = 17 if ready_metrics_2_application' in cli_source
-    assert 'Publisher disabled: selected ready-metrics application is device-initiated.' in cli_source
-    assert 'Starting MQTT ready/timing/metrics validation' in cli_source
-    assert 'ready_connect_timing_two_memory_metrics' in cli_source
-    assert 'PQC_APP_METRICS sequence=2' in cli_source
+    assert 'expected_response_count = 1 if ready_metrics_application' in cli_source
+    assert 'scientific evidence is deferred to the reporting broker' in cli_source
+    assert 'reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"' in cli_source
+    assert 'stop_and_collect_gateway_result_collector(' in cli_source
+    pass_predicate = cli_source[cli_source.index('broker_response_passed = ('):cli_source.index('passed = broker_response_passed')]
+    assert 'missing_uart_markers' not in pass_predicate
 
 
 
@@ -123,8 +123,9 @@ def test_ready_metrics_2_application_defines_paper_comparable_ttfb_boundary():
     rm2_source = source[source.index("int PQC_WolfMQTT_RunReadyMetrics2Application("):]
     assert "PQC_MQTT_TRANSFER_RESPONSE_TOPIC" in rm2_source
     assert "PQC_MQTT_TRANSFER_REQUEST_TOPIC" in rm2_source
-    assert "tcp_connect_start_to_last_byte_of_requested_application_payload" in rm2_source
-    assert "message_context.transfer_received_bytes" in rm2_source
+    assert "s_ready_metrics_2_snapshot.ttlb_ms" in rm2_source
+    assert "s_ready_metrics_2_snapshot.transfer_received_bytes" in rm2_source
+    assert "tcp_connect_start_to_last_byte_of_requested_application_payload" in source
     assert rm2_source.index("while (!message_context.transfer_complete)") < rm2_source.index(
         'result = PQC_WolfMQTT_PublishText(&client, "ready", 4U);'
     )

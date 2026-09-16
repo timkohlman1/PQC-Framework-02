@@ -199,6 +199,22 @@ add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
 
+# Request 15 UART transport modes. disabled is a true compile-time exclusion:
+# do not link the HAL UART implementation when the experiment profile disables UART.
+if(PQC_UART_OUTPUT_MODE STREQUAL "disabled")
+    set(PQC_UART_OUTPUT_MODE_VALUE 0)
+    list(REMOVE_ITEM STM32_Drivers_Src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
+    )
+elseif(PQC_UART_OUTPUT_MODE STREQUAL "minimal")
+    set(PQC_UART_OUTPUT_MODE_VALUE 1)
+elseif(PQC_UART_OUTPUT_MODE STREQUAL "full")
+    set(PQC_UART_OUTPUT_MODE_VALUE 2)
+else()
+    message(FATAL_ERROR "Unsupported UART output mode: ${PQC_UART_OUTPUT_MODE}")
+endif()
+
 # Create STM32_Drivers static library
 add_library(STM32_Drivers OBJECT)
 target_sources(STM32_Drivers PRIVATE ${STM32_Drivers_Src})
@@ -238,6 +254,7 @@ endif()
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_STM32_MQTT_APPLICATION_NAME="${PQC_STM32_MQTT_APPLICATION}"
     PQC_UART_LOG_LEVEL=${PQC_UART_LOG_LEVEL_VALUE}
+    PQC_UART_OUTPUT_MODE=${PQC_UART_OUTPUT_MODE_VALUE}
 )
 
 # Link directories setup

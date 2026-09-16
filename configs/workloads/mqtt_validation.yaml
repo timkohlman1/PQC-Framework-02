@@ -3,5 +3,6 @@ profile_type: workload
 id: mqtt_validation
 firmware_application: mqtt_validation
 uart_log_level: info
+uart_output_mode: minimal
 evidence:
   deferred_reporting: true

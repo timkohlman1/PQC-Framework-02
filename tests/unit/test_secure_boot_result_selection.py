@@ -74,10 +74,7 @@ def test_secure_boot_timing_assertions_accept_fractional_milliseconds():
         'isinstance(manifest["boot_timing"]["derived_verification_time_ms"], '
         '(int, float))'
     ) in source
-    assert (
-        'isinstance(manifest["uart"]["derived_verification_time_ms"], '
-        '(int, float))'
-    ) in source
+    assert '"derived_verification_time_ms" not in manifest["uart"]' in source
     assert (
         'isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], '
         '(int, float))'

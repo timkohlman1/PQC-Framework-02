@@ -150,6 +150,11 @@ class ConfigResolver:
             _require(data, "class", str(path))
         elif domain == "workload":
             _require(data, "firmware_application", str(path))
+            uart_mode = str(data.get("uart_output_mode", "minimal"))
+            if uart_mode not in {"disabled", "minimal", "full"}:
+                raise ResolutionError(
+                    f"{path}: uart_output_mode must be disabled, minimal, or full"
+                )
         elif domain == "secure_boot":
             _require(data, "wolfboot", str(path))
 
@@ -215,6 +220,9 @@ class ConfigResolver:
         if auth_mode not in tls_auth.data["supported_modes"]:
             raise ResolutionError(f"tls_auth '{tls_auth.profile_id}' does not support auth_mode '{auth_mode}'")
         effective_workload = _deep_merge(workload.data, workload_overrides)
+        uart_mode = str(effective_workload.get("uart_output_mode", "minimal"))
+        if uart_mode not in {"disabled", "minimal", "full"}:
+            raise ResolutionError("workload uart_output_mode must be disabled, minimal, or full")
         transfer = effective_workload.get("transfer", {})
         if transfer:
             payload = int(_require(transfer, "payload_bytes", f"workload {workload.profile_id}.transfer"))
@@ -289,6 +297,11 @@ class ConfigResolver:
         root = output_root or self.repo_root / ".pqc-generated-state" / "campaigns" / str(campaign_data["id"])
         cases_dir = root / "cases"
         cases_dir.mkdir(parents=True, exist_ok=True)
+        # Materialized campaign state is derivative. Remove prior generated case
+        # files before writing the new expansion so callers cannot accidentally
+        # select a stale case left behind after profile/content changes.
+        for stale_case in cases_dir.glob("*.yaml"):
+            stale_case.unlink()
         summary = {"schema_version": SCHEMA_VERSION, "resolver_version": RESOLVER_VERSION,
                    "campaign": campaign_data["id"], "source": path.relative_to(self.repo_root).as_posix(),
                    "case_count": len(cases), "cases": []}
@@ -327,6 +340,7 @@ class ConfigResolver:
         auth = self.load_profile("tls_auth", c["tls_auth"]).data
         network = self.load_profile("network_condition", c["network_condition"]).data
         exp_service = self.load_service("mqtt_broker", s["services"]["experiment_broker"]).data
+        reporting_service = self.load_service("mqtt_broker", s["services"]["reporting_broker"]).data
         auth_mode = c["auth_mode"]
         klass = kex["class"]
         mode_prefix = "classical_tls" if klass == "classical" else ("pqc_hybrid_tls" if klass == "hybrid_pqc" else "pqc_tls")
@@ -406,6 +420,7 @@ class ConfigResolver:
             "id": case["id"], "description": f"Resolved canonical case {case['id']}",
             "board": board_id, "host": host_id, "boot": "direct_flash",
             "firmware": {"application": workload["firmware_application"], "uart_log_level": workload.get("uart_log_level", "info"),
+                         "uart_output_mode": workload.get("uart_output_mode", "minimal"),
                          "mode": "direct_flash", "artifact": target["build"]["artifact"]},
             "network": {"wifi": {"ssid": ssid, "psk": psk}, "ipv4": {"mode": target["network"]["ipv4_mode"]},
                         "packet_capture": {"enabled": True, "interface": gateway["network"]["capture_interface"]},
@@ -413,6 +428,17 @@ class ConfigResolver:
             "mqtt": mqtt,
             "uart": {"expected_boot_message": target["uart"]["expected_boot_message"], "expected_tick_message": target["uart"]["expected_tick_message"]},
             "services": {"experiment_broker": s["services"]["experiment_broker"], "reporting_broker": s["services"]["reporting_broker"]},
+            "structured_reporting": {"enabled": True, "schema_version": 1},
+            "reporting": {
+                "host": reporting_service["listener"]["host"],
+                "port": int(reporting_service["listener"]["port"]),
+                "transport": "plaintext",
+                "tls_enabled": False,
+                "impairment_exempt": True,
+                "control_run_id_topic": "pqc/control/run-id/current",
+                "stm32_topic_prefix": "pqc/result/stm32",
+                "instrument_topic_prefix": "pqc/instrument",
+            },
             "instruments": resolved_instruments,
             "resolved_configuration": {
                 "schema_version": SCHEMA_VERSION,

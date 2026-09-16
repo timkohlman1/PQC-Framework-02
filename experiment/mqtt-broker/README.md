@@ -366,7 +366,7 @@ In Wireshark, open **Edit → Preferences → Protocols → TLS** and select the
 
 ## Reporting broker
 
-Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/results/#` and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
+Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/result/#`, `pqc/instrument/#`, and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
 
 The reporting service health check performs a deterministic retained publish/subscribe round trip on `pqc/control/health`, then clears the retained probe. This validates broker readiness and the configured reporting ACL without relying on periodic `$SYS` publications or TLS/PKI material.
 

@@ -122,3 +122,20 @@ def test_secure_boot_campaign_uses_runnable_mqtt_validation_workload(monkeypatch
     bundle = resolver.to_legacy_bundle(cases[0])
     assert bundle['experiment']['firmware']['application'] == 'mqtt_validation'
 
+
+
+def test_materialize_campaign_removes_stale_generated_case_files(tmp_path):
+    resolver = ConfigResolver(ROOT)
+    output = tmp_path / "generated"
+    root = resolver.materialize_campaign("baseline", output)
+    cases_dir = root / "cases"
+    stale = cases_dir / "0000_stale.yaml"
+    stale.write_text("kind: resolved_case\n", encoding="utf-8")
+    assert stale.exists()
+
+    resolver.materialize_campaign("baseline", output)
+
+    assert not stale.exists()
+    materialized = sorted(cases_dir.glob("*.yaml"))
+    assert materialized
+    assert all(resolver.load_resolved_case(path)["kind"] == "resolved_case" for path in materialized)

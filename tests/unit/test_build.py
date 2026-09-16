@@ -838,6 +838,7 @@ def test_write_application_selection_uses_profile_application(tmp_path):
     assert path.read_text(encoding="utf-8") == (
         'set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")\n'
         'set(PQC_UART_LOG_LEVEL "info")\n'
+        'set(PQC_UART_OUTPUT_MODE "minimal")\n'
     )
 
 
@@ -922,3 +923,24 @@ def test_ready_metrics_2_wifi_header_contains_transfer_contract(tmp_path):
     assert '#define PQC_MQTT_TRANSFER_REQUEST_PAYLOAD "send"' in header
     assert "#define PQC_MQTT_TRANSFER_PAYLOAD_BYTES 204800U" in header
     assert "#define PQC_MQTT_TRANSFER_CHUNK_BYTES 400U" in header
+
+
+def test_write_application_selection_supports_uart_output_modes(tmp_path):
+    build = load_build_module()
+    for mode in ("disabled", "minimal", "full"):
+        bundle = sample_bundle()
+        bundle["experiment"]["firmware"]["uart_output_mode"] = mode
+        path, _ = build._write_application_selection(bundle, tmp_path, mode)
+        assert f'set(PQC_UART_OUTPUT_MODE "{mode}")' in path.read_text(encoding="utf-8")
+
+
+def test_write_application_selection_rejects_unknown_uart_output_mode(tmp_path):
+    build = load_build_module()
+    bundle = sample_bundle()
+    bundle["experiment"]["firmware"]["uart_output_mode"] = "sometimes"
+    try:
+        build._write_application_selection(bundle, tmp_path, "Release")
+    except ValueError as exc:
+        assert "Unsupported UART output mode" in str(exc)
+    else:
+        raise AssertionError("unknown UART output mode should be rejected")

@@ -354,16 +354,15 @@ def test_pqc_readiness_requires_subscriber_and_publisher_success():
     assert 'sub_rc=$?' in readiness
     assert '"$publisher_file" 2>&1; pub_rc=$?' in readiness
 
-def test_pqc_uart_capture_uses_profile_hard_limit_and_current_boot_epoch():
+def test_pqc_capture_uses_reporting_completion_and_uart_only_as_diagnostics():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     assert 'hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))' in source
-    assert 'boot_marker = str(experiment["uart"]["expected_boot_message"])' in source
-    assert 'timeout 0.2s cat {device} >/dev/null 2>&1 || true' in source
+    assert 'reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"' in source
+    assert 'grep -Fq "$reporting_completion_topic"' in source
+    assert 'termination_reason=reporting_complete' in source
+    assert 'uart_output_mode == "disabled"' in source
+    assert 'sleep {hard_limit_seconds}' in source
     assert 'timeout {hard_limit_seconds}s cat' in source
-    assert 'boot_marker={shlex.quote(boot_marker)}; boot_seen=0' in source
-    assert 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi' in source
-    assert 'if [ "$boot_seen" -eq 0 ]; then continue; fi' in source
-    assert '[ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"' in source
     assert 'boot_marker_present=$boot_seen' in source
     assert 'hard_limit_seconds={hard_limit_seconds}' in source
 
@@ -377,18 +376,15 @@ def test_pqc_command_publisher_failures_are_retained():
     assert 'publish_rc=$?' in source
 
 
-def test_mqtt_uart_completion_is_observed_only_after_boot_and_publish():
+def test_mqtt_run_completion_is_reporting_stream_authoritative():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     capture_block = source[source.index("def _execute_mqtt_e2e_uart_capture"):]
-    legacy_branch = capture_block[capture_block.index("    else:\n        script = ("):]
 
-    boot_check = legacy_branch.index('grep -Fq "$boot_marker" "$uart_file"')
-    completion_check = legacy_branch.index('grep -Fq "$completion_marker" "$uart_file"')
-    publish = legacy_branch.index('attempts=$((attempts + 1))')
-    common_suffix = legacy_branch.index("+ common_suffix")
-
-    assert boot_check < completion_check < publish < common_suffix
-    assert '[ "$attempts" -gt 0 ]' in legacy_branch[completion_check - 120:completion_check]
+    reporting_topic = capture_block.index('reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"')
+    reporting_check = capture_block.index('grep -Fq "$reporting_completion_topic"')
+    assert reporting_topic < reporting_check
+    assert 'termination_reason=reporting_complete' in capture_block
+    assert 'grep -Fq "$completion_marker" "$uart_file"' not in capture_block
     assert "duration_seconds=hard_limit_seconds" in capture_block
 
 
@@ -574,3 +570,11 @@ def test_managed_broker_start_uses_resolved_classical_listener_port():
     start = source[source.index("def _start_managed_mqtt_broker"):source.index("def _collect_and_stop_managed_mqtt_broker")]
     assert 'profile in {"classical", "classical-server-auth"}' in start
     assert 'start_args.extend(["--classical-port", str(broker_port)])' in start
+
+
+def test_managed_broker_checks_reporting_profile_status():
+    source = (REPO_ROOT / "scripts" / "experiment.py").read_text(encoding="utf-8")
+    start = source[source.index("def _start_managed_mqtt_broker"):source.index("def _collect_and_stop_managed_mqtt_broker")]
+    assert 'step_name="reporting-status", subcommand="status"' in start
+    assert 'extra_args=[*common, "--profile", "reporting"]' in start
+    assert '"reporting_broker_status"' in start

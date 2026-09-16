@@ -128,6 +128,7 @@ def infer_experiment_features(bundle: dict[str, dict[str, Any]]) -> dict[str, bo
     ota = "ota" in workload.lower() or "update" in workload.lower()
     energy = "energy" in instruments and instruments.get("energy") not in (None, {}, "")
     structured_reporting = bool(experiment.get("structured_reporting", {}).get("enabled")) if isinstance(experiment.get("structured_reporting"), dict) else False
+    uart_output_mode = str(firmware.get("uart_output_mode", "minimal")).strip().lower()
 
     primary = "build_only" if build_only else "tls_runtime" if tls_runtime else "mqtt_plaintext_runtime" if mqtt_runtime else "secure_boot" if secure_boot else "generic_runtime"
     return {
@@ -140,6 +141,7 @@ def infer_experiment_features(bundle: dict[str, dict[str, Any]]) -> dict[str, bo
         "ota": ota,
         "energy": energy,
         "structured_reporting": structured_reporting,
+        "uart_output_mode": uart_output_mode,
     }
 
 
@@ -185,7 +187,12 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
         items += [
             _contract_item("deployment_provenance", "required", "deployment"),
             _contract_item("flash_log", "optional", "deployment"),
-            _contract_item("diagnostic_uart", "required", "stm32_runtime"),
+            _contract_item(
+                "diagnostic_uart",
+                "not_applicable" if features["uart_output_mode"] == "disabled" else "optional",
+                "stm32_runtime",
+                reason="UART is compile-time disabled for this firmware." if features["uart_output_mode"] == "disabled" else "Diagnostic/fallback evidence only; structured result acceptance does not depend on UART.",
+            ),
             _contract_item("experiment_broker_log", "required", "broker"),
             _contract_item("packet_capture", "required", "network"),
             _contract_item("observer_evidence", "required", "broker_observer"),
@@ -193,7 +200,7 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
                 "stm32_result_stream",
                 "required" if features["structured_reporting"] else "optional",
                 "stm32_runtime",
-                reason=None if features["structured_reporting"] else "Deferred structured reporting is introduced by Request 15.",
+                reason=None if features["structured_reporting"] else "Structured reporting is unavailable for this legacy case.",
             ),
         ]
         items.append(
@@ -436,6 +443,8 @@ def _infer_discovered_metadata(relative: str) -> tuple[str, str]:
         return "network", "tls_key_log"
     if name == "mqtt-broker-log.log":
         return "broker", "experiment_broker_log"
+    if name == "mqtt-reporting-raw.ndjson":
+        return "stm32_runtime", "stm32_result_stream"
     if "reporting" in name and suffix == ".log":
         return "broker", "reporting_broker_log"
     if name == "mqtt-broker-message-evidence.json":

@@ -3,6 +3,7 @@ profile_type: workload
 id: ready_metrics_2
 firmware_application: mqtt_ready_metrics_2
 uart_log_level: info
+uart_output_mode: minimal
 evidence:
   deferred_reporting: true
 transfer:

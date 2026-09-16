@@ -96,10 +96,18 @@ def packet_capture_config(bundle: dict[str, dict[str, Any]]) -> dict[str, Any] |
             "network.packet_capture.stm32_mac_address must use six colon-separated hexadecimal octets"
         )
 
+    base_filter = f"ether host {mac_address}" if mac_address else None
+    reporting_port = 1886
+    capture_filter = (
+        f"({base_filter}) and not port {reporting_port}"
+        if base_filter
+        else f"not port {reporting_port}"
+    )
     return {
         "interface": interface,
         "stm32_mac_address": mac_address or None,
-        "capture_filter": f"ether host {mac_address}" if mac_address else None,
+        "capture_filter": capture_filter,
+        "reporting_port_excluded": reporting_port,
     }
 
 

@@ -94,6 +94,10 @@ from framework.packet_capture import (
     start_gateway_packet_capture,
     stop_and_collect_gateway_packet_capture,
 )
+from framework.result_collector import (
+    start_gateway_result_collector,
+    stop_and_collect_gateway_result_collector,
+)
 from framework.network_degradation import (
     apply_gateway_network_degradation,
     degradation_manifest,
@@ -983,6 +987,15 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     if reporting_start.return_code != 0:
         update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": "reporting_broker_start"}})
         return False, "reporting_broker_start"
+    emit_progress("broker", "Checking reporting broker status", detail="Mandatory plaintext reporting profile.")
+    reporting_status = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="reporting-status", subcommand="status",
+        extra_args=[*common, "--profile", "reporting"],
+    )
+    steps["reporting-status"] = {"return_code": reporting_status.return_code, "log": "mqtt-broker-reporting-status.log"}
+    if reporting_status.return_code != 0:
+        update_manifest(result_dir / "manifest.json", {"mqtt_broker": {"managed_by_experiment": True, "profile": profile, "steps": steps, "readiness_passed": False, "failure_stage": "reporting_broker_status"}})
+        return False, "reporting_broker_status"
     emit_progress("broker", "Waiting for MQTT broker readiness", detail="Gateway-side publish/subscribe readiness probe.")
     readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
     emit_progress("broker", "MQTT broker readiness probe complete" if readiness.return_code == 0 else "MQTT broker readiness probe failed", detail=f"Return code: {readiness.return_code}; log: mqtt-broker-readiness.log")
@@ -1235,7 +1248,7 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
             if "=" not in token:
                 continue
             key, value = token.split("=", 1)
-            if key in {"boot_marker_present", "completion_marker_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
+            if key in {"boot_marker_present", "reporting_complete_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
                 try:
                     values[key] = int(value)
                     continue
@@ -1493,6 +1506,20 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
+    result_collector, collector_start = start_gateway_result_collector(
+        bundle=bundle, repo_root=repo_root, result_dir=result_dir, run_id=result_dir.name
+    )
+    update_manifest(result_dir / "manifest.json", {"result_collection": {
+        "required": True,
+        "raw_stream": "mqtt-reporting-raw.ndjson",
+        "collector_log": "mqtt-reporting-collector.log",
+        "start_return_code": collector_start.return_code,
+        "status": "running" if result_collector is not None else "start_failed",
+    }})
+    if result_collector is None:
+        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "result_collector_start"
+
     packet_capture, packet_capture_start = start_gateway_packet_capture(
         bundle=bundle,
         repo_root=repo_root,
@@ -1514,6 +1541,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             },
         )
     if packet_capture is None:
+        stop_and_collect_gateway_result_collector(collector=result_collector, repo_root=repo_root, result_dir=result_dir)
         _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture_start"
     emit_progress(
@@ -1562,7 +1590,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
     ready_metrics_application = _is_device_initiated_metrics_application(bundle)
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 17 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
+    expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
@@ -1687,17 +1715,26 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             f'echo "$responder_rc" >"{transfer_responder_rc_file}"; exit "$responder_rc"; '
             ') & transfer_responder_pid=$!; '
         )
+    uart_output_mode = str(experiment.get("firmware", {}).get("uart_output_mode", "minimal")).lower()
+    if uart_output_mode == "disabled":
+        uart_capture_setup = f': >"$uart_file"; sleep {hard_limit_seconds} & capture_pid=$!; '
+    else:
+        uart_capture_setup = (
+            f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
+            f"timeout 0.2s cat {device} >/dev/null 2>&1 || true; "
+            f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
+        )
+    reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"
+    reporting_stream = shlex.quote(result_collector.remote_stream_path)
     common_prefix = (
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
-        f"stty -F {device} {baud} cs8 -cstopb -parenb raw -echo || exit $?; "
-        f"timeout 0.2s cat {device} >/dev/null 2>&1 || true; "
         + subscriber_command
         + transfer_responder_command
-        + f'timeout {hard_limit_seconds}s cat {device} >"$uart_file" & capture_pid=$!; '
+        + uart_capture_setup
         + f"{restart_command} 1>&2; reset_rc=$?; "
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
-        + f'completion_marker={shlex.quote(_mqtt_completion_marker(bundle))}; completion_seen=0; '
+        + f'reporting_completion_topic={shlex.quote(reporting_completion_topic)}; reporting_complete_seen=0; '
     )
     subscriber_cleanup = (
         f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
@@ -1722,15 +1759,15 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + f'cat "{transfer_responder_log}" 1>&2; echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; fi; '
         )
     common_suffix = (
-        f'if [ "$completion_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
+        f'if [ "$reporting_complete_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
         'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
-        + 'if [ "$completion_seen" -eq 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; fi; '
-        + 'termination_reason=hard_timeout; [ "$completion_seen" -eq 1 ] && termination_reason=completion_marker; '
-        + 'normalized_capture_rc=$capture_rc; [ "$completion_seen" -eq 1 ] && normalized_capture_rc=0; '
+        + f'if [ "$reporting_complete_seen" -eq 0 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
+        + 'termination_reason=hard_timeout; [ "$reporting_complete_seen" -eq 1 ] && termination_reason=reporting_complete; '
+        + 'normalized_capture_rc=$capture_rc; [ "$reporting_complete_seen" -eq 1 ] && normalized_capture_rc=0; '
         + 'cat "$uart_file"; '
         + 'response_count=$(grep -c . "$response_file" || true); response=$(paste -sd, "$response_file"); '
         + "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
@@ -1740,11 +1777,11 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             common_prefix
             + 'while kill -0 "$capture_pid" 2>/dev/null; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + 'if [ "$boot_seen" -eq 1 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
             + 'sleep 1; done; '
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
-            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
             + f'rm -f "$response_file" "$uart_file" "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
@@ -1754,9 +1791,9 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + 'attempts=0; publish_failures=0; publish_rc=0; '
             + f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + 'if [ "$boot_seen" -eq 1 ] && [ "$attempts" -gt 0 ] && grep -Fq "$completion_marker" "$uart_file"; then completion_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
             + f"sleep {publish_interval}; "
-            + 'if [ "$boot_seen" -eq 0 ]; then continue; fi; attempts=$((attempts + 1)); '
+            + 'attempts=$((attempts + 1)); '
             + f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(publisher_client_id)} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
             + 'if [ "$publish_rc" -ne 0 ]; then publish_failures=$((publish_failures + 1)); fi; done; '
             + common_suffix
@@ -1765,7 +1802,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             + '[ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
             + 'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
-            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen completion_marker_present=$completion_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
             + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
@@ -1822,9 +1859,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 detail=(
                     f"Subscriber topic: {topics['response']}; expected messages: "
                     + (
-                        "17-message Ready Metrics 2 timing/TLS/TTLB bundle."
-                        if ready_metrics_2_application
-                        else "1 ready, 1 connect timing, and 2 memory metrics."
+                        "1 workload-ready response; scientific evidence is deferred to the reporting broker."
                     )
                 ),
             )
@@ -1849,24 +1884,21 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         }
         subscriber_evidence_integrity["passed"] = all(subscriber_evidence_integrity.values())
         if ready_metrics_application:
-            ready_metrics_evidence = (
-                _parse_ready_metrics_2_subscriber_output(
-                    persisted_subscriber_output, response_topic=str(topics["response"])
-                )
-                if ready_metrics_2_application
-                else _parse_ready_metrics_subscriber_output(
-                    persisted_subscriber_output, response_topic=str(topics["response"])
-                )
-            )
+            # Request 15 leaves only the workload's ready/application response on
+            # the experiment broker. Scientific result records are validated by
+            # the dedicated reporting collector instead of this subscriber.
+            ready_metrics_evidence = {
+                "passed": "ready" in persisted_subscriber_output,
+                "message_count": marker.get("response_count", 0),
+                "ready_count": 1 if "ready" in persisted_subscriber_output else 0,
+                "timing_count": 0,
+                "metrics_count": 0,
+            }
             broker_response_passed = (
                 marker.get("subscriber_rc") == 0
                 and marker.get("response_count") == expected_response_count
                 and marker.get("expected_response_count") == expected_response_count
-                and (
-                    marker.get("transfer_responder_rc") == 0
-                    if ready_metrics_2_application
-                    else True
-                )
+                and (marker.get("transfer_responder_rc") == 0 if ready_metrics_2_application else True)
                 and bool(ready_metrics_evidence.get("passed"))
                 and bool(subscriber_evidence_integrity.get("passed"))
             )
@@ -1878,7 +1910,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 and marker.get("expected_response_count") == expected_response_count
                 and bool(subscriber_evidence_integrity.get("passed"))
             )
-        passed = uart_result.return_code == 0 and broker_response_passed and not missing_uart_markers
+        passed = broker_response_passed
         if ready_metrics_application:
             emit_progress(
                 "mqtt",
@@ -1894,15 +1926,32 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         else:
             emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
         failure_stage = "none"
-        if uart_result.return_code != 0:
-            failure_stage = "uart"
-        elif not subscriber_evidence_integrity.get("passed", False):
+        if not subscriber_evidence_integrity.get("passed", False):
             failure_stage = "subscriber_evidence_integrity"
         elif not broker_response_passed:
             failure_stage = "broker_response"
-        elif missing_uart_markers:
-            failure_stage = "mqtt_uart_markers"
     finally:
+        collector_result = stop_and_collect_gateway_result_collector(
+            collector=result_collector, repo_root=repo_root, result_dir=result_dir
+        )
+        update_manifest(result_dir / "manifest.json", {"result_collection": {
+            "required": True,
+            "status": "complete" if collector_result.return_code == 0 else "invalid",
+            "raw_stream": None if collector_result.raw_stream_path is None else collector_result.raw_stream_path.name,
+            "collector_log": collector_result.log_path.name,
+            "completion_integrity": collector_result.validation.passed,
+            "record_count": collector_result.validation.record_count,
+            "completion_count": collector_result.validation.completion_count,
+            "observed_chunk_count": collector_result.validation.observed_chunk_count,
+            "expected_chunk_count": collector_result.validation.expected_chunk_count,
+            "logical_sha256": collector_result.validation.observed_sha256,
+            "source_integrity": collector_result.validation.source_results,
+            "failure_reason": collector_result.failure_reason,
+        }})
+        if collector_result.return_code != 0:
+            passed = False
+            if failure_stage == "none":
+                failure_stage = "result_collection"
         degradation_cleanup_result = None
         if network_degradation is not None:
             degradation_cleanup_result = remove_gateway_network_degradation(
@@ -2055,7 +2104,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
             "broker_message_evidence": broker_message_evidence,
             "broker_message_evidence_log": "mqtt-broker-message-evidence.json",
             "capture_termination_reason": capture_marker.get("termination_reason") if uart_result is not None else None,
-            "completion_marker_present": capture_marker.get("completion_marker_present") if uart_result is not None else None,
+            "reporting_complete_present": capture_marker.get("reporting_complete_present") if uart_result is not None else None,
             "completion_grace_seconds": completion_grace_seconds,
             "hard_limit_seconds": duration_seconds,
         }
@@ -4948,6 +4997,7 @@ def _secure_boot_sample_from_uart_result(
 ) -> dict[str, Any]:
     """Convert one UART capture result into a Phase 11.2 benchmark sample."""
 
+    analysis = analyze_uart_capture(uart_result)
     marker_detection = {
         "boot_marker_present": uart_result.boot_marker_present,
         "tick_present": uart_result.tick_present,
@@ -4959,30 +5009,30 @@ def _secure_boot_sample_from_uart_result(
     }
     sample_passed = (
         uart_result.return_code == 0
-        and uart_result.derived_verification_time_ms is not None
-        and uart_result.verification_cycles is not None
+        and analysis.derived_verification_time_ms is not None
+        and analysis.verification_cycles is not None
     )
     return build_secure_boot_benchmark_sample(
         run_index=run_index,
         timestamp=format_manifest_timestamp(),
-        derived_verification_time_ms=uart_result.derived_verification_time_ms,
-        verification_cycles=uart_result.verification_cycles,
-        bootloader_hclk_hz=uart_result.bootloader_hclk_hz,
-        verification_result_code=uart_result.verification_result_code,
-        verification_time_source=uart_result.verification_time_source,
+        derived_verification_time_ms=analysis.derived_verification_time_ms,
+        verification_cycles=analysis.verification_cycles,
+        bootloader_hclk_hz=analysis.bootloader_hclk_hz,
+        verification_result_code=analysis.verification_result_code,
+        verification_time_source=analysis.verification_time_source,
         verification_cycles_source=(
             "uart_explicit_verification_cycles_marker"
-            if uart_result.verification_cycles is not None
+            if analysis.verification_cycles is not None
             else "unavailable"
         ),
         uart_marker_detection_result=marker_detection,
         sample_verdict="passed" if sample_passed else "failed",
         referenced_artifact_identity=artifact_identity,
-        max_stack_used_bytes=getattr(uart_result, "max_stack_used_bytes", None),
-        stack_metric_source=getattr(uart_result, "stack_metric_source", "unavailable"),
-        heap_used_bytes=getattr(uart_result, "heap_used_bytes", None),
-        heap_metric_source=getattr(uart_result, "heap_metric_source", "unavailable"),
-        runtime_memory_limitations=getattr(uart_result, "runtime_memory_limitations", None),
+        max_stack_used_bytes=analysis.max_stack_used_bytes,
+        stack_metric_source=analysis.stack_metric_source,
+        heap_used_bytes=analysis.heap_used_bytes,
+        heap_metric_source=analysis.heap_metric_source,
+        runtime_memory_limitations=analysis.runtime_memory_limitations,
     )
 
 def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
@@ -5106,22 +5156,23 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     )
     boot_marker_present = None if uart_result is None else uart_result.boot_marker_present
     tick_present = None if uart_result is None else uart_result.tick_present
-    derived_verification_time_ms = None if uart_result is None else uart_result.derived_verification_time_ms
-    verification_cycles = None if uart_result is None else uart_result.verification_cycles
-    bootloader_hclk_hz = None if uart_result is None else uart_result.bootloader_hclk_hz
-    verification_result_code = None if uart_result is None else uart_result.verification_result_code
+    uart_analysis = None if uart_result is None else analyze_uart_capture(uart_result)
+    derived_verification_time_ms = None if uart_analysis is None else uart_analysis.derived_verification_time_ms
+    verification_cycles = None if uart_analysis is None else uart_analysis.verification_cycles
+    bootloader_hclk_hz = None if uart_analysis is None else uart_analysis.bootloader_hclk_hz
+    verification_result_code = None if uart_analysis is None else uart_analysis.verification_result_code
     verification_time_source = (
-        "unavailable" if uart_result is None else uart_result.verification_time_source
+        "unavailable" if uart_analysis is None else uart_analysis.verification_time_source
     )
     verification_time_measurement_method = (
         "UART capture did not run, so no verification timing source was available."
-        if uart_result is None
-        else uart_result.verification_time_measurement_method
+        if uart_analysis is None
+        else uart_analysis.verification_time_measurement_method
     )
     verification_time_limitations = (
         "No UART timing evidence was captured because UART was skipped or secure-boot flashing failed."
-        if uart_result is None
-        else uart_result.verification_time_limitations
+        if uart_analysis is None
+        else uart_analysis.verification_time_limitations
     )
     stack_sample_values = [
         sample.get("runtime_memory_metrics", {}).get("max_stack_used_bytes")
@@ -5129,11 +5180,11 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         if isinstance(sample.get("runtime_memory_metrics"), dict)
         and sample.get("runtime_memory_metrics", {}).get("max_stack_used_bytes") is not None
     ]
-    max_stack_used_bytes = max(stack_sample_values) if stack_sample_values else (None if uart_result is None else getattr(uart_result, "max_stack_used_bytes", None))
+    max_stack_used_bytes = max(stack_sample_values) if stack_sample_values else (None if uart_analysis is None else uart_analysis.max_stack_used_bytes)
     stack_metric_source = (
         "unavailable"
         if max_stack_used_bytes is None
-        else ("uart_explicit_stack_high_water_marker" if stack_sample_values else getattr(uart_result, "stack_metric_source", "unavailable"))
+        else ("uart_explicit_stack_high_water_marker" if stack_sample_values else uart_analysis.stack_metric_source)
     )
     heap_sample_values = [
         sample.get("runtime_memory_metrics", {}).get("heap_used_bytes")
@@ -5141,16 +5192,16 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         if isinstance(sample.get("runtime_memory_metrics"), dict)
         and sample.get("runtime_memory_metrics", {}).get("heap_used_bytes") is not None
     ]
-    heap_used_bytes = max(heap_sample_values) if heap_sample_values else (None if uart_result is None else getattr(uart_result, "heap_used_bytes", None))
+    heap_used_bytes = max(heap_sample_values) if heap_sample_values else (None if uart_analysis is None else uart_analysis.heap_used_bytes)
     heap_metric_source = (
         "unavailable"
         if heap_used_bytes is None
-        else ("uart_explicit_heap_marker" if heap_sample_values else getattr(uart_result, "heap_metric_source", "unavailable"))
+        else ("uart_explicit_heap_marker" if heap_sample_values else uart_analysis.heap_metric_source)
     )
     runtime_memory_limitations = (
         "No UART runtime memory evidence was captured because UART was skipped or secure-boot flashing failed."
-        if uart_result is None
-        else getattr(uart_result, "runtime_memory_limitations", "No explicit runtime memory evidence was available.")
+        if uart_analysis is None
+        else uart_analysis.runtime_memory_limitations
     )
     capture_completed = (
         False

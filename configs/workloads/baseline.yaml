@@ -3,5 +3,6 @@ profile_type: workload
 id: baseline
 firmware_application: baseline
 uart_log_level: info
+uart_output_mode: minimal
 evidence:
   deferred_reporting: true
