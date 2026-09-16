@@ -99,6 +99,49 @@ def test_configured_instrument_is_a_required_result_source(tmp_path):
     assert 'required energy source missing' in result.failure_reasons
 
 
+
+def test_collector_accepts_mosquitto_json_transport_wrapper(tmp_path):
+    run_id = "run-1"
+    logical = b'{"timing":1}\n'
+    topic = f"pqc/result/stm32/{run_id}/chunk"
+    chunk = {
+        "type": "chunk",
+        "source": "stm32",
+        "run_id": run_id,
+        "sequence": 0,
+        "data_hex": logical.hex(),
+    }
+    complete = _complete("stm32", run_id, logical, 1, 1)
+
+    def wrapped_line(message_topic: str, message: dict, mid: int) -> str:
+        return json.dumps({
+            "topic": message_topic,
+            "payload": {
+                "tst": "2026-09-16T19:21:52.000000+1000",
+                "topic": message_topic,
+                "qos": 1,
+                "retain": 0,
+                "payloadlen": len(json.dumps(message)),
+                "mid": mid,
+                "payload": json.dumps(message, separators=(",", ":")),
+            },
+        })
+
+    path = tmp_path / "raw.ndjson"
+    path.write_text(
+        "\n".join([
+            wrapped_line(topic, chunk, 1),
+            wrapped_line(f"pqc/result/stm32/{run_id}/complete", complete, 2),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_raw_stream(path, run_id)
+    assert result.passed
+    assert result.observed_chunk_count == 1
+    assert result.completion_count == 1
+    assert result.source_results["stm32"]["observed_record_count"] == 1
+
 def test_common_topics_include_stm32_and_enabled_instruments():
     bundle={"experiment":{"instruments":{"energy":{"profile":"esp32_ina228"}}}}
     assert result_topics(bundle,"r") == ("pqc/result/stm32/r/#","pqc/instrument/energy/r/#")

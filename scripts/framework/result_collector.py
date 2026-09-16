@@ -141,7 +141,16 @@ def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...]
             outer=json.loads(line)
             topic=str(outer.get("topic", ""))
             payload=outer.get("payload")
-            obj=json.loads(payload) if isinstance(payload,str) else payload
+            # mosquitto_sub %j emits a JSON metadata object whose own ``payload``
+            # member contains the application payload as a JSON string.  Keep the
+            # raw capture unchanged, but unwrap that transport metadata for
+            # integrity validation.  The simpler direct-string form remains
+            # supported for deterministic fixtures and compatible clients.
+            if isinstance(payload, dict) and "payload" in payload:
+                mqtt_payload=payload.get("payload")
+                obj=json.loads(mqtt_payload) if isinstance(mqtt_payload, str) else mqtt_payload
+            else:
+                obj=json.loads(payload) if isinstance(payload,str) else payload
         except Exception as exc:
             failures.append(f"line {lineno}: invalid JSON envelope: {exc}")
             continue
