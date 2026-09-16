@@ -97,6 +97,14 @@ function Invoke-DockerRun {
             $dockerArgs += @("-e", "PQC_WIFI_PSK")
         }
 
+        if ($env:PQC_CAMPAIGN_HW) {
+            $dockerArgs += @("-e", "PQC_CAMPAIGN_HW")
+        }
+
+        if ($env:PQC_CAMPAIGN_HW_CONFIG) {
+            $dockerArgs += @("-e", "PQC_CAMPAIGN_HW_CONFIG")
+        }
+
         if ($Gateway) {
             if (-not (Test-Path -LiteralPath $sshSource)) {
                 throw "Gateway mode requires an SSH directory. Set PQC_DOCKER_SSH_DIR or create $sshSource."

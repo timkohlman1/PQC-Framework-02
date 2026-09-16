@@ -76,6 +76,14 @@ run_container() (
     wifi_args="$wifi_args PQC_WIFI_PSK"
   fi
 
+  campaign_env_args=""
+  if [ -n "${PQC_CAMPAIGN_HW:-}" ]; then
+    campaign_env_args="$campaign_env_args -e PQC_CAMPAIGN_HW"
+  fi
+  if [ -n "${PQC_CAMPAIGN_HW_CONFIG:-}" ]; then
+    campaign_env_args="$campaign_env_args -e PQC_CAMPAIGN_HW_CONFIG"
+  fi
+
   # Build the docker invocation explicitly so secret values are inherited from
   # this temporary process environment (-e NAME), not exposed on the command
   # line as -e NAME=value.
@@ -89,6 +97,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
+        $campaign_env_args \
         -e PQC_WIFI_SSID \
         -e PQC_WIFI_PSK \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
@@ -99,6 +108,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
+        $campaign_env_args \
         -e PQC_WIFI_SSID \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
@@ -108,6 +118,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
+        $campaign_env_args \
         -e PQC_WIFI_PSK \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
@@ -117,6 +128,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
+        $campaign_env_args \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
         "$image_name" \
@@ -124,13 +136,13 @@ run_container() (
     fi
   else
     if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
     elif [ -n "${PQC_WIFI_SSID:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_SSID "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_SSID "$image_name" "$@"
     elif [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_PSK "$image_name" "$@"
     else
-      docker run --rm -v "$repo_root:/workspace" -w /workspace "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args "$image_name" "$@"
     fi
   fi
 )
