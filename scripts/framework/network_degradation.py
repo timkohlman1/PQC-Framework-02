@@ -88,16 +88,20 @@ def _resolve_veth_script(config:NetworkDegradationConfig)->str:
       f'service={service}; compose=$HOME/pqc-framework-02/experiment/mqtt-broker/compose.yaml; '
       'cid=$("$DOCKER" compose -p pqc-framework-mqtt-broker -f "$compose" ps -q "$service"); [ -n "$cid" ] || { echo PQC_NETDEG_ERROR=broker_container_not_running; exit 3; }; '
       'pid=$("$DOCKER" inspect -f "{{.State.Pid}}" "$cid"); [ "$pid" -gt 0 ] || exit 3; '
-      'peer_index=$(sudo -n "$NSENTER" -t "$pid" -n cat /sys/class/net/eth0/iflink); '
+      'container_iface=eth0; container_link=$(sudo -n "$NSENTER" -t "$pid" -n "$IP" -o link show dev "$container_iface"); '
+      'peer_index=$(printf "%s\\n" "$container_link" | sed -n "s/.*@if\\([0-9][0-9]*\\):.*/\\1/p"); '
+      '[ -n "$peer_index" ] || { echo PQC_NETDEG_ERROR=container_peer_index_not_found; exit 3; }; '
+      'container_mtu=$(printf "%s\\n" "$container_link" | sed -n "s/.* mtu \\([0-9][0-9]*\\) .*/\\1/p"); '
+      '[ -n "$container_mtu" ] || { echo PQC_NETDEG_ERROR=container_mtu_not_found; exit 3; }; '
       'iface=$("$IP" -o link show | grep "^$peer_index:" | cut -d: -f2 | cut -d@ -f1 | xargs); '
       '[ -n "$iface" ] || { echo PQC_NETDEG_ERROR=veth_not_found; exit 3; }; '
-      'echo PQC_EXPERIMENT_VETH=$iface; echo PQC_EXPERIMENT_CONTAINER_PID=$pid; '
+      'echo PQC_EXPERIMENT_VETH=$iface; echo PQC_EXPERIMENT_CONTAINER_IFACE=$container_iface; echo PQC_EXPERIMENT_CONTAINER_PID=$pid; '
     )
 
 def _remote_script(config:NetworkDegradationConfig)->str:
     delay=f'{config.one_way_delay_ms:g}ms'; loss=f'{config.loss_percent:g}%'; rate=f'{config.rate_kbit}kbit'; ifb=shlex.quote(config.ifb_interface)
     return ('set -eu; '+_remote_command_resolution_script()+_resolve_veth_script(config)+f'ifb={ifb}; '
-      'original_mtu=$(cat /sys/class/net/$iface/mtu); container_original_mtu=$(sudo -n "$NSENTER" -t "$pid" -n cat /sys/class/net/eth0/mtu); echo PQC_ORIGINAL_MTU=$original_mtu; echo PQC_CONTAINER_ORIGINAL_MTU=$container_original_mtu; '
+      'original_mtu=$(cat /sys/class/net/$iface/mtu); container_original_mtu=$container_mtu; echo PQC_ORIGINAL_MTU=$original_mtu; echo PQC_CONTAINER_ORIGINAL_MTU=$container_original_mtu; '
       'sudo -n "$MODPROBE" ifb numifbs=1 >/dev/null 2>&1 || true; sudo -n "$IP" link add $ifb type ifb 2>/dev/null || true; sudo -n "$IP" link set dev $ifb up; '
       'sudo -n "$TC" qdisc del dev $iface root 2>/dev/null || true; sudo -n "$TC" qdisc del dev $iface ingress 2>/dev/null || true; sudo -n "$TC" qdisc del dev $ifb root 2>/dev/null || true; '
       f'sudo -n "$IP" link set dev $iface mtu {config.mtu}; sudo -n "$NSENTER" -t "$pid" -n "$IP" link set dev eth0 mtu {config.mtu}; '

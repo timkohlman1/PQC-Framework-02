@@ -1106,9 +1106,14 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
 
     degradation = updates.get("network_degradation")
     if isinstance(degradation, dict) and degradation.get("enabled"):
-        log_name = degradation.get("log")
-        if isinstance(log_name, str):
-            artifact("network_condition_record", log_name, "network_condition", "tc/netem")
+        # The degradation log is appended during cleanup so it records both the
+        # applied and restored states. Freeze/hash it only once that lifecycle is
+        # terminal; raw evidence roles are immutable once collected.
+        terminal_statuses = {"removed", "cleanup_failed", "apply_failed", "invalid"}
+        if degradation.get("status") in terminal_statuses:
+            log_name = degradation.get("log")
+            if isinstance(log_name, str):
+                artifact("network_condition_record", log_name, "network_condition", "tc/netem")
 
     for stage_key, role, tool_name in (
         ("wolfboot_build", "wolfboot_build_log", "wolfBoot build"),

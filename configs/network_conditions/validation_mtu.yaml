@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: network_condition
+id: validation_mtu
+description: Request 15 validation - representative MTU reduction.
+impairment:
+  enabled: true
+  interface: enp0s31f6
+  management_safe: true
+  rate_kbit: 100000
+  rtt_ms: 0
+  loss_percent: 0
+  mtu: 1200

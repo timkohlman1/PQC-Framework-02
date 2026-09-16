@@ -121,3 +121,31 @@ def test_preflight_checks_noninteractive_sudo_before_profile_build():
     assert "PQC_NETDEG_PREFLIGHT=passed" in script
 
 
+
+
+def test_veth_resolution_queries_container_link_via_ip_in_network_namespace():
+    module = _load_module("scripts/framework/network_degradation.py", "network_degradation_namespace_link")
+    config = module.NetworkDegradationConfig(
+        interface="enp0s31f6", ifb_interface="ifb-pqc0", rate_kbit=256,
+        rtt_ms=0, loss_percent=0.0, mtu=1500, management_safe=True, broker_service="mqtt-oqs",
+    )
+    script = module._remote_script(config)
+    assert 'container_link=$(sudo -n "$NSENTER" -t "$pid" -n "$IP" -o link show dev "$container_iface")' in script
+    assert 'container_iface=eth0' in script
+    assert r'@if\([0-9][0-9]*\)' in script
+    assert 'container_mtu=$(printf' in script
+    assert 'PQC_NETDEG_ERROR=container_peer_index_not_found' in script
+    assert 'PQC_NETDEG_ERROR=container_mtu_not_found' in script
+    assert '/sys/class/net/eth0/iflink' not in script
+    assert '/sys/class/net/eth0/mtu' not in script
+
+
+def test_container_mtu_reuses_namespace_aware_ip_result():
+    module = _load_module("scripts/framework/network_degradation.py", "network_degradation_namespace_mtu")
+    config = module.NetworkDegradationConfig(
+        interface="enp0s31f6", ifb_interface="ifb-pqc0", rate_kbit=256,
+        rtt_ms=0, loss_percent=0.0, mtu=1200, management_safe=True, broker_service="mqtt-oqs",
+    )
+    script = module._remote_script(config)
+    assert 'container_original_mtu=$container_mtu' in script
+    assert 'sudo -n "$NSENTER" -t "$pid" -n "$IP" link set dev eth0 mtu 1200' in script
