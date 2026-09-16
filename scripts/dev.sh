@@ -136,7 +136,7 @@ run_container() (
 )
 
 if [ "$#" -eq 0 ]; then
-  echo "Usage: scripts/dev.sh <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
+  echo "Usage: scripts/dev.sh <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
   exit 2
 fi
 
@@ -164,6 +164,12 @@ case "$command" in
     ;;
   experiment-gateway)
     run_container --gateway python scripts/experiment.py "$@"
+    ;;
+  campaign)
+    run_container python scripts/run_campaign.py "$@"
+    ;;
+  campaign-gateway)
+    run_container --gateway python scripts/run_campaign.py "$@"
     ;;
   python)
     run_container python "$@"

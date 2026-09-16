@@ -42,6 +42,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 from pathlib import Path
 from typing import Any
@@ -1017,6 +1018,8 @@ def _collect_and_stop_managed_mqtt_broker(
     bundle: dict[str, dict[str, Any]],
     repo_root: Path,
     result_dir: Path,
+    stop_broker: bool = True,
+    log_since: str | None = None,
 ) -> tuple[int, int]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
     profile = str(mqtt.get("broker_profile", "classical")) if isinstance(mqtt, dict) else "classical"
@@ -1028,9 +1031,12 @@ def _collect_and_stop_managed_mqtt_broker(
     }
     common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
+    log_args = [*common, "--profile", profile, "--tail", "100000"]
+    if log_since:
+        log_args.extend(["--since", log_since])
     logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
-        extra_args=[*common, "--profile", profile, "--tail", "100000"],
+        extra_args=log_args,
     )
 
     keylog_evidence: dict[str, Any] = {"enabled": tls_enabled, "artifact": None}
@@ -1063,16 +1069,28 @@ def _collect_and_stop_managed_mqtt_broker(
     else:
         keylog_evidence.update({"status": "not_applicable", "return_code": None, "failure_reason": None})
 
+    reporting_log_args = [*common, "--profile", "reporting", "--tail", "100000"]
+    if log_since:
+        reporting_log_args.extend(["--since", log_since])
     reporting_logs_result = _run_mqtt_broker_step(
         repo_root=repo_root, result_dir=result_dir, step_name="reporting-log", subcommand="logs",
-        extra_args=[*common, "--profile", "reporting", "--tail", "100000"],
+        extra_args=reporting_log_args,
     )
-    emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}; reporting profile: reporting.")
-    stop_result = _run_mqtt_broker_step(
-        repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
-    )
+    stop_return_code = 0
+    stop_log: str | None = None
+    cleanup_completed: bool | None = None
+    if stop_broker:
+        emit_progress("broker", "Stopping MQTT broker", detail=f"Profile: {profile}; reporting profile: reporting.")
+        stop_result = _run_mqtt_broker_step(
+            repo_root=repo_root, result_dir=result_dir, step_name="stop", subcommand="stop", extra_args=common,
+        )
+        stop_return_code = stop_result.return_code
+        stop_log = "mqtt-broker-stop.log"
+        cleanup_completed = stop_result.return_code == 0
+        emit_progress("broker", "MQTT broker stopped" if stop_result.return_code == 0 else "MQTT broker stop failed", detail=f"Return code: {stop_result.return_code}; log: mqtt-broker-stop.log")
+    else:
+        emit_progress("broker", "Retaining campaign-managed MQTT brokers", detail=f"Profile: {profile}; reporting profile: reporting.")
     emit_progress("broker", "MQTT broker log collection complete" if logs_result.return_code == 0 else "MQTT broker log collection failed", detail=f"Return code: {logs_result.return_code}; log: mqtt-broker-log.log")
-    emit_progress("broker", "MQTT broker stopped" if stop_result.return_code == 0 else "MQTT broker stop failed", detail=f"Return code: {stop_result.return_code}; log: mqtt-broker-stop.log")
     update_manifest(result_dir / "manifest.json", {"mqtt_broker": {
         "image": MQTT_BROKER_IMAGE,
         "log": "mqtt-broker-log.log",
@@ -1081,14 +1099,16 @@ def _collect_and_stop_managed_mqtt_broker(
         "reporting_log": "mqtt-broker-reporting-log.log",
         "reporting_log_return_code": reporting_logs_result.return_code,
         "tls_keylog": keylog_evidence,
-        "stop_log": "mqtt-broker-stop.log",
-        "stop_return_code": stop_result.return_code,
-        "cleanup_completed": stop_result.return_code == 0,
+        "managed_by_experiment": stop_broker,
+        "campaign_reused": not stop_broker,
+        "stop_log": stop_log,
+        "stop_return_code": None if not stop_broker else stop_return_code,
+        "cleanup_completed": cleanup_completed,
     }})
     collection_return_code = logs_result.return_code
     if tls_enabled and keylog_evidence.get("status") != "collected":
         collection_return_code = collection_return_code or 1
-    return collection_return_code, stop_result.return_code
+    return collection_return_code, stop_return_code
 
 def _parse_mqtt_e2e_marker(stderr: str) -> dict[str, Any]:
     marker_line = ""
@@ -1500,10 +1520,34 @@ def _execute_uart_capture_with_optional_gateway_packet_capture(
     assert uart_result is not None
     return uart_result, uart_result.return_code, ("none" if uart_result.return_code == 0 else "uart")
 
-def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path, duration_seconds: int, restart_command: str):
-    broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+def _execute_mqtt_e2e_uart_capture(
+    *,
+    bundle: dict[str, dict[str, Any]],
+    repo_root: Path,
+    result_dir: Path,
+    duration_seconds: int,
+    restart_command: str | None,
+    manage_broker_lifecycle: bool = True,
+    manage_network_condition: bool = True,
+):
+    broker_log_since = datetime.now(timezone.utc).isoformat()
+    if manage_broker_lifecycle:
+        broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    else:
+        readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
+        broker_started = readiness.return_code == 0
+        broker_failure_stage = "none" if broker_started else "campaign_broker_readiness"
+        update_manifest(result_dir / "manifest.json", {"mqtt_broker": {
+            "managed_by_experiment": False,
+            "campaign_reused": True,
+            "readiness_passed": broker_started,
+            "failure_stage": broker_failure_stage,
+        }})
     if not broker_started:
-        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        _collect_and_stop_managed_mqtt_broker(
+            bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+            stop_broker=manage_broker_lifecycle, log_since=broker_log_since,
+        )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
     result_collector, collector_start = start_gateway_result_collector(
@@ -1517,7 +1561,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         "status": "running" if result_collector is not None else "start_failed",
     }})
     if result_collector is None:
-        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "result_collector_start"
 
     packet_capture, packet_capture_start = start_gateway_packet_capture(
@@ -1542,7 +1586,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         )
     if packet_capture is None:
         stop_and_collect_gateway_result_collector(collector=result_collector, repo_root=repo_root, result_dir=result_dir)
-        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture_start"
     emit_progress(
         "capture",
@@ -1555,10 +1599,23 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
 
     network_degradation = None
     degradation_apply = None
+    if not manage_network_condition:
+        retained_config = network_degradation_config(bundle)
+        if retained_config is not None:
+            retained_evidence = degradation_manifest(retained_config)
+            retained_evidence.update({
+                "status": "campaign_retained",
+                "ownership": "campaign",
+                "apply_return_code": None,
+                "cleanup_return_code": None,
+                "log": None,
+            })
+            update_manifest(result_dir / "manifest.json", {"network_degradation": retained_evidence})
     try:
-        network_degradation, degradation_apply = apply_gateway_network_degradation(
-            bundle=bundle, repo_root=repo_root, result_dir=result_dir
-        )
+        if manage_network_condition:
+            network_degradation, degradation_apply = apply_gateway_network_degradation(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir
+            )
     except ValueError as exc:
         update_manifest(result_dir / "manifest.json", {"network_degradation": {"enabled": True, "status": "invalid", "failure_reason": str(exc)}})
         stop_and_collect_gateway_packet_capture(capture=packet_capture, repo_root=repo_root, result_dir=result_dir)
@@ -2007,7 +2064,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
                 else str(packet_capture_result.failure_reason)
             ),
         )
-        broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
     broker_log_path = result_dir / "mqtt-broker-log.log"
     broker_log_integrity: dict[str, Any] = {
         "passed": False,
@@ -2068,7 +2125,7 @@ def _execute_mqtt_e2e_uart_capture(*, bundle: dict[str, dict[str, Any]], repo_ro
         json.dumps(broker_message_evidence, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if passed and broker_stop_rc != 0:
+    if passed and manage_broker_lifecycle and broker_stop_rc != 0:
         passed = False
         failure_stage = "broker_stop"
     update_manifest(result_dir / "manifest.json", {
@@ -4482,6 +4539,10 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         print(f"Error: invalid profile preparation manifest: {exc}", file=sys.stderr)
         return 2
     preparation_run = preparation_manifest.get("run", {})
+    preparation_run_id = (
+        preparation_manifest.get("run_id")
+        or (preparation_run.get("id") if isinstance(preparation_run, dict) else None)
+    )
     if not isinstance(preparation_run, dict) or preparation_run.get("return_code") != 0:
         print("Error: referenced profile preparation did not complete successfully.", file=sys.stderr)
         return 2
@@ -4491,6 +4552,17 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         if isinstance(preparation_firmware, dict)
         else None
     )
+    if not isinstance(firmware_sha256, str) or not firmware_sha256.strip():
+        provenance_path = reference_path.parent / "run-provenance.json"
+        if provenance_path.is_file():
+            try:
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                provenance = {}
+            records = provenance.get("records", {}) if isinstance(provenance, dict) else {}
+            provenance_firmware = records.get("firmware", {}) if isinstance(records, dict) else {}
+            if isinstance(provenance_firmware, dict):
+                firmware_sha256 = provenance_firmware.get("sha256")
     if not isinstance(firmware_sha256, str) or not firmware_sha256.strip():
         print("Error: referenced profile preparation has no firmware SHA-256 evidence.", file=sys.stderr)
         return 2
@@ -4508,7 +4580,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         {
             "profile_preparation_reference": {
                 "manifest": str(reference_path),
-                "run_id": preparation_manifest.get("run_id"),
+                "run_id": preparation_run_id,
                 "result": preparation_manifest.get("result"),
                 "firmware_sha256": firmware_sha256,
                 "build_and_flash_reused": True,
@@ -4526,6 +4598,20 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
                 "flash_performed": False,
                 "prerequisite_provisioning_performed": False,
             },
+            "configuration": {
+                "campaign_execution": {
+                    "campaign_id": getattr(args, "campaign_id", None),
+                    "case_id": getattr(args, "campaign_case_id", None),
+                    "condition_identity": getattr(args, "campaign_condition_identity", None),
+                    "repetition_index": getattr(args, "campaign_repetition_index", None),
+                    "preparation_manifest": str(reference_path),
+                    "preparation_run_id": preparation_run_id,
+                    "firmware_sha256": firmware_sha256,
+                    "broker_ownership": "campaign" if getattr(args, "campaign_managed_broker", False) else "run",
+                    "condition_ownership": "campaign" if getattr(args, "campaign_managed_condition", False) else "run",
+                    "hardware_reset": not getattr(args, "skip_hardware_reset", False),
+                }
+            },
         },
     )
     emit_progress(
@@ -4538,7 +4624,9 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         repo_root=repo_root,
         result_dir=result_dir,
         duration_seconds=args.uart_duration_seconds,
-        restart_command=_monitor_restart_command(bundle, None),
+        restart_command=(None if getattr(args, "skip_hardware_reset", False) else _monitor_restart_command(bundle, None)),
+        manage_broker_lifecycle=not getattr(args, "campaign_managed_broker", False),
+        manage_network_condition=not getattr(args, "campaign_managed_condition", False),
     )
     _record_run_summary(
         result_dir=result_dir,
@@ -6252,6 +6340,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Successful profile-preparation manifest required by --runtime-only.",
     )
+    run_parser.add_argument("--campaign-managed-broker", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument("--campaign-managed-condition", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument("--skip-hardware-reset", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument("--campaign-id", default=None, help=argparse.SUPPRESS)
+    run_parser.add_argument("--campaign-case-id", default=None, help=argparse.SUPPRESS)
+    run_parser.add_argument("--campaign-condition-identity", default=None, help=argparse.SUPPRESS)
+    run_parser.add_argument("--campaign-repetition-index", type=int, default=None, help=argparse.SUPPRESS)
     run_parser.set_defaults(func=run_full_baseline_command)
 
 

@@ -321,7 +321,11 @@ def status(args: argparse.Namespace) -> None:
 
 def logs(args: argparse.Namespace) -> None:
     service = BROKER_PROFILE_SERVICES[args.profile]
-    compose_remote(args, ["logs", "--tail", str(args.tail), service])
+    compose_args = ["logs", "--tail", str(args.tail)]
+    if getattr(args, "since", None):
+        compose_args.extend(["--since", str(args.since)])
+    compose_args.append(service)
+    compose_remote(args, compose_args)
 
 
 def collect_tls_keylog(args: argparse.Namespace) -> None:
@@ -599,6 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_port_options(logs_parser)
     logs_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
     logs_parser.add_argument("--tail", type=int, default=100)
+    logs_parser.add_argument("--since", default=None, help="Docker Compose log start timestamp/duration for per-run evidence isolation")
     logs_parser.set_defaults(func=logs)
 
     keylog_parser = sub.add_parser("collect-tls-keylog", help="copy a broker TLS key log from the gateway")
