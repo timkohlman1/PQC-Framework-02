@@ -147,6 +147,45 @@ def test_reused_preparation_linkage_keeps_exact_manifest_and_firmware_identity(t
     assert data["preparation"]["firmware_sha256"] == "f" * 64
     assert data["preparation"]["verified"] is True
 
+
+def test_runtime_only_preparation_reuses_required_secure_boot_artifact_identities(tmp_path):
+    manifest, evidence = _modules()
+    bundle = _bundle(evidence_class="stm32_st67_plaintext_e2e")
+    bundle["boot"] = {"mode": "wolfboot"}
+    result_dir, _ = manifest.create_result_folder(bundle, tmp_path / "results")
+
+    manifest.update_manifest(result_dir / "manifest.json", {
+        "profile_preparation_reference": {
+            "manifest": str(tmp_path / "preparation" / "manifest.json"),
+            "run_id": "prep-001",
+            "result": "passed",
+            "firmware_sha256": "f" * 64,
+            "reused_artifact_identities": {
+                "wolfboot_image": "a" * 64,
+                "signed_application": "b" * 64,
+            },
+        }
+    })
+
+    data = manifest.read_manifest(result_dir / "manifest.json")
+    by_role = {item["role"]: item for item in data["artifacts"]}
+    assert by_role["wolfboot_image"]["requirement"] == "required"
+    assert by_role["wolfboot_image"]["sha256"] == "a" * 64
+    assert by_role["wolfboot_image"]["acquisition"] == {
+        "status": "available", "result": "reused", "reason": None
+    }
+    assert by_role["signed_application"]["requirement"] == "required"
+    assert by_role["signed_application"]["sha256"] == "b" * 64
+    assert by_role["signed_application"]["acquisition"] == {
+        "status": "available", "result": "reused", "reason": None
+    }
+
+    acceptance = evidence.evaluate_capture_acceptance(data)
+    reasons = " ".join(acceptance["reasons"])
+    assert "wolfboot_image" not in reasons
+    assert "signed_application" not in reasons
+
+
 @pytest.mark.parametrize(
     ("bundle_mutator", "required_role"),
     [

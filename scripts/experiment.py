@@ -4599,6 +4599,25 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         print("Error: referenced profile preparation has no firmware SHA-256 evidence.", file=sys.stderr)
         return 2
 
+    reused_artifact_identities: dict[str, str] = {}
+    preparation_artifacts = preparation_manifest.get("artifacts")
+    if isinstance(preparation_artifacts, list):
+        for item in preparation_artifacts:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            if role not in {"wolfboot_image", "signed_application"}:
+                continue
+            acquisition = item.get("acquisition")
+            digest = item.get("sha256")
+            if (
+                isinstance(acquisition, dict)
+                and acquisition.get("status") == "available"
+                and isinstance(digest, str)
+                and digest.strip()
+            ):
+                reused_artifact_identities[str(role)] = digest.strip()
+
     bundle = load_experiment_bundle(args.experiment)
     if not _is_st67_mqtt_e2e(bundle):
         print("Error: --runtime-only is limited to STM32/ST67 MQTT end-to-end experiments.", file=sys.stderr)
@@ -4615,6 +4634,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
                 "run_id": preparation_run_id,
                 "result": preparation_manifest.get("result"),
                 "firmware_sha256": firmware_sha256,
+                "reused_artifact_identities": reused_artifact_identities,
                 "build_and_flash_reused": True,
                 "external_dependencies_reused": True,
                 "smoke_test_reused": True,
