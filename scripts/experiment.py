@@ -1031,13 +1031,16 @@ def _collect_and_stop_managed_mqtt_broker(
     }
     common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     emit_progress("broker", "Collecting MQTT broker logs", detail=f"Profile: {profile}.")
-    log_args = [*common, "--profile", profile, "--tail", "100000"]
     if log_since:
-        log_args.extend(["--since", log_since])
-    logs_result = _run_mqtt_broker_step(
-        repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
-        extra_args=log_args,
-    )
+        logs_result = _run_mqtt_broker_step(
+            repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
+            extra_args=[*common, "--profile", profile, "--tail", "100000", "--since", log_since],
+        )
+    else:
+        logs_result = _run_mqtt_broker_step(
+            repo_root=repo_root, result_dir=result_dir, step_name="log", subcommand="logs",
+            extra_args=[*common, "--profile", profile, "--tail", "100000"],
+        )
 
     keylog_evidence: dict[str, Any] = {"enabled": tls_enabled, "artifact": None}
     if tls_enabled:
