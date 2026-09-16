@@ -1544,10 +1544,13 @@ def _execute_mqtt_e2e_uart_capture(
             "failure_stage": broker_failure_stage,
         }})
     if not broker_started:
-        _collect_and_stop_managed_mqtt_broker(
-            bundle=bundle, repo_root=repo_root, result_dir=result_dir,
-            stop_broker=manage_broker_lifecycle, log_since=broker_log_since,
-        )
+        if manage_broker_lifecycle:
+            _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        else:
+            _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                stop_broker=False, log_since=broker_log_since,
+            )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
     result_collector, collector_start = start_gateway_result_collector(
@@ -1561,7 +1564,13 @@ def _execute_mqtt_e2e_uart_capture(
         "status": "running" if result_collector is not None else "start_failed",
     }})
     if result_collector is None:
-        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
+        if manage_broker_lifecycle:
+            _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        else:
+            _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                stop_broker=False, log_since=broker_log_since,
+            )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "result_collector_start"
 
     packet_capture, packet_capture_start = start_gateway_packet_capture(
@@ -1586,7 +1595,13 @@ def _execute_mqtt_e2e_uart_capture(
         )
     if packet_capture is None:
         stop_and_collect_gateway_result_collector(collector=result_collector, repo_root=repo_root, result_dir=result_dir)
-        _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
+        if manage_broker_lifecycle:
+            _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        else:
+            _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                stop_broker=False, log_since=broker_log_since,
+            )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "gateway_packet_capture_start"
     emit_progress(
         "capture",
@@ -1619,17 +1634,25 @@ def _execute_mqtt_e2e_uart_capture(
     except ValueError as exc:
         update_manifest(result_dir / "manifest.json", {"network_degradation": {"enabled": True, "status": "invalid", "failure_reason": str(exc)}})
         stop_and_collect_gateway_packet_capture(capture=packet_capture, repo_root=repo_root, result_dir=result_dir)
-        _collect_and_stop_managed_mqtt_broker(
-            bundle=bundle, repo_root=repo_root, result_dir=result_dir
-        )
+        if manage_broker_lifecycle:
+            _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        else:
+            _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                stop_broker=False, log_since=broker_log_since,
+            )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "network_degradation_config"
     if degradation_apply is not None:
         if network_degradation is None:
             update_manifest(result_dir / "manifest.json", {"network_degradation": {"enabled": True, "status": "apply_failed", "apply_return_code": degradation_apply.return_code, "log": "gateway-network-degradation.log"}})
             stop_and_collect_gateway_packet_capture(capture=packet_capture, repo_root=repo_root, result_dir=result_dir)
-            _collect_and_stop_managed_mqtt_broker(
-                bundle=bundle, repo_root=repo_root, result_dir=result_dir
-            )
+            if manage_broker_lifecycle:
+                _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+            else:
+                _collect_and_stop_managed_mqtt_broker(
+                    bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                    stop_broker=False, log_since=broker_log_since,
+                )
             return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "network_degradation_apply"
         degradation_evidence = degradation_manifest(network_degradation.config)
         degradation_evidence.update({"status": "applied", "apply_return_code": degradation_apply.return_code, "original_mtu": network_degradation.original_mtu, "log": network_degradation.log_path.name})
@@ -2064,7 +2087,13 @@ def _execute_mqtt_e2e_uart_capture(
                 else str(packet_capture_result.failure_reason)
             ),
         )
-        broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir, stop_broker=manage_broker_lifecycle, log_since=broker_log_since)
+        if manage_broker_lifecycle:
+            broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+        else:
+            broker_log_rc, broker_stop_rc = _collect_and_stop_managed_mqtt_broker(
+                bundle=bundle, repo_root=repo_root, result_dir=result_dir,
+                stop_broker=False, log_since=broker_log_since,
+            )
     broker_log_path = result_dir / "mqtt-broker-log.log"
     broker_log_integrity: dict[str, Any] = {
         "passed": False,
