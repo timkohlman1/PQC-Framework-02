@@ -23,4 +23,7 @@ execution:
 id: network_degradation
 matrix:
   network_condition:
-  - baseline
+    - validation_rate
+    - validation_rtt
+    - validation_loss
+    - validation_mtu

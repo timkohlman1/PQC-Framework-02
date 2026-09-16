@@ -366,7 +366,7 @@ In Wireshark, open **Edit → Preferences → Protocols → TLS** and select the
 
 ## Reporting broker
 
-Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/results/#` and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
+Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/result/#`, `pqc/instrument/#`, and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
 
 The reporting service health check performs a deterministic retained publish/subscribe round trip on `pqc/control/health`, then clears the retained probe. This validates broker readiness and the configured reporting ACL without relying on periodic `$SYS` publications or TLS/PKI material.
 
@@ -374,7 +374,3 @@ The reporting service health check performs a deterministic retained publish/sub
 ### Standalone ML-KEM groups
 
 The OQS broker OpenSSL policy advertises the maintained hybrid groups and standalone `MLKEM512`, `MLKEM768`, and `MLKEM1024`. Canonical STM32 `ML_KEM_512`, `ML_KEM_768`, and `ML_KEM_1024` profiles therefore remain standalone and are not substituted with hybrid groups.
-
-## Reporting plane
-
-The `reporting` Compose profile is mandatory experiment infrastructure and is independent of the workload broker. It listens on plaintext TCP/1886, uses no experiment PKI, and is excluded from network impairment. Framework control uses `pqc/control/run-id/current`; STM32 results use `pqc/result/stm32/<run-id>/...`; auxiliary instruments use `pqc/instrument/<source>/<run-id>/...`. The collector is started before the target and validates only stream identity/order/count/hash/completion integrity.
