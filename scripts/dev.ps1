@@ -97,6 +97,14 @@ function Invoke-DockerRun {
             $dockerArgs += @("-e", "PQC_WIFI_PSK")
         }
 
+        if ($env:PQC_CAMPAIGN_HW) {
+            $dockerArgs += @("-e", "PQC_CAMPAIGN_HW")
+        }
+
+        if ($env:PQC_CAMPAIGN_HW_CONFIG) {
+            $dockerArgs += @("-e", "PQC_CAMPAIGN_HW_CONFIG")
+        }
+
         if ($Gateway) {
             if (-not (Test-Path -LiteralPath $sshSource)) {
                 throw "Gateway mode requires an SSH directory. Set PQC_DOCKER_SSH_DIR or create $sshSource."
@@ -129,7 +137,7 @@ function Invoke-DockerRun {
 }
 
 if (-not $CommandArgs -or $CommandArgs.Count -eq 0) {
-    Write-Host "Usage: scripts\dev.ps1 <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|python|python-gateway|cmake|shell|run> [args...]"
+    Write-Host "Usage: scripts\dev.ps1 <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]"
     exit 2
 }
 
@@ -159,6 +167,12 @@ switch ($command) {
     }
     "experiment-gateway" {
         Invoke-DockerRun -Gateway -InnerArgs (@("python", "scripts/experiment.py") + $rest)
+    }
+    "campaign" {
+        Invoke-DockerRun -InnerArgs (@("python", "scripts/run_campaign.py") + $rest)
+    }
+    "campaign-gateway" {
+        Invoke-DockerRun -Gateway -InnerArgs (@("python", "scripts/run_campaign.py") + $rest)
     }
     "python" {
         Invoke-DockerRun -InnerArgs (@("python") + $rest)

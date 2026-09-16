@@ -153,7 +153,19 @@ The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM
 
 Ready Metrics 2 is owned by `configs/workloads/ready_metrics_2.yaml`. Its default transfer is 200 KiB with 400-byte chunks. Campaign matrix keys may override workload fields without creating duplicate experiment YAML.
 
-Network conditions are selected through `configs/network_conditions/` and the `network_degradation` campaign. Resolve that campaign, then execute generated cases through the normal experiment runner; impairment applies only to the dedicated experiment interface and must remain isolated from reporting/control traffic.
+Network conditions are selected through `configs/network_conditions/` and the `network_degradation` campaign. The first-class campaign executor applies a condition once at the condition boundary, retains it across repetitions, and removes it during guaranteed campaign cleanup. Impairment applies only to the dedicated experiment-broker interface and remains isolated from reporting/control traffic.
+
+Execute a complete campaign through the gateway wrapper:
+
+```powershell
+.\scripts\dev.ps1 campaign-gateway baseline
+```
+
+The executor validates the campaign `execution` policy before hardware work, expands deterministic cases, groups them by build-affecting firmware identity, performs one validated preparation per group, then binds reuse to the final validated firmware/ELF SHA-256. Each repetition invokes the normal experiment runner in runtime-only mode and retains its own finalized run manifest, UART/result stream, broker evidence and PCAP. Compatible brokers and a condition may remain active across repetitions, but each reuse is health/readiness checked. Resume is explicit using the generated campaign manifest:
+
+```powershell
+.\scripts\dev.ps1 campaign-gateway --resume "results/campaigns/<campaign-run>/campaign-manifest.json"
+```
 
 Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RAM_LINKER_ACCOUNTING` reports static/linker-region capacity and reservation, while `PQC_MEMORY_HIGH_WATERMARK` reports FreeRTOS heap, ML-DSA RAM3 workspace, newlib `_sbrk`, and application MSP high-water values. The linker now reserves 1280 bytes (`0x500`) for the MSP; runtime evidence still reports the actual measured peak and remaining headroom. Pre-`main()` startup stack depth remains outside this measurement.
 

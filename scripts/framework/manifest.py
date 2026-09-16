@@ -1145,6 +1145,16 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
             stage="preparation_reuse", tool="framework.runtime_only", acquisition_result="reused",
             path=None, source_class="deployment",
         )
+        reused_artifact_identities = preparation_reference.get("reused_artifact_identities")
+        if isinstance(reused_artifact_identities, dict):
+            for role in ("wolfboot_image", "signed_application"):
+                digest = reused_artifact_identities.get(role)
+                if isinstance(digest, str) and digest.strip():
+                    register_evidence_identity_in_manifest(
+                        manifest, role=role, sha256=digest.strip(),
+                        stage="preparation_reuse", tool="framework.runtime_only", acquisition_result="reused",
+                        path=None, source_class="secure_boot",
+                    )
 
     build_reference = updates.get("build_reference")
     if isinstance(build_reference, dict) and build_reference.get("record_manifest"):
