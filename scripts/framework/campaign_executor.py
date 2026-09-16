@@ -262,6 +262,46 @@ def _default_runner(command: list[str], cwd: Path) -> subprocess.CompletedProces
     )
 
 
+def _stream_command_to_log(
+    command: list[str], cwd: Path, log_path: Path
+) -> subprocess.CompletedProcess[str]:
+    """Run a long-lived experiment command with live, durable output.
+
+    Output is appended to ``log_path`` as it is produced and mirrored to this
+    process' stdout so gateway/hardware validation remains observable. The
+    returned ``CompletedProcess.stdout`` still contains the complete combined
+    stream for compatibility with existing error handling.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    captured: list[str] = []
+    with log_path.open("w", encoding="utf-8", buffering=1) as log_handle:
+        log_handle.write(f"[{_now()}] command={subprocess.list2cmdline(command)}\n")
+        log_handle.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            captured.append(line)
+            log_handle.write(line)
+            log_handle.flush()
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        return_code = process.wait()
+        log_handle.write(f"\n[{_now()}] return_code={return_code}\n")
+        log_handle.flush()
+    return subprocess.CompletedProcess(
+        args=command, returncode=return_code, stdout="".join(captured), stderr=None
+    )
+
+
 def _new_manifest_after(results_dir: Path, before: set[Path]) -> Path:
     candidates = {
         path.resolve()
@@ -276,11 +316,21 @@ def _new_manifest_after(results_dir: Path, before: set[Path]) -> Path:
 
 
 def _run_experiment(
-    *, repo_root: Path, command: list[str], results_dir: Path, runner: CommandRunner
+    *,
+    repo_root: Path,
+    command: list[str],
+    results_dir: Path,
+    runner: CommandRunner,
+    log_path: Path,
 ) -> tuple[int, Path | None, str]:
     results_dir.mkdir(parents=True, exist_ok=True)
     before = {path.resolve() for path in results_dir.glob("*/manifest.json") if path.is_file()}
-    completed = runner(command, repo_root)
+    if runner is _default_runner:
+        completed = _stream_command_to_log(command, repo_root, log_path)
+    else:
+        completed = runner(command, repo_root)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(completed.stdout or "", encoding="utf-8")
     manifest_path = None
     try:
         manifest_path = _new_manifest_after(results_dir, before)
@@ -650,12 +700,14 @@ class CampaignExecutor:
             "--experiment", str(prep_case_path),
             "--results-dir", str(preparation_results),
         ]
-        rc, produced_manifest, output = _run_experiment(
-            repo_root=self.repo_root, command=command, results_dir=preparation_results, runner=self.runner
-        )
         log_path = campaign_root / "logs" / f"preparation-{group_index:04d}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(output, encoding="utf-8")
+        rc, produced_manifest, output = _run_experiment(
+            repo_root=self.repo_root,
+            command=command,
+            results_dir=preparation_results,
+            runner=self.runner,
+            log_path=log_path,
+        )
         if rc != 0 or produced_manifest is None:
             raise CampaignError(f"firmware preparation failed for {firmware_identity}; see {log_path}")
         firmware_sha = validate_preparation_manifest(
@@ -766,12 +818,14 @@ class CampaignExecutor:
         ]
         if policy.reset_between_runs == "none":
             command.append("--skip-hardware-reset")
-        rc, produced_manifest, output = _run_experiment(
-            repo_root=self.repo_root, command=command, results_dir=results_dir, runner=self.runner
-        )
         log_path = campaign_root / "logs" / f"{case['id']}-rep-{repetition:04d}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(output, encoding="utf-8")
+        rc, produced_manifest, output = _run_experiment(
+            repo_root=self.repo_root,
+            command=command,
+            results_dir=results_dir,
+            runner=self.runner,
+            log_path=log_path,
+        )
         if produced_manifest is None:
             raise CampaignError(f"repetition produced no run manifest; see {log_path}")
         if rc != 0:
