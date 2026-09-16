@@ -329,30 +329,24 @@ def test_execute_uart_capture_does_not_accept_tick_as_substring(tmp_path):
     repo_root.mkdir()
     write_initial_manifest(result_dir)
 
-    def fake_runner(command, cwd):
-        return uart.CommandExecution(
-            command=command,
-            return_code=124,
-            stdout=(
-                "stm32-basic_hal1 boot v0.1.0\n"
-                "FreeRTOS scheduler starting: tick_hz=1000\n"
-                "FreeRTOS defaultTask started: heartbeat active\n"
-            ),
-            stderr="",
-            duration_seconds=10.0,
-        )
-
-    result = uart.execute_uart_capture(
-        sample_bundle(),
-        repo_root,
-        result_dir,
-        runner=fake_runner,
-        duration_seconds=10,
+    raw = (
+        "stm32-basic_hal1 boot v0.1.0\n"
+        "FreeRTOS scheduler starting: tick_hz=1000\n"
+        "FreeRTOS defaultTask started: heartbeat active\n"
     )
 
-    assert result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
-    assert result.boot_marker_present is True
-    assert result.tick_present is False
+    def fake_runner(command, cwd):
+        return uart.CommandExecution(command=command, return_code=124, stdout=raw, stderr="", duration_seconds=10.0)
+
+    result = uart.execute_uart_capture(sample_bundle(), repo_root, result_dir, runner=fake_runner, duration_seconds=10)
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert result.return_code == 0
+    assert result.tick_present is False  # transient orchestration observation only
+    assert (result_dir / "uart.log").read_text(encoding="utf-8") == raw
+    assert manifest["uart"]["acquisition_status"] == "available"
+    assert "tick_present" not in manifest["uart"]
+    assert manifest["result"] == "pending"
 
 def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path):
     uart = load_uart_module()
@@ -360,48 +354,21 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     result_dir = tmp_path / "results" / "run"
     repo_root.mkdir()
     write_initial_manifest(result_dir)
-    calls = []
+
+    raw = (
+        "wolfBoot verification cycles: 1360000 cycles\n"
+        "wolfBoot clock hclk_hz: 64000000\n"
+        "wolfBoot verification result: 0\n"
+        "application clock sysclk_hz: 120000000\n"
+        "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800\n"
+        "stm32-basic_hal1 boot v0.1.0\n"
+        "tick\n"
+    )
 
     def fake_runner(command, cwd):
-        calls.append(command)
-        assert cwd == repo_root
-        return uart.CommandExecution(
-            command=command,
-            return_code=124,
-            stdout=(
-                "wolfBoot verification cycles: 1360000 cycles\n"
-                "wolfBoot clock sysclk_hz: 64000000\n"
-                "wolfBoot clock hclk_hz: 64000000\n"
-                "wolfBoot clock pclk1_hz: 64000000\n"
-                "wolfBoot clock pclk2_hz: 64000000\n"
-                "wolfBoot verification cycles: 1360000 cycles\n"
-                "wolfBoot clock hclk_hz: 64000000\n"
-                "wolfBoot verification result: 0\n"
-                "application clock sysclk_hz: 120000000\n"
-                "application clock hclk_hz: 120000000\n"
-                "application clock pclk1_hz: 120000000\n"
-                "application clock pclk2_hz: 120000000\n"
-                "application memory checkpoint: stage=pre_scheduler heap_total_bytes=40000 heap_free_bytes=37600 heap_min_ever_free_bytes=37600 heap_current_used_bytes=2400 heap_peak_used_bytes=2400\n"
-                "application memory checkpoint: stage=default_task_start heap_total_bytes=40000 heap_free_bytes=37520 heap_min_ever_free_bytes=37440 heap_current_used_bytes=2480 heap_peak_used_bytes=2560\n"
-                "application task stack: stage=default_task_start task=defaultTask total_bytes=2048 minimum_free_bytes=1600 peak_used_bytes=448\n"
-                "application memory checkpoint: stage=default_task_runtime heap_total_bytes=40000 heap_free_bytes=37400 heap_min_ever_free_bytes=37200 heap_current_used_bytes=2600 heap_peak_used_bytes=2800\n"
-                "application task stack: stage=default_task_runtime task=defaultTask total_bytes=2048 minimum_free_bytes=1500 peak_used_bytes=548\n"
-                "application task stack: stage=default_task_runtime task=networkTask total_bytes=4096 minimum_free_bytes=3000 peak_used_bytes=1096\n"
-                "stm32-basic_hal1 boot v0.1.0\n"
-                "tick\n"
-                "tick\n"
-            ),
-            stderr="",
-            duration_seconds=10.0,
-        )
+        return uart.CommandExecution(command=command, return_code=124, stdout=raw, stderr="", duration_seconds=10.0)
 
-    result = uart.execute_uart_capture(
-        sample_bundle(),
-        repo_root,
-        result_dir,
-        runner=fake_runner,
-        duration_seconds=10,
-    )
+    result = uart.execute_uart_capture(sample_bundle(), repo_root, result_dir, runner=fake_runner, duration_seconds=10)
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     log = (result_dir / "uart.log").read_text(encoding="utf-8")
 
@@ -409,56 +376,29 @@ def test_execute_uart_capture_passes_when_expected_markers_are_present(tmp_path)
     assert result.boot_marker_present is True
     assert result.tick_present is True
     assert result.data_captured is True
-    assert result.derived_verification_time_ms == 21.25
-    assert result.verification_cycles == 1360000
-    assert result.bootloader_hclk_hz == 64000000
-    assert result.application_clock_hz == {
-        "sysclk_hz": 120000000,
-        "hclk_hz": 120000000,
-        "pclk1_hz": 120000000,
-        "pclk2_hz": 120000000,
-    }
-    assert [checkpoint["stage"] for checkpoint in result.application_memory_checkpoints] == [
-        "pre_scheduler",
-        "default_task_start",
-        "default_task_runtime",
-    ]
-    assert result.heap_used_bytes == 2800
-    assert result.verification_result_code == 0
-    assert result.verification_time_source == "framework_derived_from_uart_cycles_and_reported_hclk"
-    assert len(calls) == 1
-    assert manifest["result"] == "pass"
-    assert manifest["uart"]["return_code"] == 0
+    assert result.derived_verification_time_ms is None
+    assert result.verification_cycles is None
+    assert log == raw
+    assert not log.startswith("UART post-flash capture log")
+    assert "Boot timing evidence" not in log
+    assert "Pass/fail detection" not in log
+    assert manifest["result"] == "pending"
+    assert manifest["uart"]["acquisition_status"] == "available"
     assert manifest["uart"]["capture_return_code"] == 124
-    assert manifest["uart"]["boot_marker_present"] is True
-    assert manifest["uart"]["tick_present"] is True
     assert manifest["uart"]["data_captured"] is True
-    assert manifest["uart"]["derived_verification_time_ms"] == 21.25
-    assert manifest["uart"]["verification_cycles"] == 1360000
-    assert manifest["uart"]["bootloader_hclk_hz"] > 0
-    assert manifest["uart"]["application_clock_hz"]["hclk_hz"] == 120000000
-    assert manifest["application_clock"]["clock_hz"]["sysclk_hz"] == 120000000
-    assert manifest["application_clock"]["source"] == "uart_reported_hal_rcc_from_running_default_task"
-    assert manifest["runtime_memory"]["application_checkpoints"][-1]["heap_peak_used_bytes"] == 2800
-    assert manifest["uart"]["application_memory_checkpoints"][-1]["task_stacks"][0]["peak_used_bytes"] == 548
-    assert manifest["uart"]["verification_result_code"] == 0
-    assert manifest["boot_timing"]["derived_verification_time_ms"] == 21.25
-    assert manifest["boot_timing"]["verification_cycles"] == 1360000
-    assert manifest["boot_timing"]["bootloader_hclk_hz"] > 0
-    assert manifest["boot_timing"]["verification_result_code"] == 0
-    assert manifest["boot_timing"]["verification_time_source"] == "framework_derived_from_uart_cycles_and_reported_hclk"
-    assert "derived_verification_time_ms: 21.25" in log
-    assert "verification_cycles: 1360000" in log
-    assert "bootloader_hclk_hz: 64000000" in log
-    assert "Application clock evidence" in log
-    assert "application_hclk_hz: 120000000" in log
-    assert "verification_result_code: 0" in log
-    assert "Boot marker present: true" in log
-    assert "Tick marker present: true" in log
-    assert "stm32-basic_hal1 boot v0.1.0" in log
+    assert manifest["uart"]["captured_bytes"] == len(raw.encode("utf-8"))
+    assert manifest["uart"]["capture_format"] == "raw_uart_text"
+    assert manifest["uart"]["framework_preamble"] is False
+    assert manifest["uart"]["scientific_parsing_performed"] is False
+    for prohibited in ("derived_verification_time_ms", "verification_cycles", "application_clock_hz", "application_memory_checkpoints", "boot_marker_present", "tick_present"):
+        assert prohibited not in manifest["uart"]
+    assert "boot_timing" not in manifest
+    assert "runtime_memory" not in manifest
+    assert "application_clock" not in manifest
 
-
-
+    analysis = uart.analyze_uart_capture(result)
+    assert analysis.derived_verification_time_ms == 21.25
+    assert analysis.verification_cycles == 1360000
 
 def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_path):
     uart = load_uart_module()
@@ -469,76 +409,18 @@ def test_execute_uart_capture_requires_secure_boot_marker_when_configured(tmp_pa
     bundle = sample_bundle()
     bundle["experiment"]["uart"]["expected_secure_boot_message"] = "stm32-basic_hal1 secure-boot app v0.1.0"
 
-    def missing_secure_marker_runner(command, cwd):
-        return uart.CommandExecution(
-            command=command,
-            return_code=124,
-            stdout="stm32-basic_hal1 boot v0.1.0\ntick\n",
-            stderr="",
-            duration_seconds=10.0,
-        )
+    def runner(command, cwd):
+        return uart.CommandExecution(command=command, return_code=124, stdout="stm32-basic_hal1 boot v0.1.0\ntick\n", stderr="", duration_seconds=10.0)
 
-    missing_result = uart.execute_uart_capture(
-        bundle,
-        repo_root,
-        result_dir,
-        runner=missing_secure_marker_runner,
-    )
-    missing_manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    result = uart.execute_uart_capture(bundle, repo_root, result_dir, runner=runner)
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
 
-    assert missing_result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
-    assert missing_result.boot_marker_present is True
-    assert missing_result.tick_present is True
-    assert missing_result.secure_boot_marker_present is False
-    assert missing_result.derived_verification_time_ms is None
-    assert missing_result.verification_cycles is None
-    assert missing_result.bootloader_hclk_hz is None
-    assert missing_result.application_clock_hz == {
-        "sysclk_hz": None,
-        "hclk_hz": None,
-        "pclk1_hz": None,
-        "pclk2_hz": None,
-    }
-    assert missing_result.application_memory_checkpoints == []
-    assert missing_result.verification_result_code is None
-    assert missing_result.verification_time_source == "unavailable"
-    assert missing_manifest["uart"]["secure_boot_marker_present"] is False
-    assert missing_manifest["boot_timing"]["derived_verification_time_ms"] is None
-    assert missing_manifest["boot_timing"]["verification_cycles"] is None
-    assert missing_manifest["boot_timing"]["bootloader_hclk_hz"] is None
-    assert missing_manifest["boot_timing"]["verification_result_code"] is None
-    assert missing_manifest["boot_timing"]["verification_time_source"] == "unavailable"
-
-    def secure_marker_runner(command, cwd):
-        return uart.CommandExecution(
-            command=command,
-            return_code=124,
-            stdout=(
-                "stm32-basic_hal1 secure-boot app v0.1.0\n"
-                "stm32-basic_hal1 boot v0.1.0\n"
-                "tick\n"
-            ),
-            stderr="",
-            duration_seconds=10.0,
-        )
-
-    # A second capture is a separate raw observation. Use a distinct result
-    # record rather than overwriting the first run's immutable uart.log.
-    passed_result_dir = tmp_path / "results" / "run-passed"
-    write_initial_manifest(passed_result_dir)
-    passed_result = uart.execute_uart_capture(
-        bundle,
-        repo_root,
-        passed_result_dir,
-        runner=secure_marker_runner,
-    )
-    passed_manifest = json.loads((passed_result_dir / "manifest.json").read_text(encoding="utf-8"))
-
-    assert passed_result.return_code == 0
-    assert passed_result.secure_boot_marker_present is True
-    assert passed_manifest["uart"]["secure_boot_marker_present"] is True
-    assert "Secure-boot marker present: true" in (passed_result_dir / "uart.log").read_text(encoding="utf-8")
-
+    # Missing semantic markers do not make raw acquisition fail. The boolean is
+    # available only to legacy orchestration code and is not capture evidence.
+    assert result.return_code == 0
+    assert result.secure_boot_marker_present is False
+    assert "secure_boot_marker_present" not in manifest["uart"]
+    assert (result_dir / "uart.log").read_text(encoding="utf-8") == "stm32-basic_hal1 boot v0.1.0\ntick\n"
 
 def test_execute_uart_capture_fails_when_expected_marker_is_missing(tmp_path):
     uart = load_uart_module()
@@ -548,29 +430,17 @@ def test_execute_uart_capture_fails_when_expected_marker_is_missing(tmp_path):
     write_initial_manifest(result_dir)
 
     def fake_runner(command, cwd):
-        return uart.CommandExecution(
-            command=command,
-            return_code=124,
-            stdout="stm32-basic_hal1 boot v0.1.0\n",
-            stderr="",
-            duration_seconds=10.0,
-        )
+        return uart.CommandExecution(command=command, return_code=124, stdout="stm32-basic_hal1 boot v0.1.0\n", stderr="", duration_seconds=10.0)
 
-    result = uart.execute_uart_capture(
-        sample_bundle(),
-        repo_root,
-        result_dir,
-        runner=fake_runner,
-    )
+    result = uart.execute_uart_capture(sample_bundle(), repo_root, result_dir, runner=fake_runner)
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
 
-    assert result.return_code == uart.UART_MARKER_MISSING_RETURN_CODE
+    assert result.return_code == 0
     assert result.boot_marker_present is True
     assert result.tick_present is False
-    assert manifest["result"] == "fail"
-    assert manifest["uart"]["boot_marker_present"] is True
-    assert manifest["uart"]["tick_present"] is False
-
+    assert manifest["uart"]["acquisition_status"] == "available"
+    assert "boot_marker_present" not in manifest["uart"]
+    assert "tick_present" not in manifest["uart"]
 
 def test_execute_uart_capture_fails_when_ssh_command_fails(tmp_path):
     uart = load_uart_module()
@@ -580,28 +450,18 @@ def test_execute_uart_capture_fails_when_ssh_command_fails(tmp_path):
     write_initial_manifest(result_dir)
 
     def fake_runner(command, cwd):
-        return uart.CommandExecution(
-            command=command,
-            return_code=255,
-            stdout="",
-            stderr="ssh failed",
-            duration_seconds=0.1,
-        )
+        return uart.CommandExecution(command=command, return_code=255, stdout="", stderr="ssh failed", duration_seconds=0.1)
 
-    result = uart.execute_uart_capture(
-        sample_bundle(),
-        repo_root,
-        result_dir,
-        runner=fake_runner,
-    )
+    result = uart.execute_uart_capture(sample_bundle(), repo_root, result_dir, runner=fake_runner)
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
     log = (result_dir / "uart.log").read_text(encoding="utf-8")
 
     assert result.return_code == 255
-    assert manifest["result"] == "fail"
+    assert manifest["result"] == "pending"
+    assert manifest["uart"]["acquisition_status"] == "unavailable"
     assert manifest["uart"]["capture_return_code"] == 255
-    assert "ssh failed" in log
-
+    assert manifest["uart"]["acquisition_reason"] == "ssh failed"
+    assert log == ""
 
 def test_execute_uart_monitor_writes_adhoc_log_and_passes_when_data_is_captured(tmp_path):
     uart = load_uart_module()
@@ -813,8 +673,6 @@ def test_execute_uart_capture_accepts_structured_tick_prefix(tmp_path):
 
     assert result.return_code == 0
     assert result.tick_present is True
-    assert manifest["uart"]["expected_tick_message"] is None
-    assert manifest["uart"]["expected_tick_prefix"] == "[tick="
 
 
 def test_execute_uart_capture_legacy_tick_marker_accepts_structured_prefix(tmp_path):

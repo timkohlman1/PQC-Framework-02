@@ -102,6 +102,14 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     void (*mark_complete)(void),
     uint32_t firmware_boot_origin_tick_ms);
 
+int PQC_WolfMQTT_PublishDeferredResults(
+    const uint8_t *data,
+    size_t length,
+    const char *logical_sha256,
+    uint32_t record_count,
+    uint32_t dropped_record_count,
+    bool overflowed);
+
 const PQC_WolfMQTTReadyMetrics2Snapshot *PQC_WolfMQTT_ReadyMetrics2Snapshot(void);
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend);

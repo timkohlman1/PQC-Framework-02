@@ -73,6 +73,17 @@
 #define PQC_WOLFMQTT_KEEPALIVE_SECONDS 30
 #define PQC_WOLFMQTT_PACKET_ID_SUBSCRIBE 1
 #define PQC_WOLFMQTT_PACKET_ID_PUBLISH 2
+#ifndef PQC_REPORTING_MQTT_HOST
+#define PQC_REPORTING_MQTT_HOST PQC_MQTT_BROKER_HOST
+#endif
+#ifndef PQC_REPORTING_MQTT_PORT
+#define PQC_REPORTING_MQTT_PORT 1886
+#endif
+#ifndef PQC_REPORTING_RUN_ID_TOPIC
+#define PQC_REPORTING_RUN_ID_TOPIC "pqc/control/run-id/current"
+#endif
+#define PQC_REPORTING_CHUNK_BYTES 96U
+#define PQC_REPORTING_RUN_ID_MAX 96U
 
 __attribute__((weak)) void PQC_WolfMQTT_DiagnosticMarker(const char *marker) { (void)marker; }
 
@@ -1046,6 +1057,110 @@ static int PQC_WolfMQTT_MessageCallback(MqttClient *client, MqttMessage *message
     return MQTT_CODE_SUCCESS;
 }
 
+
+static int PQC_WolfMQTT_PublishTopic(
+    MqttClient *client, const char *topic, const char *payload, word16 packet_id)
+{
+    MqttPublish publish;
+    if ((client == NULL) || (topic == NULL) || (payload == NULL)) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(&publish, 0, sizeof(publish));
+    publish.topic_name = topic;
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = packet_id;
+    publish.buffer = (byte *)payload;
+    publish.total_len = (word32)strlen(payload);
+    return MqttClient_Publish(client, &publish);
+}
+
+int PQC_WolfMQTT_PublishDeferredResults(
+    const uint8_t *data,
+    size_t length,
+    const char *logical_sha256,
+    uint32_t record_count,
+    uint32_t dropped_record_count,
+    bool overflowed)
+{
+    MqttClient client;
+    MqttNet network;
+    MqttConnect connect;
+    MqttSubscribe subscribe;
+    MqttTopic control_topic;
+    PQC_WolfMQTTSocketContext socket_context;
+    PQC_WolfMQTTMessageContext message_context;
+    byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
+    char run_id[PQC_REPORTING_RUN_ID_MAX];
+    char topic[192];
+    char payload[512];
+    char hex[(PQC_REPORTING_CHUNK_BYTES * 2U) + 1U];
+    size_t offset = 0U;
+    uint32_t sequence = 0U;
+    uint32_t chunk_count = 0U;
+    int result;
+    unsigned int i;
+
+    if (((data == NULL) && (length != 0U)) || (logical_sha256 == NULL)) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(&client,0,sizeof(client)); memset(&network,0,sizeof(network));
+    memset(&socket_context,0,sizeof(socket_context)); memset(&message_context,0,sizeof(message_context));
+    socket_context.socket_fd = -1;
+    socket_context.tls_requested = false;
+    network.context=&socket_context;
+    network.connect=PQC_WolfMQTT_LwIPConnect;
+    network.read=PQC_WolfMQTT_LwIPRead;
+    network.write=PQC_WolfMQTT_LwIPWrite;
+    network.disconnect=PQC_WolfMQTT_LwIPDisconnect;
+
+    result=MqttClient_Init(&client,&network,PQC_WolfMQTT_MessageCallback,tx,sizeof(tx),rx,sizeof(rx),PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    if(result!=MQTT_CODE_SUCCESS) return result;
+    client.ctx=&message_context;
+    result=MqttClient_NetConnect(&client,PQC_REPORTING_MQTT_HOST,(word16)PQC_REPORTING_MQTT_PORT,PQC_WOLFMQTT_COMMAND_TIMEOUT_MS,0,NULL);
+    if(result!=MQTT_CODE_SUCCESS) goto cleanup_client;
+    memset(&connect,0,sizeof(connect)); connect.keep_alive_sec=PQC_WOLFMQTT_KEEPALIVE_SECONDS; connect.clean_session=1; connect.client_id="pqc-stm32-reporting";
+    result=MqttClient_Connect(&client,&connect);
+    if(result!=MQTT_CODE_SUCCESS) goto cleanup_network;
+
+    memset(&control_topic,0,sizeof(control_topic)); control_topic.topic_filter=PQC_REPORTING_RUN_ID_TOPIC; control_topic.qos=MQTT_QOS_1;
+    memset(&subscribe,0,sizeof(subscribe)); subscribe.packet_id=41U; subscribe.topic_count=1U; subscribe.topics=&control_topic;
+    result=MqttClient_Subscribe(&client,&subscribe);
+    if(result!=MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+    result=MqttClient_WaitMessage(&client,PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+    if((result!=MQTT_CODE_SUCCESS)||!message_context.received||message_context.payload_length==0U||message_context.payload_length>=sizeof(run_id)) {
+        result=MQTT_CODE_ERROR_TIMEOUT; goto cleanup_mqtt;
+    }
+    memcpy(run_id,message_context.payload,message_context.payload_length); run_id[message_context.payload_length]='\0';
+
+    chunk_count=(uint32_t)((length + PQC_REPORTING_CHUNK_BYTES - 1U)/PQC_REPORTING_CHUNK_BYTES);
+    while(offset<length) {
+        size_t amount=length-offset; size_t hex_index=0U;
+        if(amount>PQC_REPORTING_CHUNK_BYTES) amount=PQC_REPORTING_CHUNK_BYTES;
+        for(i=0U;i<(unsigned int)amount;i++) {
+            static const char digits[]="0123456789abcdef"; uint8_t value=data[offset+i];
+            hex[hex_index++]=digits[value>>4]; hex[hex_index++]=digits[value&0x0fU];
+        }
+        hex[hex_index]='\0';
+        (void)snprintf(topic,sizeof(topic),"pqc/result/stm32/%s/chunk",run_id);
+        (void)snprintf(payload,sizeof(payload),
+            "{\"schema_version\":1,\"type\":\"chunk\",\"source\":\"stm32\",\"run_id\":\"%s\",\"sequence\":%lu,\"context\":\"deferred_result_buffer\",\"data_hex\":\"%s\"}",
+            run_id,(unsigned long)sequence,hex);
+        result=PQC_WolfMQTT_PublishTopic(&client,topic,payload,(word16)(100U+(sequence%60000U)));
+        if(result!=MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+        offset+=amount; sequence++;
+    }
+    (void)snprintf(topic,sizeof(topic),"pqc/result/stm32/%s/complete",run_id);
+    (void)snprintf(payload,sizeof(payload),
+        "{\"schema_version\":1,\"type\":\"complete\",\"source\":\"stm32\",\"run_id\":\"%s\",\"record_count\":%lu,\"chunk_count\":%lu,\"logical_bytes\":%lu,\"dropped_record_count\":%lu,\"overflowed\":%s,\"logical_sha256\":\"%s\"}",
+        run_id,(unsigned long)record_count,(unsigned long)chunk_count,(unsigned long)length,
+        (unsigned long)dropped_record_count,overflowed?"true":"false",logical_sha256);
+    result=PQC_WolfMQTT_PublishTopic(&client,topic,payload,60001U);
+
+cleanup_mqtt:
+    (void)MqttClient_Disconnect(&client);
+cleanup_network:
+    (void)MqttClient_NetDisconnect(&client);
+cleanup_client:
+    MqttClient_DeInit(&client);
+    return result;
+}
+
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend)
 {
     return backend == PQC_WOLFMQTT_BACKEND_ST67W61M1 ? "st67w61m1" : "fake_no_network";
@@ -1136,9 +1251,9 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
     MqttClient client; MqttNet network; MqttConnect connect;
     PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
     byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
-    char payload[224]; char marker[256];
-    TickType_t connect_started, connect_finished, last_wake;
-    unsigned int metrics_count = 0U; int result;
+    char marker[256];
+    TickType_t connect_started, connect_finished;
+    int result;
 
     memset(&client, 0, sizeof(client)); memset(&network, 0, sizeof(network));
     memset(&socket_context, 0, sizeof(socket_context)); memset(&message_context, 0, sizeof(message_context));
@@ -1183,36 +1298,12 @@ int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void))
     PQC_WolfMQTT_DiagnosticMarker(marker);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
 
-    (void)snprintf(payload, sizeof(payload),
-        "{\"type\":\"connect_timing\",\"milliseconds\":%lu,\"tls_mode\":\"%s\"}",
-        (unsigned long)((connect_finished - connect_started) * portTICK_PERIOD_MS), PQC_MQTT_TLS_MODE);
-    result = PQC_WolfMQTT_PublishText(&client, payload, 3U);
-    (void)snprintf(marker, sizeof(marker),
-        "PQC_APP_PUBLISH sequence=2 type=connect_timing duration_ms=%lu result=%d\r\n",
-        (unsigned long)((connect_finished - connect_started) * portTICK_PERIOD_MS), result);
-    PQC_WolfMQTT_DiagnosticMarker(marker);
-    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
+    /* Request 15: the experiment broker carries only the workload response.
+     * Scientific timing/memory/TLS evidence is retained in RAM and is emitted
+     * after this workload returns through the reporting broker. */
+    if (mark_complete != NULL) mark_complete();
+    result = MQTT_CODE_SUCCESS;
 
-    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS_TASK state=started interval_ms=1000 completion_after=2\r\n");
-    last_wake = xTaskGetTickCount();
-    for (;;) {
-        UBaseType_t stack_words; size_t heap_free, heap_min;
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U));
-        metrics_count++; stack_words = uxTaskGetStackHighWaterMark(NULL);
-        heap_free = xPortGetFreeHeapSize(); heap_min = xPortGetMinimumEverFreeHeapSize();
-        (void)snprintf(payload, sizeof(payload),
-            "{\"type\":\"memory_metrics\",\"sequence\":%u,\"stack_high_water_words\":%lu,\"heap_free_bytes\":%lu,\"heap_min_ever_bytes\":%lu}",
-            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free, (unsigned long)heap_min);
-        result = PQC_WolfMQTT_PublishText(&client, payload, (word16)(3U + metrics_count));
-        (void)snprintf(marker, sizeof(marker),
-            "PQC_APP_METRICS sequence=%u stack_high_water_words=%lu heap_free_bytes=%lu heap_min_ever_bytes=%lu publish_result=%d\r\n",
-            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free, (unsigned long)heap_min, result);
-        PQC_WolfMQTT_DiagnosticMarker(marker);
-        if ((metrics_count == 2U) && (mark_complete != NULL)) {
-            PQC_WolfMQTT_DiagnosticMarker("PQC_APP_METRICS completion_threshold=2 status=reached task=continuing\r\n");
-            mark_complete();
-        }
-    }
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);
 cleanup_network:
@@ -1444,9 +1535,9 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     MqttSubscribe transfer_subscribe; MqttTopic transfer_topic; MqttPublish transfer_request;
     PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
     byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
-    char payload[224]; char marker[256];
-    TickType_t legacy_connect_started, legacy_connect_finished, last_wake;
-    unsigned int metrics_count = 0U; int result;
+    char marker[256];
+    TickType_t legacy_connect_started, legacy_connect_finished;
+    int result;
 
     memset(&s_ready_metrics_2_snapshot, 0, sizeof(s_ready_metrics_2_snapshot));
     s_ready_metrics_2_snapshot.schema_version = 1U;
@@ -1592,78 +1683,10 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
         s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
     s_ready_metrics_2_snapshot.ready_publish_valid = 1U;
 
-    (void)snprintf(marker, sizeof(marker),
-        "PQC_RM2_TTFB definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte "
-        "dns_included=0 ttfb_ms=%lu tcp_connect_ms=%lu mqtt_connect_ms=%lu "
-        "boot_to_mqtt_connected_ms=%lu boot_to_ready_publish_ms=%lu\r\n",
-        (unsigned long)s_ready_metrics_2_snapshot.ttfb_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.tcp_connect_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.mqtt_connect_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_mqtt_connected_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms);
-    PQC_WolfMQTT_DiagnosticMarker(marker);
-    (void)snprintf(marker, sizeof(marker),
-        "PQC_RM2_TTLB definition=tcp_connect_start_to_last_byte_of_requested_application_payload "
-        "direction=broker_to_stm32 payload_bytes=%lu received_bytes=%lu messages=%lu "
-        "application_ttfb_ms=%lu ttlb_ms=%lu transfer_ms=%lu\r\n",
-        (unsigned long)s_ready_metrics_2_snapshot.transfer_payload_bytes,
-        (unsigned long)s_ready_metrics_2_snapshot.transfer_received_bytes,
-        (unsigned long)s_ready_metrics_2_snapshot.transfer_message_count,
-        (unsigned long)s_ready_metrics_2_snapshot.application_ttfb_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.ttlb_ms,
-        (unsigned long)s_ready_metrics_2_snapshot.application_transfer_ms);
-    PQC_WolfMQTT_DiagnosticMarker(marker);
-    PQC_WolfMQTT_DiagnosticMarker("PQC_APP_PUBLISH sequence=1 type=ready result=0\r\n");
-
-    (void)snprintf(payload, sizeof(payload),
-        "{\"type\":\"connect_timing\",\"milliseconds\":%lu,\"tls_mode\":\"%s\"}",
-        (unsigned long)s_ready_metrics_2_snapshot.legacy_connect_timing_ms,
-        PQC_MQTT_TLS_MODE);
-    result = PQC_WolfMQTT_PublishText(&client, payload, 3U);
-    (void)snprintf(marker, sizeof(marker),
-        "PQC_APP_PUBLISH sequence=2 type=connect_timing duration_ms=%lu result=%d\r\n",
-        (unsigned long)s_ready_metrics_2_snapshot.legacy_connect_timing_ms, result);
-    PQC_WolfMQTT_DiagnosticMarker(marker);
-    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
-
-    last_wake = xTaskGetTickCount();
-    while (metrics_count < 2U) {
-        UBaseType_t stack_words; size_t heap_free, heap_min;
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000U));
-        metrics_count++;
-        stack_words = uxTaskGetStackHighWaterMark(NULL);
-        heap_free = xPortGetFreeHeapSize();
-        heap_min = xPortGetMinimumEverFreeHeapSize();
-        (void)snprintf(payload, sizeof(payload),
-            "{\"type\":\"memory_metrics\",\"sequence\":%u,\"stack_high_water_words\":%lu,\"heap_free_bytes\":%lu,\"heap_min_ever_bytes\":%lu}",
-            metrics_count, (unsigned long)stack_words, (unsigned long)heap_free,
-            (unsigned long)heap_min);
-        result = PQC_WolfMQTT_PublishText(&client, payload, (word16)(3U + metrics_count));
-        if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
-    }
-
-    /* Export the RAM-resident benchmark record only after the timed workload
-     * and its two compatibility memory samples have completed. */
-    result = PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(&client, &socket_context);
-    (void)snprintf(marker, sizeof(marker),
-        "PQC_APP_PUBLISH sequence=17 type=ready_metrics_2_complete result=%d\r\n",
-        result);
-    PQC_WolfMQTT_DiagnosticMarker(marker);
-    if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
-
-#if PQC_TLS_COMPILED
-    if (socket_context.tls_requested) {
-        PQC_TLS_InstrumentationReport(PQC_WolfMQTT_DiagnosticMarker);
-        PQC_WolfMQTT_DiagnosticMarker(
-            "wolfMQTT TLS: stage=handshake result=1 error=0\r\n");
-        PQC_WolfMQTT_DiagnosticMarker("wolfMQTT TLS: handshake passed\r\n");
-    }
-#endif
-
+    /* All scientific result serialization/publication is deferred until after
+     * this workload returns. The RAM snapshot above remains authoritative. */
     if (mark_complete != NULL) mark_complete();
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000U));
-    }
+    result = MQTT_CODE_SUCCESS;
 
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);

@@ -374,3 +374,7 @@ The reporting service health check performs a deterministic retained publish/sub
 ### Standalone ML-KEM groups
 
 The OQS broker OpenSSL policy advertises the maintained hybrid groups and standalone `MLKEM512`, `MLKEM768`, and `MLKEM1024`. Canonical STM32 `ML_KEM_512`, `ML_KEM_768`, and `ML_KEM_1024` profiles therefore remain standalone and are not substituted with hybrid groups.
+
+## Reporting plane
+
+The `reporting` Compose profile is mandatory experiment infrastructure and is independent of the workload broker. It listens on plaintext TCP/1886, uses no experiment PKI, and is excluded from network impairment. Framework control uses `pqc/control/run-id/current`; STM32 results use `pqc/result/stm32/<run-id>/...`; auxiliary instruments use `pqc/instrument/<source>/<run-id>/...`. The collector is started before the target and validates only stream identity/order/count/hash/completion integrity.

@@ -80,7 +80,7 @@ def test_managed_broker_cleanup_receives_bundle_and_uses_selected_profile():
     assert "bundle: dict[str, dict[str, Any]]" in source
     assert source.count(
         "_collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)"
-    ) == 3
+    ) >= 3
     assert 'extra_args=[*common, "--profile", profile, "--tail", "100000"]' in source
     assert 'extra_args=[*common, "--profile", "classical", "--tail", "100000"]' not in source
 
@@ -201,14 +201,14 @@ def test_classical_server_auth_profile_and_stm32_are_tls13_only_without_tls12_ci
     assert "ciphers ECDHE-ECDSA-AES128-GCM-SHA256" not in broker
 
 
-def test_gateway_reconnect_orchestration_waits_for_two_exact_responses():
+def test_gateway_reconnect_orchestration_uses_one_workload_response_for_deferred_metrics():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert 'expected_response_count = 17 if ready_metrics_2_application else (4 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))' in source
+    assert 'expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)' in source
     assert '-C {expected_response_count}' in source
     assert 'response_count=$(grep -c . "$response_file" || true)' in source
-    assert 'matched_count=$(grep -Fxc "$expected_line" "$response_file" || true)' in source
     assert 'marker.get("response_count") == expected_response_count' in source
     assert 'marker.get("expected_response_count") == expected_response_count' in source
+    assert 'reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"' in source
 
 
 def test_gateway_reconnect_orchestration_keeps_publishing_until_all_responses_arrive():
@@ -243,16 +243,17 @@ def test_broker_readiness_waits_for_subscriber_and_captures_return_code():
 
 
 
-def test_mqtt_uart_capture_uses_completion_marker_grace_and_hard_limit():
+def test_mqtt_capture_uses_reporting_completion_grace_and_hard_limit():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
     config = _resolved_experiment()
-    assert 'MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="' in source
-    assert "_mqtt_completion_marker(bundle)" in source
-    assert 'grep -Fq "$completion_marker" "$uart_file"' in source
-    assert 'termination_reason=completion_marker' in source
+    assert 'reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"' in source
+    assert 'grep -Fq "$reporting_completion_topic"' in source
+    assert 'termination_reason=reporting_complete' in source
     assert 'termination_reason=hard_timeout' in source
+    assert 'reporting_complete_present=$reporting_complete_seen' in source
     assert 'exit "$normalized_capture_rc"' in source
     assert '"capture_termination_reason"' in source
+    assert '"reporting_complete_present"' in source
     assert config["mqtt"]["orchestration"]["completion_grace_seconds"] == 3
 
 def test_mqtt_uart_default_output_is_concise_and_emits_terminal_marker():

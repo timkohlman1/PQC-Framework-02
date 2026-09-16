@@ -46,7 +46,13 @@ class CommandExecution:
 
 @dataclass(frozen=True)
 class UartResult:
-    """Captured output and pass/fail status from one run-scoped UART capture."""
+    """Raw run-scoped UART capture result.
+
+    This object describes acquisition only. Scientific interpretation of the
+    captured bytes is deliberately outside the capture path. Marker booleans
+    are retained only as transient orchestration observations for legacy
+    workflows that cannot use the reporting-MQTT completion plane.
+    """
 
     return_code: int
     duration_seconds: float
@@ -55,13 +61,42 @@ class UartResult:
     device: str
     baud: int
     requested_duration_seconds: int
-    expected_boot_message: str
-    expected_tick_message: str
-    expected_secure_boot_message: str | None
-    boot_marker_present: bool
-    tick_present: bool
-    secure_boot_marker_present: bool | None
     data_captured: bool
+    captured_bytes: int
+    restart_command: str | None
+    boot_marker_present: bool | None = None
+    tick_present: bool | None = None
+    secure_boot_marker_present: bool | None = None
+    # Deprecated scientific fields remain as acquisition-object compatibility
+    # placeholders only. Raw capture never populates them; callers that still
+    # require interpretation must call analyze_uart_capture() explicitly.
+    verification_cycles: int | None = None
+    derived_verification_time_ms: float | None = None
+    derived_time_clock_source: str | None = None
+    bootloader_clock_hz: dict[str, int | None] | None = None
+    bootloader_hclk_hz: int | None = None
+    application_clock_hz: dict[str, int | None] | None = None
+    application_memory_checkpoints: list[dict[str, Any]] | None = None
+    verification_result_code: int | None = None
+    verification_time_source: str = "unavailable"
+    verification_time_measurement_method: str = "Raw UART capture only; scientific interpretation not performed during acquisition."
+    verification_time_limitations: str = "Scientific UART interpretation is deferred to ingestion/analysis."
+    max_stack_used_bytes: int | None = None
+    stack_metric_source: str = "unavailable"
+    heap_used_bytes: int | None = None
+    heap_metric_source: str = "unavailable"
+    runtime_memory_limitations: str = "Scientific UART interpretation is deferred to ingestion/analysis."
+
+
+@dataclass(frozen=True)
+class UartAnalysis:
+    """Scientific interpretation of a previously captured raw UART stream.
+
+    This compatibility object is intentionally separate from :class:`UartResult`
+    so acquisition does not implicitly parse scientific observations. New
+    ingestion/analysis code should consume ``uart.log`` as an immutable input.
+    """
+
     verification_cycles: int | None
     derived_verification_time_ms: float | None
     derived_time_clock_source: str | None
@@ -78,6 +113,7 @@ class UartResult:
     heap_used_bytes: int | None
     heap_metric_source: str
     runtime_memory_limitations: str
+
 
 
 @dataclass(frozen=True)
@@ -500,127 +536,15 @@ def _timestamped_monitor_log_path(results_root: Path) -> Path:
     return candidate
 
 
-def _write_uart_capture_log(
-    log_path: Path,
-    repo_root: Path,
-    capture_execution: CommandExecution,
-    device: str,
-    baud: int,
-    requested_duration_seconds: int,
-    expected_boot_message: str,
-    expected_tick_message: str | None,
-    expected_tick_prefix: str | None,
-    expected_secure_boot_message: str | None,
-    boot_marker_present: bool,
-    tick_present: bool,
-    secure_boot_marker_present: bool | None,
-    data_captured: bool,
-    restart_command: str | None,
-    return_code: int,
-    duration_seconds: float,
-    boot_timing: dict[str, Any],
-    application_clock_hz: dict[str, int | None],
-    runtime_memory: dict[str, Any],
-) -> None:
-    lines = [
-        "UART post-flash capture log",
-        "===========================",
-        f"Timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}",
-        f"Repository root: {repo_root}",
-        f"UART device: {device}",
-        f"UART baud: {baud}",
-        f"Requested capture duration seconds: {requested_duration_seconds}",
-        f"Restart during capture: {str(restart_command is not None).lower()}",
-        f"Restart command: {restart_command if restart_command is not None else 'not requested'}",
-        f"Final return code: {return_code}",
-        f"Total duration seconds: {duration_seconds:.3f}",
-        "",
-        "Pass/fail detection",
-        "-------------------",
-        f"Expected boot marker: {expected_boot_message}",
-        (
-            f"Expected tick prefix: {expected_tick_prefix}"
-            if expected_tick_prefix is not None
-            else f"Expected tick marker: {expected_tick_message}"
-        ),
-        f"Expected secure-boot marker: {expected_secure_boot_message if expected_secure_boot_message is not None else 'not configured'}",
-        f"Boot marker present: {str(boot_marker_present).lower()}",
-        f"Tick marker present: {str(tick_present).lower()}",
-        f"Secure-boot marker present: {str(secure_boot_marker_present).lower() if secure_boot_marker_present is not None else 'not configured'}",
-        f"Data captured: {str(data_captured).lower()}",
-        "",
-        "Boot timing evidence",
-        "--------------------",
-        f"derived_verification_time_ms: {boot_timing['derived_verification_time_ms'] if boot_timing['derived_verification_time_ms'] is not None else 'unavailable'}",
-        f"verification_cycles: {boot_timing['verification_cycles'] if boot_timing['verification_cycles'] is not None else 'unavailable'}",
-        f"derived_time_clock_source: {boot_timing['derived_time_clock_source'] or 'unavailable'}",
-        f"bootloader_sysclk_hz: {boot_timing['bootloader_clock_hz']['sysclk_hz'] if boot_timing['bootloader_clock_hz']['sysclk_hz'] is not None else 'unavailable'}",
-        f"bootloader_hclk_hz: {boot_timing['bootloader_clock_hz']['hclk_hz'] if boot_timing['bootloader_clock_hz']['hclk_hz'] is not None else 'unavailable'}",
-        f"bootloader_pclk1_hz: {boot_timing['bootloader_clock_hz']['pclk1_hz'] if boot_timing['bootloader_clock_hz']['pclk1_hz'] is not None else 'unavailable'}",
-        f"bootloader_pclk2_hz: {boot_timing['bootloader_clock_hz']['pclk2_hz'] if boot_timing['bootloader_clock_hz']['pclk2_hz'] is not None else 'unavailable'}",
-        f"verification_result_code: {boot_timing['verification_result_code'] if boot_timing['verification_result_code'] is not None else 'unavailable'}",
-        f"verification_time_source: {boot_timing['verification_time_source']}",
-        f"Measurement method: {boot_timing['measurement_method']}",
-        f"Limitations: {boot_timing['limitations']}",
-        "",
-        "Application clock evidence",
-        "--------------------------",
-        f"application_sysclk_hz: {application_clock_hz['sysclk_hz'] if application_clock_hz['sysclk_hz'] is not None else 'unavailable'}",
-        f"application_hclk_hz: {application_clock_hz['hclk_hz'] if application_clock_hz['hclk_hz'] is not None else 'unavailable'}",
-        f"application_pclk1_hz: {application_clock_hz['pclk1_hz'] if application_clock_hz['pclk1_hz'] is not None else 'unavailable'}",
-        f"application_pclk2_hz: {application_clock_hz['pclk2_hz'] if application_clock_hz['pclk2_hz'] is not None else 'unavailable'}",
-        "application_clock_source: uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "application_clock_source: unavailable",
-        "",
-        "Runtime memory evidence",
-        "-----------------------",
-        f"max_stack_used_bytes: {runtime_memory['max_stack_used_bytes'] if runtime_memory['max_stack_used_bytes'] is not None else 'unavailable'}",
-        f"stack_metric_source: {runtime_memory['stack_metric_source']}",
-        f"heap_used_bytes: {runtime_memory['heap_used_bytes'] if runtime_memory['heap_used_bytes'] is not None else 'unavailable'}",
-        f"heap_metric_source: {runtime_memory['heap_metric_source']}",
-        f"runtime_memory_limitations: {runtime_memory['limitations']}",
-        "final_ram_linker_accounting: " + (
-            " ".join(f"{key}={value}" for key, value in runtime_memory["ram_accounting"]["linker"].items())
-            if runtime_memory["ram_accounting"]["linker"] else "unavailable"
-        ),
-        "final_ram_runtime_accounting: " + (
-            " ".join(f"{key}={value}" for key, value in runtime_memory["ram_accounting"]["runtime"].items())
-            if runtime_memory["ram_accounting"]["runtime"] else "unavailable"
-        ),
-        "application_memory_checkpoints:",
-        *[
-            line
-            for checkpoint in runtime_memory["application_checkpoints"]
-            for line in (
-                "  " + " ".join(
-                    f"{key}={value if value is not None else 'unavailable'}"
-                    for key, value in checkpoint.items()
-                    if key != "task_stacks"
-                ),
-                *(
-                    "    task_stack " + " ".join(
-                        f"{key}={value if value is not None else 'unavailable'}"
-                        for key, value in task_stack.items()
-                    )
-                    for task_stack in checkpoint["task_stacks"]
-                ),
-            )
-        ],
-        "",
-        "Capture command",
-        "---------------",
-        f"Command: {_format_command(capture_execution.command)}",
-        f"Working directory: {repo_root}",
-        f"Capture return code: {capture_execution.return_code}",
-        f"Capture duration seconds: {capture_execution.duration_seconds:.3f}",
-        "",
-        "stdout:",
-        capture_execution.stdout.rstrip(),
-        "",
-        "stderr:",
-        capture_execution.stderr.rstrip(),
-        "",
-    ]
-    log_path.write_text("\n".join(lines), encoding="utf-8")
+def _write_uart_capture_log(log_path: Path, capture_execution: CommandExecution) -> None:
+    """Persist the UART device stream without framework-generated decoration.
+
+    ``stdout`` is the bytes/text captured from the configured UART device. SSH,
+    reset-command and collector diagnostics remain acquisition metadata and are
+    therefore not mixed into the authoritative raw UART artefact.
+    """
+
+    log_path.write_text(capture_execution.stdout, encoding="utf-8")
 
 
 def _write_uart_monitor_log(
@@ -709,184 +633,116 @@ def execute_uart_capture(
     restart_command: str | None = None,
     log_name: str = "uart.log",
 ) -> UartResult:
-    """Capture post-flash UART output through the configured gateway.
+    """Capture raw post-flash UART output through the configured gateway.
 
-    A GNU ``timeout`` return code of 124 is accepted as a completed bounded
-    capture because the timeout is what stops the otherwise-continuous UART
-    stream. The final framework return code is zero only when the capture step
-    returned either 0 or 124 and both configured markers were observed. When a
-    restart command is supplied, UART capture starts first and the restart is
-    triggered from the same remote command after a short delay so one-shot boot
-    output can be captured.
+    The capture stage records acquisition facts only. It does not derive timing,
+    memory, clock, networking or scientific pass/fail evidence from UART text and
+    it does not place framework-generated metadata into ``uart.log``.
+
+    Marker booleans are calculated only as transient compatibility observations
+    for legacy boot-path orchestration. They are not persisted as UART capture
+    evidence and do not affect capture acceptance.
     """
 
     repo_root_path = Path(repo_root)
     result_dir_path = Path(result_dir)
     log_path = result_dir_path / log_name
 
-    gateway_alias = str(bundle["host"]["alias"])
     gateway_target = gateway_ssh_target(bundle["host"])
     device = str(bundle["host"]["uart"]["device"])
     baud = int(bundle["host"]["uart"]["baud"])
-    expected_boot_message = str(bundle["experiment"]["uart"]["expected_boot_message"])
-    expected_tick_message_value = bundle["experiment"]["uart"].get("expected_tick_message")
-    expected_tick_prefix_value = bundle["experiment"]["uart"].get("expected_tick_prefix")
+    uart_cfg = bundle["experiment"].get("uart", {})
+    expected_boot_message_value = uart_cfg.get("expected_boot_message")
+    expected_tick_message_value = uart_cfg.get("expected_tick_message")
+    expected_tick_prefix_value = uart_cfg.get("expected_tick_prefix")
+    expected_secure_boot_message_value = uart_cfg.get("expected_secure_boot_message")
+
+    start = perf_counter()
+    if restart_command is None:
+        capture_command = construct_ssh_uart_capture_command(
+            gateway_target, device, baud, duration_seconds
+        )
+    else:
+        capture_command = construct_ssh_uart_monitor_with_restart_command(
+            gateway_target, device, baud, duration_seconds, restart_command
+        )
+
+    capture_execution = runner(capture_command, repo_root_path)
+    duration = perf_counter() - start
+    _write_uart_capture_log(log_path, capture_execution)
+
+    data_captured = bool(capture_execution.stdout)
+    captured_bytes = len(capture_execution.stdout.encode("utf-8"))
+    capture_completed = _capture_completed(capture_execution.return_code)
+    if capture_completed and data_captured:
+        return_code = 0
+        acquisition_status = "available"
+        acquisition_reason = None
+    elif capture_completed:
+        return_code = UART_NO_DATA_RETURN_CODE
+        acquisition_status = "unavailable"
+        acquisition_reason = "UART capture completed but no device bytes were captured."
+    else:
+        return_code = capture_execution.return_code
+        acquisition_status = "unavailable"
+        acquisition_reason = (
+            capture_execution.stderr.strip()
+            or f"UART capture command failed with return code {capture_execution.return_code}."
+        )
+
+    # Compatibility-only orchestration observations. These values are not
+    # persisted in the capture manifest and do not affect capture acceptance.
+    expected_boot_message = (
+        None if expected_boot_message_value in (None, "") else str(expected_boot_message_value)
+    )
     expected_tick_message = (
         None if expected_tick_message_value in (None, "") else str(expected_tick_message_value)
     )
     expected_tick_prefix = (
         None if expected_tick_prefix_value in (None, "") else str(expected_tick_prefix_value)
     )
-    expected_secure_boot_message_value = bundle["experiment"].get("uart", {}).get(
-        "expected_secure_boot_message"
-    )
     expected_secure_boot_message = (
-        None
-        if expected_secure_boot_message_value in (None, "")
-        else str(expected_secure_boot_message_value)
+        None if expected_secure_boot_message_value in (None, "") else str(expected_secure_boot_message_value)
     )
-
-    start = perf_counter()
-    if restart_command is None:
-        capture_command = construct_ssh_uart_capture_command(
-            gateway_target,
-            device,
-            baud,
-            duration_seconds,
-        )
-    else:
-        capture_command = construct_ssh_uart_monitor_with_restart_command(
-            gateway_target,
-            device,
-            baud,
-            duration_seconds,
-            restart_command,
-        )
-
-    capture_execution = runner(capture_command, repo_root_path)
-    duration = perf_counter() - start
-
-    data_captured = bool(capture_execution.stdout.strip())
     output_lines = {line.strip() for line in capture_execution.stdout.splitlines()}
-    boot_marker_present = expected_boot_message in capture_execution.stdout
+    boot_marker_present = (
+        None if expected_boot_message is None else expected_boot_message in capture_execution.stdout
+    )
     if expected_tick_prefix is not None:
-        tick_present = any(
-            line.startswith(expected_tick_prefix)
-            for line in capture_execution.stdout.splitlines()
-        )
+        tick_present = any(line.startswith(expected_tick_prefix) for line in capture_execution.stdout.splitlines())
+    elif expected_tick_message is not None:
+        tick_present = expected_tick_message.strip() in output_lines
+        if not tick_present and expected_tick_message.strip() == "tick":
+            tick_present = any(line.startswith("[tick=") for line in capture_execution.stdout.splitlines())
     else:
-        tick_present = (
-            expected_tick_message is not None
-            and expected_tick_message.strip() in output_lines
-        )
-        if (
-            not tick_present
-            and expected_tick_message is not None
-            and expected_tick_message.strip() == "tick"
-        ):
-            tick_present = any(
-                line.startswith("[tick=")
-                for line in capture_execution.stdout.splitlines()
-            )
+        tick_present = None
     secure_boot_marker_present = (
-        None
-        if expected_secure_boot_message is None
-        else expected_secure_boot_message in capture_execution.stdout
-    )
-    secure_boot_marker_requirement_met = (
-        expected_secure_boot_message is None or secure_boot_marker_present is True
-    )
-    capture_completed = _capture_completed(capture_execution.return_code)
-    boot_timing = _boot_timing_evidence(capture_execution.stdout)
-    application_clock_hz = parse_application_clock_hz(capture_execution.stdout)
-    runtime_memory = _runtime_memory_evidence(capture_execution.stdout)
-    network_evidence = parse_wifi_dhcp_evidence(capture_execution.stdout)
-
-    if capture_completed and boot_marker_present and tick_present and secure_boot_marker_requirement_met:
-        return_code = 0
-        result_status = "pass"
-    elif capture_completed:
-        return_code = UART_MARKER_MISSING_RETURN_CODE
-        result_status = "fail"
-    else:
-        return_code = capture_execution.return_code
-        result_status = "fail"
-
-    _write_uart_capture_log(
-        log_path=log_path,
-        repo_root=repo_root_path,
-        capture_execution=capture_execution,
-        device=device,
-        baud=baud,
-        requested_duration_seconds=duration_seconds,
-        expected_boot_message=expected_boot_message,
-        expected_tick_message=expected_tick_message,
-        expected_tick_prefix=expected_tick_prefix,
-        expected_secure_boot_message=expected_secure_boot_message,
-        boot_marker_present=boot_marker_present,
-        tick_present=tick_present,
-        secure_boot_marker_present=secure_boot_marker_present,
-        data_captured=data_captured,
-        restart_command=restart_command,
-        return_code=return_code,
-        duration_seconds=duration,
-        boot_timing=boot_timing,
-        application_clock_hz=application_clock_hz,
-        runtime_memory=runtime_memory,
+        None if expected_secure_boot_message is None else expected_secure_boot_message in capture_execution.stdout
     )
 
     update_manifest(
         result_dir_path / "manifest.json",
         {
-            "result": result_status,
             "uart": {
+                "log": log_name,
+                "skipped": False,
+                "acquisition_status": acquisition_status,
+                "acquisition_reason": acquisition_reason,
                 "return_code": return_code,
                 "capture_return_code": capture_execution.return_code,
                 "duration_seconds": round(duration, 3),
                 "capture_duration_seconds": round(capture_execution.duration_seconds, 3),
-                "log": log_name,
                 "device": device,
                 "baud": baud,
                 "requested_duration_seconds": duration_seconds,
-                "expected_boot_message": expected_boot_message,
-                "expected_tick_message": expected_tick_message,
-                "expected_tick_prefix": expected_tick_prefix,
-                "expected_secure_boot_message": expected_secure_boot_message,
-                "boot_marker_present": boot_marker_present,
-                "tick_present": tick_present,
-                "secure_boot_marker_present": secure_boot_marker_present,
-                "data_captured": data_captured,
                 "restart_command": restart_command,
                 "restart_during_capture": restart_command is not None,
-                "skipped": False,
-                "derived_verification_time_ms": boot_timing["derived_verification_time_ms"],
-                "derived_time_clock_source": boot_timing["derived_time_clock_source"],
-                "bootloader_clock_hz": boot_timing["bootloader_clock_hz"],
-                "bootloader_hclk_hz": boot_timing["bootloader_hclk_hz"],
-                "bootloader_clock_source": boot_timing["bootloader_clock_source"],
-                "application_clock_hz": application_clock_hz,
-                "application_clock_source": "uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "unavailable",
-                "verification_cycles": boot_timing["verification_cycles"],
-                
-                "verification_result_code": boot_timing["verification_result_code"],
-                "verification_time_source": boot_timing["verification_time_source"],
-                "verification_time_measurement_method": boot_timing["measurement_method"],
-                "verification_time_limitations": boot_timing["limitations"],
-                "max_stack_used_bytes": runtime_memory["max_stack_used_bytes"],
-                "stack_metric_source": runtime_memory["stack_metric_source"],
-                "heap_used_bytes": runtime_memory["heap_used_bytes"],
-                "heap_metric_source": runtime_memory["heap_metric_source"],
-                "runtime_memory_limitations": runtime_memory["limitations"],
-                "application_memory_checkpoints": runtime_memory["application_checkpoints"],
-            },
-            "boot_timing": boot_timing,
-            "application_clock": {
-                "clock_hz": application_clock_hz,
-                "source": "uart_reported_hal_rcc_from_running_default_task" if any(value is not None for value in application_clock_hz.values()) else "unavailable",
-                "measurement_point": "after FreeRTOS scheduler start in defaultTask",
-            },
-            "runtime_memory": runtime_memory,
-            "network": network_evidence,
+                "data_captured": data_captured,
+                "captured_bytes": captured_bytes,
+                "capture_format": "raw_uart_text",
+                "framework_preamble": False,
+                "scientific_parsing_performed": False,
+            }
         },
     )
 
@@ -898,20 +754,36 @@ def execute_uart_capture(
         device=device,
         baud=baud,
         requested_duration_seconds=duration_seconds,
-        expected_boot_message=expected_boot_message,
-        expected_tick_message=expected_tick_message,
-        expected_secure_boot_message=expected_secure_boot_message,
+        data_captured=data_captured,
+        captured_bytes=captured_bytes,
+        restart_command=restart_command,
         boot_marker_present=boot_marker_present,
         tick_present=tick_present,
         secure_boot_marker_present=secure_boot_marker_present,
-        data_captured=data_captured,
+    )
+
+
+def analyze_uart_capture(result: UartResult) -> UartAnalysis:
+    """Interpret an already captured UART stream.
+
+    This compatibility helper is intentionally explicit and separate from raw
+    acquisition. It must not be called by normal Request-15 result capture. A
+    future/offline ingestion stage can use the same parsers against ``uart.log``
+    and record lineage under ``analysis/``.
+    """
+
+    output = result.capture.stdout
+    boot_timing = _boot_timing_evidence(output)
+    application_clock_hz = parse_application_clock_hz(output)
+    runtime_memory = _runtime_memory_evidence(output)
+    return UartAnalysis(
+        verification_cycles=boot_timing["verification_cycles"],
         derived_verification_time_ms=boot_timing["derived_verification_time_ms"],
         derived_time_clock_source=boot_timing["derived_time_clock_source"],
         bootloader_clock_hz=boot_timing["bootloader_clock_hz"],
         bootloader_hclk_hz=boot_timing["bootloader_hclk_hz"],
         application_clock_hz=application_clock_hz,
         application_memory_checkpoints=runtime_memory["application_checkpoints"],
-        verification_cycles=boot_timing["verification_cycles"],
         verification_result_code=boot_timing["verification_result_code"],
         verification_time_source=boot_timing["verification_time_source"],
         verification_time_measurement_method=boot_timing["measurement_method"],

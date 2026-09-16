@@ -57,10 +57,13 @@ def test_apply_command_uses_distinct_interface_and_ifb_netem():
     module = _load_module("scripts/framework/network_degradation.py", "network_degradation_commands")
     config = module.NetworkDegradationConfig(
         interface="wlan-experiment", ifb_interface="ifb-pqc0", rate_kbit=250,
-        rtt_ms=50, loss_percent=1.0, mtu=1500, management_safe=True,
+        rtt_ms=50, loss_percent=1.0, mtu=1500, management_safe=True, broker_service="mqtt-classical",
     )
     script = module._remote_script(config)
     assert "dev $iface root netem delay 25ms loss 1% rate 250kbit" in script
+    assert "docker" in script.lower() or "$DOCKER" in script
+    assert "PQC_EXPERIMENT_VETH" in script
+    assert "link set dev $physical_iface mtu" not in script
     assert "mirred egress redirect dev $ifb" in script
     assert "dev $ifb root netem delay 25ms loss 1% rate 250kbit" in script
 
@@ -75,11 +78,12 @@ def test_runtime_only_measurement_does_not_prepare_build_or_flash():
     assert "_execute_mqtt_e2e_uart_capture(" in runtime_only
 
 
-def test_legacy_managed_broker_cleanup_structural_count_remains_three():
+def test_result_collector_is_finalised_before_impairment_cleanup():
     source = Path("scripts/experiment.py").read_text(encoding="utf-8")
-    assert source.count(
-        "_collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)"
-    ) == 3
+    finally_start = source.index("    finally:", source.index("def _execute_mqtt_e2e_uart_capture"))
+    collector = source.index("stop_and_collect_gateway_result_collector", finally_start)
+    cleanup = source.index("remove_gateway_network_degradation", finally_start)
+    assert collector < cleanup
 
 
 def test_gateway_command_resolution_falls_back_to_standard_system_paths():
@@ -96,11 +100,13 @@ def test_apply_uses_resolved_absolute_commands_instead_of_bare_tc_ip():
     module = _load_module("scripts/framework/network_degradation.py", "network_degradation_resolved_apply")
     config = module.NetworkDegradationConfig(
         interface="enp0s31f6", ifb_interface="ifb-pqc0", rate_kbit=40,
-        rtt_ms=200, loss_percent=0.0, mtu=1280, management_safe=True,
+        rtt_ms=200, loss_percent=0.0, mtu=1280, management_safe=True, broker_service="mqtt-classical",
     )
     script = module._remote_script(config)
     assert 'sudo -n "$TC" qdisc add dev $iface root netem' in script
     assert 'sudo -n "$IP" link set dev $iface mtu 1280' in script
+    assert 'NSENTER' in script
+    assert 'link set dev eth0 mtu 1280' in script
     assert 'sudo -n "$MODPROBE" ifb numifbs=1' in script
     assert "sudo -n tc " not in script
     assert "sudo -n ip " not in script

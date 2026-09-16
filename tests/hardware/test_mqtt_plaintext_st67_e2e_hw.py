@@ -25,6 +25,11 @@ def test_mqtt_plaintext_st67_e2e_retained_broker_evidence():
     assert evidence["return_code"] == 0
     assert evidence["failure_stage"] == "none"
     assert evidence["broker_response_passed"] is True
-    assert evidence["missing_uart_markers"] == []
+    collection = manifest["result_collection"]
+    assert collection["status"] == "complete"
+    assert collection["completion_integrity"] is True
+    assert collection["source_integrity"]["stm32"]["passed"] is True
+    assert (result_dir / collection["raw_stream"]).is_file()
+    assert (result_dir / collection["collector_log"]).is_file()
     assert (result_dir / evidence["publisher_log"]).is_file()
     assert (result_dir / evidence["subscriber_log"]).is_file()

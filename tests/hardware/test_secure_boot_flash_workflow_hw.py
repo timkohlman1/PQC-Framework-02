@@ -236,10 +236,14 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
         assert artifact_freshness["fingerprint_inputs"]
 
     assert manifest["uart"]["return_code"] == 0
-    assert manifest["uart"]["boot_marker_present"] is True
-    assert manifest["uart"]["tick_present"] is True
-    assert manifest["uart"]["secure_boot_marker_present"] is True
+    assert manifest["uart"]["acquisition_status"] == "available"
     assert manifest["uart"]["data_captured"] is True
+    assert manifest["uart"]["capture_format"] == "raw_uart_text"
+    assert manifest["uart"]["framework_preamble"] is False
+    assert manifest["uart"]["scientific_parsing_performed"] is False
+    assert "boot_marker_present" not in manifest["uart"]
+    assert "tick_present" not in manifest["uart"]
+    assert "secure_boot_marker_present" not in manifest["uart"]
 
     assert manifest["secure_boot_run"]["return_code"] == 0
     assert manifest["secure_boot_run"]["flash_return_code"] == 0
@@ -261,12 +265,10 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
         manifest["boot_timing"]["verification_time_source"]
         == "framework_derived_from_uart_cycles_and_reported_hclk"
     )
-    assert isinstance(manifest["uart"]["derived_verification_time_ms"], (int, float))
-    assert manifest["uart"]["derived_verification_time_ms"] > 0
-    assert isinstance(manifest["uart"]["verification_cycles"], int)
-    assert manifest["uart"]["verification_cycles"] > 0
-    assert manifest["uart"]["bootloader_hclk_hz"] > 0
-    assert manifest["uart"]["verification_result_code"] == 0
+    assert "derived_verification_time_ms" not in manifest["uart"]
+    assert "verification_cycles" not in manifest["uart"]
+    assert "bootloader_hclk_hz" not in manifest["uart"]
+    assert "verification_result_code" not in manifest["uart"]
     assert isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], (int, float))
     assert manifest["secure_boot_run"]["derived_verification_time_ms"] > 0
     assert isinstance(manifest["secure_boot_run"]["verification_cycles"], int)
@@ -388,23 +390,13 @@ def test_secure_boot_build_sign_flash_uart_workflow(tmp_path, pqc_require_capabi
     assert "0x08020000" in flash_log
 
     uart_log = uart_log_path.read_text(encoding="utf-8")
-    assert "Boot marker present: true" in uart_log
-    assert "Tick marker present: true" in uart_log
-    assert "Secure-boot marker present: true" in uart_log
-    assert "Data captured: true" in uart_log
-    assert "verification_time_source: framework_derived_from_uart_cycles_and_reported_hclk" in uart_log
-    assert "verification_cycles:" in uart_log
-    assert "bootloader_hclk_hz:" in uart_log
-    assert "verification_result_code: 0" in uart_log
-    assert "max_stack_used_bytes:" in uart_log
-    # The secure-boot contract is established by the parsed boot, tick,
-    # secure-boot, verification, and stack evidence above. Incidental FreeRTOS
-    # diagnostic strings are intentionally not required because UART capture may
-    # begin after one-time scheduler startup messages have already been emitted.
-    if "max_stack_used_bytes: unavailable" in uart_log:
-        assert "stack_metric_source: unavailable" in uart_log
-    else:
-        assert "stack_metric_source: uart_explicit_stack_high_water_marker" in uart_log
+    # uart.log is the raw device stream only. Framework-generated capture
+    # metadata and interpreted timing/memory summaries must not be prepended.
+    assert "UART post-flash capture log" not in uart_log
+    assert "Pass/fail detection" not in uart_log
+    assert "Boot timing evidence" not in uart_log
+    assert "Runtime memory evidence" not in uart_log
+    assert "stm32-basic_hal1" in uart_log
 
 @pytest.mark.hardware
 @pytest.mark.long
@@ -495,29 +487,19 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         assert manifest["secure_boot_negative_test"]["secure_boot_marker_absent"] is True
         assert manifest["secure_boot_negative_test"]["source_image_modified"] is False
 
-        # In the negative workflow, UART marker evaluation is expected to fail
-        # because the normal application markers must be absent. The enclosing
-        # secure-boot command still returns success when the negative-test
-        # verdict passes.
-        assert manifest["uart"]["return_code"] == 9
-        assert manifest["uart"]["boot_marker_present"] is False
-        assert manifest["uart"]["tick_present"] is False
-        assert manifest["uart"]["secure_boot_marker_present"] is False
-        # A rejected/corrupted app may produce no UART payload at all. That is
-        # valid negative evidence as long as the application markers are absent
-        # and the enclosing negative-test verdict passed.
+        # UART acquisition is evaluated independently of semantic marker
+        # absence. Negative-test orchestration records the marker observations
+        # under secure_boot_negative_test, while uart.log remains raw.
+        assert manifest["uart"]["return_code"] in {0, 10}
+        assert manifest["uart"]["acquisition_status"] in {"available", "unavailable"}
         assert manifest["uart"]["data_captured"] in {True, False}
-
-        # Negative-test state is verified through manifest fields instead of
-        # brittle flash-log text, because the flash log primarily captures
-        # command output from external tools.
+        assert "boot_marker_present" not in manifest["uart"]
+        assert "tick_present" not in manifest["uart"]
+        assert "secure_boot_marker_present" not in manifest["uart"]
 
         uart_log = uart_log_path.read_text(encoding="utf-8")
-        assert "Boot marker present: false" in uart_log
-        assert "Tick marker present: false" in uart_log
-        assert "Secure-boot marker present: false" in uart_log
-        # The negative verdict is based on absence of the canonical application
-        # markers recorded in the manifest, not optional scheduler diagnostics.
+        assert "UART post-flash capture log" not in uart_log
+        assert "Pass/fail detection" not in uart_log
     finally:
         restore_completed = _restore_valid_secure_boot_application(repo_root, results_dir)
         assert restore_completed.returncode == 0, (
@@ -531,7 +513,6 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         )
         _assert_positive_secure_boot_manifest(restored_manifest)
         restored_uart_log = (restored_result_dir / "uart.log").read_text(encoding="utf-8")
-        assert "Boot marker present: true" in restored_uart_log
-        assert "Tick marker present: true" in restored_uart_log
-        assert "Secure-boot marker present: true" in restored_uart_log
+        assert "UART post-flash capture log" not in restored_uart_log
+        assert "stm32-basic_hal1" in restored_uart_log
 

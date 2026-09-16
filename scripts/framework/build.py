@@ -42,6 +42,7 @@ BUILD_NUMBER_ERROR_RETURN_CODE = 9
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
 SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
 SUPPORTED_UART_LOG_LEVELS = {"off": -1, "error": 0, "info": 1, "debug": 2}
+SUPPORTED_UART_OUTPUT_MODES = {"disabled", "minimal", "full"}
 
 
 @dataclass(frozen=True)
@@ -347,18 +348,31 @@ def _resolved_uart_log_level(bundle: dict[str, dict[str, Any]]) -> str:
     return level
 
 
+
+def _resolved_uart_output_mode(bundle: dict[str, dict[str, Any]]) -> str:
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    mode = str(firmware.get("uart_output_mode", "minimal")).strip().lower()
+    if mode not in SUPPORTED_UART_OUTPUT_MODES:
+        raise ValueError(
+            "Unsupported UART output mode: " + mode
+            + "; supported modes: " + ", ".join(sorted(SUPPORTED_UART_OUTPUT_MODES))
+        )
+    return mode
+
 def _write_application_selection(
     bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release"
 ) -> tuple[Path, str]:
     """Write profile-selected STM32 application and UART log level for CMake."""
     application = _resolved_firmware_application(bundle)
     uart_log_level = _resolved_uart_log_level(bundle)
+    uart_output_mode = _resolved_uart_output_mode(bundle)
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_application_selection.cmake"
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
-        f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n',
+        f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
+        f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n',
         encoding="utf-8",
     )
     return path, application
@@ -411,6 +425,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
     ipv4 = network.get("ipv4", {}) if isinstance(network, dict) else {}
     mqtt = experiment.get("mqtt", {}) if isinstance(experiment, dict) else {}
     broker = mqtt.get("broker", {}) if isinstance(mqtt, dict) else {}
+    reporting = experiment.get("reporting", {}) if isinstance(experiment, dict) else {}
     topics = mqtt.get("topics", {}) if isinstance(mqtt, dict) else {}
     transfer = mqtt.get("transfer", {}) if isinstance(mqtt, dict) else {}
     tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
@@ -487,6 +502,9 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_ENABLED {1 if bool(mqtt.get("enabled", False)) else 0}\n'
         f'#define PQC_MQTT_BROKER_HOST "{esc(str(broker.get("host", "")))}"\n'
         f'#define PQC_MQTT_BROKER_PORT {int(broker.get("port", 1883))}\n'
+        f'#define PQC_REPORTING_MQTT_HOST "{esc(str(reporting.get("host", broker.get("host", ""))))}"\n'
+        f'#define PQC_REPORTING_MQTT_PORT {int(reporting.get("port", 1886))}\n'
+        f'#define PQC_REPORTING_RUN_ID_TOPIC "{esc(str(reporting.get("control_run_id_topic", "pqc/control/run-id/current")))}"\n'
         f'#define PQC_MQTT_DNS_REQUIRED {1 if bool(broker.get("dns_required", False)) else 0}\n'
         f'#define PQC_MQTT_CLIENT_ID "{esc(str(mqtt.get("client_id", "pqc-stm32")))}"\n'
         f'#define PQC_MQTT_COMMAND_TOPIC "{esc(str(topics.get("command", "pqc/stm32/command")))}"\n'

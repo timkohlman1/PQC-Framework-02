@@ -33,7 +33,8 @@ def test_packet_capture_prefers_explicit_stm32_mac_filter():
     assert resolved == {
         "interface": "wlan0",
         "stm32_mac_address": "02:11:22:33:44:55",
-        "capture_filter": "ether host 02:11:22:33:44:55",
+        "capture_filter": "(ether host 02:11:22:33:44:55) and not port 1886",
+        "reporting_port_excluded": 1886,
     }
 
 
@@ -42,7 +43,8 @@ def test_packet_capture_defaults_to_any_interface_without_narrow_filter():
     assert resolved == {
         "interface": "any",
         "stm32_mac_address": None,
-        "capture_filter": None,
+        "capture_filter": "not port 1886",
+        "reporting_port_excluded": 1886,
     }
 
 

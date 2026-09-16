@@ -3,5 +3,6 @@ profile_type: workload
 id: ready_metrics
 firmware_application: mqtt_ready_metrics
 uart_log_level: info
+uart_output_mode: minimal
 evidence:
   deferred_reporting: true

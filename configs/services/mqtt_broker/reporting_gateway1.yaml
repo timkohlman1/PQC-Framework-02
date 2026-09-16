@@ -15,8 +15,10 @@ tls:
   enabled: false
   pki_required: false
 topics:
-  results: pqc/results/{run_id}/#
-  control: pqc/control/{run_id}/#
+  stm32_results: pqc/result/stm32/{run_id}/#
+  instrument_results: pqc/instrument/+/{run_id}/#
+  control: pqc/control/#
+  current_run_id: pqc/control/run-id/current
 collector:
   required: true
   access: local_gateway
