@@ -119,6 +119,13 @@ typedef struct {
     bool suppress_success_diagnostics;
 } PQC_WolfMQTTSocketContext;
 
+#ifndef PQC_OTA_ENABLED
+#define PQC_OTA_ENABLED 0
+#endif
+#ifndef PQC_DUAL_BANK_ENABLED
+#define PQC_DUAL_BANK_ENABLED 0
+#endif
+
 static PQC_WolfMQTTReadyMetrics2Snapshot s_ready_metrics_2_snapshot;
 
 typedef struct {
@@ -135,9 +142,11 @@ typedef struct {
     bool transfer_complete;
 } PQC_WolfMQTTMessageContext;
 
+#if PQC_OTA_ENABLED
 static int PQC_WolfMQTT_ProcessRetainedOta(
     MqttClient *client, PQC_WolfMQTTMessageContext *message_context, const char *run_id);
 static int PQC_OTA_ConfirmActiveCandidateIfPending(void);
+#endif
 
 #if PQC_TLS_COMPILED
 #define PQC_WOLFSSL_RNG_READY_SPIN_LIMIT 1000000UL
@@ -1171,11 +1180,13 @@ int PQC_WolfMQTT_PublishDeferredResults(
         run_id,(unsigned long)record_count,(unsigned long)chunk_count,(unsigned long)length,
         (unsigned long)dropped_record_count,overflowed?"true":"false",logical_sha256);
     result=PQC_WolfMQTT_PublishTopic(&client,topic,payload,60001U);
+#if PQC_OTA_ENABLED
     if(result==MQTT_CODE_SUCCESS) {
         int ota_result=PQC_WolfMQTT_ProcessRetainedOta(&client,&message_context,run_id);
         if(ota_result!=MQTT_CODE_SUCCESS) result=ota_result;
         else if(PQC_OTA_ConfirmActiveCandidateIfPending()!=0) result=MQTT_CODE_ERROR_NETWORK;
     }
+#endif
 
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);
@@ -1186,6 +1197,7 @@ cleanup_client:
     return result;
 }
 
+#if PQC_OTA_ENABLED
 #define PQC_OTA_BANK_BYTES 0x00100000UL
 #define PQC_OTA_INACTIVE_BASE 0x08100000UL
 #define PQC_OTA_BOOTLOADER_BYTES 0x0001C000UL
@@ -1453,6 +1465,7 @@ int PQC_WolfMQTT_ServiceRetainedOta(PQC_OtaStatus *status)
     status->inactive_physical_bank = status->active_physical_bank == 1U ? 2U : 1U;
     return MQTT_CODE_SUCCESS;
 }
+#endif /* PQC_OTA_ENABLED */
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend)
 {

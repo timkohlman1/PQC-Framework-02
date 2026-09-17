@@ -2398,37 +2398,63 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 
 
 
-def _request5_dualbank_wolfboot_config(config_text: str) -> str:
-    """Apply the maintained STM32L4R5 hardware-dual-bank layout.
+def _request5_wolfboot_config(
+    config_text: str, *, firmware_mode: str, standby_signing_keys: int
+) -> str:
+    """Apply experiment-selected Request-5 flash layout and key-count settings."""
+    modes = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}
+    if firmware_mode not in modes:
+        raise ConfigError(
+            "firmware_mode must be one of: " + ", ".join(sorted(modes))
+        )
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ConfigError("standby_signing_keys must be 0, 1, or 2")
 
-    The canonical target profile is shared with direct-flash configuration, so
-    the wolfBoot compatibility layer owns these wolfBoot-only overrides.
-    """
-    overrides = {
-        "DUALBANK_SWAP?": "1",
-        "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
-        "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000",
-        "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
-    }
-    lines = []
-    seen = set()
+    if firmware_mode == "single_bank":
+        overrides = {
+            "DUALBANK_SWAP?": "0",
+            "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
+            "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08100000",
+            "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+            "WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x081E0000",
+        }
+        remove = set()
+    else:
+        overrides = {
+            "DUALBANK_SWAP?": "1",
+            "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
+            "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000",
+            "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+        }
+        remove = {"WOLFBOOT_PARTITION_SWAP_ADDRESS"}
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    standby_define_seen = False
     for line in config_text.splitlines():
         key = line.split("=", 1)[0] if "=" in line else None
+        if key in remove:
+            continue
         if key in overrides:
             lines.append(f"{key}={overrides[key]}")
             seen.add(key)
-        elif key == "WOLFBOOT_PARTITION_SWAP_ADDRESS":
             continue
-        else:
-            lines.append(line)
+        if line.startswith("CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS="):
+            lines.append(f"CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS={standby_signing_keys}")
+            standby_define_seen = True
+            continue
+        lines.append(line)
     for key, value in overrides.items():
         if key not in seen:
             lines.append(f"{key}={value}")
+    if not standby_define_seen:
+        lines.append(f"CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS={standby_signing_keys}")
     return "\n".join(lines) + "\n"
 
 
 def load_secure_boot_profile_section(
-    *, target_profile: Path | str, algorithm: str, section: str
+    *, target_profile: Path | str, algorithm: str, section: str,
+    firmware_mode: str = "single_bank", standby_signing_keys: int = 0
 ) -> tuple[dict[str, Any], Path]:
     """Resolve a secure-boot compatibility section from canonical profiles.
 
@@ -2462,6 +2488,12 @@ def load_secure_boot_profile_section(
     signing = secure_boot.get("signing", {})
     requires_private_key = bool(signing.get("requires_private_key"))
     tuple_id = signing.get("tuple_id")
+    if firmware_mode not in {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}:
+        raise ConfigError(f"unsupported firmware_mode: {firmware_mode}")
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ConfigError("standby_signing_keys must be 0, 1, or 2")
+    if tuple_id and standby_signing_keys:
+        tuple_id = f"{tuple_id}-standby{standby_signing_keys}"
     tuple_dir = None if not tuple_id else f"secrets/wolfboot/tuples/{tuple_id}"
     private_key = None if tuple_dir is None else f"{tuple_dir}/private_key.der"
     boot_profile = f"wolfboot_{compat_id}" if compat_id != "integrity_sha256" else "wolfboot_integrity"
@@ -2524,14 +2556,25 @@ def load_secure_boot_profile_section(
         })
         build = dict(resolved.get("build", {}))
         build.pop("config_template", None)
-        build["config_content"] = _request5_dualbank_wolfboot_config(render_wolfboot_config(canonical_target, secure_boot))
+        build["config_content"] = _request5_wolfboot_config(
+            render_wolfboot_config(canonical_target, secure_boot),
+            firmware_mode=firmware_mode,
+            standby_signing_keys=standby_signing_keys,
+        )
         build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
+        build["firmware_mode"] = firmware_mode
+        build["standby_signing_keys"] = standby_signing_keys
+        build["standby_keygen_option"] = packaging_option
         if requires_private_key and private_key and tuple_dir and tuple_id:
             build["signing_key"] = private_key
             signing_tuple = dict(build.get("signing_tuple", {}))
             signing_tuple.update({
                 "tuple_id": tuple_id,
                 "directory": tuple_dir,
+                "standby_private_keys": [
+                    f"standby_key_{index}.der"
+                    for index in range(1, standby_signing_keys + 1)
+                ],
             })
             build["signing_tuple"] = signing_tuple
             # Preserve the raw ECC256 public-key export contract used by the
@@ -2560,6 +2603,8 @@ def load_secure_boot_profile_section(
             "require_input_build_provenance": True,
             "retained_signed_image": f"application_{image_stem}.bin",
             "status": "canonical_request10_profile",
+            "firmware_mode": firmware_mode,
+            "standby_signing_keys": standby_signing_keys,
         })
         binary = dict(resolved.get("binary_conversion", {}))
         binary.update({
@@ -2589,6 +2634,10 @@ def load_secure_boot_profile_section(
                     "tuple_id": tuple_id,
                     "directory": tuple_dir,
                     "public_key": "public_key.der" if canonical_id == "ecdsa_p256" else "keystore.c",
+                    "standby_private_keys": [
+                        f"standby_key_{index}.der"
+                        for index in range(1, standby_signing_keys + 1)
+                    ],
                 })
                 resolved["signing_tuple"] = signing_tuple
         else:
@@ -3271,6 +3320,18 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     return bundle
 
 
+def _request5_choices_from_bundle(bundle: dict[str, dict[str, Any]]) -> tuple[str, int]:
+    experiment = bundle.get("experiment", {})
+    resolved = experiment.get("resolved_configuration", {})
+    choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
+    if not isinstance(choices, dict):
+        choices = {}
+    firmware = experiment.get("firmware", {})
+    mode = str(choices.get("firmware_mode", firmware.get("firmware_mode", "single_bank")))
+    standby = int(choices.get("standby_signing_keys", firmware.get("standby_signing_keys", 0)))
+    return mode, standby
+
+
 def load_secure_boot_experiment_bundle(
     experiment_path: Path | str,
     *,
@@ -3280,11 +3341,14 @@ def load_secure_boot_experiment_bundle(
     """Compose a generated canonical case with the selected wolfBoot runtime settings."""
 
     bundle = load_experiment_bundle(experiment_path)
+    firmware_mode, standby_signing_keys = _request5_choices_from_bundle(bundle)
     experiment_defaults, _ = load_secure_boot_profile_section(
-        target_profile=target_profile, algorithm=algorithm, section="experiment"
+        target_profile=target_profile, algorithm=algorithm, section="experiment",
+        firmware_mode=firmware_mode, standby_signing_keys=standby_signing_keys
     )
     boot_config, _ = load_secure_boot_profile_section(
-        target_profile=target_profile, algorithm=algorithm, section="boot"
+        target_profile=target_profile, algorithm=algorithm, section="boot",
+        firmware_mode=firmware_mode, standby_signing_keys=standby_signing_keys
     )
     experiment_config = _merge_config(bundle["experiment"], experiment_defaults)
     validate_experiment_config(experiment_config)
@@ -3344,6 +3408,8 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
             f"Gateway profile: {selections.get('gateway', 'unavailable')}",
             f"Workload profile: {selections.get('workload', 'unavailable')}",
             f"Secure-boot profile: {choices.get('secure_boot', 'unavailable')}",
+            f"Firmware mode: {choices.get('firmware_mode', 'single_bank')}",
+            f"Standby signing keys: {choices.get('standby_signing_keys', 0)}",
             f"Network condition: {choices.get('network_condition', 'unavailable')}",
         ])
 
@@ -4218,7 +4284,11 @@ def _compose_wolfboot_run_bundle(
             **{
                 key: value
                 for key, value in original_experiment.get("firmware", {}).items()
-                if key in {"application", "uart_log_level"}
+                if key in {
+                    "application", "uart_log_level", "uart_output_mode",
+                    "firmware_mode", "dual_bank_enabled", "ota_enabled",
+                    "standby_signing_keys",
+                }
             },
         },
         "secure_boot_benchmark_profile": dict(
@@ -4346,6 +4416,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if getattr(args, "ota_plan", None) is not None and args.firmware_mode != "dual_bank_ota":
+        print(
+            "Error: --ota-plan requires resolved firmware_mode=dual_bank_ota.",
+            file=sys.stderr,
+        )
+        return 2
 
     repo_root = repo_root_from_experiment_path(args.experiment)
     bundle = _compose_wolfboot_run_bundle(
@@ -4364,6 +4440,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "mode": "wolfboot",
                 "algorithm": args.boot_algorithm,
                 "target_profile": str(args.target_profile),
+                "firmware_mode": args.firmware_mode,
+                "standby_signing_keys": args.standby_signing_keys,
                 "source_experiment": str(args.experiment),
             }
         },
@@ -4385,6 +4463,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         target_profile=args.target_profile,
         algorithm=args.boot_algorithm,
         section="build",
+        firmware_mode=args.firmware_mode,
+        standby_signing_keys=args.standby_signing_keys,
     )
     validate_wolfboot_build_profile_config(build_profile)
     emit_progress("boot", "Building wolfBoot", detail=f"Algorithm: {args.boot_algorithm}.")
@@ -4423,6 +4503,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         target_profile=args.target_profile,
         algorithm=args.boot_algorithm,
         section="signing",
+        firmware_mode=args.firmware_mode,
+        standby_signing_keys=args.standby_signing_keys,
     )
     signing_profile = _retarget_signing_profile_build_preset(
         signing_profile,
@@ -4805,6 +4887,20 @@ def _resolved_case_secure_boot_choice(experiment_path: Path | str) -> str | None
     return secure_boot.strip()
 
 
+def _resolved_case_request5_choices(experiment_path: Path | str) -> tuple[str, int]:
+    try:
+        import yaml as _yaml
+        raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    except Exception:
+        return "single_bank", 0
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return "single_bank", 0
+    choices = raw.get("choices", {})
+    if not isinstance(choices, dict):
+        return "single_bank", 0
+    return str(choices.get("firmware_mode", "single_bank")), int(choices.get("standby_signing_keys", 0))
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
@@ -4840,6 +4936,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             or canonical_boot_algorithm
             or "integrity_sha256"
         )
+        args.firmware_mode, args.standby_signing_keys = _resolved_case_request5_choices(args.experiment)
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)

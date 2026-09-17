@@ -110,6 +110,11 @@ int PQC_WolfMQTT_PublishDeferredResults(
     uint32_t dropped_record_count,
     bool overflowed);
 
+#ifndef PQC_OTA_ENABLED
+#define PQC_OTA_ENABLED 0
+#endif
+
+#if PQC_OTA_ENABLED
 #define PQC_OTA_SCHEMA_VERSION 1U
 #define PQC_OTA_FLAG_BOOTLOADER_MIGRATION 0x00000001UL
 
@@ -134,6 +139,7 @@ typedef struct
  * publication, verifies complete-bank hashes, and only then resets for wolfBoot
  * candidate-bank authentication/activation. */
 int PQC_WolfMQTT_ServiceRetainedOta(PQC_OtaStatus *status);
+#endif /* PQC_OTA_ENABLED */
 
 const PQC_WolfMQTTReadyMetrics2Snapshot *PQC_WolfMQTT_ReadyMetrics2Snapshot(void);
 

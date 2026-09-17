@@ -369,10 +369,23 @@ def _write_application_selection(
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_application_selection.cmake"
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    firmware_mode = str(firmware.get("firmware_mode", "single_bank"))
+    dual_bank_enabled = 1 if bool(firmware.get("dual_bank_enabled", firmware_mode != "single_bank")) else 0
+    ota_enabled = 1 if bool(firmware.get("ota_enabled", firmware_mode == "dual_bank_ota")) else 0
+    standby_signing_keys = int(firmware.get("standby_signing_keys", 0))
+    if firmware_mode not in {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}:
+        raise ValueError(f"Unsupported firmware_mode: {firmware_mode}")
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ValueError("standby_signing_keys must be 0, 1, or 2")
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
         f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
-        f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n',
+        f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n'
+        f'set(PQC_FIRMWARE_MODE "{firmware_mode}")\n'
+        f'set(PQC_DUAL_BANK_ENABLED {dual_bank_enabled})\n'
+        f'set(PQC_OTA_ENABLED {ota_enabled})\n'
+        f'set(PQC_STANDBY_SIGNING_KEYS {standby_signing_keys})\n',
         encoding="utf-8",
     )
     return path, application

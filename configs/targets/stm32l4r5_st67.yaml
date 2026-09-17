@@ -17,6 +17,11 @@ capabilities:
   standalone_mlkem_tls: true
   wolfboot: true
   energy_sync_gpio: true
+  firmware_modes:
+  - single_bank
+  - dual_bank_no_ota
+  - dual_bank_ota
+  max_standby_signing_keys: 2
 network:
   ipv4_mode: dhcp
   wifi:
@@ -42,7 +47,7 @@ wolfboot:
     SPMATH?: 1
     RAM_CODE?: 0
     NVM_FLASH_WRITEONCE: 1
-    DUALBANK_SWAP?: 1
+    DUALBANK_SWAP?: 0
     ALLOW_DOWNGRADE?: 0
     WOLFBOOT_VERSION?: 0
     V?: 0
@@ -50,8 +55,8 @@ wolfboot:
     WOLFBOOT_SECTOR_SIZE: '0x4000'
     WOLFBOOT_PARTITION_BOOT_ADDRESS: '0x08020000'
     WOLFBOOT_PARTITION_SIZE: '0x000E0000'
-    WOLFBOOT_PARTITION_UPDATE_ADDRESS: '0x08120000'
-    WOLFBOOT_PARTITION_SWAP_ADDRESS: '0x0'
+    WOLFBOOT_PARTITION_UPDATE_ADDRESS: '0x08100000'
+    WOLFBOOT_PARTITION_SWAP_ADDRESS: '0x081E0000'
     IMAGE_HEADER_SIZE: 12288
     CFLAGS_EXTRA:
     - -mcpu=cortex-m4

@@ -1,5 +1,6 @@
 id: stm32l4r5_wolfboot
-description: Shared STM32L4R5 wolfBoot target, layout, build, signing, and secure-boot experiment defaults.
+description: Shared STM32L4R5 wolfBoot target, layout, build, signing, and secure-boot
+  experiment defaults.
 profiles:
   build:
     artifact: tools/wolfboot/wolfboot.elf
@@ -42,13 +43,13 @@ profiles:
     sign:
       command: tools/keytools/sign
       environment:
-        IMAGE_HEADER_SIZE: "12288"
+        IMAGE_HEADER_SIZE: '12288'
       working_dir: tools/wolfboot
     signing_tuple:
       manifest: tuple.json
   experiment:
     board: board_a
-    firmware:
+    firmware: null
     host: gateway
     secure_boot_benchmark_profile:
       application_payload: same_relocated_hal_application_payload
@@ -63,7 +64,7 @@ profiles:
       schema_version: 1
       static_metrics_model: phase_11_3_elf_and_artifact_metrics
     secure_boot_flash:
-      boot_timing_expected_uart_pattern: "wolfBoot verification cycles: <cycles> cycles"
+      boot_timing_expected_uart_pattern: 'wolfBoot verification cycles: <cycles> cycles'
       boot_timing_unavailable_behavior: record_null_verification_time_ms
       corrupted_application_artifact: corrupted_application_signed.bin
       corruption_method: flip_first_byte
@@ -94,16 +95,43 @@ profiles:
       decision_record: docs/decisions/0003_secure_boot_flash_layout.md
       hardware_dual_bank: true
       physical_bank_size_bytes: 1048576
-      wolfboot_offset: 0x00000
+      wolfboot_offset: 0
       wolfboot_reserved_bytes: 131072
-      candidate_manifest_offset: 0x1C000
+      candidate_manifest_offset: 114688
       candidate_manifest_reserved_bytes: 16384
-      application_slot_offset: 0x20000
+      application_slot_offset: 131072
       application_slot_bytes: 917504
-      application_vector_address: 0x08023000
+      application_vector_address: '0x08023000'
       software_swap_partition: false
+      selection: resolved choices.firmware_mode
     wolfboot_build_profile:
       dependency_strategy: git_submodule
       generated_config: tools/wolfboot/.config
       output_evidence: results/wolfboot-builds
       runtime_boot_validated: false
+    firmware_modes:
+      single_bank:
+        description: Legacy software primary/update/swap layout; no BFB2 bank-switch
+          code and no reporting-plane OTA receiver.
+        dual_bank: false
+        ota: false
+        software_swap_partition: true
+      dual_bank_no_ota:
+        description: Symmetric STM32L4R5 hardware-dual-bank boot layout without reporting-plane
+          OTA delivery code.
+        dual_bank: true
+        ota: false
+        software_swap_partition: false
+      dual_bank_ota:
+        description: Symmetric hardware-dual-bank layout with Request-5 reporting-plane
+          OTA staging, activation, confirmation and rollback.
+        dual_bank: true
+        ota: true
+        software_swap_partition: false
+    standby_signing_keys:
+      allowed:
+      - 0
+      - 1
+      - 2
+      default: 0
+      total_trusted_keys: 1 + standby_signing_keys

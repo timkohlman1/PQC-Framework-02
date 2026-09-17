@@ -83,3 +83,62 @@ Negative hardware tests use isolated copies and never alter the canonical signed
 ```
 
 For explicit rollback of a valid-but-unconfirmed candidate, create the signed candidate with `ota-prepare --test-no-confirm`. This test-only bit is covered by the signed candidate manifest. After the candidate application completes its workload and deferred reporting path, it intentionally resets without writing the confirmation marker; wolfBoot must restore the previous bank and invalidate the unconfirmed candidate.
+
+## Experiment-selectable firmware mode
+
+Request 5 exposes two independent resolved choices. They are build-affecting and
+therefore participate in configuration and firmware identity:
+
+```yaml
+fixed:
+  firmware_mode: single_bank        # or dual_bank_no_ota / dual_bank_ota
+  standby_signing_keys: 0           # 0, 1, or 2
+```
+
+Both fields may instead be campaign matrix dimensions.
+
+`single_bank` retains the pre-Request-5 wolfBoot primary/update/software-swap
+layout. `DUALBANK_SWAP` is disabled, so the STM32 BFB2 swap implementation is
+not selected by wolfBoot, and the application is compiled with
+`PQC_OTA_ENABLED=0`.
+
+`dual_bank_no_ota` uses the symmetric 1 MiB hardware dual-bank layout and the
+BFB2 bank-switch implementation, but the application reporting-plane OTA
+receiver/staging/confirmation code is compiled out (`PQC_OTA_ENABLED=0`).
+
+`dual_bank_ota` uses the same symmetric hardware layout and compiles the
+reporting-plane OTA staging, confirmation and rollback path
+(`PQC_OTA_ENABLED=1`). An `--ota-plan` is rejected unless this mode is selected.
+
+The logical signed-application vector remains `0x08023000` in all wolfBoot
+modes, so the application does not require a different vector address after a
+hardware bank remap.
+
+### Standby firmware-signing keys
+
+`standby_signing_keys` accepts 0, 1, or 2, giving a total trusted firmware key
+count of 1, 2, or 3. Multi-key builds use wolfBoot's native keystore: each
+signed image carries the normal public-key hint and wolfBoot selects the
+matching trusted slot.
+
+The persistent tuple directory is keyed by standby count, so changing the count
+cannot silently reuse an incompatible keystore. Standby private keys remain in
+the ignored local `secrets/wolfboot/tuples/...` tuple and are never copied into
+result evidence.
+
+When `standby_signing_keys: 0`, `PQC_WOLFBOOT_STANDBY_KEYS=0` specializes
+`keyslot_id_by_sha()` to slot zero and the multi-slot iteration loop is excluded
+at preprocessing time. With one or two standby keys the native constant-time
+hint comparison iterates the generated 2- or 3-key keystore.
+
+Example campaign matrix:
+
+```yaml
+matrix:
+  secure_boot: [ecdsa_p256]
+  firmware_mode: [single_bank, dual_bank_no_ota, dual_bank_ota]
+  standby_signing_keys: [0, 1, 2]
+```
+
+This produces distinct firmware identities for all nine combinations and
+prevents campaign build/flash reuse across incompatible layouts or key sets.

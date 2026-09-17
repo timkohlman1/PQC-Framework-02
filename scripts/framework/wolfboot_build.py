@@ -801,6 +801,13 @@ def _signing_tuple_paths(
     public_key_value = config.get("public_key")
     if isinstance(public_key_value, str) and public_key_value:
         paths["public_key"] = tuple_dir / public_key_value
+    standby_values = config.get("standby_private_keys", [])
+    if not isinstance(standby_values, list):
+        raise WolfBootBuildProfileError("build.signing_tuple.standby_private_keys must be a list")
+    for index, value in enumerate(standby_values, start=1):
+        if not isinstance(value, str) or not value:
+            raise WolfBootBuildProfileError("standby private-key names must be non-empty strings")
+        paths[f"standby_private_key_{index}"] = tuple_dir / value
     return paths
 
 
@@ -816,6 +823,10 @@ def _load_and_validate_persistent_tuple(
     members = [paths["private_key"], paths["keystore"], paths["manifest"]]
     if "public_key" in paths:
         members.insert(1, paths["public_key"])
+    standby_path_keys = sorted(
+        key for key in paths if key.startswith("standby_private_key_")
+    )
+    members.extend(paths[key] for key in standby_path_keys)
     present = [path.is_file() for path in members]
     if not any(present):
         return "absent", None
@@ -832,12 +843,24 @@ def _load_and_validate_persistent_tuple(
             "Persistent signing tuple algorithm does not match the selected profile: "
             f"{manifest.get('signature_algorithm')} != {expected_algorithm}"
         )
+    expected_standby = len(standby_path_keys)
+    if int(manifest.get("standby_signing_keys", 0)) != expected_standby:
+        return "incompatible", (
+            "Persistent signing tuple standby-key count does not match the selected profile: "
+            f"{manifest.get('standby_signing_keys', 0)} != {expected_standby}"
+        )
     hash_members = [
         ("private_key", "private_key_sha256"),
         ("keystore", "keystore_sha256"),
     ]
     if "public_key" in paths:
         hash_members.insert(1, ("public_key", "public_key_sha256"))
+    standby_hashes = manifest.get("standby_private_key_sha256", [])
+    if not isinstance(standby_hashes, list) or len(standby_hashes) != len(standby_path_keys):
+        return "invalid", "Persistent signing tuple standby-key hash inventory is invalid"
+    for index, key in enumerate(standby_path_keys):
+        if standby_hashes[index] != _tuple_sha256(paths[key]):
+            return "invalid", f"Persistent signing tuple hash mismatch for {paths[key]}"
     for key, manifest_key in hash_members:
         if manifest.get(manifest_key) != _tuple_sha256(paths[key]):
             return "invalid", f"Persistent signing tuple hash mismatch for {paths[key]}"
@@ -1027,7 +1050,9 @@ def _persist_generated_tuple_atomically(
             "schema_version": 1,
             "tuple_id": str(config.get("tuple_id", tuple_dir.name)),
             "signature_algorithm": str(profile.get("signature_algorithm", "")),
+            "standby_signing_keys": 0,
             "private_key_sha256": _tuple_sha256(private_dest),
+            "standby_private_key_sha256": [],
             "keystore_sha256": _tuple_sha256(keystore_dest),
         }
         if public_dest is not None:
@@ -1044,6 +1069,108 @@ def _persist_generated_tuple_atomically(
     finally:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _create_multi_key_persistent_tuple(
+    *,
+    profile: dict[str, Any],
+    paths: dict[str, Path],
+    source_dir: Path,
+) -> str | None:
+    """Create a 2/3-key wolfBoot tuple atomically using the pinned keygen tool."""
+    standby_path_keys = sorted(
+        key for key in paths if key.startswith("standby_private_key_")
+    )
+    if not standby_path_keys:
+        return None
+    build = profile.get("build", {})
+    option = str(build.get("standby_keygen_option", "")).strip()
+    if not option:
+        return "Multi-key wolfBoot tuple requires build.standby_keygen_option"
+
+    tuple_dir = paths["directory"]
+    tuple_dir.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{tuple_dir.name}.creating-", dir=tuple_dir.parent))
+    generated_keystore = paths["materialized_keystore"]
+    generated_private = paths["materialized_private_key"]
+    keygen = source_dir / "tools" / "keytools" / "keygen"
+    if os.name == "nt" and not keygen.exists():
+        keygen = keygen.with_suffix(".exe")
+    try:
+        make_result = subprocess.run(
+            ["make", "keytools"], cwd=source_dir, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if make_result.returncode != 0:
+            return "Unable to build wolfBoot keygen for multi-key tuple: " + make_result.stderr.strip()
+        if not keygen.is_file():
+            return f"wolfBoot keygen executable is unavailable: {keygen}"
+
+        private_dest = temp_dir / paths["private_key"].name
+        standby_dests = [temp_dir / paths[key].name for key in standby_path_keys]
+        command = [str(keygen), option, "--force", "-g", str(private_dest)]
+        for standby in standby_dests:
+            command.extend(["-g", str(standby)])
+        keygen_result = subprocess.run(
+            command, cwd=source_dir, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if keygen_result.returncode != 0:
+            return "wolfBoot multi-key keygen failed: " + keygen_result.stderr.strip()
+        if not generated_keystore.is_file():
+            return f"wolfBoot keygen did not create keystore: {generated_keystore}"
+
+        keystore_dest = temp_dir / paths["keystore"].name
+        shutil.copyfile(generated_keystore, keystore_dest)
+        public_dest = None
+        if "public_key" in paths:
+            public_dest = temp_dir / paths["public_key"].name
+            public_bytes, public_key_error = _derive_tuple_public_key(
+                profile=profile,
+                private_key_path=private_dest,
+                keystore_path=keystore_dest,
+            )
+            if public_key_error is not None:
+                return public_key_error
+            assert public_bytes is not None
+            public_dest.write_bytes(public_bytes)
+
+        config = _signing_tuple_config(profile) or {}
+        manifest = {
+            "schema_version": 2,
+            "tuple_id": str(config.get("tuple_id", tuple_dir.name)),
+            "signature_algorithm": str(profile.get("signature_algorithm", "")),
+            "standby_signing_keys": len(standby_dests),
+            "private_key_sha256": _tuple_sha256(private_dest),
+            "standby_private_key_sha256": [_tuple_sha256(path) for path in standby_dests],
+            "keystore_sha256": _tuple_sha256(keystore_dest),
+        }
+        if public_dest is not None:
+            manifest["public_key_sha256"] = _tuple_sha256(public_dest)
+            manifest["public_key_format"] = "wolfboot_raw_ecc_xy"
+            manifest["public_key_size"] = public_dest.stat().st_size
+        (temp_dir / paths["manifest"].name).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if tuple_dir.exists():
+            return f"Persistent signing tuple appeared concurrently: {tuple_dir}"
+        os.replace(temp_dir, tuple_dir)
+        _materialize_persistent_tuple(paths)
+        return None
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        # The persistent tuple owns the private material. Keep only the normal
+        # wolfBoot-local primary key and generated public keystore materialized.
+        for standby in standby_path_keys:
+            candidate = source_dir / paths[standby].name
+            candidate.unlink(missing_ok=True)
+        if paths["private_key"].is_file():
+            generated_private.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(paths["private_key"], generated_private)
+        if paths["keystore"].is_file():
+            generated_keystore.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(paths["keystore"], generated_keystore)
 
 
 def _prepare_persistent_signing_tuple(
@@ -1070,6 +1197,13 @@ def _prepare_persistent_signing_tuple(
         _remove_wolfboot_generated_signing_artifacts(
             profile=profile, repo_root=repo_root, source_dir=source_dir
         )
+        standby_count = len([key for key in paths if key.startswith("standby_private_key_")])
+        if standby_count:
+            creation_error = _create_multi_key_persistent_tuple(
+                profile=profile, paths=paths, source_dir=source_dir
+            )
+            if creation_error is not None:
+                return paths, creation_error
     return paths, None
 
 

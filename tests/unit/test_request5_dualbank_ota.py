@@ -14,14 +14,50 @@ def test_result_buffer_is_explicitly_in_ram3():
         assert "__pqc_result_buffer_size__" in section
 
 
-def test_wolfboot_generated_config_uses_hardware_dualbank_layout():
+def test_request5_firmware_modes_are_resolved_and_build_affecting():
+    resolver = (ROOT / "scripts/framework/config_resolver.py").read_text()
+    assert 'FIRMWARE_MODES = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}' in resolver
+    assert '"firmware_mode": firmware_mode' in resolver
+    assert '"standby_signing_keys": standby_signing_keys' in resolver
+    build = (ROOT / "scripts/framework/build.py").read_text()
+    assert 'set(PQC_FIRMWARE_MODE' in build
+    assert 'set(PQC_DUAL_BANK_ENABLED' in build
+    assert 'set(PQC_OTA_ENABLED' in build
+
+
+def test_wolfboot_config_selects_legacy_or_hardware_dualbank_layout():
     text = (ROOT / "scripts/experiment.py").read_text()
-    for value in ('DUALBANK_SWAP?": "1"', "0x08120000", "0x08020000", "0x000E0000"):
-        assert value in text
-    target = (ROOT / "configs/targets/stm32l4r5_st67.yaml").read_text()
-    assert "DUALBANK_SWAP?: 1" in target
-    assert "WOLFBOOT_PARTITION_UPDATE_ADDRESS: '0x08120000'" in target
-    assert "WOLFBOOT_PARTITION_SWAP_ADDRESS: '0x0'" in target
+    assert 'firmware_mode == "single_bank"' in text
+    assert '"DUALBANK_SWAP?": "0"' in text
+    assert '"WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08100000"' in text
+    assert '"WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x081E0000"' in text
+    assert '"DUALBANK_SWAP?": "1"' in text
+    assert '"WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000"' in text
+
+
+def test_ota_code_is_compile_time_guarded():
+    cmake = (ROOT / "CMakeLists.txt").read_text()
+    firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
+    assert 'PQC_OTA_ENABLED=${PQC_OTA_ENABLED}' in cmake
+    assert '#if PQC_OTA_ENABLED' in firmware
+    assert 'PQC_WolfMQTT_ProcessRetainedOta' in firmware
+
+
+def test_zero_standby_keys_compile_out_keyslot_iteration():
+    image = (ROOT / "tools/wolfboot/src/image.c").read_text()
+    assert '#if PQC_WOLFBOOT_STANDBY_KEYS == 0' in image
+    single = image[image.index('#if PQC_WOLFBOOT_STANDBY_KEYS == 0'):image.index('#else', image.index('#if PQC_WOLFBOOT_STANDBY_KEYS == 0'))]
+    assert 'for (' not in single
+    assert 'key_hash(0, digest)' in single
+
+
+def test_multi_key_tuple_supports_one_or_two_standby_keys():
+    wb = (ROOT / "scripts/framework/wolfboot_build.py").read_text()
+    exp = (ROOT / "scripts/experiment.py").read_text()
+    assert '_create_multi_key_persistent_tuple' in wb
+    assert 'standby_private_key_sha256' in wb
+    assert 'standby_signing_keys not in {0, 1, 2}' in exp
+    assert 'standby_private_keys' in exp
 
 
 def test_stm32l4_hal_has_bfb2_swap_and_mapping_evidence():

@@ -111,6 +111,10 @@ message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
 set(PQC_UART_LOG_LEVEL "info")
 set(PQC_UART_OUTPUT_MODE "minimal")
+set(PQC_FIRMWARE_MODE "single_bank")
+set(PQC_DUAL_BANK_ENABLED 0)
+set(PQC_OTA_ENABLED 0)
+set(PQC_STANDBY_SIGNING_KEYS 0)
 set(PQC_APPLICATION_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake")
 if(EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
     include("${PQC_APPLICATION_SELECTION_FILE}")
@@ -125,6 +129,21 @@ else()
     message(FATAL_ERROR "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}")
 endif()
 message("STM32 MQTT application: " ${PQC_STM32_MQTT_APPLICATION})
+if(NOT PQC_FIRMWARE_MODE STREQUAL "single_bank" AND
+   NOT PQC_FIRMWARE_MODE STREQUAL "dual_bank_no_ota" AND
+   NOT PQC_FIRMWARE_MODE STREQUAL "dual_bank_ota")
+    message(FATAL_ERROR "Unsupported PQC_FIRMWARE_MODE: ${PQC_FIRMWARE_MODE}")
+endif()
+if(PQC_OTA_ENABLED AND NOT PQC_DUAL_BANK_ENABLED)
+    message(FATAL_ERROR "PQC_OTA_ENABLED requires PQC_DUAL_BANK_ENABLED")
+endif()
+if(PQC_STANDBY_SIGNING_KEYS LESS 0 OR PQC_STANDBY_SIGNING_KEYS GREATER 2)
+    message(FATAL_ERROR "PQC_STANDBY_SIGNING_KEYS must be 0, 1, or 2")
+endif()
+message("Firmware mode: " ${PQC_FIRMWARE_MODE})
+message("Dual-bank compiled: " ${PQC_DUAL_BANK_ENABLED})
+message("OTA compiled: " ${PQC_OTA_ENABLED})
+message("Standby signing keys: " ${PQC_STANDBY_SIGNING_KEYS})
 
 
 # Create an executable object type
@@ -309,6 +328,9 @@ target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
     BUILDING_WOLFMQTT
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
+    PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
+    PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
+    PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
 )
 
 # Link directories setup
@@ -357,6 +379,9 @@ endif()
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_TLS_COMPILED=${PQC_TLS_COMPILED}
+    PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
+    PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
+    PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS

@@ -11,6 +11,8 @@ fixed:
   tls_auth: rsa3072
   auth_mode: server
   network_condition: baseline
+  firmware_mode: single_bank
+  standby_signing_keys: 0
 execution:
   repetitions: 1
   reset_between_runs: hardware_reset
