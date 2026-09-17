@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -35,12 +36,20 @@ def _repo_root() -> Path:
 
 
 def _run_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    # This is a destructive real-hardware system workflow, not an isolated unit
+    # test build. The subprocesses must therefore use normal experiment build
+    # provenance so the immediately rebuilt ELF can be signed by the same
+    # provenance guard used by the supported experiment-gateway run path.
+    env = os.environ.copy()
+    env["PQC_BUILD_PURPOSE"] = "experiment"
+    env.pop("PQC_TEST_RESULT_DIR", None)
     return subprocess.run(
         args,
         cwd=repo_root,
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
 
 

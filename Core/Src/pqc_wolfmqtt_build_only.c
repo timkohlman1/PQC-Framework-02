@@ -13,6 +13,7 @@
 #include "lwip/sockets.h"
 #include "pqc_wifi_config.h"
 #include "pqc_tls_instrumentation.h"
+#include "pqc_result_buffer.h"
 #include "pqc_wolfssl_memory.h"
 
 #ifndef PQC_TLS_COMPILED
@@ -133,6 +134,10 @@ typedef struct {
     bool transfer_first_byte_valid;
     bool transfer_complete;
 } PQC_WolfMQTTMessageContext;
+
+static int PQC_WolfMQTT_ProcessRetainedOta(
+    MqttClient *client, PQC_WolfMQTTMessageContext *message_context, const char *run_id);
+static int PQC_OTA_ConfirmActiveCandidateIfPending(void);
 
 #if PQC_TLS_COMPILED
 #define PQC_WOLFSSL_RNG_READY_SPIN_LIMIT 1000000UL
@@ -1072,6 +1077,21 @@ static int PQC_WolfMQTT_PublishTopic(
     return MqttClient_Publish(client, &publish);
 }
 
+static int PQC_WolfMQTT_ClearRetainedTopic(MqttClient *client, const char *topic, word16 packet_id)
+{
+    MqttPublish publish;
+    static byte empty = 0U;
+    if (client == NULL || topic == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(&publish, 0, sizeof(publish));
+    publish.topic_name = topic;
+    publish.qos = MQTT_QOS_1;
+    publish.retain = 1;
+    publish.packet_id = packet_id;
+    publish.buffer = &empty;
+    publish.total_len = 0U;
+    return MqttClient_Publish(client, &publish);
+}
+
 int PQC_WolfMQTT_PublishDeferredResults(
     const uint8_t *data,
     size_t length,
@@ -1151,6 +1171,11 @@ int PQC_WolfMQTT_PublishDeferredResults(
         run_id,(unsigned long)record_count,(unsigned long)chunk_count,(unsigned long)length,
         (unsigned long)dropped_record_count,overflowed?"true":"false",logical_sha256);
     result=PQC_WolfMQTT_PublishTopic(&client,topic,payload,60001U);
+    if(result==MQTT_CODE_SUCCESS) {
+        int ota_result=PQC_WolfMQTT_ProcessRetainedOta(&client,&message_context,run_id);
+        if(ota_result!=MQTT_CODE_SUCCESS) result=ota_result;
+        else if(PQC_OTA_ConfirmActiveCandidateIfPending()!=0) result=MQTT_CODE_ERROR_NETWORK;
+    }
 
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);
@@ -1159,6 +1184,274 @@ cleanup_network:
 cleanup_client:
     MqttClient_DeInit(&client);
     return result;
+}
+
+#define PQC_OTA_BANK_BYTES 0x00100000UL
+#define PQC_OTA_INACTIVE_BASE 0x08100000UL
+#define PQC_OTA_BOOTLOADER_BYTES 0x0001C000UL
+#define PQC_OTA_MANIFEST_ADDRESS 0x0811C000UL
+#define PQC_OTA_MANIFEST_BYTES 0x00004000UL
+#define PQC_OTA_APPLICATION_ADDRESS 0x08120000UL
+#define PQC_OTA_APPLICATION_BYTES 0x000E0000UL
+#define PQC_OTA_ACTIVE_MANIFEST_ADDRESS 0x0801C000UL
+#define PQC_OTA_MARKER_STAGED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 24UL)
+#define PQC_OTA_MARKER_BOOTED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 16UL)
+#define PQC_OTA_MARKER_CONFIRMED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 8UL)
+#define PQC_OTA_MARKER_STAGED 0x5354414745445035ULL
+#define PQC_OTA_MARKER_BOOTED 0x424F4F5445445035ULL
+#define PQC_OTA_MARKER_CONFIRMED 0x434F4E4649524D35ULL
+#define PQC_OTA_MANIFEST_PAYLOAD_FLAGS_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + 0x3000UL + 8UL)
+#define PQC_OTA_FLAG_TEST_NO_CONFIRM 0x80000000UL
+#define PQC_OTA_CONTROL_WAIT_MS 250
+#define PQC_OTA_TRANSFER_WAIT_MS 30000
+
+typedef struct {
+    uint32_t flags;
+    uint32_t bootloader_bytes;
+    uint32_t manifest_bytes;
+    uint32_t application_bytes;
+    uint8_t bootloader_sha256[32];
+    uint8_t manifest_sha256[32];
+    uint8_t application_sha256[32];
+    bool activate;
+    uint32_t received_bootloader_bytes;
+    uint32_t received_manifest_bytes;
+    uint32_t received_application_bytes;
+} PQC_OtaTransfer;
+
+
+static bool PQC_OTA_MarkerIs(uint32_t address, uint64_t expected)
+{
+    return (*(const volatile uint64_t *)(uintptr_t)address == expected);
+}
+
+static int PQC_OTA_ConfirmActiveCandidateIfPending(void)
+{
+#ifdef SECURE_BOOT_APPLICATION
+    const bool staged = PQC_OTA_MarkerIs(PQC_OTA_MARKER_STAGED_ADDRESS, PQC_OTA_MARKER_STAGED);
+    const bool booted = PQC_OTA_MarkerIs(PQC_OTA_MARKER_BOOTED_ADDRESS, PQC_OTA_MARKER_BOOTED);
+    const bool confirmed = PQC_OTA_MarkerIs(PQC_OTA_MARKER_CONFIRMED_ADDRESS, PQC_OTA_MARKER_CONFIRMED);
+    if (staged && booted && !confirmed) {
+        const uint32_t manifest_flags = *(const volatile uint32_t *)(uintptr_t)PQC_OTA_MANIFEST_PAYLOAD_FLAGS_ADDRESS;
+        if ((manifest_flags & PQC_OTA_FLAG_TEST_NO_CONFIRM) != 0U) {
+            PQC_WolfMQTT_DiagnosticMarker("PQC OTA: test candidate intentionally left unconfirmed; reset for rollback\r\n");
+            NVIC_SystemReset();
+        }
+        uint64_t marker = PQC_OTA_MARKER_CONFIRMED;
+        if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+        __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, PQC_OTA_MARKER_CONFIRMED_ADDRESS, marker) != HAL_OK) {
+            (void)HAL_FLASH_Lock();
+            return -1;
+        }
+        (void)HAL_FLASH_Lock();
+        PQC_WolfMQTT_DiagnosticMarker("PQC OTA: candidate application confirmed; reset to commit\r\n");
+        NVIC_SystemReset();
+    }
+#endif
+    return 0;
+}
+
+static uint32_t PQC_OTA_InactivePhysicalBank(void)
+{
+    return (READ_BIT(SYSCFG->MEMRMP, SYSCFG_MEMRMP_FB_MODE) == 0U) ? FLASH_BANK_2 : FLASH_BANK_1;
+}
+
+static int PQC_OTA_EraseInactiveBank(void)
+{
+    FLASH_EraseInitTypeDef erase = {0};
+    uint32_t page_error = 0U;
+    HAL_StatusTypeDef rc;
+    if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+    erase.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase.Banks = PQC_OTA_InactivePhysicalBank();
+    erase.Page = 0U;
+    erase.NbPages = FLASH_BANK_SIZE / FLASH_PAGE_SIZE;
+    rc = HAL_FLASHEx_Erase(&erase, &page_error);
+    (void)HAL_FLASH_Lock();
+    return rc == HAL_OK ? 0 : -1;
+}
+
+static int PQC_OTA_Write(uint32_t address, const uint8_t *data, size_t length)
+{
+    size_t offset = 0U;
+    if (data == NULL || address < PQC_OTA_INACTIVE_BASE ||
+        (address + length) > (PQC_OTA_INACTIVE_BASE + PQC_OTA_BANK_BYTES)) return -1;
+    if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+    while (offset < length) {
+        uint64_t value = UINT64_MAX;
+        size_t amount = length - offset;
+        if (amount > 8U) amount = 8U;
+        memcpy(&value, data + offset, amount);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, address + offset, value) != HAL_OK) {
+            (void)HAL_FLASH_Lock(); return -1;
+        }
+        offset += amount;
+    }
+    (void)HAL_FLASH_Lock();
+    return 0;
+}
+
+static bool PQC_OTA_HashMatches(uint32_t address, uint32_t length, const uint8_t expected[32])
+{
+    uint8_t digest[32];
+    PQC_ResultBufferHashData((const uint8_t *)(uintptr_t)address, length, digest);
+    return memcmp(digest, expected, sizeof(digest)) == 0;
+}
+
+static int PQC_OTA_HexNibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool PQC_OTA_ParseHash(const char *text, uint8_t output[32])
+{
+    unsigned int i;
+    if (text == NULL || strlen(text) != 64U) return false;
+    for (i = 0U; i < 32U; ++i) {
+        int high = PQC_OTA_HexNibble(text[2U * i]);
+        int low = PQC_OTA_HexNibble(text[2U * i + 1U]);
+        if (high < 0 || low < 0) return false;
+        output[i] = (uint8_t)((high << 4) | low);
+    }
+    return true;
+}
+
+static bool PQC_OTA_ParseRequest(const char *payload, PQC_OtaTransfer *transfer)
+{
+    char boot_hash[65], manifest_hash[65], app_hash[65];
+    unsigned long flags, boot_bytes, manifest_bytes, app_bytes, activate;
+    if (payload == NULL || transfer == NULL) return false;
+    if (sscanf(payload,
+               "request|%lu|%lu|%64[^|]|%lu|%64[^|]|%lu|%64[^|]|%lu",
+               &flags, &boot_bytes, boot_hash, &manifest_bytes, manifest_hash,
+               &app_bytes, app_hash, &activate) != 8) return false;
+    if (boot_bytes == 0UL || boot_bytes > PQC_OTA_BOOTLOADER_BYTES ||
+        manifest_bytes == 0UL || manifest_bytes > PQC_OTA_MANIFEST_BYTES ||
+        app_bytes == 0UL || app_bytes > PQC_OTA_APPLICATION_BYTES) return false;
+    memset(transfer, 0, sizeof(*transfer));
+    transfer->flags = (uint32_t)flags;
+    transfer->bootloader_bytes = (uint32_t)boot_bytes;
+    transfer->manifest_bytes = (uint32_t)manifest_bytes;
+    transfer->application_bytes = (uint32_t)app_bytes;
+    transfer->activate = activate != 0UL;
+    return PQC_OTA_ParseHash(boot_hash, transfer->bootloader_sha256) &&
+           PQC_OTA_ParseHash(manifest_hash, transfer->manifest_sha256) &&
+           PQC_OTA_ParseHash(app_hash, transfer->application_sha256);
+}
+
+static int PQC_OTA_ParseAndWriteChunk(const char *payload, PQC_OtaTransfer *transfer)
+{
+    char region[16];
+    char hex[385];
+    unsigned long offset;
+    uint8_t bytes[192];
+    size_t hex_len, amount, i;
+    uint32_t base, limit;
+    uint32_t *received;
+    if (sscanf(payload, "%15[^|]|%lu|%384s", region, &offset, hex) != 3) return -1;
+    hex_len = strlen(hex);
+    if ((hex_len & 1U) != 0U || hex_len == 0U || hex_len > sizeof(bytes) * 2U) return -1;
+    amount = hex_len / 2U;
+    for (i = 0U; i < amount; ++i) {
+        int high = PQC_OTA_HexNibble(hex[2U * i]);
+        int low = PQC_OTA_HexNibble(hex[2U * i + 1U]);
+        if (high < 0 || low < 0) return -1;
+        bytes[i] = (uint8_t)((high << 4) | low);
+    }
+    if (strcmp(region, "bootloader") == 0) {
+        base = PQC_OTA_INACTIVE_BASE; limit = transfer->bootloader_bytes; received = &transfer->received_bootloader_bytes;
+    } else if (strcmp(region, "manifest") == 0) {
+        base = PQC_OTA_MANIFEST_ADDRESS; limit = transfer->manifest_bytes; received = &transfer->received_manifest_bytes;
+    } else if (strcmp(region, "application") == 0) {
+        base = PQC_OTA_APPLICATION_ADDRESS; limit = transfer->application_bytes; received = &transfer->received_application_bytes;
+    } else return -1;
+    if (offset + amount > limit) return -1;
+    if (PQC_OTA_Write(base + (uint32_t)offset, bytes, amount) != 0) return -1;
+    if ((uint32_t)(offset + amount) > *received) *received = (uint32_t)(offset + amount);
+    return 0;
+}
+
+static int PQC_WolfMQTT_ProcessRetainedOta(
+    MqttClient *client, PQC_WolfMQTTMessageContext *message_context, const char *run_id)
+{
+    MqttSubscribe subscribe;
+    MqttTopic topic;
+    PQC_OtaTransfer transfer;
+    char request_topic[192];
+    char data_topic[192];
+    int result;
+    bool complete = false;
+
+    if (client == NULL || message_context == NULL || run_id == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    (void)snprintf(request_topic, sizeof(request_topic), "pqc/control/ota/stm32/%s/request", run_id);
+    memset(&topic, 0, sizeof(topic)); topic.topic_filter = request_topic; topic.qos = MQTT_QOS_1;
+    memset(&subscribe, 0, sizeof(subscribe)); subscribe.packet_id = 420U; subscribe.topic_count = 1U; subscribe.topics = &topic;
+    result = MqttClient_Subscribe(client, &subscribe);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    memset(message_context->payload, 0, sizeof(message_context->payload)); message_context->payload_length = 0U; message_context->received = false;
+    result = MqttClient_WaitMessage(client, PQC_OTA_CONTROL_WAIT_MS);
+    if (result != MQTT_CODE_SUCCESS || !message_context->received) return MQTT_CODE_SUCCESS; /* no OTA requested */
+    if (!PQC_OTA_ParseRequest(message_context->payload, &transfer)) return MQTT_CODE_ERROR_BAD_ARG;
+    if (PQC_OTA_EraseInactiveBank() != 0) return MQTT_CODE_ERROR_NETWORK;
+
+    (void)snprintf(data_topic, sizeof(data_topic), "pqc/control/ota/stm32/%s/data/#", run_id);
+    topic.topic_filter = data_topic; subscribe.packet_id = 421U;
+    result = MqttClient_Subscribe(client, &subscribe);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    while (!complete ||
+           transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
+           transfer.received_manifest_bytes != transfer.manifest_bytes ||
+           transfer.received_application_bytes != transfer.application_bytes) {
+        memset(message_context->payload, 0, sizeof(message_context->payload)); message_context->payload_length = 0U; message_context->received = false;
+        result = MqttClient_WaitMessage(client, PQC_OTA_TRANSFER_WAIT_MS);
+        if (result != MQTT_CODE_SUCCESS || !message_context->received) return MQTT_CODE_ERROR_TIMEOUT;
+        if (strcmp(message_context->payload, "complete") == 0) {
+            complete = true;
+        } else if (PQC_OTA_ParseAndWriteChunk(message_context->payload, &transfer) != 0) {
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+    }
+    if (transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
+        transfer.received_manifest_bytes != transfer.manifest_bytes ||
+        transfer.received_application_bytes != transfer.application_bytes) return MQTT_CODE_ERROR_BAD_ARG;
+    if (!PQC_OTA_HashMatches(PQC_OTA_INACTIVE_BASE, transfer.bootloader_bytes, transfer.bootloader_sha256) ||
+        !PQC_OTA_HashMatches(PQC_OTA_MANIFEST_ADDRESS, transfer.manifest_bytes, transfer.manifest_sha256) ||
+        !PQC_OTA_HashMatches(PQC_OTA_APPLICATION_ADDRESS, transfer.application_bytes, transfer.application_sha256)) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        uint64_t staged = PQC_OTA_MARKER_STAGED;
+        if (PQC_OTA_Write(PQC_OTA_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 24U,
+                          (const uint8_t *)&staged, sizeof(staged)) != 0)
+            return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    PQC_WolfMQTT_DiagnosticMarker("PQC OTA: staged candidate bank hashes verified\r\n");
+    /* Clear only the retained request trigger before reset. Stale retained data
+     * chunks are inert without a request and may be cleaned by the host after
+     * evidence collection. This prevents an accepted update from replaying on
+     * the newly active bank. */
+    if (PQC_WolfMQTT_ClearRetainedTopic(client, request_topic, 422U) != MQTT_CODE_SUCCESS)
+        return MQTT_CODE_ERROR_NETWORK;
+    if (transfer.activate) {
+        PQC_WolfMQTT_DiagnosticMarker("PQC OTA: activation reset requested\r\n");
+        NVIC_SystemReset();
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+int PQC_WolfMQTT_ServiceRetainedOta(PQC_OtaStatus *status)
+{
+    if (status == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(status, 0, sizeof(*status));
+    status->schema_version = PQC_OTA_SCHEMA_VERSION;
+    status->active_physical_bank = (PQC_OTA_InactivePhysicalBank() == FLASH_BANK_2) ? 1U : 2U;
+    status->inactive_physical_bank = status->active_physical_bank == 1U ? 2U : 1U;
+    return MQTT_CODE_SUCCESS;
 }
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend)

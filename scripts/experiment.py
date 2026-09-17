@@ -96,6 +96,7 @@ from framework.packet_capture import (
     stop_and_collect_gateway_packet_capture,
 )
 from framework.result_collector import (
+    reporting_config,
     start_gateway_result_collector,
     stop_and_collect_gateway_result_collector,
 )
@@ -108,6 +109,9 @@ from framework.network_degradation import (
 from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 from framework.config_resolver import ConfigResolver, ResolutionError, render_wolfboot_config
 from framework.signing import execute_application_signing
+from framework.ota import (
+    build_manifest_payload, candidate_from_files, deliver_retained_plan, make_fault_plan, write_plan,
+)
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
     _classical_profile_metadata,
@@ -1530,6 +1534,7 @@ def _execute_mqtt_e2e_uart_capture(
     result_dir: Path,
     duration_seconds: int,
     restart_command: str | None,
+    ota_plan: Path | None = None,
     manage_broker_lifecycle: bool = True,
     manage_network_condition: bool = True,
 ):
@@ -1575,6 +1580,33 @@ def _execute_mqtt_e2e_uart_capture(
                 stop_broker=False, log_since=broker_log_since,
             )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "result_collector_start"
+
+    if ota_plan is not None:
+        plan_path = Path(ota_plan)
+        if not plan_path.is_absolute():
+            plan_path = repo_root / plan_path
+        reporting_host, reporting_port = reporting_config(bundle)
+        ota_delivery = deliver_retained_plan(
+            plan_path=plan_path,
+            repo_root=repo_root,
+            gateway_target=gateway_ssh_target(bundle["host"]),
+            reporting_host=reporting_host,
+            reporting_port=reporting_port,
+            run_id=result_dir.name,
+        )
+        update_manifest(result_dir / "manifest.json", {"ota": {
+            "requested": True,
+            "plan": str(plan_path),
+            "transport": "reporting_mqtt_plaintext",
+            "impairment_exempt": True,
+            "delivery": ota_delivery,
+        }})
+        if int(ota_delivery.get("return_code", 1)) != 0:
+            stop_and_collect_gateway_result_collector(collector=result_collector, repo_root=repo_root, result_dir=result_dir)
+            if manage_broker_lifecycle:
+                _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+            return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "ota_delivery"
+        emit_progress("ota", "Candidate bank queued on reporting control plane", detail=f"Plan: {plan_path}.")
 
     packet_capture, packet_capture_start = start_gateway_packet_capture(
         bundle=bundle,
@@ -2366,6 +2398,35 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 
 
 
+def _request5_dualbank_wolfboot_config(config_text: str) -> str:
+    """Apply the maintained STM32L4R5 hardware-dual-bank layout.
+
+    The canonical target profile is shared with direct-flash configuration, so
+    the wolfBoot compatibility layer owns these wolfBoot-only overrides.
+    """
+    overrides = {
+        "DUALBANK_SWAP?": "1",
+        "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
+        "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000",
+        "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+    }
+    lines = []
+    seen = set()
+    for line in config_text.splitlines():
+        key = line.split("=", 1)[0] if "=" in line else None
+        if key in overrides:
+            lines.append(f"{key}={overrides[key]}")
+            seen.add(key)
+        elif key == "WOLFBOOT_PARTITION_SWAP_ADDRESS":
+            continue
+        else:
+            lines.append(line)
+    for key, value in overrides.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines) + "\n"
+
+
 def load_secure_boot_profile_section(
     *, target_profile: Path | str, algorithm: str, section: str
 ) -> tuple[dict[str, Any], Path]:
@@ -2463,7 +2524,7 @@ def load_secure_boot_profile_section(
         })
         build = dict(resolved.get("build", {}))
         build.pop("config_template", None)
-        build["config_content"] = render_wolfboot_config(canonical_target, secure_boot)
+        build["config_content"] = _request5_dualbank_wolfboot_config(render_wolfboot_config(canonical_target, secure_boot))
         build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
         if requires_private_key and private_key and tuple_dir and tuple_id:
             build["signing_key"] = private_key
@@ -2566,6 +2627,10 @@ def load_secure_boot_profile_section(
                 "unsigned_application_artifact": input_image,
                 "signed_application_artifact": signed_image,
                 "signed_application_offset": "0x08020000",
+                "inactive_bank_wolfboot_offset": "0x08100000",
+                "inactive_bank_manifest_offset": "0x0811C000",
+                "inactive_bank_application_offset": "0x08120000",
+                "hardware_dual_bank": True,
                 "signing_private_key": private_key,
             },
         })
@@ -3676,6 +3741,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
+            ota_plan=getattr(args, "ota_plan", None),
         )
         uart_return_code = uart_result.return_code
         uart_duration_seconds = uart_result.duration_seconds
@@ -4505,6 +4571,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
+            ota_plan=getattr(args, "ota_plan", None),
         )
     else:
         uart_result, final_return_code, failure_stage = _execute_uart_capture_with_optional_gateway_packet_capture(
@@ -4677,6 +4744,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         duration_seconds=args.uart_duration_seconds,
         restart_command=(None if getattr(args, "skip_hardware_reset", False) else _monitor_restart_command(bundle, None)),
+        ota_plan=getattr(args, "ota_plan", None),
         manage_broker_lifecycle=not getattr(args, "campaign_managed_broker", False),
         manage_network_condition=not getattr(args, "campaign_managed_condition", False),
     )
@@ -4993,6 +5061,99 @@ def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | 
             return str(helper)
 
     return DEFAULT_RESTART_COMMAND
+
+
+def run_ota_prepare_command(args: argparse.Namespace) -> int:
+    """Create and sign the authenticated Request-5 candidate-bank manifest."""
+    repo_root = Path(__file__).resolve().parents[1]
+    bootloader = Path(args.bootloader)
+    application = Path(args.signed_application)
+    if not bootloader.is_absolute(): bootloader = repo_root / bootloader
+    if not application.is_absolute(): application = repo_root / application
+    work = Path(args.output_dir)
+    if not work.is_absolute(): work = repo_root / work
+    work.mkdir(parents=True, exist_ok=True)
+    payload = work / "candidate_manifest.bin"
+    try:
+        manifest = build_manifest_payload(
+            bootloader=bootloader,
+            signed_application=application,
+            migration=bool(args.migration),
+            test_no_confirm=bool(args.test_no_confirm),
+            output=payload,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"OTA candidate preparation failed: {exc}", file=sys.stderr)
+        return 2
+
+    profile, _ = load_secure_boot_profile_section(
+        target_profile=args.target_profile,
+        algorithm=args.recovery_boot_algorithm,
+        section="signing",
+    )
+    profile = dict(profile)
+    profile["id"] = f"ota_recovery_{args.recovery_boot_algorithm}"
+    profile["description"] = "Authenticated Request-5 candidate-bank manifest."
+    profile["input_image"] = str(payload.relative_to(repo_root))
+    profile["signed_image"] = str((work / "candidate_manifest_v1_signed.bin").relative_to(repo_root))
+    profile["retained_signed_image"] = "candidate_manifest_signed.bin"
+    profile["require_input_build_provenance"] = False
+    profile["binary_conversion"] = {"enabled": False}
+    profile.pop("input_elf", None)
+    signing_result = execute_application_signing(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=work / "evidence",
+    )
+    if signing_result.return_code != 0:
+        print(signing_result.failure_reason or "OTA manifest signing failed", file=sys.stderr)
+        return signing_result.return_code
+    try:
+        candidate = candidate_from_files(
+            bootloader=bootloader,
+            signed_application=application,
+            signed_manifest=signing_result.signed_image_path,
+            migration=bool(args.migration),
+            test_no_confirm=bool(args.test_no_confirm),
+        )
+        plan_path = write_plan(candidate, work / "ota-plan.json")
+    except (OSError, ValueError) as exc:
+        print(f"OTA plan creation failed: {exc}", file=sys.stderr)
+        return 2
+    print(plan_path)
+    return 0
+
+
+def run_ota_fault_plan_command(args: argparse.Namespace) -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        path = make_fault_plan(
+            plan_path=Path(args.plan), repo_root=repo_root,
+            output_dir=Path(args.output_dir), fault=args.fault,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"OTA fault-plan creation failed: {exc}", file=sys.stderr)
+        return 2
+    print(path)
+    return 0
+
+
+def run_ota_deliver_command(args: argparse.Namespace) -> int:
+    """Publish a prepared candidate bank through the impairment-exempt reporting broker."""
+    repo_root = Path(__file__).resolve().parents[1]
+    bundle = load_experiment_bundle(args.experiment)
+    host, port = reporting_config(bundle)
+    target = gateway_ssh_target(bundle["host"])
+    result = deliver_retained_plan(
+        plan_path=Path(args.plan),
+        repo_root=repo_root,
+        gateway_target=target,
+        reporting_host=host,
+        reporting_port=port,
+        run_id=args.run_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return int(result["return_code"])
 
 
 def run_monitor_command(args: argparse.Namespace) -> int:
@@ -6392,6 +6553,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Successful profile-preparation manifest required by --runtime-only.",
     )
+    run_parser.add_argument(
+        "--ota-plan",
+        type=Path,
+        default=None,
+        help="Queue a prepared Request-5 OTA plan on the reporting plane during this run.",
+    )
     run_parser.add_argument("--campaign-managed-broker", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-managed-condition", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--skip-hardware-reset", action="store_true", help=argparse.SUPPRESS)
@@ -6401,6 +6568,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--campaign-repetition-index", type=int, default=None, help=argparse.SUPPRESS)
     run_parser.set_defaults(func=run_full_baseline_command)
 
+
+    ota_prepare_parser = subparsers.add_parser(
+        "ota-prepare",
+        help="Build and sign an authenticated STM32L4R5 dual-bank OTA candidate manifest.",
+    )
+    ota_prepare_parser.add_argument("--bootloader", required=True, type=Path)
+    ota_prepare_parser.add_argument("--signed-application", required=True, type=Path)
+    ota_prepare_parser.add_argument("--recovery-boot-algorithm", required=True)
+    ota_prepare_parser.add_argument("--migration", action="store_true")
+    ota_prepare_parser.add_argument("--test-no-confirm", action="store_true", help="Hardware-test only: force a successful candidate runtime to reset without confirmation so rollback can be verified.")
+    ota_prepare_parser.add_argument("--output-dir", type=Path, default=Path("build/ota"))
+    ota_prepare_parser.add_argument("--target-profile", type=Path, default=Path("configs/targets/stm32l4r5_wolfboot.yaml"))
+    ota_prepare_parser.set_defaults(func=run_ota_prepare_command)
+
+    ota_fault_parser = subparsers.add_parser(
+        "ota-fault-plan", help="Create an isolated negative-test OTA plan from a valid plan."
+    )
+    ota_fault_parser.add_argument("--plan", required=True, type=Path)
+    ota_fault_parser.add_argument("--fault", required=True, choices=("invalid-manifest", "corrupt-application", "interrupted"))
+    ota_fault_parser.add_argument("--output-dir", type=Path, default=Path("build/ota/faults"))
+    ota_fault_parser.set_defaults(func=run_ota_fault_plan_command)
+
+    ota_deliver_parser = subparsers.add_parser(
+        "ota-deliver",
+        help="Publish a prepared dual-bank candidate through the reporting MQTT control plane.",
+    )
+    ota_deliver_parser.add_argument("--experiment", required=True, type=Path)
+    ota_deliver_parser.add_argument("--plan", required=True, type=Path)
+    ota_deliver_parser.add_argument("--run-id", required=True)
+    ota_deliver_parser.set_defaults(func=run_ota_deliver_command)
 
     wolfboot_build_parser = subparsers.add_parser(
         "build-wolfboot",
