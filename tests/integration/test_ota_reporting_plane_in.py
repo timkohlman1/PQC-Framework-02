@@ -20,7 +20,7 @@ def test_ota_reporting_plane_gateway_prerequisites(pqc_require_capabilities):
     """
     pqc_require_capabilities("gateway", strict_mode="gateway")
     if os.environ.get("PQC_OTA_GATEWAY", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        pytest.skip("set PQC_OTA_GATEWAY=1 for live Request-5 reporting-plane validation")
+        pytest.skip("set PQC_OTA_GATEWAY=1 for live reporting-plane OTA validation")
     target = os.environ.get("PQC_OTA_GATEWAY_TARGET", "timk@pqc-gateway1.pqcnet")
     completed = subprocess.run(
         ["ssh", target, "sh -c 'command -v mosquitto_pub >/dev/null && command -v mosquitto_sub >/dev/null'"],

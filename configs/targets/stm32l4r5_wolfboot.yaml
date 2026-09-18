@@ -120,7 +120,7 @@ profiles:
         ota: false
         software_swap_partition: false
       dual_bank_ota:
-        description: Symmetric hardware-dual-bank layout with Request-5 reporting-plane OTA staging, activation, confirmation and rollback.
+        description: Symmetric hardware-dual-bank layout with reporting-plane OTA staging, activation, confirmation and rollback.
         dual_bank: true
         ota: true
         software_swap_partition: false

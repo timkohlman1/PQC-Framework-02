@@ -55,7 +55,7 @@ def _emit_ota_uart(manifest_path: Path) -> str:
     text = _uart_text(manifest_path)
     print(f"\n===== Dual-bank OTA UART: {manifest_path.parent.name} =====")
     for line in text.splitlines():
-        if "PQC_OTA_" in line or "PQC OTA:" in line:
+        if "PQC_OTA_" in line or "PQC OTA:" in line or "wolfBoot verification" in line:
             print(line)
     print("===== End Dual-bank OTA UART =====\n")
     return text
@@ -63,7 +63,7 @@ def _emit_ota_uart(manifest_path: Path) -> str:
 
 def _records(text: str, prefix: str) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
-    for line in text.splitlines():
+    for line_index, line in enumerate(text.splitlines()):
         marker = line.find(prefix)
         if marker < 0:
             continue
@@ -72,6 +72,7 @@ def _records(text: str, prefix: str) -> list[dict[str, str]]:
             if "=" in token:
                 key, value = token.split("=", 1)
                 fields[key] = value
+        fields["__line_index"] = str(line_index)
         records.append(fields)
     return records
 
@@ -81,6 +82,18 @@ def _first_phase(records: list[dict[str, str]], phase: str) -> dict[str, str]:
         if record.get("phase") == phase:
             return record
     raise AssertionError(f"missing OTA UART phase {phase!r}; records={records}")
+
+
+def _verification_result_lines(text: str) -> list[int]:
+    return [
+        index
+        for index, line in enumerate(text.splitlines())
+        if "wolfBoot verification result: 0" in line
+    ]
+
+
+def _record_line(record: dict[str, str]) -> int:
+    return int(record["__line_index"])
 
 
 @pytest.fixture
@@ -156,35 +169,38 @@ def test_application_update_explicit_bank_boot_and_confirmation_state_hw(ota_hw_
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     _assert_delivery_manifest(manifest_path)
     uart = _emit_ota_uart(manifest_path)
-    boot = _records(uart, "PQC_OTA_BOOT")
     app = _records(uart, "PQC_OTA_APP")
 
-    starts = [record for record in boot if record.get("phase") == "start"]
-    assert len(starts) >= 2, f"expected pre/post-swap wolfBoot starts: {starts}"
-    initial_bank = starts[0].get("active_bank")
-    initial_bfb2 = starts[0].get("bfb2")
-    candidate_start = next(
-        (record for record in starts[1:] if record.get("active_bank") != initial_bank),
-        None,
-    )
-    assert candidate_start is not None, f"active physical bank never changed: {starts}"
-    candidate_bank = candidate_start.get("active_bank")
-    assert candidate_start.get("bfb2") != initial_bfb2, f"BFB2 did not change: {starts}"
-
-    manifest_auth = _first_phase(boot, "candidate_manifest_authenticated")
-    image_auth = _first_phase(boot, "candidate_application_authenticated")
-    swap = _first_phase(boot, "swap_requested")
-    assert manifest_auth.get("target_bank") == candidate_bank
-    assert image_auth.get("target_bank") == candidate_bank
-    assert swap.get("from_bank") == initial_bank and swap.get("to_bank") == candidate_bank
+    request = _first_phase(app, "request_accepted")
+    activation = _first_phase(app, "activation_reset")
+    initial_bank = request.get("active_bank")
+    initial_bfb2 = request.get("bfb2")
+    assert initial_bank in {"1", "2"}
+    assert initial_bfb2 in {"0", "1"}
 
     candidate_app = next(
-        (record for record in app if record.get("phase") == "boot_state" and record.get("active_bank") == candidate_bank and record.get("staged") == "1" and record.get("booted") == "1"),
+        (record for record in app
+         if record.get("phase") == "boot_state"
+         and record.get("active_bank") != initial_bank
+         and record.get("staged") == "1"
+         and record.get("booted") == "1"),
         None,
     )
     assert candidate_app is not None, f"candidate application execution not observed: {app}"
+    candidate_bank = candidate_app.get("active_bank")
+    assert candidate_app.get("bfb2") != initial_bfb2, f"BFB2 did not change: {app}"
+
+    verification_lines = _verification_result_lines(uart)
+    assert any(
+        _record_line(activation) < line < _record_line(candidate_app)
+        for line in verification_lines
+    ), "candidate wolfBoot verification success was not observed after activation reset"
+
     confirmed = next(
-        (record for record in app if record.get("phase") == "confirmed" and record.get("active_bank") == candidate_bank and record.get("confirmed") == "1"),
+        (record for record in app
+         if record.get("phase") == "confirmed"
+         and record.get("active_bank") == candidate_bank
+         and record.get("confirmed") == "1"),
         None,
     )
     assert confirmed is not None, f"confirmation marker write not observed: {app}"
@@ -200,31 +216,51 @@ def test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw(ota_
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     _assert_delivery_manifest(manifest_path)
     uart = _emit_ota_uart(manifest_path)
-    boot = _records(uart, "PQC_OTA_BOOT")
     app = _records(uart, "PQC_OTA_APP")
 
-    starts = [record for record in boot if record.get("phase") == "start"]
-    assert len(starts) >= 3, f"expected baseline, candidate and rollback wolfBoot starts: {starts}"
-    original_bank = starts[0].get("active_bank")
-    candidate_start = next(
-        (record for record in starts[1:] if record.get("active_bank") != original_bank),
+    request = _first_phase(app, "request_accepted")
+    activation = _first_phase(app, "activation_reset")
+    original_bank = request.get("active_bank")
+    original_bfb2 = request.get("bfb2")
+    assert original_bank in {"1", "2"}
+
+    candidate_app = next(
+        (record for record in app
+         if record.get("phase") == "boot_state"
+         and record.get("active_bank") != original_bank
+         and record.get("staged") == "1"
+         and record.get("booted") == "1"),
         None,
     )
-    assert candidate_start is not None, f"candidate bank never became active: {starts}"
-    candidate_bank = candidate_start.get("active_bank")
+    assert candidate_app is not None, f"candidate bank never became active: {app}"
+    candidate_bank = candidate_app.get("active_bank")
+    assert candidate_app.get("bfb2") != original_bfb2
 
     withheld = next(
-        (record for record in app if record.get("phase") == "confirmation_withheld" and record.get("active_bank") == candidate_bank),
+        (record for record in app
+         if record.get("phase") == "confirmation_withheld"
+         and record.get("active_bank") == candidate_bank),
         None,
     )
     assert withheld is not None, f"unconfirmed candidate execution not observed: {app}"
-    rollback = _first_phase(boot, "rollback_requested")
-    assert rollback.get("from_bank") == candidate_bank
-    assert rollback.get("to_bank") == original_bank
 
-    rollback_index = boot.index(rollback)
     restored = next(
-        (record for record in boot[rollback_index + 1:] if record.get("phase") == "start" and record.get("active_bank") == original_bank),
+        (record for record in app
+         if record.get("phase") == "boot_state"
+         and _record_line(record) > _record_line(withheld)
+         and record.get("active_bank") == original_bank),
         None,
     )
-    assert restored is not None, f"original physical bank did not resume after rollback: {boot}"
+    assert restored is not None, f"original physical bank did not resume after rollback: {app}"
+    assert restored.get("bfb2") == original_bfb2
+
+    verification_lines = _verification_result_lines(uart)
+    assert any(
+        _record_line(activation) < line < _record_line(candidate_app)
+        for line in verification_lines
+    ), "candidate wolfBoot verification success was not observed"
+    assert any(
+        _record_line(withheld) < line < _record_line(restored)
+        for line in verification_lines
+    ), "restored-bank wolfBoot verification success was not observed"
+

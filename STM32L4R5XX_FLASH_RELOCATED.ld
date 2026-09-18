@@ -248,7 +248,7 @@ SECTIONS
  * NOLOAD prevents image bytes being stored in flash; the backing array is
  * explicitly placed here and reused serially by the custom allocator.
  */
-  /* Request 5: retain the 32 KiB deferred result/evidence buffer in RAM3.
+  /* Retain the 32 KiB deferred result/evidence buffer in RAM3.
    * Keep it independent from the heavily-used RAM1 .bss/heap/stack region and
    * from the ML-DSA workspace so map-file accounting remains explicit. */
   .pqc_result_buffer (NOLOAD) :

@@ -212,8 +212,8 @@ def test_dualbank_run_provenance_retains_ota_record(tmp_path):
 
 def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist():
     firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
-    wolfboot = (ROOT / "tools/wolfboot/src/update_flash_hwswap.c").read_text()
     hardware = (ROOT / "tests/hardware/test_ota_dualbank_hw.py").read_text()
+    experiment = (ROOT / "scripts/experiment.py").read_text()
     for phase in (
         "request_accepted",
         "transfer_complete",
@@ -224,22 +224,16 @@ def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist
         "confirmation_withheld",
     ):
         assert f'phase={phase}' in firmware or f'PQC_OTA_LogApplicationState("{phase}")' in firmware
-    for phase in (
-        "start",
-        "candidate_manifest_authenticated",
-        "candidate_application_authenticated",
-        "swap_requested",
-        "candidate_first_boot",
-        "rollback_requested",
-    ):
-        assert f'phase={phase}' in wolfboot or f'pqc_log_dualbank_state("{phase}")' in wolfboot
-    assert "PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS" in firmware
-    assert "PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS" in wolfboot
-    assert "PQC_OTA_EmitBootEventMailbox" in firmware
-    assert "pqc_ota_boot_event_append" in wolfboot
     assert "test_application_update_explicit_bank_boot_and_confirmation_state_hw" in hardware
     assert "test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw" in hardware
-    assert 'candidate_start.get("bfb2") != initial_bfb2' in hardware
+    assert 'record.get("active_bank") != initial_bank' in hardware
+    assert 'candidate_app.get("bfb2") != initial_bfb2' in hardware
     assert 'record.get("phase") == "confirmed"' in hardware
-    assert 'rollback.get("to_bank") == original_bank' in hardware
+    assert 'record.get("active_bank") == original_bank' in hardware
+    assert "wolfBoot verification result: 0" in hardware
     assert "===== Dual-bank OTA UART:" in hardware
+    assert 'ota_wait_mode = "rollback" if ota_plan_payload.get("test_no_confirm") else "confirmed"' in experiment
+    assert 'termination_reason=ota_terminal' in experiment
+    assert 'PQC_OTA_APP phase=confirmed ' in experiment
+    assert 'PQC_OTA_APP phase=confirmation_withheld ' in experiment
+

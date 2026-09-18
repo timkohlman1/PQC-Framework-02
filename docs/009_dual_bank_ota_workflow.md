@@ -2,7 +2,7 @@
 
 ## Scope
 
-Request 5 replaces the legacy primary/update/software-swap interpretation with two symmetric 1 MiB physical banks. Each physical bank is a complete boot environment: 128 KiB is reserved from bank offset `0x00000` for wolfBoot and candidate metadata, and the 896 KiB signed application slot begins at bank offset `0x20000`. With the 12 KiB wolfBoot image-header reserve, the application remains linked at logical vector address `0x08023000` regardless of which physical bank is mapped active.
+The dual-bank OTA design uses two symmetric 1 MiB physical banks instead of the legacy primary/update/software-swap interpretation. Each physical bank is a complete boot environment: 128 KiB is reserved from bank offset `0x00000` for wolfBoot and candidate metadata, and the 896 KiB signed application slot begins at bank offset `0x20000`. With the 12 KiB wolfBoot image-header reserve, the application remains linked at logical vector address `0x08023000` regardless of which physical bank is mapped active.
 
 The inactive physical bank is always addressed through the logical upper-bank window (`0x08100000`..`0x081FFFFF`). BFB2 remaps the selected physical bank into the logical lower-bank boot window after reset. No dedicated software swap partition remains. The app confirms through the reserved manifest tail, so the previous bank remains recoverable until the new application has completed its workload and reporting path.
 
@@ -35,9 +35,9 @@ Negative validation must cover interrupted delivery, incomplete bank, corrupted 
 
 ## Hardware-test gates
 
-The destructive OTA test is opt-in. Set `PQC_OTA_HW=1` and `PQC_OTA_HW_CASE` to a resolved secure-boot case, then run `tests/hardware/test_ota_dualbank_hw.py`. A passing static/unit suite is not hardware evidence; BFB2, physical-bank identity, flash contents, reset behavior and rollback require retained hardware logs/manifests. The Linux `scripts/dev.sh` wrapper forwards the Request-5 OTA hardware variables into the container by name: `PQC_OTA_HW`, `PQC_OTA_HW_CASE`, `PQC_OTA_HW_APP_PLAN`, `PQC_OTA_HW_ROLLBACK_PLAN`, `PQC_OTA_HW_MIGRATION_PLAN`, `PQC_OTA_HW_INTERRUPTED_PLAN`, `PQC_OTA_HW_CORRUPT_APP_PLAN`, and `PQC_OTA_HW_INVALID_MANIFEST_PLAN`.
+The destructive OTA test is opt-in. Set `PQC_OTA_HW=1` and `PQC_OTA_HW_CASE` to a resolved secure-boot case, then run `tests/hardware/test_ota_dualbank_hw.py`. A passing static/unit suite is not hardware evidence; BFB2, physical-bank identity, flash contents, reset behavior and rollback require retained hardware logs/manifests. The Linux `scripts/dev.sh` wrapper forwards the dual-bank OTA hardware variables into the container by name: `PQC_OTA_HW`, `PQC_OTA_HW_CASE`, `PQC_OTA_HW_APP_PLAN`, `PQC_OTA_HW_ROLLBACK_PLAN`, `PQC_OTA_HW_MIGRATION_PLAN`, `PQC_OTA_HW_INTERRUPTED_PLAN`, `PQC_OTA_HW_CORRUPT_APP_PLAN`, and `PQC_OTA_HW_INVALID_MANIFEST_PLAN`.
 
-The hardware suite also contains explicit state-transition proofs for the six low-level conditions that a host return code alone cannot establish: physical-bank change, BFB2 change, candidate wolfBoot execution, candidate application execution, confirmation-marker programming, and rollback to the original physical bank. The firmware and wolfBoot emit structured serial markers prefixed `PQC_OTA_APP` and `PQC_OTA_BOOT`. Run pytest with `-s` to display those OTA serial markers while each scenario is reported:
+The hardware suite also contains explicit state-transition proofs for the six low-level conditions that a host return code alone cannot establish: physical-bank change, BFB2 change, candidate wolfBoot execution, candidate application execution, confirmation-marker programming, and rollback to the original physical bank. The application emits structured `PQC_OTA_APP` serial markers, while the established wolfBoot verification mailbox emits `wolfBoot verification result` evidence through the application UART path. Run pytest with `-s` to display those OTA serial markers while each scenario is reported:
 
 ```bash
 ./scripts/dev.sh pytest-hardware -s \
@@ -46,7 +46,7 @@ The hardware suite also contains explicit state-transition proofs for the six lo
     --pqc-require-hardware
 ```
 
-Representative markers are `PQC_OTA_APP phase=request_accepted`, `transfer_complete`, `hashes_verified`, `activation_reset`, `boot_state`, `confirmed` or `confirmation_withheld`, plus wolfBoot markers `PQC_OTA_BOOT phase=start`, `candidate_manifest_authenticated`, `candidate_application_authenticated`, `swap_requested`, `candidate_first_boot`, and `rollback_requested`. The complete serial capture remains `uart.log`; the pytest display filters to Request-5 OTA markers so the bank transition is readable.
+Representative OTA markers are `PQC_OTA_APP phase=request_accepted`, `transfer_complete`, `hashes_verified`, `activation_reset`, `boot_state`, `confirmed` and `confirmation_withheld`. Successful wolfBoot execution/authentication is correlated with `wolfBoot verification result: 0` between reset/state transitions. The complete serial capture remains `uart.log`; pytest displays the OTA and wolfBoot-verification lines so the bank transition is readable.
 
 ## Manual framework commands
 
@@ -81,7 +81,7 @@ For a delivery-only diagnostic against an already running reporting service, use
     --run-id <run-id>
 ```
 
-The integrated `experiment-gateway run --ota-plan ...` form is the normal end-to-end path because it owns reporting-broker lifecycle and evidence capture.
+The integrated `experiment-gateway run --ota-plan ...` form is the normal end-to-end path because it owns reporting-broker lifecycle and evidence capture. For valid positive and no-confirm/rollback plans, the runner does not stop at the ordinary workload reporting-complete event: it keeps the reporting broker and UART capture active until the OTA terminal state is observed. A confirmed update terminates on `PQC_OTA_APP phase=confirmed`; an intentional no-confirm rollback terminates only after `confirmation_withheld` and a subsequent restored-bank `boot_state`. Negative fault plans retain the normal failure/recovery handling.
 
 ## Negative-test plan generation
 
@@ -97,7 +97,7 @@ For explicit rollback of a valid-but-unconfirmed candidate, create the signed ca
 
 ## Experiment-selectable firmware mode
 
-Request 5 exposes two independent resolved choices. They are build-affecting and
+The firmware configuration exposes two independent resolved choices. They are build-affecting and
 therefore participate in configuration and firmware identity:
 
 ```yaml
@@ -108,7 +108,7 @@ fixed:
 
 Both fields may instead be campaign matrix dimensions.
 
-`single_bank` retains the pre-Request-5 wolfBoot primary/update/software-swap
+`single_bank` retains the legacy wolfBoot primary/update/software-swap
 layout. `DUALBANK_SWAP` is disabled, so the STM32 BFB2 swap implementation is
 not selected by wolfBoot, and the application is compiled with
 `PQC_OTA_ENABLED=0`.

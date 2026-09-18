@@ -1538,6 +1538,15 @@ def _execute_mqtt_e2e_uart_capture(
     manage_broker_lifecycle: bool = True,
     manage_network_condition: bool = True,
 ):
+    ota_wait_mode: str | None = None
+    if ota_plan is not None:
+        ota_plan_path = Path(ota_plan)
+        if not ota_plan_path.is_absolute():
+            ota_plan_path = repo_root / ota_plan_path
+        ota_plan_payload = json.loads(ota_plan_path.read_text(encoding="utf-8"))
+        if not ota_plan_payload.get("negative_test_fault"):
+            ota_wait_mode = "rollback" if ota_plan_payload.get("test_no_confirm") else "confirmed"
+
     broker_log_since = datetime.now(timezone.utc).isoformat()
     if manage_broker_lifecycle:
         broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
@@ -1708,6 +1717,8 @@ def _execute_mqtt_e2e_uart_capture(
     expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
+    if ota_wait_mode is not None:
+        hard_limit_seconds = max(hard_limit_seconds, 240)
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
     completion_grace_seconds = int(orchestration.get("completion_grace_seconds", 3))
     boot_marker = str(experiment["uart"]["expected_boot_message"])
@@ -1850,6 +1861,7 @@ def _execute_mqtt_e2e_uart_capture(
         + f"{restart_command} 1>&2; reset_rc=$?; "
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
         + f'reporting_completion_topic={shlex.quote(reporting_completion_topic)}; reporting_complete_seen=0; '
+        + 'ota_terminal_seen=0; '
     )
     subscriber_cleanup = (
         f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
@@ -1873,16 +1885,53 @@ def _execute_mqtt_e2e_uart_capture(
             + f'if [ -s "{transfer_responder_log}" ]; then echo "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN" 1>&2; '
             + f'cat "{transfer_responder_log}" 1>&2; echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; fi; '
         )
+    if ota_wait_mode == "confirmed":
+        ota_terminal_probe = (
+            'if grep -Fq "PQC_OTA_APP phase=confirmed " "$uart_file"; '
+            'then ota_terminal_seen=1; break; fi; '
+        )
+    elif ota_wait_mode == "rollback":
+        ota_terminal_probe = (
+            'if grep -Fq "PQC_OTA_APP phase=confirmation_withheld " "$uart_file" && '
+            '[ "$(grep -Fc \'PQC_OTA_APP phase=boot_state \' "$uart_file" 2>/dev/null || true)" -ge 2 ]; '
+            'then ota_terminal_seen=1; break; fi; '
+        )
+    else:
+        ota_terminal_probe = ""
+
+    reporting_break = "" if ota_wait_mode is not None else " break;"
+    if ota_wait_mode is not None:
+        completion_stop = (
+            f'if [ "$ota_terminal_seen" -eq 1 ]; then sleep {completion_grace_seconds}; '
+            'kill "$capture_pid" 2>/dev/null || true; fi; '
+        )
+        completion_status = (
+            'termination_reason=hard_timeout; '
+            '[ "$ota_terminal_seen" -eq 1 ] && termination_reason=ota_terminal; '
+            'normalized_capture_rc=$capture_rc; '
+            '[ "$ota_terminal_seen" -eq 1 ] && normalized_capture_rc=0; '
+        )
+    else:
+        completion_stop = (
+            f'if [ "$reporting_complete_seen" -eq 1 ]; then sleep {completion_grace_seconds}; '
+            'kill "$capture_pid" 2>/dev/null || true; fi; '
+        )
+        completion_status = (
+            'termination_reason=hard_timeout; '
+            '[ "$reporting_complete_seen" -eq 1 ] && termination_reason=reporting_complete; '
+            'normalized_capture_rc=$capture_rc; '
+            '[ "$reporting_complete_seen" -eq 1 ] && normalized_capture_rc=0; '
+        )
+
     common_suffix = (
-        f'if [ "$reporting_complete_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
-        'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
+        completion_stop
+        + 'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
         + f'if [ "$reporting_complete_seen" -eq 0 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
-        + 'termination_reason=hard_timeout; [ "$reporting_complete_seen" -eq 1 ] && termination_reason=reporting_complete; '
-        + 'normalized_capture_rc=$capture_rc; [ "$reporting_complete_seen" -eq 1 ] && normalized_capture_rc=0; '
+        + completion_status
         + 'cat "$uart_file"; '
         + 'response_count=$(grep -c . "$response_file" || true); response=$(paste -sd, "$response_file"); '
         + "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
@@ -1892,7 +1941,8 @@ def _execute_mqtt_e2e_uart_capture(
             common_prefix
             + 'while kill -0 "$capture_pid" 2>/dev/null; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + ota_terminal_probe
             + 'sleep 1; done; '
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
@@ -1906,7 +1956,8 @@ def _execute_mqtt_e2e_uart_capture(
             + 'attempts=0; publish_failures=0; publish_rc=0; '
             + f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + ota_terminal_probe
             + f"sleep {publish_interval}; "
             + 'attempts=$((attempts + 1)); '
             + f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(publisher_client_id)} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
@@ -2398,10 +2449,10 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 
 
 
-def _request5_wolfboot_config(
+def _dualbank_ota_wolfboot_config(
     config_text: str, *, firmware_mode: str, standby_signing_keys: int
 ) -> str:
-    """Apply experiment-selected Request-5 flash layout and key-count settings."""
+    """Apply experiment-selected firmware layout and key-count settings."""
     modes = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}
     if firmware_mode not in modes:
         raise ConfigError(
@@ -2557,7 +2608,7 @@ def load_secure_boot_profile_section(
         })
         build = dict(resolved.get("build", {}))
         build.pop("config_template", None)
-        build["config_content"] = _request5_wolfboot_config(
+        build["config_content"] = _dualbank_ota_wolfboot_config(
             render_wolfboot_config(canonical_target, secure_boot),
             firmware_mode=firmware_mode,
             standby_signing_keys=standby_signing_keys,
@@ -3321,7 +3372,7 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     return bundle
 
 
-def _request5_choices_from_bundle(bundle: dict[str, dict[str, Any]]) -> tuple[str, int]:
+def _firmware_mode_choices_from_bundle(bundle: dict[str, dict[str, Any]]) -> tuple[str, int]:
     experiment = bundle.get("experiment", {})
     resolved = experiment.get("resolved_configuration", {})
     choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
@@ -3342,7 +3393,7 @@ def load_secure_boot_experiment_bundle(
     """Compose a generated canonical case with the selected wolfBoot runtime settings."""
 
     bundle = load_experiment_bundle(experiment_path)
-    firmware_mode, standby_signing_keys = _request5_choices_from_bundle(bundle)
+    firmware_mode, standby_signing_keys = _firmware_mode_choices_from_bundle(bundle)
     experiment_defaults, _ = load_secure_boot_profile_section(
         target_profile=target_profile, algorithm=algorithm, section="experiment",
         firmware_mode=firmware_mode, standby_signing_keys=standby_signing_keys
@@ -4902,7 +4953,7 @@ def _resolved_case_secure_boot_choice(experiment_path: Path | str) -> str | None
     return secure_boot.strip()
 
 
-def _resolved_case_request5_choices(experiment_path: Path | str) -> tuple[str, int]:
+def _resolved_case_firmware_choices(experiment_path: Path | str) -> tuple[str, int]:
     try:
         import yaml as _yaml
         raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
@@ -4951,7 +5002,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             or canonical_boot_algorithm
             or "integrity_sha256"
         )
-        args.firmware_mode, args.standby_signing_keys = _resolved_case_request5_choices(args.experiment)
+        args.firmware_mode, args.standby_signing_keys = _resolved_case_firmware_choices(args.experiment)
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)
@@ -5176,7 +5227,7 @@ def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | 
 
 
 def run_ota_prepare_command(args: argparse.Namespace) -> int:
-    """Create and sign the authenticated Request-5 candidate-bank manifest."""
+    """Create and sign the authenticated dual-bank OTA candidate manifest."""
     repo_root = Path(__file__).resolve().parents[1]
     bootloader = Path(args.bootloader)
     application = Path(args.signed_application)
@@ -5205,7 +5256,7 @@ def run_ota_prepare_command(args: argparse.Namespace) -> int:
     )
     profile = dict(profile)
     profile["id"] = f"ota_recovery_{args.recovery_boot_algorithm}"
-    profile["description"] = "Authenticated Request-5 candidate-bank manifest."
+    profile["description"] = "Authenticated dual-bank OTA candidate manifest."
     profile["input_image"] = str(payload.relative_to(repo_root))
     profile["signed_image"] = str((work / "candidate_manifest_v1_signed.bin").relative_to(repo_root))
     profile["retained_signed_image"] = "candidate_manifest_signed.bin"
@@ -6669,7 +6720,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--ota-plan",
         type=Path,
         default=None,
-        help="Queue a prepared Request-5 OTA plan on the reporting plane during this run.",
+        help="Queue a prepared dual-bank OTA plan on the reporting plane during this run.",
     )
     run_parser.add_argument("--campaign-managed-broker", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-managed-condition", action="store_true", help=argparse.SUPPRESS)
