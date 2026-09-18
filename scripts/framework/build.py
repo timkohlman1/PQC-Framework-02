@@ -36,6 +36,7 @@ from framework.source import GitCommandExecution, GitRunner, capture_reproducibi
 from framework.tls_algorithms import cmake_boolean, resolve_tls_algorithm_set
 
 ARTIFACT_MISSING_RETURN_CODE = 3
+ARTIFACT_CONVERSION_RETURN_CODE = 4
 BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
@@ -94,6 +95,12 @@ def construct_build_command(preset: str = "Release") -> list[str]:
     """Construct the CMake build command for a preset."""
 
     return ["cmake", "--build", "--preset", preset]
+
+
+def construct_binary_command(elf_path: Path, binary_path: Path) -> list[str]:
+    """Construct the raw application binary conversion command."""
+
+    return ["arm-none-eabi-objcopy", "-O", "binary", str(elf_path), str(binary_path)]
 
 
 def default_runner(command: list[str], cwd: Path) -> CommandExecution:
@@ -632,6 +639,13 @@ def execute_build(
     if return_code == 0 and not artifact_exists:
         return_code = ARTIFACT_MISSING_RETURN_CODE
 
+    binary_path = elf_path.with_suffix(".bin")
+    binary_execution: CommandExecution | None = None
+    if return_code == 0:
+        binary_execution = runner(construct_binary_command(elf_path, binary_path), repo_root_path)
+        if binary_execution.return_code != 0 or not binary_path.is_file():
+            return_code = ARTIFACT_CONVERSION_RETURN_CODE
+
     firmware_sha256 = calculate_file_sha256(elf_path) if return_code == 0 else None
     result_artifacts = copy_firmware_artifacts_to_result(elf_path, result_dir_path) if return_code == 0 else {}
     if return_code == 0 and firmware_sha256 is not None:
@@ -650,6 +664,17 @@ def execute_build(
         force_rebuild=force, build_purpose=build_purpose, build_identity=build_identity_value,
         firmware_application=firmware_application,
     )
+    if binary_execution is not None:
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(
+                "\nBinary artifact step\n"
+                "--------------------\n"
+                + _format_execution(binary_execution, repo_root_path)
+                + f"Binary artifact path: {binary_path}\n"
+                + f"Binary artifact exists: {str(binary_path.is_file()).lower()}\n"
+            )
+            if return_code == ARTIFACT_CONVERSION_RETURN_CODE:
+                log_file.write("Binary artifact conversion failed or did not create the expected .bin output.\n")
 
     build_record_path: Path | None = None
     build_record_manifest_path: Path | None = None

@@ -1198,6 +1198,89 @@ cleanup_client:
 }
 
 #if PQC_OTA_ENABLED
+#define PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS 0x10000100UL
+#define PQC_OTA_BOOT_EVENT_MAILBOX_MAGIC 0x504F424DUL
+#define PQC_OTA_BOOT_EVENT_MAILBOX_VERSION 1U
+#define PQC_OTA_BOOT_EVENT_CAPACITY 12U
+#define PQC_OTA_BOOT_EVENT_START 1U
+#define PQC_OTA_BOOT_EVENT_MANIFEST_AUTH 2U
+#define PQC_OTA_BOOT_EVENT_APPLICATION_AUTH 3U
+#define PQC_OTA_BOOT_EVENT_SWAP_REQUESTED 4U
+#define PQC_OTA_BOOT_EVENT_CANDIDATE_FIRST_BOOT 5U
+#define PQC_OTA_BOOT_EVENT_ROLLBACK_REQUESTED 6U
+
+typedef struct {
+    uint32_t phase;
+    uint32_t active_bank;
+    uint32_t bfb2;
+    uint32_t from_bank;
+    uint32_t to_bank;
+    uint32_t target_bank;
+    uint32_t migration;
+} PQC_OtaBootEvent;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t count;
+    uint32_t reserved;
+    PQC_OtaBootEvent events[PQC_OTA_BOOT_EVENT_CAPACITY];
+} PQC_OtaBootEventMailbox;
+
+static void PQC_OTA_EmitBootEventMailbox(void)
+{
+    volatile PQC_OtaBootEventMailbox *mailbox =
+        (volatile PQC_OtaBootEventMailbox *)(uintptr_t)PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS;
+    uint32_t count, i;
+    char marker[256];
+    if (mailbox->magic != PQC_OTA_BOOT_EVENT_MAILBOX_MAGIC ||
+        mailbox->version != PQC_OTA_BOOT_EVENT_MAILBOX_VERSION ||
+        mailbox->count > PQC_OTA_BOOT_EVENT_CAPACITY)
+        return;
+    count = mailbox->count;
+    for (i = 0U; i < count; ++i) {
+        const volatile PQC_OtaBootEvent *event = &mailbox->events[i];
+        switch (event->phase) {
+            case PQC_OTA_BOOT_EVENT_START:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=start active_bank=%lu bfb2=%lu\r\n",
+                    (unsigned long)event->active_bank, (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_MANIFEST_AUTH:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_manifest_authenticated target_bank=%lu migration=%lu\r\n",
+                    (unsigned long)event->target_bank, (unsigned long)event->migration);
+                break;
+            case PQC_OTA_BOOT_EVENT_APPLICATION_AUTH:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_application_authenticated target_bank=%lu\r\n",
+                    (unsigned long)event->target_bank);
+                break;
+            case PQC_OTA_BOOT_EVENT_SWAP_REQUESTED:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=swap_requested from_bank=%lu to_bank=%lu bfb2_before=%lu\r\n",
+                    (unsigned long)event->from_bank, (unsigned long)event->to_bank,
+                    (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_CANDIDATE_FIRST_BOOT:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_first_boot active_bank=%lu bfb2=%lu\r\n",
+                    (unsigned long)event->active_bank, (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_ROLLBACK_REQUESTED:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=rollback_requested from_bank=%lu to_bank=%lu bfb2_before=%lu\r\n",
+                    (unsigned long)event->from_bank, (unsigned long)event->to_bank,
+                    (unsigned long)event->bfb2);
+                break;
+            default:
+                continue;
+        }
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    mailbox->count = 0U;
+}
+
 #define PQC_OTA_BANK_BYTES 0x00100000UL
 #define PQC_OTA_INACTIVE_BASE 0x08100000UL
 #define PQC_OTA_BOOTLOADER_BYTES 0x0001C000UL
@@ -1237,15 +1320,45 @@ static bool PQC_OTA_MarkerIs(uint32_t address, uint64_t expected)
     return (*(const volatile uint64_t *)(uintptr_t)address == expected);
 }
 
-static int PQC_OTA_ConfirmActiveCandidateIfPending(void)
+static uint32_t PQC_OTA_ActivePhysicalBank(void)
 {
-#ifdef SECURE_BOOT_APPLICATION
+    return (READ_BIT(SYSCFG->MEMRMP, SYSCFG_MEMRMP_FB_MODE) == 0U) ? 1U : 2U;
+}
+
+static uint32_t PQC_OTA_Bfb2Enabled(void)
+{
+    return (READ_BIT(FLASH->OPTR, FLASH_OPTR_BFB2) != 0U) ? 1U : 0U;
+}
+
+static void PQC_OTA_LogApplicationState(const char *phase)
+{
+    char marker[224];
     const bool staged = PQC_OTA_MarkerIs(PQC_OTA_MARKER_STAGED_ADDRESS, PQC_OTA_MARKER_STAGED);
     const bool booted = PQC_OTA_MarkerIs(PQC_OTA_MARKER_BOOTED_ADDRESS, PQC_OTA_MARKER_BOOTED);
     const bool confirmed = PQC_OTA_MarkerIs(PQC_OTA_MARKER_CONFIRMED_ADDRESS, PQC_OTA_MARKER_CONFIRMED);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_OTA_APP phase=%s active_bank=%lu bfb2=%lu staged=%u booted=%u confirmed=%u\r\n",
+        phase,
+        (unsigned long)PQC_OTA_ActivePhysicalBank(),
+        (unsigned long)PQC_OTA_Bfb2Enabled(),
+        staged ? 1U : 0U,
+        booted ? 1U : 0U,
+        confirmed ? 1U : 0U);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+}
+
+static int PQC_OTA_ConfirmActiveCandidateIfPending(void)
+{
+#ifdef SECURE_BOOT_APPLICATION
+    PQC_OTA_EmitBootEventMailbox();
+    const bool staged = PQC_OTA_MarkerIs(PQC_OTA_MARKER_STAGED_ADDRESS, PQC_OTA_MARKER_STAGED);
+    const bool booted = PQC_OTA_MarkerIs(PQC_OTA_MARKER_BOOTED_ADDRESS, PQC_OTA_MARKER_BOOTED);
+    const bool confirmed = PQC_OTA_MarkerIs(PQC_OTA_MARKER_CONFIRMED_ADDRESS, PQC_OTA_MARKER_CONFIRMED);
+    PQC_OTA_LogApplicationState("boot_state");
     if (staged && booted && !confirmed) {
         const uint32_t manifest_flags = *(const volatile uint32_t *)(uintptr_t)PQC_OTA_MANIFEST_PAYLOAD_FLAGS_ADDRESS;
         if ((manifest_flags & PQC_OTA_FLAG_TEST_NO_CONFIRM) != 0U) {
+            PQC_OTA_LogApplicationState("confirmation_withheld");
             PQC_WolfMQTT_DiagnosticMarker("PQC OTA: test candidate intentionally left unconfirmed; reset for rollback\r\n");
             NVIC_SystemReset();
         }
@@ -1257,6 +1370,7 @@ static int PQC_OTA_ConfirmActiveCandidateIfPending(void)
             return -1;
         }
         (void)HAL_FLASH_Lock();
+        PQC_OTA_LogApplicationState("confirmed");
         PQC_WolfMQTT_DiagnosticMarker("PQC OTA: candidate application confirmed; reset to commit\r\n");
         NVIC_SystemReset();
     }
@@ -1409,7 +1523,22 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     result = MqttClient_WaitMessage(client, PQC_OTA_CONTROL_WAIT_MS);
     if (result != MQTT_CODE_SUCCESS || !message_context->received) return MQTT_CODE_SUCCESS; /* no OTA requested */
     if (!PQC_OTA_ParseRequest(message_context->payload, &transfer)) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=request_accepted active_bank=%lu inactive_bank=%lu bfb2=%lu flags=%lu boot_bytes=%lu manifest_bytes=%lu app_bytes=%lu\r\n",
+            (unsigned long)PQC_OTA_ActivePhysicalBank(),
+            (unsigned long)(PQC_OTA_ActivePhysicalBank() == 1U ? 2U : 1U),
+            (unsigned long)PQC_OTA_Bfb2Enabled(),
+            (unsigned long)transfer.flags,
+            (unsigned long)transfer.bootloader_bytes,
+            (unsigned long)transfer.manifest_bytes,
+            (unsigned long)transfer.application_bytes);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=erase_inactive_bank_start\r\n");
     if (PQC_OTA_EraseInactiveBank() != 0) return MQTT_CODE_ERROR_NETWORK;
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=erase_inactive_bank_complete\r\n");
 
     (void)snprintf(data_topic, sizeof(data_topic), "pqc/control/ota/stm32/%s/data/#", run_id);
     topic.topic_filter = data_topic; subscribe.packet_id = 421U;
@@ -1432,6 +1561,15 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     if (transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
         transfer.received_manifest_bytes != transfer.manifest_bytes ||
         transfer.received_application_bytes != transfer.application_bytes) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        char marker[224];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_complete boot_received=%lu manifest_received=%lu app_received=%lu\r\n",
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
     if (!PQC_OTA_HashMatches(PQC_OTA_INACTIVE_BASE, transfer.bootloader_bytes, transfer.bootloader_sha256) ||
         !PQC_OTA_HashMatches(PQC_OTA_MANIFEST_ADDRESS, transfer.manifest_bytes, transfer.manifest_sha256) ||
         !PQC_OTA_HashMatches(PQC_OTA_APPLICATION_ADDRESS, transfer.application_bytes, transfer.application_sha256)) return MQTT_CODE_ERROR_BAD_ARG;
@@ -1442,6 +1580,8 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
             return MQTT_CODE_ERROR_NETWORK;
     }
 
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=hashes_verified result=passed\r\n");
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=staged_marker_written staged=1\r\n");
     PQC_WolfMQTT_DiagnosticMarker("PQC OTA: staged candidate bank hashes verified\r\n");
     /* Clear only the retained request trigger before reset. Stale retained data
      * chunks are inert without a request and may be cleaned by the host after
@@ -1450,6 +1590,7 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     if (PQC_WolfMQTT_ClearRetainedTopic(client, request_topic, 422U) != MQTT_CODE_SUCCESS)
         return MQTT_CODE_ERROR_NETWORK;
     if (transfer.activate) {
+        PQC_OTA_LogApplicationState("activation_reset");
         PQC_WolfMQTT_DiagnosticMarker("PQC OTA: activation reset requested\r\n");
         NVIC_SystemReset();
     }

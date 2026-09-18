@@ -2425,8 +2425,9 @@ def _request5_wolfboot_config(
             "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
             "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000",
             "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+            "WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x0",
         }
-        remove = {"WOLFBOOT_PARTITION_SWAP_ADDRESS"}
+        remove = set()
 
     lines: list[str] = []
     seen: set[str] = set()
@@ -3509,9 +3510,22 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
 
 
 def run_status_command(args: argparse.Namespace) -> int:
-    """Run the status command."""
+    """Run the status command using the same effective boot selection as ``run``.
 
-    bundle = load_experiment_bundle(args.experiment)
+    Canonical resolved cases carry the secure-boot choice in ``choices``.  Status
+    must therefore compose the secure-boot compatibility bundle before rendering
+    the target/runtime section; otherwise the base target's direct-flash defaults
+    are displayed even though ``run`` will execute through wolfBoot.
+    """
+
+    secure_boot = _resolved_case_secure_boot_choice(args.experiment)
+    if secure_boot:
+        bundle = load_secure_boot_experiment_bundle(
+            args.experiment,
+            algorithm=secure_boot,
+        )
+    else:
+        bundle = load_experiment_bundle(args.experiment)
     print(format_status_summary(bundle))
     return 0
 
@@ -4608,6 +4622,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "sha256": signing_result.signed_image_sha256,
                 "result_artifact": signing_result.retained_signed_image_path.name,
                 "result_artifact_path": str(signing_result.retained_signed_image_path),
+                "evidence_role": "signed_application",
             }
         },
     )

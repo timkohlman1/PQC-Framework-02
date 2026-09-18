@@ -35,7 +35,18 @@ Negative validation must cover interrupted delivery, incomplete bank, corrupted 
 
 ## Hardware-test gates
 
-The destructive OTA test is opt-in. Set `PQC_OTA_HW=1` and `PQC_OTA_HW_CASE` to a resolved secure-boot case, then run `tests/hardware/test_ota_dualbank_hw.py`. A passing static/unit suite is not hardware evidence; BFB2, physical-bank identity, flash contents, reset behavior and rollback require retained hardware logs/manifests.
+The destructive OTA test is opt-in. Set `PQC_OTA_HW=1` and `PQC_OTA_HW_CASE` to a resolved secure-boot case, then run `tests/hardware/test_ota_dualbank_hw.py`. A passing static/unit suite is not hardware evidence; BFB2, physical-bank identity, flash contents, reset behavior and rollback require retained hardware logs/manifests. The Linux `scripts/dev.sh` wrapper forwards the Request-5 OTA hardware variables into the container by name: `PQC_OTA_HW`, `PQC_OTA_HW_CASE`, `PQC_OTA_HW_APP_PLAN`, `PQC_OTA_HW_ROLLBACK_PLAN`, `PQC_OTA_HW_MIGRATION_PLAN`, `PQC_OTA_HW_INTERRUPTED_PLAN`, `PQC_OTA_HW_CORRUPT_APP_PLAN`, and `PQC_OTA_HW_INVALID_MANIFEST_PLAN`.
+
+The hardware suite also contains explicit state-transition proofs for the six low-level conditions that a host return code alone cannot establish: physical-bank change, BFB2 change, candidate wolfBoot execution, candidate application execution, confirmation-marker programming, and rollback to the original physical bank. The firmware and wolfBoot emit structured serial markers prefixed `PQC_OTA_APP` and `PQC_OTA_BOOT`. Run pytest with `-s` to display those OTA serial markers while each scenario is reported:
+
+```bash
+./scripts/dev.sh pytest-hardware -s \
+    tests/hardware/test_ota_dualbank_hw.py \
+    -m hardware \
+    --pqc-require-hardware
+```
+
+Representative markers are `PQC_OTA_APP phase=request_accepted`, `transfer_complete`, `hashes_verified`, `activation_reset`, `boot_state`, `confirmed` or `confirmation_withheld`, plus wolfBoot markers `PQC_OTA_BOOT phase=start`, `candidate_manifest_authenticated`, `candidate_application_authenticated`, `swap_requested`, `candidate_first_boot`, and `rollback_requested`. The complete serial capture remains `uart.log`; the pytest display filters to Request-5 OTA markers so the bank transition is readable.
 
 ## Manual framework commands
 

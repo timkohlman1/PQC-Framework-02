@@ -45,6 +45,7 @@ MISSING_SOURCE_RETURN_CODE = 20
 WOLFBOOT_BUILD_ARTIFACT_MISSING_RETURN_CODE = 21
 PROFILE_ERROR_RETURN_CODE = 22
 WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE = 23
+WOLFBOOT_BINARY_CONVERSION_FAILED_RETURN_CODE = 24
 DEFAULT_WOLFBOOT_RESULTS_SUBDIR = "wolfboot-builds"
 DEFAULT_WOLFBOOT_LOG_NAME = "wolfboot_build.log"
 MINGW_KEYTOOLS_STDIO_DEFINE = "-D__USE_MINGW_ANSI_STDIO=1"
@@ -1666,6 +1667,10 @@ def execute_wolfboot_build(
     execution: WolfBootCommandExecution | None = None
     artifact_sha256: str | None = None
     retained_artifact_path: Path | None = None
+    retained_binary_path: Path | None = None
+    binary_artifact_path: Path | None = None
+    binary_artifact_sha256: str | None = None
+    binary_conversion: dict[str, Any] | None = None
     failure_reason: str | None = None
     wolfboot_state_identity: dict[str, Any] | None = None
     fingerprint_evidence: dict[str, Any] = {
@@ -1872,11 +1877,63 @@ def execute_wolfboot_build(
         if return_code == 0:
             if artifact_path.is_file():
                 artifact_sha256 = calculate_file_sha256(artifact_path)
-                retained_artifact_path = copy_artifact_to_result(
-                    artifact_path,
-                    result_dir,
-                    "wolfboot.elf",
-                )
+                binary_artifact_path = artifact_path.with_suffix(".bin")
+                binary_command = [
+                    "arm-none-eabi-objcopy",
+                    "-O",
+                    "binary",
+                    str(artifact_path),
+                    str(binary_artifact_path),
+                ]
+                binary_start = perf_counter()
+                try:
+                    completed = subprocess.run(
+                        binary_command,
+                        cwd=working_directory,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    binary_conversion = {
+                        "command": binary_command,
+                        "return_code": completed.returncode,
+                        "stdout": completed.stdout,
+                        "stderr": completed.stderr,
+                        "duration_seconds": round(perf_counter() - binary_start, 3),
+                    }
+                    if completed.returncode != 0 or not binary_artifact_path.is_file():
+                        return_code = WOLFBOOT_BINARY_CONVERSION_FAILED_RETURN_CODE
+                        failure_reason = (
+                            "wolfBoot ELF build succeeded, but raw bootloader binary conversion failed. "
+                            f"objcopy return code: {completed.returncode}; expected artifact: {binary_artifact_path}"
+                        )
+                except FileNotFoundError as exc:
+                    binary_conversion = {
+                        "command": binary_command,
+                        "return_code": WOLFBOOT_BUILD_TOOL_MISSING_RETURN_CODE,
+                        "stdout": "",
+                        "stderr": str(exc),
+                        "duration_seconds": round(perf_counter() - binary_start, 3),
+                    }
+                    return_code = WOLFBOOT_BINARY_CONVERSION_FAILED_RETURN_CODE
+                    failure_reason = (
+                        "wolfBoot ELF build succeeded, but arm-none-eabi-objcopy was not available "
+                        "to create the required raw bootloader binary."
+                    )
+
+                if return_code == 0:
+                    binary_artifact_sha256 = calculate_file_sha256(binary_artifact_path)
+                    retained_artifact_path = copy_artifact_to_result(
+                        artifact_path,
+                        result_dir,
+                        "wolfboot.elf",
+                    )
+                    retained_binary_path = copy_artifact_to_result(
+                        binary_artifact_path,
+                        result_dir,
+                        "wolfboot.bin",
+                    )
             else:
                 return_code = WOLFBOOT_BUILD_ARTIFACT_MISSING_RETURN_CODE
                 failure_reason = (
@@ -1924,11 +1981,14 @@ def execute_wolfboot_build(
         )
 
     if return_code == 0 and wolfboot_state_identity is not None:
+        state_artifacts = [artifact_path]
+        if binary_artifact_path is not None and binary_artifact_path.is_file():
+            state_artifacts.append(binary_artifact_path)
         record_generated_state_success(
             repo_root=repo_root_path,
             scope=f"wolfboot-{profile_id}",
             identity=wolfboot_state_identity,
-            artifacts=[artifact_path],
+            artifacts=state_artifacts,
             record_refs={"wolfboot_build_manifest": str(result_dir / "manifest.json")},
         )
 
@@ -2077,6 +2137,10 @@ def execute_wolfboot_build(
             "exists": artifact_exists,
             "sha256": artifact_sha256,
             "retained_path": None if retained_artifact_path is None else str(retained_artifact_path),
+            "binary_path": None if binary_artifact_path is None else str(binary_artifact_path),
+            "binary_sha256": binary_artifact_sha256,
+            "retained_binary_path": None if retained_binary_path is None else str(retained_binary_path),
+            "binary_conversion": binary_conversion,
         },
     }
     _write_json(result_dir / "manifest.json", manifest)

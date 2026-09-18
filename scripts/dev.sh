@@ -84,6 +84,23 @@ run_container() (
     campaign_env_args="$campaign_env_args -e PQC_CAMPAIGN_HW_CONFIG"
   fi
 
+  ota_env_args=""
+  for ota_env_name in \
+    PQC_OTA_HW \
+    PQC_OTA_HW_CASE \
+    PQC_OTA_HW_APP_PLAN \
+    PQC_OTA_HW_ROLLBACK_PLAN \
+    PQC_OTA_HW_MIGRATION_PLAN \
+    PQC_OTA_HW_INTERRUPTED_PLAN \
+    PQC_OTA_HW_CORRUPT_APP_PLAN \
+    PQC_OTA_HW_INVALID_MANIFEST_PLAN
+  do
+    eval "ota_env_value=\${$ota_env_name:-}"
+    if [ -n "$ota_env_value" ]; then
+      ota_env_args="$ota_env_args -e $ota_env_name"
+    fi
+  done
+
   # Build the docker invocation explicitly so secret values are inherited from
   # this temporary process environment (-e NAME), not exposed on the command
   # line as -e NAME=value.
@@ -97,7 +114,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
-        $campaign_env_args \
+        $campaign_env_args $ota_env_args \
         -e PQC_WIFI_SSID \
         -e PQC_WIFI_PSK \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
@@ -108,7 +125,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
-        $campaign_env_args \
+        $campaign_env_args $ota_env_args \
         -e PQC_WIFI_SSID \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
@@ -118,7 +135,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
-        $campaign_env_args \
+        $campaign_env_args $ota_env_args \
         -e PQC_WIFI_PSK \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
@@ -128,7 +145,7 @@ run_container() (
       docker run --rm \
         -v "$repo_root:/workspace" \
         -w /workspace \
-        $campaign_env_args \
+        $campaign_env_args $ota_env_args \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
         -v "$ssh_source:/host-ssh:ro" \
         "$image_name" \
@@ -136,13 +153,13 @@ run_container() (
     fi
   else
     if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
     elif [ -n "${PQC_WIFI_SSID:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_SSID "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID "$image_name" "$@"
     elif [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_PSK "$image_name" "$@"
     else
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args "$image_name" "$@"
     fi
   fi
 )

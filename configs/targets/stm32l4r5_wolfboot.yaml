@@ -1,6 +1,5 @@
 id: stm32l4r5_wolfboot
-description: Shared STM32L4R5 wolfBoot target, layout, build, signing, and secure-boot
-  experiment defaults.
+description: Shared STM32L4R5 wolfBoot target, layout, build, signing, and secure-boot experiment defaults.
 profiles:
   build:
     artifact: tools/wolfboot/wolfboot.elf
@@ -111,27 +110,22 @@ profiles:
       runtime_boot_validated: false
     firmware_modes:
       single_bank:
-        description: Legacy software primary/update/swap layout; no BFB2 bank-switch
-          code and no reporting-plane OTA receiver.
+        description: Legacy software primary/update/swap layout; no BFB2 bank-switch code and no reporting-plane OTA receiver.
         dual_bank: false
         ota: false
         software_swap_partition: true
       dual_bank_no_ota:
-        description: Symmetric STM32L4R5 hardware-dual-bank boot layout without reporting-plane
-          OTA delivery code.
+        description: Symmetric STM32L4R5 hardware-dual-bank boot layout without reporting-plane OTA delivery code.
         dual_bank: true
         ota: false
         software_swap_partition: false
       dual_bank_ota:
-        description: Symmetric hardware-dual-bank layout with Request-5 reporting-plane
-          OTA staging, activation, confirmation and rollback.
+        description: Symmetric hardware-dual-bank layout with Request-5 reporting-plane OTA staging, activation, confirmation and rollback.
         dual_bank: true
         ota: true
         software_swap_partition: false
     standby_signing_keys:
-      allowed:
-      - 0
-      - 1
-      - 2
+      minimum: 0
+      maximum: 2
       default: 0
       total_trusted_keys: 1 + standby_signing_keys
