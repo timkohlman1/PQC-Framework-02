@@ -1549,6 +1549,7 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     char data_topic[192];
     int result;
     bool complete = false;
+    uint32_t last_progress_bytes = 0U;
 
     if (client == NULL || message_context == NULL || run_id == NULL) return MQTT_CODE_ERROR_BAD_ARG;
     (void)snprintf(request_topic, sizeof(request_topic), "pqc/control/ota/stm32/%s/request", run_id);
@@ -1590,19 +1591,50 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     message_context->payload_length = 0U;
     message_context->payload[0] = '\0';
     message_context->received = false;
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=data_subscription_start\r\n");
     result = MqttClient_Subscribe(client, &subscribe);
     if (result != MQTT_CODE_SUCCESS) {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_failed reason=subscribe result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            result,
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
         message_context->ota_transfer_mode = false;
         message_context->ota_transfer = NULL;
         return result;
     }
+    {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=data_subscription_complete boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
     if (message_context->ota_transfer_error != 0) {
+        char marker[256];
         result = message_context->ota_transfer_error;
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_failed reason=parse_or_write result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            result,
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
         message_context->ota_transfer_mode = false;
         message_context->ota_transfer = NULL;
         return result;
     }
 
+    last_progress_bytes = transfer.received_bootloader_bytes +
+        transfer.received_manifest_bytes + transfer.received_application_bytes;
     complete = message_context->ota_complete_seen;
     while (!complete ||
            transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
@@ -1611,17 +1643,50 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
         message_context->received = false;
         result = MqttClient_WaitMessage(client, PQC_OTA_TRANSFER_WAIT_MS);
         if (result != MQTT_CODE_SUCCESS) {
+            char marker[256];
+            (void)snprintf(marker, sizeof(marker),
+                "PQC_OTA_APP phase=transfer_failed reason=wait result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                result,
+                (unsigned long)transfer.received_bootloader_bytes,
+                (unsigned long)transfer.received_manifest_bytes,
+                (unsigned long)transfer.received_application_bytes,
+                message_context->ota_complete_seen ? 1U : 0U);
+            PQC_WolfMQTT_DiagnosticMarker(marker);
             message_context->ota_transfer_mode = false;
             message_context->ota_transfer = NULL;
             return MQTT_CODE_ERROR_TIMEOUT;
         }
         if (message_context->ota_transfer_error != 0) {
+            char marker[256];
             result = message_context->ota_transfer_error;
+            (void)snprintf(marker, sizeof(marker),
+                "PQC_OTA_APP phase=transfer_failed reason=parse_or_write result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                result,
+                (unsigned long)transfer.received_bootloader_bytes,
+                (unsigned long)transfer.received_manifest_bytes,
+                (unsigned long)transfer.received_application_bytes,
+                message_context->ota_complete_seen ? 1U : 0U);
+            PQC_WolfMQTT_DiagnosticMarker(marker);
             message_context->ota_transfer_mode = false;
             message_context->ota_transfer = NULL;
             return result;
         }
         complete = message_context->ota_complete_seen;
+        {
+            uint32_t received_total = transfer.received_bootloader_bytes +
+                transfer.received_manifest_bytes + transfer.received_application_bytes;
+            if ((received_total - last_progress_bytes >= 32768U) || complete) {
+                char marker[256];
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_APP phase=transfer_progress boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                    (unsigned long)transfer.received_bootloader_bytes,
+                    (unsigned long)transfer.received_manifest_bytes,
+                    (unsigned long)transfer.received_application_bytes,
+                    complete ? 1U : 0U);
+                PQC_WolfMQTT_DiagnosticMarker(marker);
+                last_progress_bytes = received_total;
+            }
+        }
     }
     message_context->ota_transfer_mode = false;
     message_context->ota_transfer = NULL;
