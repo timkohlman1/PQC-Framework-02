@@ -127,6 +127,9 @@ def write_stm32l4_source(source_dir: Path) -> Path:
         "void hal_init(void)\n"
         "{\n"
         "    clockconfig(0);\n"
+        "}\n"
+        "void hal_prepare_boot(void)\n"
+        "{\n"
         "}\n",
         encoding="utf-8",
     )
@@ -205,29 +208,37 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "#include \"stm32l4xx_hal_pwr_ex.h\"" in patched_hal_conf
         patched_image_source = image_source_path.read_text(encoding="utf-8")
         patched_hal_source = hal_source_path.read_text(encoding="utf-8")
-        assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
-        assert "pqc_boot_timing_write_mailbox" in patched_image_source
-        assert "elapsed_cycles" in patched_image_source
-        assert "PQC_BOOT_RCC_BASE" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_MSI" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSI" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSE" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_PLL" in patched_image_source
-        assert "PQC_BOOT_PQC_BOOT_RCC_CFGR_SWS_" not in patched_image_source
-        assert "PQC_BOOT_RCC_CFGR" in patched_image_source
-        assert "RCC->" not in patched_image_source
-        assert "RCC_PLLCFGR_PLLSRC_Msk" not in patched_image_source
-        assert "RCC_PLLSOURCE_HSI" not in patched_image_source
-        assert "verification_result" in patched_image_source
-        assert "max_stack_used_bytes" in patched_image_source
-        assert "PQC_BOOT_STACK_UNAVAILABLE" in patched_image_source
-        assert "pqc_boot_stack_high_water" not in patched_image_source
-        assert "pqc_boot_stack_paint" not in patched_image_source
-        assert "PQC_BOOT_STACK_SENTINEL" not in patched_image_source
-        assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
+        assert "PQC_BOOT_TIMING_WRAPPER_V3" in patched_image_source
+        assert "pqc_boot_timing_verification_start" in patched_image_source
+        assert "pqc_boot_timing_verification_finish" in patched_image_source
+        assert "pqc_boot_timing_write_mailbox" not in patched_image_source
+        assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 3UL" in patched_hal_source
+        assert "pqc_boot_reset_origin_start" in patched_hal_source
+        assert "pqc_boot_reset_origin_clock_ready" in patched_hal_source
+        assert "pqc_boot_timing_prepare_handoff" in patched_hal_source
+        assert "pqc_boot_reset_origin_valid" in patched_hal_source
+        assert "LPTIM2" in patched_hal_source
+        assert "RCC_LPTIM2CLKSOURCE_HSI" in patched_hal_source
+        assert "PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL" in patched_hal_source
+        assert "pqc_boot_bridge_start(uint32_t *counter_start_cycle)" in patched_hal_source
+        assert "*counter_start_cycle = PQC_BOOT_DWT_CYCCNT" in patched_hal_source
+        assert "reset_origin_to_handoff_us_low" in patched_hal_source
+        assert "handoff_bridge_status" in patched_hal_source
+        assert "elapsed_cycles" in patched_hal_source
+        assert "verification_result" in patched_hal_source
+        assert "max_stack_used_bytes" in patched_hal_source
+        assert "PQC_BOOT_STACK_UNAVAILABLE" in patched_hal_source
         assert "wolfBoot_printf" not in patched_image_source
         assert "pqc_boot_timing_uart_write" not in patched_hal_source
         assert "uart_printf" not in patched_hal_source
+        hal_init_start = patched_hal_source.index("void hal_init(void)")
+        origin_start = patched_hal_source.index("pqc_boot_reset_origin_start();", hal_init_start)
+        clockconfig = patched_hal_source.index("clockconfig(0);", hal_init_start)
+        clock_ready = patched_hal_source.index("pqc_boot_reset_origin_clock_ready();", hal_init_start)
+        assert origin_start < clockconfig < clock_ready
+        prepare_start = patched_hal_source.index("void hal_prepare_boot(void)")
+        assert patched_hal_source.index("pqc_boot_timing_prepare_handoff();", prepare_start) > prepare_start
         artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
         return wolfboot_build.WolfBootCommandExecution(
             command=command,
@@ -260,7 +271,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert result.boot_timing_instrumentation_patch_enabled is True
     assert result.boot_timing_instrumentation_patch_applied is True
     assert result.boot_timing_image_path == image_source_path
-    assert result.boot_timing_hal_path is None
+    assert result.boot_timing_hal_path == hal_source_path
     assert makefile_path.read_text(encoding="utf-8") == original_makefile_text
     assert hal_conf_path.read_text(encoding="utf-8") == original_hal_conf_text
     assert image_source_path.read_text(encoding="utf-8") == original_image_source_text
@@ -285,7 +296,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_enabled"] is True
     assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_applied"] is True
     assert manifest["wolfboot_build"]["boot_timing_image_path"] == str(image_source_path)
-    assert manifest["wolfboot_build"]["boot_timing_hal_path"] is None
+    assert manifest["wolfboot_build"]["boot_timing_hal_path"] == str(hal_source_path)
     assert manifest["wolfboot_build"]["fingerprint_status"] == "available"
     assert len(manifest["wolfboot_build"]["fingerprint"]) == 64
     assert manifest["wolfboot_build"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"

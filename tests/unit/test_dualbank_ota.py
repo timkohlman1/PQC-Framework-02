@@ -269,3 +269,21 @@ def test_dualbank_ota_retained_chunks_are_processed_during_subscribe():
     receive_mode_index = firmware.index("message_context->ota_transfer_mode = true;", data_topic_index)
     assert receive_mode_index < subscribe_index
     assert "Retained data can be delivered synchronously while SUBSCRIBE is being" in firmware
+
+
+def test_dualbank_ota_transfer_failures_and_progress_are_diagnostic():
+    firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
+    ota_start = firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta")
+    ota = firmware[ota_start:]
+    for phase in (
+        "data_subscription_start",
+        "data_subscription_complete",
+        "transfer_progress",
+        "transfer_failed",
+    ):
+        assert f"phase={phase}" in ota
+    for reason in ("subscribe", "parse_or_write", "wait"):
+        assert f"reason={reason}" in ota
+    assert "boot_received=%lu manifest_received=%lu app_received=%lu complete=%u" in ota
+    assert "received_total - last_progress_bytes >= 32768U" in ota
+    assert "return MQTT_CODE_ERROR_TIMEOUT;" in ota

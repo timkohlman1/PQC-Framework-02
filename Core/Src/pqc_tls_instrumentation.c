@@ -1,13 +1,14 @@
 #include "pqc_tls_instrumentation.h"
 
 #include "main.h"
+#include "pqc_timebase.h"
 #include <stdio.h>
 #include <string.h>
 
 typedef struct
 {
     uint32_t start_cycle;
-    uint32_t start_tick_ms;
+    uint64_t start_us;
     uint8_t active;
 } PQC_TLSSpan;
 
@@ -41,12 +42,38 @@ static uint8_t PQC_TLS_EnableCycleCounter(void)
 #endif
 }
 
+static void PQC_TLS_FormatU64(uint64_t value, char *buffer, size_t buffer_size)
+{
+    char reversed[21];
+    size_t count = 0U;
+    size_t i;
+
+    if ((buffer == NULL) || (buffer_size == 0U)) {
+        return;
+    }
+
+    do {
+        reversed[count++] = (char)('0' + (value % 10U));
+        value /= 10U;
+    } while ((value != 0U) && (count < sizeof(reversed)));
+
+    if (count >= buffer_size) {
+        buffer[0] = '\0';
+        return;
+    }
+
+    for (i = 0U; i < count; ++i) {
+        buffer[i] = reversed[count - 1U - i];
+    }
+    buffer[count] = '\0';
+}
+
 static void PQC_TLS_Accumulate(
     PQC_TLSTimingAggregate *aggregate,
     uint32_t start_cycle,
     uint32_t end_cycle,
-    uint32_t start_tick_ms,
-    uint32_t end_tick_ms)
+    uint64_t start_us,
+    uint64_t end_us)
 {
     uint32_t elapsed_cycles = end_cycle - start_cycle;
 
@@ -54,7 +81,7 @@ static void PQC_TLS_Accumulate(
         aggregate->min_cycles = elapsed_cycles;
         aggregate->max_cycles = elapsed_cycles;
         aggregate->first_start_cycle = start_cycle;
-        aggregate->first_start_tick_ms = start_tick_ms;
+        aggregate->first_start_us = start_us;
     }
     else {
         if (elapsed_cycles < aggregate->min_cycles) aggregate->min_cycles = elapsed_cycles;
@@ -64,7 +91,7 @@ static void PQC_TLS_Accumulate(
     aggregate->count++;
     aggregate->total_cycles += elapsed_cycles;
     aggregate->last_end_cycle = end_cycle;
-    aggregate->last_end_tick_ms = end_tick_ms;
+    aggregate->last_end_us = end_us;
 }
 
 void PQC_TLS_InstrumentationSetPreMemory(
@@ -94,7 +121,7 @@ void PQC_TLS_InstrumentationHandshakeBegin(void)
     s_handshake_active = 1U;
 
     /* These are deliberately the final operations before wolfSSL_connect(). */
-    s_snapshot.handshake_start_tick_ms = HAL_GetTick();
+    s_snapshot.handshake_start_us = PQC_TimebaseNowUs();
     s_snapshot.handshake_start_cycle = PQC_TLS_ReadCycleCounter();
 }
 
@@ -102,14 +129,14 @@ void PQC_TLS_InstrumentationHandshakeEnd(int result)
 {
     /* These are deliberately the first measurements after wolfSSL_connect(). */
     s_snapshot.handshake_end_cycle = PQC_TLS_ReadCycleCounter();
-    s_snapshot.handshake_end_tick_ms = HAL_GetTick();
+    s_snapshot.handshake_end_us = PQC_TimebaseNowUs();
     s_handshake_active = 0U;
 
     s_snapshot.handshake_result = result;
     s_snapshot.handshake_elapsed_cycles =
         s_snapshot.handshake_end_cycle - s_snapshot.handshake_start_cycle;
-    s_snapshot.handshake_elapsed_ms =
-        s_snapshot.handshake_end_tick_ms - s_snapshot.handshake_start_tick_ms;
+    s_snapshot.handshake_elapsed_us =
+        PQC_TimebaseElapsedUs(s_snapshot.handshake_start_us, s_snapshot.handshake_end_us);
 }
 
 void PQC_TLS_InstrumentationSetPostMemory(
@@ -127,7 +154,7 @@ void PQC_TLS_InstrumentationPhaseBegin(PQC_TLSPhase phase)
     PQC_TLSSpan *span;
     if (!s_handshake_active || phase >= PQC_TLS_PHASE_COUNT) return;
     span = &s_phase_spans[phase];
-    span->start_tick_ms = HAL_GetTick();
+    span->start_us = PQC_TimebaseNowUs();
     span->start_cycle = PQC_TLS_ReadCycleCounter();
     span->active = 1U;
 }
@@ -136,15 +163,15 @@ void PQC_TLS_InstrumentationPhaseEnd(PQC_TLSPhase phase)
 {
     PQC_TLSSpan *span;
     uint32_t end_cycle;
-    uint32_t end_tick_ms;
+    uint64_t end_us;
     if (!s_handshake_active || phase >= PQC_TLS_PHASE_COUNT) return;
     span = &s_phase_spans[phase];
     if (!span->active) return;
     end_cycle = PQC_TLS_ReadCycleCounter();
-    end_tick_ms = HAL_GetTick();
+    end_us = PQC_TimebaseNowUs();
     span->active = 0U;
     PQC_TLS_Accumulate(&s_snapshot.phases[phase],
-        span->start_cycle, end_cycle, span->start_tick_ms, end_tick_ms);
+        span->start_cycle, end_cycle, span->start_us, end_us);
 }
 
 void PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLSPrimitive primitive)
@@ -152,7 +179,7 @@ void PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLSPrimitive primitive)
     PQC_TLSSpan *span;
     if (!s_handshake_active || primitive >= PQC_TLS_PRIMITIVE_COUNT) return;
     span = &s_primitive_spans[primitive];
-    span->start_tick_ms = 0U;
+    span->start_us = 0U;
     span->start_cycle = PQC_TLS_ReadCycleCounter();
     span->active = 1U;
 }
@@ -161,12 +188,12 @@ void PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLSPrimitive primitive)
 {
     PQC_TLSSpan *span;
     uint32_t end_cycle;
-    uint32_t end_tick_ms;
+    uint64_t end_us;
     if (!s_handshake_active || primitive >= PQC_TLS_PRIMITIVE_COUNT) return;
     span = &s_primitive_spans[primitive];
     if (!span->active) return;
     end_cycle = PQC_TLS_ReadCycleCounter();
-    end_tick_ms = 0U;
+    end_us = 0U;
     span->active = 0U;
 
     if (primitive == PQC_TLS_PRIMITIVE_X509_VERIFY) {
@@ -185,7 +212,7 @@ void PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLSPrimitive primitive)
     }
 
     PQC_TLS_Accumulate(&s_snapshot.primitives[primitive],
-        span->start_cycle, end_cycle, span->start_tick_ms, end_tick_ms);
+        span->start_cycle, end_cycle, span->start_us, end_us);
 }
 
 const PQC_TLSInstrumentationSnapshot *PQC_TLS_InstrumentationSnapshot(void)
@@ -246,18 +273,24 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
     /* Keep timing and memory on separate bounded records. The original combined
      * record exceeded its UART formatting buffer on hardware and concatenated
      * the first phase record onto a truncated handshake line. */
-    (void)snprintf(line, sizeof(line),
-        "PQC_TLS_HANDSHAKE_TIMING result=%d cycle_counter_available=%u "
-        "start_cycle=%lu end_cycle=%lu elapsed_cycles=%lu "
-        "start_tick_ms=%lu end_tick_ms=%lu elapsed_ms=%lu\r\n",
-        s_snapshot.handshake_result,
-        (unsigned int)s_snapshot.cycle_counter_available,
-        (unsigned long)s_snapshot.handshake_start_cycle,
-        (unsigned long)s_snapshot.handshake_end_cycle,
-        (unsigned long)s_snapshot.handshake_elapsed_cycles,
-        (unsigned long)s_snapshot.handshake_start_tick_ms,
-        (unsigned long)s_snapshot.handshake_end_tick_ms,
-        (unsigned long)s_snapshot.handshake_elapsed_ms);
+    {
+        char start_us[21];
+        char end_us[21];
+        char elapsed_us[21];
+        PQC_TLS_FormatU64(s_snapshot.handshake_start_us, start_us, sizeof(start_us));
+        PQC_TLS_FormatU64(s_snapshot.handshake_end_us, end_us, sizeof(end_us));
+        PQC_TLS_FormatU64(s_snapshot.handshake_elapsed_us, elapsed_us, sizeof(elapsed_us));
+        (void)snprintf(line, sizeof(line),
+            "PQC_TLS_HANDSHAKE_TIMING result=%d cycle_counter_available=%u "
+            "start_cycle=%lu end_cycle=%lu elapsed_cycles=%lu "
+            "start_us=%s end_us=%s elapsed_us=%s\r\n",
+            s_snapshot.handshake_result,
+            (unsigned int)s_snapshot.cycle_counter_available,
+            (unsigned long)s_snapshot.handshake_start_cycle,
+            (unsigned long)s_snapshot.handshake_end_cycle,
+            (unsigned long)s_snapshot.handshake_elapsed_cycles,
+            start_us, end_us, elapsed_us);
+    }
     write_line(line);
 
     (void)snprintf(line, sizeof(line),
@@ -276,19 +309,24 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
     for (i = 0U; i < (unsigned int)PQC_TLS_PHASE_COUNT; ++i) {
         const PQC_TLSTimingAggregate *m = &s_snapshot.phases[i];
         if (m->count == 0U) continue;
-        (void)snprintf(line, sizeof(line),
-            "PQC_TLS_PHASE name=%s count=%lu total_cycles=%lu min_cycles=%lu "
-            "max_cycles=%lu first_start_cycle=%lu last_end_cycle=%lu "
-            "first_start_tick_ms=%lu last_end_tick_ms=%lu\r\n",
-            PQC_TLS_PhaseName((PQC_TLSPhase)i),
-            (unsigned long)m->count,
-            (unsigned long)m->total_cycles,
-            (unsigned long)m->min_cycles,
-            (unsigned long)m->max_cycles,
-            (unsigned long)m->first_start_cycle,
-            (unsigned long)m->last_end_cycle,
-            (unsigned long)m->first_start_tick_ms,
-            (unsigned long)m->last_end_tick_ms);
+        {
+            char first_start_us[21];
+            char last_end_us[21];
+            PQC_TLS_FormatU64(m->first_start_us, first_start_us, sizeof(first_start_us));
+            PQC_TLS_FormatU64(m->last_end_us, last_end_us, sizeof(last_end_us));
+            (void)snprintf(line, sizeof(line),
+                "PQC_TLS_PHASE name=%s count=%lu total_cycles=%lu min_cycles=%lu "
+                "max_cycles=%lu first_start_cycle=%lu last_end_cycle=%lu "
+                "first_start_us=%s last_end_us=%s\r\n",
+                PQC_TLS_PhaseName((PQC_TLSPhase)i),
+                (unsigned long)m->count,
+                (unsigned long)m->total_cycles,
+                (unsigned long)m->min_cycles,
+                (unsigned long)m->max_cycles,
+                (unsigned long)m->first_start_cycle,
+                (unsigned long)m->last_end_cycle,
+                first_start_us, last_end_us);
+        }
         write_line(line);
     }
 

@@ -53,6 +53,7 @@ KEYTOOLS_MAKEFILE_RELATIVE_PATH = Path("tools/keytools/Makefile")
 STM32L4_HAL_CONF_RELATIVE_PATH = Path("hal/stm32l4xx_hal_conf.h")
 STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH = Path("src/image.c")
+WOLFBOOT_STM32L4_HAL_SOURCE_RELATIVE_PATH = Path("hal/stm32l4.c")
 DEFAULT_WOLFBOOT_PRIVATE_KEY_RELATIVE_PATH = Path("wolfboot_signing_private_key.der")
 WOLFBOOT_GENERATED_SIGNING_ARTIFACT_RELATIVE_PATHS = (
     Path("src/keystore.c"),
@@ -362,43 +363,41 @@ def _temporarily_patch_boot_timing_instrumentation(
     profile: dict[str, Any],
     source_dir: Path,
 ) -> tuple[Path | None, Path | None, bool, str | None, str | None]:
-    """Temporarily instrument wolfBoot verification timing for STM32L4R5.
+    """Temporarily instrument wolfBoot timing and reset-origin handoff.
 
-    Phase 10k needs wolfBoot to produce a concrete timing value. The earlier
-    UART-in-wolfBoot approach was unreliable because the application UART path
-    is already known-good while the bootloader's early USART state is not. This
-    patch wraps wolfBoot's image-authenticity function with a Cortex-M DWT
-    cycle-counter measurement and writes the measured value to a fixed RAM2
-    mailbox. The relocated HAL application reads that mailbox after its UART is
-    initialized and emits the framework-parsed line:
-
-        wolfBoot verification cycles: <N> cycles
-        wolfBoot clock sysclk_hz: <N>
-        wolfBoot clock hclk_hz: <N>
-        wolfBoot clock pclk1_hz: <N>
-        wolfBoot clock pclk2_hz: <N>
-
-    The wolfBoot source is restored after the build command runs.
+    The patch keeps DWT cycle attribution for authenticity verification and
+    adds a reset-origin record established in ``hal_init()``.  A 1 MHz LPTIM2
+    bridge clocked directly from HSI16 spans the final wolfBoot handoff and the
+    application clock transition; the application consumes that bridge before
+    starting its dedicated 32-bit TIM2 timebase.  Both wolfBoot sources are
+    restored after the build.
     """
 
     if not _optional_profile_bool(profile, "build.boot_timing_instrumentation_patch"):
         return None, None, False, None, None
 
     image_path = source_dir / WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH
+    hal_path = source_dir / WOLFBOOT_STM32L4_HAL_SOURCE_RELATIVE_PATH
     if not image_path.is_file():
         raise WolfBootBuildProfileError(
             f"wolfBoot image source not found for boot timing patch: {image_path}"
         )
+    if not hal_path.is_file():
+        raise WolfBootBuildProfileError(
+            f"wolfBoot STM32L4 HAL source not found for boot timing patch: {hal_path}"
+        )
 
     original_image_text = image_path.read_text(encoding="utf-8")
-
-    image_marker = "PQC_BOOT_TIMING_MAILBOX_MAGIC"
-    image_already_patched = image_marker in original_image_text
+    original_hal_text = hal_path.read_text(encoding="utf-8")
+    image_marker = "PQC_BOOT_TIMING_WRAPPER_V3"
+    hal_marker = "PQC_BOOT_RESET_ORIGIN_V3"
 
     patched_image_text = original_image_text
+    patched_hal_text = original_hal_text
     image_original_to_restore: str | None = original_image_text
+    hal_original_to_restore: str | None = original_hal_text
 
-    if not image_already_patched:
+    if image_marker not in patched_image_text:
         signature = "#else\nint wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n{"
         replacement = (
             "#else\n"
@@ -416,46 +415,56 @@ def _temporarily_patch_boot_timing_instrumentation(
         patched_image_text = patched_image_text.replace(signature, replacement, 1)
 
         wrapper_marker = "#endif\n\n/**\n * @brief Peek at the content of the image at a specific offset."
-        wrapper = """\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)
+        wrapper = r'''
+#if defined(WOLFBOOT_PQC_BOOT_TIMING)
+/* PQC_BOOT_TIMING_WRAPPER_V3 */
+void pqc_boot_timing_verification_start(uint32_t *start_cycles);
+void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification_result);
+
+int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
+{
+    uint32_t start_cycles;
+    int ret;
+    pqc_boot_timing_verification_start(&start_cycles);
+    ret = wolfBoot_verify_authenticity_impl(img);
+    pqc_boot_timing_verification_finish(start_cycles, ret);
+    return ret;
+}
+#endif
+'''
+        if wrapper_marker not in patched_image_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate safe insertion point after wolfBoot_verify_authenticity()"
+            )
+        patched_image_text = patched_image_text.replace(
+            wrapper_marker, f"{wrapper}\n{wrapper_marker}", 1
+        )
+    else:
+        image_original_to_restore = None
+
+    if hal_marker not in patched_hal_text:
+        helper_anchor = '#define DMB() asm volatile ("dmb")\n'
+        helper = r'''
+
+#if defined(WOLFBOOT_PQC_BOOT_TIMING)
+/* PQC_BOOT_RESET_ORIGIN_V3 */
 #ifndef WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR
 #define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
 #endif
-
-#define PQC_BOOT_TIMING_DEMCR        (*(volatile uint32_t *)0xE000EDFCUL)
-#define PQC_BOOT_TIMING_DWT_CTRL     (*(volatile uint32_t *)0xE0001000UL)
-#define PQC_BOOT_TIMING_DWT_CYCCNT   (*(volatile uint32_t *)0xE0001004UL)
-#define PQC_BOOT_TIMING_DEMCR_TRCENA (1UL << 24)
-#define PQC_BOOT_TIMING_DWT_CYCCNTENA (1UL << 0)
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION 2UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 3UL
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
+#define PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY 1UL
+#define PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL
+#define PQC_BOOT_HANDOFF_BRIDGE_BITS 16UL
 #define PQC_BOOT_HSI_HZ 16000000UL
 #define PQC_BOOT_MSI_HZ 4000000UL
 #define PQC_BOOT_HSE_HZ 0UL
-#define PQC_BOOT_RCC_BASE 0x40021000UL
-#define PQC_BOOT_RCC_CFGR (*(volatile uint32_t *)(PQC_BOOT_RCC_BASE + 0x08UL))
-#define PQC_BOOT_RCC_PLLCFGR (*(volatile uint32_t *)(PQC_BOOT_RCC_BASE + 0x0CUL))
-#define PQC_BOOT_RCC_CFGR_SWS_MASK (0x3UL << 2)
-#define PQC_BOOT_RCC_CFGR_SWS_MSI (0x0UL << 2)
-#define PQC_BOOT_RCC_CFGR_SWS_HSI (0x1UL << 2)
-#define PQC_BOOT_RCC_CFGR_SWS_HSE (0x2UL << 2)
-#define PQC_BOOT_RCC_CFGR_SWS_PLL (0x3UL << 2)
-#define PQC_BOOT_RCC_CFGR_HPRE_MASK (0xFUL << 4)
-#define PQC_BOOT_RCC_CFGR_HPRE_POS 4U
-#define PQC_BOOT_RCC_CFGR_PPRE1_MASK (0x7UL << 8)
-#define PQC_BOOT_RCC_CFGR_PPRE1_POS 8U
-#define PQC_BOOT_RCC_CFGR_PPRE2_MASK (0x7UL << 11)
-#define PQC_BOOT_RCC_CFGR_PPRE2_POS 11U
-#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_MASK 0x3UL
-#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_MSI 0x1UL
-#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSI 0x2UL
-#define PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSE 0x3UL
-#define PQC_BOOT_RCC_PLLCFGR_PLLM_MASK (0x7UL << 4)
-#define PQC_BOOT_RCC_PLLCFGR_PLLM_POS 4U
-#define PQC_BOOT_RCC_PLLCFGR_PLLN_MASK (0x7FUL << 8)
-#define PQC_BOOT_RCC_PLLCFGR_PLLN_POS 8U
-#define PQC_BOOT_RCC_PLLCFGR_PLLR_MASK (0x3UL << 25)
-#define PQC_BOOT_RCC_PLLCFGR_PLLR_POS 25U
+#define PQC_BOOT_DEMCR (*(volatile uint32_t *)0xE000EDFCUL)
+#define PQC_BOOT_DWT_CTRL (*(volatile uint32_t *)0xE0001000UL)
+#define PQC_BOOT_DWT_CYCCNT (*(volatile uint32_t *)0xE0001004UL)
+#define PQC_BOOT_DEMCR_TRCENA (1UL << 24)
+#define PQC_BOOT_DWT_CYCCNTENA (1UL << 0)
 
 struct pqc_boot_timing_mailbox {
     uint32_t magic;
@@ -467,7 +476,17 @@ struct pqc_boot_timing_mailbox {
     uint32_t hclk_hz;
     uint32_t pclk1_hz;
     uint32_t pclk2_hz;
+    uint32_t reset_origin_to_handoff_us_low;
+    uint32_t reset_origin_to_handoff_us_high;
+    uint32_t reset_origin_kind;
+    uint32_t handoff_bridge_counter_hz;
+    uint32_t handoff_bridge_counter_bits;
+    uint32_t handoff_bridge_status;
 };
+
+static uint64_t pqc_boot_reset_prefix_us;
+static uint32_t pqc_boot_stable_hclk_hz;
+static uint32_t pqc_boot_reset_origin_valid = 1U;
 
 static uint32_t pqc_boot_decode_ahb_divider(uint32_t hpre)
 {
@@ -483,28 +502,27 @@ static uint32_t pqc_boot_decode_apb_divider(uint32_t ppre)
 
 static uint32_t pqc_boot_pll_source_hz(uint32_t pllcfgr)
 {
-    switch (pllcfgr & PQC_BOOT_RCC_PLLCFGR_PLLSRC_MASK) {
-        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_MSI: return PQC_BOOT_MSI_HZ;
-        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSI: return PQC_BOOT_HSI_HZ;
-        case PQC_BOOT_RCC_PLLCFGR_PLLSRC_HSE: return PQC_BOOT_HSE_HZ;
-        default: return 0U;
+    switch (pllcfgr & RCC_PLLCFGR_PLLSRC) {
+        case RCC_PLLSOURCE_MSI: return PQC_BOOT_MSI_HZ;
+        case RCC_PLLSOURCE_HSI: return PQC_BOOT_HSI_HZ;
+        default: return PQC_BOOT_HSE_HZ;
     }
 }
 
 static uint32_t pqc_boot_reported_sysclk_hz(void)
 {
-    uint32_t cfgr = PQC_BOOT_RCC_CFGR;
-    uint32_t sws = cfgr & PQC_BOOT_RCC_CFGR_SWS_MASK;
-    if (sws == PQC_BOOT_RCC_CFGR_SWS_HSI) return PQC_BOOT_HSI_HZ;
-    if (sws == PQC_BOOT_RCC_CFGR_SWS_MSI) return PQC_BOOT_MSI_HZ;
-    if (sws == PQC_BOOT_RCC_CFGR_SWS_HSE) return PQC_BOOT_HSE_HZ;
-    if (sws == PQC_BOOT_RCC_CFGR_SWS_PLL) {
-        uint32_t pll = PQC_BOOT_RCC_PLLCFGR;
+    uint32_t cfgr = RCC->CFGR;
+    uint32_t sws = cfgr & RCC_CFGR_SWS;
+    if (sws == RCC_CFGR_SWS_HSI) return PQC_BOOT_HSI_HZ;
+    if (sws == RCC_CFGR_SWS_MSI) return PQC_BOOT_MSI_HZ;
+    if (sws == RCC_CFGR_SWS_HSE) return PQC_BOOT_HSE_HZ;
+    if (sws == RCC_CFGR_SWS_PLL) {
+        uint32_t pll = RCC->PLLCFGR;
         uint32_t source_hz = pqc_boot_pll_source_hz(pll);
-        uint32_t m = ((pll & PQC_BOOT_RCC_PLLCFGR_PLLM_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLM_POS) + 1U;
-        uint32_t n = (pll & PQC_BOOT_RCC_PLLCFGR_PLLN_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLN_POS;
-        uint32_t r = ((((pll & PQC_BOOT_RCC_PLLCFGR_PLLR_MASK) >> PQC_BOOT_RCC_PLLCFGR_PLLR_POS) + 1U) * 2U);
-        if (source_hz == 0U || m == 0U || r == 0U) return 0U;
+        uint32_t m = ((pll & RCC_PLLCFGR_PLLM) >> RCC_PLLCFGR_PLLM_Pos) + 1U;
+        uint32_t n = (pll & RCC_PLLCFGR_PLLN) >> RCC_PLLCFGR_PLLN_Pos;
+        uint32_t r = ((((pll & RCC_PLLCFGR_PLLR) >> RCC_PLLCFGR_PLLR_Pos) + 1U) * 2U);
+        if ((source_hz == 0U) || (m == 0U) || (r == 0U)) return 0U;
         return (uint32_t)((((uint64_t)source_hz / m) * n) / r);
     }
     return 0U;
@@ -512,29 +530,99 @@ static uint32_t pqc_boot_reported_sysclk_hz(void)
 
 static void pqc_boot_reported_clocks(uint32_t *sysclk_hz, uint32_t *hclk_hz, uint32_t *pclk1_hz, uint32_t *pclk2_hz)
 {
-    uint32_t cfgr = PQC_BOOT_RCC_CFGR;
+    uint32_t cfgr = RCC->CFGR;
     uint32_t sysclk = pqc_boot_reported_sysclk_hz();
-    uint32_t hclk = sysclk / pqc_boot_decode_ahb_divider((cfgr & PQC_BOOT_RCC_CFGR_HPRE_MASK) >> PQC_BOOT_RCC_CFGR_HPRE_POS);
+    uint32_t hclk = sysclk / pqc_boot_decode_ahb_divider((cfgr & RCC_CFGR_HPRE) >> RCC_CFGR_HPRE_Pos);
     *sysclk_hz = sysclk;
     *hclk_hz = hclk;
-    *pclk1_hz = hclk / pqc_boot_decode_apb_divider((cfgr & PQC_BOOT_RCC_CFGR_PPRE1_MASK) >> PQC_BOOT_RCC_CFGR_PPRE1_POS);
-    *pclk2_hz = hclk / pqc_boot_decode_apb_divider((cfgr & PQC_BOOT_RCC_CFGR_PPRE2_MASK) >> PQC_BOOT_RCC_CFGR_PPRE2_POS);
+    *pclk1_hz = hclk / pqc_boot_decode_apb_divider((cfgr & RCC_CFGR_PPRE1) >> RCC_CFGR_PPRE1_Pos);
+    *pclk2_hz = hclk / pqc_boot_decode_apb_divider((cfgr & RCC_CFGR_PPRE2) >> RCC_CFGR_PPRE2_Pos);
 }
 
-static void pqc_boot_timing_counter_start(uint32_t *start_cycles)
+static uint64_t pqc_boot_cycles_to_us(uint32_t cycles, uint32_t hclk_hz)
 {
-    PQC_BOOT_TIMING_DEMCR |= PQC_BOOT_TIMING_DEMCR_TRCENA;
-    PQC_BOOT_TIMING_DWT_CYCCNT = 0U;
-    PQC_BOOT_TIMING_DWT_CTRL |= PQC_BOOT_TIMING_DWT_CYCCNTENA;
-    *start_cycles = PQC_BOOT_TIMING_DWT_CYCCNT;
+    if (hclk_hz == 0U) return 0U;
+    return (((uint64_t)cycles * 1000000ULL) + ((uint64_t)hclk_hz / 2ULL)) / (uint64_t)hclk_hz;
 }
 
-static uint32_t pqc_boot_timing_counter_elapsed(uint32_t start_cycles)
+static void pqc_boot_dwt_reset(void)
 {
-    return PQC_BOOT_TIMING_DWT_CYCCNT - start_cycles;
+    PQC_BOOT_DEMCR |= PQC_BOOT_DEMCR_TRCENA;
+    PQC_BOOT_DWT_CTRL |= PQC_BOOT_DWT_CYCCNTENA;
+    PQC_BOOT_DWT_CYCCNT = 0U;
 }
 
-static void pqc_boot_timing_write_mailbox(uint32_t elapsed_cycles, int verification_result, uint32_t max_stack_used_bytes)
+static uint16_t pqc_boot_bridge_read(void)
+{
+    uint16_t first, second;
+    do {
+        first = (uint16_t)LPTIM2->CNT;
+        second = (uint16_t)LPTIM2->CNT;
+    } while (first != second);
+    return second;
+}
+
+static int pqc_boot_bridge_start(uint32_t *counter_start_cycle)
+{
+    RCC->CR |= RCC_CR_HSION;
+    while ((RCC->CR & RCC_CR_HSIRDY) == 0U) {}
+    __HAL_RCC_LPTIM2_CONFIG(RCC_LPTIM2CLKSOURCE_HSI);
+    __HAL_RCC_LPTIM2_CLK_ENABLE();
+    LPTIM2->CR = 0U;
+    LPTIM2->CFGR = (LPTIM2->CFGR & ~LPTIM_CFGR_PRESC) | LPTIM_CFGR_PRESC_2;
+    LPTIM2->ICR = LPTIM_ICR_ARRMCF | LPTIM_ICR_ARROKCF;
+    LPTIM2->CR = LPTIM_CR_ENABLE;
+    LPTIM2->ARR = 0xFFFFU;
+    while ((LPTIM2->ISR & LPTIM_ISR_ARROK) == 0U) {}
+    LPTIM2->ICR = LPTIM_ICR_ARROKCF | LPTIM_ICR_ARRMCF;
+    if (counter_start_cycle != NULL) *counter_start_cycle = PQC_BOOT_DWT_CYCCNT;
+    LPTIM2->CR |= LPTIM_CR_CNTSTRT;
+    return 0;
+}
+
+static uint32_t pqc_boot_bridge_elapsed_us(void)
+{
+    if ((LPTIM2->ISR & LPTIM_ISR_ARRM) != 0U) return 0xFFFFFFFFUL;
+    return (uint32_t)pqc_boot_bridge_read();
+}
+
+static void pqc_boot_reset_origin_start(void)
+{
+    uint32_t entry_hclk_hz;
+    uint32_t start_cycles;
+    uint32_t sysclk_hz, pclk1_hz, pclk2_hz;
+    pqc_boot_reported_clocks(&sysclk_hz, &entry_hclk_hz, &pclk1_hz, &pclk2_hz);
+    (void)sysclk_hz; (void)pclk1_hz; (void)pclk2_hz;
+    pqc_boot_dwt_reset();
+    start_cycles = PQC_BOOT_DWT_CYCCNT;
+    {
+        uint32_t bridge_start_cycle = start_cycles;
+        (void)pqc_boot_bridge_start(&bridge_start_cycle);
+        pqc_boot_reset_prefix_us = pqc_boot_cycles_to_us(
+            bridge_start_cycle - start_cycles, entry_hclk_hz);
+    }
+}
+
+static void pqc_boot_reset_origin_clock_ready(void)
+{
+    uint32_t bridge_us = pqc_boot_bridge_elapsed_us();
+    uint32_t sysclk_hz, pclk1_hz, pclk2_hz;
+    if (bridge_us != 0xFFFFFFFFUL) {
+        pqc_boot_reset_prefix_us += bridge_us;
+    } else {
+        pqc_boot_reset_origin_valid = 0U;
+    }
+    pqc_boot_reported_clocks(&sysclk_hz, &pqc_boot_stable_hclk_hz, &pclk1_hz, &pclk2_hz);
+    (void)sysclk_hz; (void)pclk1_hz; (void)pclk2_hz;
+    pqc_boot_dwt_reset();
+}
+
+void pqc_boot_timing_verification_start(uint32_t *start_cycles)
+{
+    if (start_cycles != NULL) *start_cycles = PQC_BOOT_DWT_CYCCNT;
+}
+
+void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification_result)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
         (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
@@ -542,45 +630,86 @@ static void pqc_boot_timing_write_mailbox(uint32_t elapsed_cycles, int verificat
     pqc_boot_reported_clocks(&sysclk_hz, &hclk_hz, &pclk1_hz, &pclk2_hz);
     mailbox->magic = 0U;
     mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
-    mailbox->elapsed_cycles = elapsed_cycles;
+    mailbox->elapsed_cycles = PQC_BOOT_DWT_CYCCNT - start_cycles;
     mailbox->verification_result = (uint32_t)verification_result;
-    mailbox->max_stack_used_bytes = max_stack_used_bytes;
+    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     mailbox->sysclk_hz = sysclk_hz;
     mailbox->hclk_hz = hclk_hz;
     mailbox->pclk1_hz = pclk1_hz;
     mailbox->pclk2_hz = pclk2_hz;
+    mailbox->reset_origin_to_handoff_us_low = 0U;
+    mailbox->reset_origin_to_handoff_us_high = 0U;
+    mailbox->reset_origin_kind = PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY;
+    mailbox->handoff_bridge_counter_hz = PQC_BOOT_HANDOFF_BRIDGE_HZ;
+    mailbox->handoff_bridge_counter_bits = PQC_BOOT_HANDOFF_BRIDGE_BITS;
+    mailbox->handoff_bridge_status = 0U;
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
-int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
+static void pqc_boot_timing_prepare_handoff(void)
 {
-    uint32_t start_cycles, elapsed_cycles;
-    int ret;
-    pqc_boot_timing_counter_start(&start_cycles);
-    ret = wolfBoot_verify_authenticity_impl(img);
-    elapsed_cycles = pqc_boot_timing_counter_elapsed(start_cycles);
-    pqc_boot_timing_write_mailbox(
-        elapsed_cycles, ret, PQC_BOOT_STACK_UNAVAILABLE);
-    return ret;
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    uint32_t bridge_start_cycle = PQC_BOOT_DWT_CYCCNT;
+    int bridge_status = pqc_boot_bridge_start(&bridge_start_cycle);
+    uint64_t reset_to_bridge_us = pqc_boot_reset_prefix_us +
+        pqc_boot_cycles_to_us(bridge_start_cycle, pqc_boot_stable_hclk_hz);
+    mailbox->magic = 0U;
+    mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
+    mailbox->reset_origin_to_handoff_us_low = (uint32_t)reset_to_bridge_us;
+    mailbox->reset_origin_to_handoff_us_high = (uint32_t)(reset_to_bridge_us >> 32);
+    mailbox->reset_origin_kind = PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY;
+    mailbox->handoff_bridge_counter_hz = PQC_BOOT_HANDOFF_BRIDGE_HZ;
+    mailbox->handoff_bridge_counter_bits = PQC_BOOT_HANDOFF_BRIDGE_BITS;
+    mailbox->handoff_bridge_status =
+        ((pqc_boot_reset_origin_valid != 0U) && (bridge_status == 0)) ? 1U : 0U;
+    mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 #endif
-"""
-        if wrapper_marker not in patched_image_text:
+'''
+        if helper_anchor not in patched_hal_text:
             raise WolfBootBuildProfileError(
-                "Could not locate safe insertion point after wolfBoot_verify_authenticity()"
+                "Could not locate STM32L4 DMB helper for reset-origin timing patch"
             )
-        patched_image_text = patched_image_text.replace(
-            wrapper_marker,
-            f"{wrapper}\n{wrapper_marker}",
-            1,
+        patched_hal_text = patched_hal_text.replace(
+            helper_anchor, helper_anchor + helper, 1
         )
+
+        hal_init_old = "void hal_init(void)\n{\n    clockconfig(0);\n}"
+        hal_init_new = "void hal_init(void)\n{\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n    pqc_boot_reset_origin_start();\n#endif\n    clockconfig(0);\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n    pqc_boot_reset_origin_clock_ready();\n#endif\n}"
+        if hal_init_old not in patched_hal_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate wolfBoot STM32L4 hal_init() for reset-origin patch"
+            )
+        patched_hal_text = patched_hal_text.replace(hal_init_old, hal_init_new, 1)
+
+        prepare_old = "void hal_prepare_boot(void)\n{"
+        prepare_new = (
+            "void hal_prepare_boot(void)\n{\n"
+            "#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n"
+            "    pqc_boot_timing_prepare_handoff();\n"
+            "#endif"
+        )
+        if prepare_old not in patched_hal_text:
+            raise WolfBootBuildProfileError(
+                "Could not locate wolfBoot STM32L4 hal_prepare_boot() for reset-origin patch"
+            )
+        patched_hal_text = patched_hal_text.replace(prepare_old, prepare_new, 1)
     else:
-        image_original_to_restore = None
+        hal_original_to_restore = None
 
     if patched_image_text != original_image_text:
         image_path.write_text(patched_image_text, encoding="utf-8")
+    if patched_hal_text != original_hal_text:
+        hal_path.write_text(patched_hal_text, encoding="utf-8")
 
-    return image_path, None, True, image_original_to_restore, None
+    return (
+        image_path,
+        hal_path,
+        True,
+        image_original_to_restore,
+        hal_original_to_restore,
+    )
 
 
 def _copy_project_local_config(

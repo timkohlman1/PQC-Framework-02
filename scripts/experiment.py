@@ -261,7 +261,7 @@ def _parse_ready_metrics_subscriber_output(
 def _parse_ready_metrics_2_subscriber_output(
     output: str, *, response_topic: str
 ) -> dict[str, Any]:
-    """Validate the fixed Ready Metrics 2 broker result bundle."""
+    """Validate the Ready Metrics 2 microsecond timing/result bundle."""
 
     payloads: list[str] = []
     prefix = response_topic + " "
@@ -295,80 +295,105 @@ def _parse_ready_metrics_2_subscriber_output(
     for decoded in decoded_messages:
         by_type.setdefault(str(decoded.get("type", "")), []).append(decoded)
 
-    timing = by_type.get("experiment_timing", [])
-    timing_message = timing[0] if len(timing) == 1 else {}
+    timebase_messages = by_type.get("application_timebase", [])
+    timebase = timebase_messages[0] if len(timebase_messages) == 1 else {}
+    timebase_valid = (
+        len(timebase_messages) == 1
+        and timebase.get("schema_version") == 2
+        and timebase.get("source") == "TIM2"
+        and isinstance(timebase.get("timer_input_clock_hz"), int)
+        and timebase["timer_input_clock_hz"] > 0
+        and isinstance(timebase.get("prescaler"), int)
+        and timebase["prescaler"] >= 0
+        and timebase.get("counter_hz") == 1_000_000
+        and timebase.get("counter_bits") == 32
+        and timebase.get("wrap_handling") == "update_irq_64bit_extension"
+        and timebase.get("reset_origin_valid") in (0, 1)
+        and isinstance(timebase.get("reset_origin_to_application_timebase_us"), int)
+        and timebase["reset_origin_to_application_timebase_us"] >= 0
+        and timebase.get("firmware_elf_sha256_source") == "run_manifest"
+    )
+    if timebase_valid:
+        expected_hz = timebase["timer_input_clock_hz"] // (timebase["prescaler"] + 1)
+        timebase_valid = expected_hz == 1_000_000
+
+    timing_messages = by_type.get("experiment_timing", [])
+    timing_message = timing_messages[0] if len(timing_messages) == 1 else {}
     timing_fields = (
-        "tcp_connect_ms",
-        "ttfb_ms",
-        "mqtt_connect_ms",
-        "legacy_connect_timing_ms",
+        "tcp_connect_us",
+        "mqtt_first_response_us",
+        "mqtt_connect_us",
+        "legacy_connect_timing_us",
     )
     timing_valid = (
-        len(timing) == 1
-        and timing_message.get("schema_version") == 1
-        and timing_message.get("ttfb_definition")
+        len(timing_messages) == 1
+        and timing_message.get("schema_version") == 2
+        and timing_message.get("mqtt_first_response_definition")
         == "tcp_connect_start_to_first_mqtt_connack_plaintext_byte"
         and timing_message.get("dns_included") is False
         and all(
-            isinstance(timing_message.get(field), int)
-            and timing_message[field] >= 0
+            isinstance(timing_message.get(field), int) and timing_message[field] >= 0
             for field in timing_fields
         )
         and timing_message.get("first_response_valid") == 1
-        and timing_message["ttfb_ms"] >= timing_message["tcp_connect_ms"]
+        and timing_message["mqtt_first_response_us"] >= timing_message["tcp_connect_us"]
     )
 
     boot_messages = by_type.get("boot_timing", [])
     boot_message = boot_messages[0] if len(boot_messages) == 1 else {}
     boot_fields = (
-        "boot_to_tcp_connect_ms",
-        "boot_to_tls_complete_ms",
-        "boot_to_mqtt_first_response_ms",
-        "boot_to_mqtt_connected_ms",
-        "boot_to_application_first_byte_ms",
-        "boot_to_application_last_byte_ms",
-        "boot_to_ready_publish_ms",
+        "reset_to_tcp_connect_us",
+        "reset_to_tls_complete_us",
+        "reset_to_mqtt_first_response_us",
+        "reset_to_mqtt_connected_us",
+        "reset_to_application_first_byte_us",
+        "reset_to_application_last_byte_us",
+        "reset_to_ready_publish_us",
     )
-    boot_fields_are_non_negative = (
+    boot_fields_non_negative = (
         len(boot_messages) == 1
         and all(
-            isinstance(boot_message.get(field), int)
-            and boot_message[field] >= 0
+            isinstance(boot_message.get(field), int) and boot_message[field] >= 0
             for field in boot_fields
         )
     )
     tls_timing_valid = timing_message.get("tls_timing_valid")
-    if tls_timing_valid == 1:
-        boot_order_valid = (
-            boot_message["boot_to_application_last_byte_ms"]
-            >= boot_message["boot_to_application_first_byte_ms"]
-            >= boot_message["boot_to_mqtt_connected_ms"]
-            >= boot_message["boot_to_mqtt_first_response_ms"]
-            >= boot_message["boot_to_tls_complete_ms"]
-            >= boot_message["boot_to_tcp_connect_ms"]
-        ) if boot_fields_are_non_negative else False
+    reset_origin_valid = boot_message.get("reset_origin_valid")
+    if boot_fields_non_negative and reset_origin_valid == 1:
+        if tls_timing_valid == 1:
+            boot_order_valid = (
+                boot_message["reset_to_ready_publish_us"]
+                >= boot_message["reset_to_application_last_byte_us"]
+                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["reset_to_mqtt_connected_us"]
+                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_tls_complete_us"]
+                >= boot_message["reset_to_tcp_connect_us"]
+            )
+        else:
+            boot_order_valid = (
+                boot_message["reset_to_tls_complete_us"] == 0
+                and boot_message["reset_to_ready_publish_us"]
+                >= boot_message["reset_to_application_last_byte_us"]
+                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["reset_to_mqtt_connected_us"]
+                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_tcp_connect_us"]
+            )
+    elif boot_fields_non_negative and reset_origin_valid == 0:
+        boot_order_valid = all(boot_message[field] == 0 for field in boot_fields)
     else:
-        # Plaintext Ready Metrics 2 has no TLS-complete event. Preserve zero as
-        # the explicit unavailable value and validate the remaining TCP/MQTT
-        # ordering without inventing a synthetic TLS boundary.
-        boot_order_valid = (
-            boot_message["boot_to_tls_complete_ms"] == 0
-            and boot_message["boot_to_application_last_byte_ms"]
-            >= boot_message["boot_to_application_first_byte_ms"]
-            >= boot_message["boot_to_mqtt_connected_ms"]
-            >= boot_message["boot_to_mqtt_first_response_ms"]
-            >= boot_message["boot_to_tcp_connect_ms"]
-        ) if boot_fields_are_non_negative else False
+        boot_order_valid = False
 
     boot_valid = (
         len(boot_messages) == 1
-        and boot_message.get("schema_version") == 1
-        and boot_message.get("firmware_boot_origin") == "post_hal_init"
-        and boot_fields_are_non_negative
+        and boot_message.get("schema_version") == 2
+        and boot_message.get("reset_origin") == "wolfboot_entry"
+        and reset_origin_valid in (0, 1)
+        and reset_origin_valid == timebase.get("reset_origin_valid")
         and tls_timing_valid in (0, 1)
+        and boot_fields_non_negative
         and boot_order_valid
-        and boot_message["boot_to_ready_publish_ms"]
-        >= boot_message["boot_to_application_last_byte_ms"]
     )
 
     connect_messages = by_type.get("connect_timing", [])
@@ -398,11 +423,12 @@ def _parse_ready_metrics_2_subscriber_output(
             for item in memory_messages
         )
     )
+
     handshake_messages = by_type.get("tls_handshake_timing", [])
     handshake = handshake_messages[0] if len(handshake_messages) == 1 else {}
     handshake_fields = (
         "elapsed_cycles",
-        "elapsed_ms",
+        "elapsed_us",
         "stack_before_min_free_bytes",
         "stack_after_min_free_bytes",
         "heap_before_free_bytes",
@@ -412,20 +438,28 @@ def _parse_ready_metrics_2_subscriber_output(
     )
     handshake_valid = (
         len(handshake_messages) == 1
-        and handshake.get("schema_version") == 1
+        and handshake.get("schema_version") == 2
         and handshake.get("available") in (0, 1)
         and isinstance(handshake.get("result"), int)
         and handshake.get("cycle_counter_available") in (0, 1)
+        and handshake.get("timing_sources") == "dwt_cycles+application_timebase_us"
         and all(
             isinstance(handshake.get(field), int) and handshake[field] >= 0
             for field in handshake_fields
         )
     )
 
-    def _valid_timing_record(record: Any) -> bool:
+    def _valid_cycle_record(record: Any) -> bool:
         return (
             isinstance(record, list)
             and len(record) == 6
+            and all(isinstance(value, int) and value >= 0 for value in record)
+        )
+
+    def _valid_phase_record(record: Any) -> bool:
+        return (
+            isinstance(record, list)
+            and len(record) == 8
             and all(isinstance(value, int) and value >= 0 for value in record)
         )
 
@@ -433,10 +467,10 @@ def _parse_ready_metrics_2_subscriber_output(
     phase_values = phase_messages[0].get("values") if len(phase_messages) == 1 else None
     phase_valid = (
         len(phase_messages) == 1
-        and phase_messages[0].get("schema_version") == 1
+        and phase_messages[0].get("schema_version") == 2
         and isinstance(phase_values, list)
         and len(phase_values) == 5
-        and all(_valid_timing_record(record) for record in phase_values)
+        and all(_valid_phase_record(record) for record in phase_values)
     )
 
     primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 24)]
@@ -444,17 +478,17 @@ def _parse_ready_metrics_2_subscriber_output(
     if primitive_valid:
         for part, (first_index, last_index) in enumerate(primitive_ranges, start=1):
             message = next(
-                (item for item in primitive_messages if item.get("part") == part),
-                {},
+                (item for item in primitive_messages if item.get("part") == part), {}
             )
             values = message.get("values")
             if not (
-                message.get("schema_version") == 1
+                message.get("schema_version") == 2
+                and message.get("timing_source") == "dwt_cycles"
                 and message.get("first_index") == first_index
                 and message.get("last_index") == last_index
                 and isinstance(values, list)
                 and len(values) == (last_index - first_index + 1)
-                and all(_valid_timing_record(record) for record in values)
+                and all(_valid_cycle_record(record) for record in values)
             ):
                 primitive_valid = False
                 break
@@ -464,7 +498,8 @@ def _parse_ready_metrics_2_subscriber_output(
     x509_cycles = x509.get("elapsed_cycles")
     x509_valid = (
         len(x509_messages) == 1
-        and x509.get("schema_version") == 1
+        and x509.get("schema_version") == 2
+        and x509.get("timing_source") == "dwt_cycles"
         and isinstance(x509.get("count"), int)
         and 0 <= x509["count"] <= 4
         and x509.get("overflow") in (0, 1)
@@ -472,40 +507,33 @@ def _parse_ready_metrics_2_subscriber_output(
         and len(x509_cycles) == 4
         and all(isinstance(value, int) and value >= 0 for value in x509_cycles)
     )
-
     tls_bundle_valid = handshake_valid and phase_valid and primitive_valid and x509_valid
 
     transfer_messages = by_type.get("application_transfer_timing", [])
     transfer_message = transfer_messages[0] if len(transfer_messages) == 1 else {}
     transfer_numeric_fields = (
-        "payload_bytes",
-        "received_bytes",
-        "message_count",
-        "chunk_bytes",
-        "application_ttfb_ms",
-        "ttlb_ms",
-        "request_to_first_byte_ms",
-        "application_transfer_ms",
+        "payload_bytes", "received_bytes", "message_count", "chunk_bytes",
+        "application_ttfb_us", "ttlb_us", "request_to_first_byte_us",
+        "application_transfer_us",
     )
     transfer_valid = (
         len(transfer_messages) == 1
-        and transfer_message.get("schema_version") == 1
+        and transfer_message.get("schema_version") == 2
         and transfer_message.get("ttlb_definition")
         == "tcp_connect_start_to_last_byte_of_requested_application_payload"
         and transfer_message.get("direction") == "broker_to_stm32"
         and all(
-            isinstance(transfer_message.get(field), int)
-            and transfer_message[field] >= 0
+            isinstance(transfer_message.get(field), int) and transfer_message[field] >= 0
             for field in transfer_numeric_fields
         )
         and transfer_message["payload_bytes"] > 0
         and transfer_message["received_bytes"] == transfer_message["payload_bytes"]
         and transfer_message["message_count"] > 0
         and 0 < transfer_message["chunk_bytes"] <= 400
-        and transfer_message["application_ttfb_ms"] >= timing_message.get("ttfb_ms", 0)
-        and transfer_message["ttlb_ms"] >= transfer_message["application_ttfb_ms"]
-        and transfer_message["application_transfer_ms"]
-        <= transfer_message["ttlb_ms"]
+        and transfer_message["application_ttfb_us"]
+        >= timing_message.get("mqtt_first_response_us", 0)
+        and transfer_message["ttlb_us"] >= transfer_message["application_ttfb_us"]
+        and transfer_message["application_transfer_us"] <= transfer_message["ttlb_us"]
         and transfer_message.get("first_byte_valid") == 1
         and transfer_message.get("last_byte_valid") == 1
         and transfer_message.get("complete_valid") == 1
@@ -513,15 +541,16 @@ def _parse_ready_metrics_2_subscriber_output(
 
     complete_valid = (
         len(complete_messages) == 1
-        and complete_messages[0].get("schema_version") == 1
+        and complete_messages[0].get("schema_version") == 2
         and complete_messages[0].get("status") == "success"
-        and complete_messages[0].get("message_count") == 17
+        and complete_messages[0].get("message_count") == 18
     )
     passed = (
-        len(payloads) == 17
+        len(payloads) == 18
         and ready_count == 1
         and connect_valid
         and memory_valid
+        and timebase_valid
         and timing_valid
         and boot_valid
         and tls_bundle_valid
@@ -537,7 +566,9 @@ def _parse_ready_metrics_2_subscriber_output(
         "connect_count": len(connect_messages),
         "memory_count": len(memory_messages),
         "memory_sequences": memory_sequences,
-        "timing_count": len(timing),
+        "timebase_valid": timebase_valid,
+        "application_timebase": timebase if timebase_valid else None,
+        "timing_count": len(timing_messages),
         "timing_valid": timing_valid,
         "experiment_timing": timing_message if timing_valid else None,
         "boot_timing": boot_message if boot_valid else None,
