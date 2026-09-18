@@ -109,5 +109,5 @@ def test_microsecond_serialization_avoids_newlib_nano_long_long_printf():
     assert "PQC_TLS_FormatU64" in tls
     assert "PQC_WolfMQTT_FormatU64" in mqtt
     assert '"start_us=%s end_us=%s elapsed_us=%s' in tls
-    assert '\"elapsed_us\":%s' in mqtt
-    assert '\"reset_origin_to_application_timebase_us\":%s' in mqtt
+    assert '\\"elapsed_us\\":%s' in mqtt
+    assert '\\"reset_origin_to_application_timebase_us\\":%s' in mqtt
