@@ -22,6 +22,16 @@ MQTT/TLS support is divided by evidence boundary:
 
 Hardware, gateway, UART, runtime, timing, memory, MQTT/TLS, and benchmark claims require explicit logs, manifests, or equivalent evidence.
 
+## External dependency reproducibility
+
+The parent repository pins each top-level Git submodule to an exact commit. Project-modified dependencies use project-controlled forks so the pinned commit remains fetchable from a fresh clone; unmodified dependencies remain pinned directly to their public upstream repositories.
+
+- `tools/wolfboot` -> `https://github.com/timkohlman1/wolfBoot.git`: project-controlled fork for STM32L4R5 and dual-bank OTA bootloader changes.
+- `Middlewares/Third_Party/wolfSSL` -> `https://github.com/timkohlman1/wolfssl-embedded.git`: project-controlled application wolfSSL fork for framework-specific TLS/crypto instrumentation and fixes.
+- `Middlewares/Third_Party/wolfMQTT` -> `https://github.com/wolfSSL/wolfMQTT.git`: unmodified public upstream dependency pinned to an exact commit.
+
+For a modified submodule, commit and push the submodule change first, then commit the updated gitlink in `PQC-Framework-02`. The SHA recorded by the parent repository, rather than a branch name, is the reproducible dependency identity.
+
 ## Current benchmark scope
 
 Implemented secure-boot profiles are ECC256, ECC384, ECC521, ED25519, ED448, RSA2048, RSA3072, RSA4096, ML-DSA-44, and ML-DSA-65. ML-DSA-87 is unavailable under the current 8192-byte image-header reserve.

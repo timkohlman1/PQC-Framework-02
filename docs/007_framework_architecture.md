@@ -48,7 +48,8 @@ Middlewares/Third_Party/wolfSSL
     CMake application TLS builds, application-side wolfSSL instrumentation, and application TLS fixes belong here.
 
 tools/wolfboot
-    Upstream wolfBoot submodule pinned by the parent repository.
+    Project-controlled wolfBoot fork used by the framework for STM32L4R5-specific dual-bank OTA and bootloader changes.
+    The parent repository records an exact gitlink/SHA for reproducibility.
 
 tools/wolfboot/lib/wolfssl
     wolfBoot-owned nested wolfSSL dependency.
@@ -57,9 +58,15 @@ tools/wolfboot/lib/wolfssl
 
 Application work must not patch `tools/wolfboot/lib/wolfssl` merely because the same upstream wolfSSL files also exist there. The application build resolves `PQC_WOLFSSL_SOURCE_DIR` to `Middlewares/Third_Party/wolfSSL`.
 
-Because `Middlewares/Third_Party/wolfSSL` is a Git submodule, durable source changes use a two-repository workflow: commit and push the wolfSSL source change in the wolfSSL submodule first, then commit the updated wolfSSL gitlink/SHA in `PQC-Framework-02`. A parent commit cannot preserve uncommitted source edits inside the submodule.
+The top-level dependency policy is:
 
-wolfBoot-specific temporary source adjustments remain owned by `scripts/framework/wolfboot_build.py` where implemented. Those build-time patches do not make wolfBoot's nested wolfSSL checkout the application dependency.
+- `Middlewares/Third_Party/wolfSSL` uses the project-controlled `https://github.com/timkohlman1/wolfssl-embedded.git` fork and is pinned by the parent repository to an exact commit. The configured tracking branch is `pqc-signing-tls-wolfssl`; reproducibility still comes from the recorded gitlink SHA.
+- `tools/wolfboot` uses the project-controlled `https://github.com/timkohlman1/wolfBoot.git` fork and is pinned by the parent repository to an exact commit. Framework-owned wolfBoot source changes, including dual-bank OTA support, must be committed and pushed to this fork before the parent gitlink is advanced. The official `wolfSSL/wolfBoot` repository may be retained locally as an `upstream` remote for maintenance.
+- `Middlewares/Third_Party/wolfMQTT` remains the public `https://github.com/wolfSSL/wolfMQTT.git` dependency pinned to an exact upstream commit because the framework does not currently carry project-specific wolfMQTT source changes.
+
+For any project-modified top-level submodule, durable source changes use a two-repository workflow: commit and push the source change in the submodule repository first, then commit the updated submodule gitlink/SHA in `PQC-Framework-02`. A parent commit cannot preserve uncommitted or unreachable source edits inside a submodule. A clean clone is reproducible only when the recorded SHA is fetchable from the URL in the parent `.gitmodules`.
+
+wolfBoot-specific temporary source adjustments remain owned by `scripts/framework/wolfboot_build.py` where implemented. Those build-time patches do not make wolfBoot's nested wolfSSL checkout the application dependency. wolfBoot's own nested submodules remain upstream-owned unless separately documented and modified.
 
 ## Canonical current capability matrix
 
@@ -99,8 +106,8 @@ Core/                                       CubeMX HAL/FreeRTOS application sour
 Drivers/                                    CubeMX HAL/CMSIS drivers
 Middlewares/Third_Party/FreeRTOS/           CubeMX-generated FreeRTOS middleware
 Middlewares/Third_Party/wolfSSL/            Project-controlled application TLS/wolfCrypt submodule
-Middlewares/Third_Party/wolfMQTT/           Project-controlled/pinned MQTT client submodule
-tools/wolfboot/                              Upstream wolfBoot submodule; owns its nested lib/wolfssl dependency
+Middlewares/Third_Party/wolfMQTT/           Public upstream wolfMQTT submodule pinned by exact parent gitlink SHA
+tools/wolfboot/                              Project-controlled wolfBoot fork pinned by exact parent gitlink SHA; owns its nested lib/wolfssl dependency
 configs/targets/stm32l4r5_st67.yaml          Board, MCU, UART, build and wolfBoot target metadata
 configs/gateways/pqc_gateway1.yaml                  Gateway, flash helper, UART path
 canonical generated-case direct-flash compatibility metadata              Direct-flash boot profile

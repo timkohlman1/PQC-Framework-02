@@ -112,3 +112,7 @@ wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b
 ```
 
 The decision remains: use upstream STM32L4 support as the starting point with project-local STM32L4R5 adaptation. A successful `wolfboot.elf` build is build evidence only. It does not prove signing, flashing, UART boot, swap/update behaviour, or secure-boot runtime success.
+
+## Current dependency-ownership note
+
+This decision record preserves the original choice to start from upstream STM32L4 support. The current repository state has since advanced beyond an unmodified upstream dependency: framework-specific wolfBoot source changes required by the STM32L4R5 dual-bank OTA workflow are maintained in the project-controlled `https://github.com/timkohlman1/wolfBoot.git` fork. `PQC-Framework-02` records the exact required wolfBoot commit as the `tools/wolfboot` submodule gitlink. Current dependency ownership and update procedure are authoritative in `docs/007_framework_architecture.md`; this note does not rewrite the historical rationale above.

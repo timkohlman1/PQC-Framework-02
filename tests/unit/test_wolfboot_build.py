@@ -42,6 +42,20 @@ def sample_profile() -> dict[str, object]:
     }
 
 
+def install_fake_objcopy(monkeypatch, wolfboot_build) -> None:
+    def fake_run(command, cwd, stdout, stderr, text, check):
+        assert command[:3] == ["arm-none-eabi-objcopy", "-O", "binary"]
+        Path(command[-1]).write_bytes(b"fake wolfboot binary")
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(wolfboot_build.subprocess, "run", fake_run)
+
+
 def write_keytools_makefile(source_dir: Path) -> Path:
     makefile_path = source_dir / "tools" / "keytools" / "Makefile"
     makefile_path.parent.mkdir(parents=True)
@@ -157,8 +171,9 @@ def test_default_wolfboot_runner_tolerates_non_utf8_build_output(monkeypatch, tm
     assert "�" in execution.stdout
     assert "�" in execution.stderr
 
-def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path):
+def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -252,6 +267,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert result.artifact_sha256 == expected_sha256
     assert result.retained_artifact_path == result.result_dir / "wolfboot.elf"
     assert (result.result_dir / "wolfboot.elf").read_text(encoding="utf-8") == "fake wolfboot elf"
+    assert (result.result_dir / "wolfboot.bin").read_bytes() == b"fake wolfboot binary"
     assert calls == [(["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"], source_dir)]
     assert manifest["result"] == "wolfboot_build_passed"
     assert manifest["wolfboot_build"]["config_applied"] is True
@@ -283,8 +299,9 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert f"Generated config path: {source_dir / '.config'}" in build_log
 
 
-def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp_path):
+def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -458,8 +475,9 @@ def test_validate_wolfboot_build_profile_accepts_mldsa44():
     wolfboot_build.validate_wolfboot_build_profile(profile)
 
 
-def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_path):
+def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -502,8 +520,9 @@ def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_
         assert not stale_path.exists()
 
 
-def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_path):
+def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -595,9 +614,10 @@ def test_execute_wolfboot_build_rejects_existing_key_when_keystore_is_missing(tm
 
 
 def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_make(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -668,6 +688,7 @@ def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_mak
 
 def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkeypatch, tmp_path):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
