@@ -96,3 +96,18 @@ def test_hardware_timebase_test_is_self_contained_and_uses_wolfboot_run_path():
     assert '"run"' in hardware_test
     assert '"wolfBoot verification result: 0"' in hardware_test
     assert 'PQC_TIMEBASE_UART_LOG' not in hardware_test.split("def test_application_timebase_known_delay_and_hal_tick_unchanged", 1)[1]
+
+
+def test_microsecond_serialization_avoids_newlib_nano_long_long_printf():
+    tls = _text("Core/Src/pqc_tls_instrumentation.c")
+    mqtt = _text("Core/Src/pqc_wolfmqtt_build_only.c")
+    toolchain = _text("cmake/gcc-arm-none-eabi.cmake")
+
+    assert "--specs=nano.specs" in toolchain
+    assert "%llu" not in tls
+    assert "%llu" not in mqtt
+    assert "PQC_TLS_FormatU64" in tls
+    assert "PQC_WolfMQTT_FormatU64" in mqtt
+    assert '"start_us=%s end_us=%s elapsed_us=%s' in tls
+    assert '\\"elapsed_us\\":%s' in mqtt
+    assert '\\"reset_origin_to_application_timebase_us\\":%s' in mqtt

@@ -42,6 +42,32 @@ static uint8_t PQC_TLS_EnableCycleCounter(void)
 #endif
 }
 
+static void PQC_TLS_FormatU64(uint64_t value, char *buffer, size_t buffer_size)
+{
+    char reversed[21];
+    size_t count = 0U;
+    size_t i;
+
+    if ((buffer == NULL) || (buffer_size == 0U)) {
+        return;
+    }
+
+    do {
+        reversed[count++] = (char)('0' + (value % 10U));
+        value /= 10U;
+    } while ((value != 0U) && (count < sizeof(reversed)));
+
+    if (count >= buffer_size) {
+        buffer[0] = '\0';
+        return;
+    }
+
+    for (i = 0U; i < count; ++i) {
+        buffer[i] = reversed[count - 1U - i];
+    }
+    buffer[count] = '\0';
+}
+
 static void PQC_TLS_Accumulate(
     PQC_TLSTimingAggregate *aggregate,
     uint32_t start_cycle,
@@ -247,18 +273,24 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
     /* Keep timing and memory on separate bounded records. The original combined
      * record exceeded its UART formatting buffer on hardware and concatenated
      * the first phase record onto a truncated handshake line. */
-    (void)snprintf(line, sizeof(line),
-        "PQC_TLS_HANDSHAKE_TIMING result=%d cycle_counter_available=%u "
-        "start_cycle=%lu end_cycle=%lu elapsed_cycles=%lu "
-        "start_us=%llu end_us=%llu elapsed_us=%llu\r\n",
-        s_snapshot.handshake_result,
-        (unsigned int)s_snapshot.cycle_counter_available,
-        (unsigned long)s_snapshot.handshake_start_cycle,
-        (unsigned long)s_snapshot.handshake_end_cycle,
-        (unsigned long)s_snapshot.handshake_elapsed_cycles,
-        (unsigned long long)s_snapshot.handshake_start_us,
-        (unsigned long long)s_snapshot.handshake_end_us,
-        (unsigned long long)s_snapshot.handshake_elapsed_us);
+    {
+        char start_us[21];
+        char end_us[21];
+        char elapsed_us[21];
+        PQC_TLS_FormatU64(s_snapshot.handshake_start_us, start_us, sizeof(start_us));
+        PQC_TLS_FormatU64(s_snapshot.handshake_end_us, end_us, sizeof(end_us));
+        PQC_TLS_FormatU64(s_snapshot.handshake_elapsed_us, elapsed_us, sizeof(elapsed_us));
+        (void)snprintf(line, sizeof(line),
+            "PQC_TLS_HANDSHAKE_TIMING result=%d cycle_counter_available=%u "
+            "start_cycle=%lu end_cycle=%lu elapsed_cycles=%lu "
+            "start_us=%s end_us=%s elapsed_us=%s\r\n",
+            s_snapshot.handshake_result,
+            (unsigned int)s_snapshot.cycle_counter_available,
+            (unsigned long)s_snapshot.handshake_start_cycle,
+            (unsigned long)s_snapshot.handshake_end_cycle,
+            (unsigned long)s_snapshot.handshake_elapsed_cycles,
+            start_us, end_us, elapsed_us);
+    }
     write_line(line);
 
     (void)snprintf(line, sizeof(line),
@@ -277,19 +309,24 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
     for (i = 0U; i < (unsigned int)PQC_TLS_PHASE_COUNT; ++i) {
         const PQC_TLSTimingAggregate *m = &s_snapshot.phases[i];
         if (m->count == 0U) continue;
-        (void)snprintf(line, sizeof(line),
-            "PQC_TLS_PHASE name=%s count=%lu total_cycles=%lu min_cycles=%lu "
-            "max_cycles=%lu first_start_cycle=%lu last_end_cycle=%lu "
-            "first_start_us=%llu last_end_us=%llu\r\n",
-            PQC_TLS_PhaseName((PQC_TLSPhase)i),
-            (unsigned long)m->count,
-            (unsigned long)m->total_cycles,
-            (unsigned long)m->min_cycles,
-            (unsigned long)m->max_cycles,
-            (unsigned long)m->first_start_cycle,
-            (unsigned long)m->last_end_cycle,
-            (unsigned long long)m->first_start_us,
-            (unsigned long long)m->last_end_us);
+        {
+            char first_start_us[21];
+            char last_end_us[21];
+            PQC_TLS_FormatU64(m->first_start_us, first_start_us, sizeof(first_start_us));
+            PQC_TLS_FormatU64(m->last_end_us, last_end_us, sizeof(last_end_us));
+            (void)snprintf(line, sizeof(line),
+                "PQC_TLS_PHASE name=%s count=%lu total_cycles=%lu min_cycles=%lu "
+                "max_cycles=%lu first_start_cycle=%lu last_end_cycle=%lu "
+                "first_start_us=%s last_end_us=%s\r\n",
+                PQC_TLS_PhaseName((PQC_TLSPhase)i),
+                (unsigned long)m->count,
+                (unsigned long)m->total_cycles,
+                (unsigned long)m->min_cycles,
+                (unsigned long)m->max_cycles,
+                (unsigned long)m->first_start_cycle,
+                (unsigned long)m->last_end_cycle,
+                first_start_us, last_end_us);
+        }
         write_line(line);
     }
 
