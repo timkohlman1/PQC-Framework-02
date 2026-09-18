@@ -133,6 +133,23 @@ def test_ready_metrics_2_application_uses_microsecond_timebase_and_deferred_repo
     assert "PQC_RM2_METRICS schema=3 ttfb_us=" in source
     assert "PQC_RM2_RESET schema=3 reset_origin=operational_wolfboot_entry" in source
     assert "PQC_RM2_MQTT_READINESS schema=3" in source
+    main = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    assert "APP_BufferReadyMetrics2Evidence();" in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_timebase", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_checkpoints", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_metrics", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_complete", line)' in main
+    assert "PQC_RM2_TIMEBASE schema=3" in main
+    assert "PQC_RM2_CHECKPOINTS schema=3" in main
+    assert "PQC_RM2_METRICS schema=3 metric_contract=ready_metrics_2_canonical_v3" in main
+    assert "mqtt_readiness_definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte" in main
+    assert "application_ttfb_us" not in main
+    network_task = main[main.index("void StartNetworkTask(void *argument)"):]
+    assert network_task.index("app_measurement_active = false;") < network_task.index(
+        "APP_BufferReadyMetrics2Evidence();"
+    ) < network_task.index("PQC_WolfMQTT_PublishDeferredResults(")
+    assert "transfer_chunk_bytes" in header
+    assert "s_ready_metrics_2_snapshot.transfer_chunk_bytes" in source
     rm2_source = source[source.index("int PQC_WolfMQTT_RunReadyMetrics2Application("):]
     assert rm2_source.index("while (!message_context.transfer_complete)") < rm2_source.index(
         'result = PQC_WolfMQTT_PublishText(&client, "ready", 4U);'

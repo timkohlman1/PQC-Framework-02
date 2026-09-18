@@ -76,6 +76,7 @@ typedef struct
     uint32_t transfer_payload_bytes;
     uint32_t transfer_received_bytes;
     uint32_t transfer_message_count;
+    uint32_t transfer_chunk_bytes;
     uint8_t reset_origin_valid;
     uint8_t tcp_timing_valid;
     uint8_t tls_timing_valid;

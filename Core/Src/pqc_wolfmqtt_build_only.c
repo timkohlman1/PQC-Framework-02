@@ -2395,6 +2395,8 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
         message_context.transfer_received_bytes;
     s_ready_metrics_2_snapshot.transfer_message_count =
         message_context.transfer_message_count;
+    s_ready_metrics_2_snapshot.transfer_chunk_bytes =
+        PQC_MQTT_TRANSFER_CHUNK_BYTES;
     if (PQC_TimebaseResetRelativeUs(
             s_ready_metrics_2_snapshot.application_first_byte_us,
             &s_ready_metrics_2_snapshot.rtfb_us)) {
