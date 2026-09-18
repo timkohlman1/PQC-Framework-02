@@ -48,6 +48,9 @@ def args_for(experiment_path: Path, results_dir: Path) -> Namespace:
         boot_mode="direct_flash",
         boot_algorithm=None,
         target_profile=Path("configs/targets/stm32l4r5_wolfboot.yaml"),
+        firmware_mode="single_bank",
+        standby_signing_keys=0,
+        ota_plan=None,
         build_number=None,
         force=False,
     )
