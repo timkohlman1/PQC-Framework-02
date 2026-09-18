@@ -61,12 +61,32 @@ load_local_dotenv() {
 
 run_container() (
   gateway=0
-  if [ "${1:-}" = "--gateway" ]; then
-    gateway=1
-    shift
-  fi
+  isolate_generated=0
+  while [ "$#" -gt 0 ]; do
+    case "${1:-}" in
+      --gateway)
+        gateway=1
+        shift
+        ;;
+      --isolated-generated)
+        isolate_generated=1
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
 
   load_local_dotenv
+
+  workspace_overlay_args=""
+  if [ "$isolate_generated" -eq 1 ]; then
+    # Hardware tests must be able to start from a repository with no generated
+    # state or build output. Anonymous Docker volumes hide any host copies and
+    # are removed automatically with docker run --rm.
+    workspace_overlay_args="--mount type=volume,target=/workspace/.pqc-generated-state --mount type=volume,target=/workspace/build"
+  fi
 
   wifi_args=""
   if [ -n "${PQC_WIFI_SSID:-}" ]; then
@@ -113,6 +133,7 @@ run_container() (
     if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
       docker run --rm \
         -v "$repo_root:/workspace" \
+        $workspace_overlay_args \
         -w /workspace \
         $campaign_env_args $ota_env_args \
         -e PQC_WIFI_SSID \
@@ -124,6 +145,7 @@ run_container() (
     elif [ -n "${PQC_WIFI_SSID:-}" ]; then
       docker run --rm \
         -v "$repo_root:/workspace" \
+        $workspace_overlay_args \
         -w /workspace \
         $campaign_env_args $ota_env_args \
         -e PQC_WIFI_SSID \
@@ -134,6 +156,7 @@ run_container() (
     elif [ -n "${PQC_WIFI_PSK:-}" ]; then
       docker run --rm \
         -v "$repo_root:/workspace" \
+        $workspace_overlay_args \
         -w /workspace \
         $campaign_env_args $ota_env_args \
         -e PQC_WIFI_PSK \
@@ -144,6 +167,7 @@ run_container() (
     else
       docker run --rm \
         -v "$repo_root:/workspace" \
+        $workspace_overlay_args \
         -w /workspace \
         $campaign_env_args $ota_env_args \
         -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
@@ -153,13 +177,13 @@ run_container() (
     fi
   else
     if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
     elif [ -n "${PQC_WIFI_SSID:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID "$image_name" "$@"
     elif [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_PSK "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_PSK "$image_name" "$@"
     else
-      docker run --rm -v "$repo_root:/workspace" -w /workspace $campaign_env_args $ota_env_args "$image_name" "$@"
+      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args "$image_name" "$@"
     fi
   fi
 )
@@ -186,7 +210,7 @@ case "$command" in
     if [ "$#" -eq 0 ]; then
       set -- tests/hardware -m hardware --pqc-require-hardware
     fi
-    run_container --gateway python -m pytest "$@"
+    run_container --gateway --isolated-generated python -m pytest "$@"
     ;;
   experiment)
     run_container python scripts/experiment.py "$@"
