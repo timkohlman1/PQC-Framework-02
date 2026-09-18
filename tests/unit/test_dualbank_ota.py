@@ -237,3 +237,14 @@ def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist
     assert 'PQC_OTA_APP phase=confirmed ' in experiment
     assert 'PQC_OTA_APP phase=confirmation_withheld ' in experiment
 
+
+
+def test_dualbank_ota_retained_chunks_are_processed_during_subscribe():
+    firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
+    assert "message_context->ota_transfer_mode = true;" in firmware
+    assert "PQC_OTA_ParseAndWriteChunk(context->payload, context->ota_transfer)" in firmware
+    data_topic_index = firmware.index('"pqc/control/ota/stm32/%s/data/#"', firmware.index("PQC_WolfMQTT_ProcessRetainedOta"))
+    subscribe_index = firmware.index("result = MqttClient_Subscribe(client, &subscribe);", data_topic_index)
+    receive_mode_index = firmware.index("message_context->ota_transfer_mode = true;", data_topic_index)
+    assert receive_mode_index < subscribe_index
+    assert "Retained data can be delivered synchronously while SUBSCRIBE is being" in firmware

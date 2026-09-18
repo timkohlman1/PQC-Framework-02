@@ -128,9 +128,20 @@ typedef struct {
 
 static PQC_WolfMQTTReadyMetrics2Snapshot s_ready_metrics_2_snapshot;
 
+#if PQC_OTA_ENABLED
+typedef struct PQC_OtaTransfer PQC_OtaTransfer;
+static int PQC_OTA_ParseAndWriteChunk(const char *payload, PQC_OtaTransfer *transfer);
+#endif
+
 typedef struct {
     bool received;
     bool transfer_mode;
+#if PQC_OTA_ENABLED
+    bool ota_transfer_mode;
+    bool ota_complete_seen;
+    int ota_transfer_error;
+    PQC_OtaTransfer *ota_transfer;
+#endif
     char payload[PQC_WOLFMQTT_BUFFER_SIZE];
     size_t payload_length;
     uint32_t transfer_expected_bytes;
@@ -1059,6 +1070,32 @@ static int PQC_WolfMQTT_MessageCallback(MqttClient *client, MqttMessage *message
         return MQTT_CODE_SUCCESS;
     }
 
+#if PQC_OTA_ENABLED
+    if (context->ota_transfer_mode) {
+        if (msg_new != 0U) {
+            context->payload_length = 0U;
+            context->payload[0] = '\0';
+        }
+        available = sizeof(context->payload) - 1U - context->payload_length;
+        copy_length = message->buffer_len < available ? message->buffer_len : available;
+        if (copy_length > 0U) {
+            memcpy(context->payload + context->payload_length, message->buffer, copy_length);
+            context->payload_length += copy_length;
+            context->payload[context->payload_length] = '\0';
+        }
+        if (msg_done != 0U) {
+            if (strcmp(context->payload, "complete") == 0) {
+                context->ota_complete_seen = true;
+            } else if (context->ota_transfer == NULL ||
+                       PQC_OTA_ParseAndWriteChunk(context->payload, context->ota_transfer) != 0) {
+                context->ota_transfer_error = MQTT_CODE_ERROR_BAD_ARG;
+            }
+            context->received = true;
+        }
+        return context->ota_transfer_error == 0 ? MQTT_CODE_SUCCESS : context->ota_transfer_error;
+    }
+#endif
+
     (void)msg_new;
     available = sizeof(context->payload) - 1U - context->payload_length;
     copy_length = message->buffer_len < available ? message->buffer_len : available;
@@ -1300,7 +1337,7 @@ static void PQC_OTA_EmitBootEventMailbox(void)
 #define PQC_OTA_CONTROL_WAIT_MS 250
 #define PQC_OTA_TRANSFER_WAIT_MS 30000
 
-typedef struct {
+struct PQC_OtaTransfer {
     uint32_t flags;
     uint32_t bootloader_bytes;
     uint32_t manifest_bytes;
@@ -1312,7 +1349,7 @@ typedef struct {
     uint32_t received_bootloader_bytes;
     uint32_t received_manifest_bytes;
     uint32_t received_application_bytes;
-} PQC_OtaTransfer;
+};
 
 
 static bool PQC_OTA_MarkerIs(uint32_t address, uint64_t expected)
@@ -1542,22 +1579,52 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
 
     (void)snprintf(data_topic, sizeof(data_topic), "pqc/control/ota/stm32/%s/data/#", run_id);
     topic.topic_filter = data_topic; subscribe.packet_id = 421U;
+    /* Retained data can be delivered synchronously while SUBSCRIBE is being
+     * processed. Enter OTA receive mode before subscribing so those messages
+     * are parsed and written immediately rather than being overwritten in the
+     * single-message scratch buffer. */
+    message_context->ota_transfer_mode = true;
+    message_context->ota_complete_seen = false;
+    message_context->ota_transfer_error = 0;
+    message_context->ota_transfer = &transfer;
+    message_context->payload_length = 0U;
+    message_context->payload[0] = '\0';
+    message_context->received = false;
     result = MqttClient_Subscribe(client, &subscribe);
-    if (result != MQTT_CODE_SUCCESS) return result;
+    if (result != MQTT_CODE_SUCCESS) {
+        message_context->ota_transfer_mode = false;
+        message_context->ota_transfer = NULL;
+        return result;
+    }
+    if (message_context->ota_transfer_error != 0) {
+        result = message_context->ota_transfer_error;
+        message_context->ota_transfer_mode = false;
+        message_context->ota_transfer = NULL;
+        return result;
+    }
 
+    complete = message_context->ota_complete_seen;
     while (!complete ||
            transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
            transfer.received_manifest_bytes != transfer.manifest_bytes ||
            transfer.received_application_bytes != transfer.application_bytes) {
-        memset(message_context->payload, 0, sizeof(message_context->payload)); message_context->payload_length = 0U; message_context->received = false;
+        message_context->received = false;
         result = MqttClient_WaitMessage(client, PQC_OTA_TRANSFER_WAIT_MS);
-        if (result != MQTT_CODE_SUCCESS || !message_context->received) return MQTT_CODE_ERROR_TIMEOUT;
-        if (strcmp(message_context->payload, "complete") == 0) {
-            complete = true;
-        } else if (PQC_OTA_ParseAndWriteChunk(message_context->payload, &transfer) != 0) {
-            return MQTT_CODE_ERROR_BAD_ARG;
+        if (result != MQTT_CODE_SUCCESS) {
+            message_context->ota_transfer_mode = false;
+            message_context->ota_transfer = NULL;
+            return MQTT_CODE_ERROR_TIMEOUT;
         }
+        if (message_context->ota_transfer_error != 0) {
+            result = message_context->ota_transfer_error;
+            message_context->ota_transfer_mode = false;
+            message_context->ota_transfer = NULL;
+            return result;
+        }
+        complete = message_context->ota_complete_seen;
     }
+    message_context->ota_transfer_mode = false;
+    message_context->ota_transfer = NULL;
     if (transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
         transfer.received_manifest_bytes != transfer.manifest_bytes ||
         transfer.received_application_bytes != transfer.application_bytes) return MQTT_CODE_ERROR_BAD_ARG;
