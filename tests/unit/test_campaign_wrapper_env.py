@@ -19,3 +19,10 @@ def test_posix_wrapper_forwards_campaign_hardware_environment():
     assert '${PQC_CAMPAIGN_HW_CONFIG:-}' in source
     assert 'campaign_env_args="$campaign_env_args -e PQC_CAMPAIGN_HW_CONFIG"' in source
     assert '$campaign_env_args' in source
+
+def test_posix_wrapper_forwards_timebase_hardware_uart_log():
+    source = (REPO_ROOT / "scripts" / "dev.sh").read_text(encoding="utf-8")
+    assert '${PQC_TIMEBASE_UART_LOG:-}' in source
+    assert 'timebase_env_args="$timebase_env_args -e PQC_TIMEBASE_UART_LOG"' in source
+    assert '$timebase_env_args' in source
+

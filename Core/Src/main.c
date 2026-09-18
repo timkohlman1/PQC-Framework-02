@@ -44,6 +44,7 @@
 #include "pqc_ram_accounting.h"
 #include "pqc_result_buffer.h"
 #include "pqc_tls_instrumentation.h"
+#include "pqc_timebase.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,7 +88,6 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;
-static uint32_t app_firmware_boot_origin_tick_ms;
 osThreadId_t networkTaskHandle;
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
@@ -148,6 +148,11 @@ void APP_ST67ReadyDiagnosticSnapshotGet(APP_ST67ReadyDiagnosticSnapshot *snapsho
 static char app_uart_line_buffer[APP_UART_LINE_BUFFER_SIZE];
 static uint32_t app_uart_line_length = 0U;
 static bool app_measurement_active = false;
+#if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST
+static uint32_t app_timebase_self_test_elapsed_us;
+static uint32_t app_timebase_self_test_hal_tick_delta_ms;
+static uint32_t app_timebase_self_test_valid;
+#endif
 
 static bool APP_UART_LineContains(const char *line, const char *needle)
 {
@@ -439,6 +444,48 @@ static void APP_UART_WriteIPv4(const uint8_t address[4])
   APP_UART_WriteUint32(address[3]);
 }
 
+
+#if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST
+static void APP_RunTimebaseHardwareSelfTest(void)
+{
+  uint64_t start_us;
+  uint64_t end_us;
+  uint64_t elapsed_us;
+  uint32_t start_tick_ms;
+  uint32_t end_tick_ms;
+
+  start_tick_ms = HAL_GetTick();
+  start_us = PQC_TimebaseNowUs();
+  HAL_Delay(10U);
+  end_us = PQC_TimebaseNowUs();
+  end_tick_ms = HAL_GetTick();
+  elapsed_us = PQC_TimebaseElapsedUs(start_us, end_us);
+  app_timebase_self_test_elapsed_us =
+      (elapsed_us > 0xFFFFFFFFULL) ? 0xFFFFFFFFUL : (uint32_t)elapsed_us;
+  app_timebase_self_test_hal_tick_delta_ms = end_tick_ms - start_tick_ms;
+  app_timebase_self_test_valid = 1U;
+}
+
+static void APP_PrintTimebaseHardwareSelfTest(void)
+{
+  const PQC_TimebaseProvenance *provenance = PQC_TimebaseGetProvenance();
+  if (app_timebase_self_test_valid == 0U)
+  {
+    return;
+  }
+  APP_UART_WriteString("PQC_TIMEBASE_SELF_TEST delay_ms=10 elapsed_us=");
+  APP_UART_WriteUint32(app_timebase_self_test_elapsed_us);
+  APP_UART_WriteString(" hal_tick_delta_ms=");
+  APP_UART_WriteUint32(app_timebase_self_test_hal_tick_delta_ms);
+  APP_UART_WriteString(" timer_input_clock_hz=");
+  APP_UART_WriteUint32(provenance->timer_input_clock_hz);
+  APP_UART_WriteString(" prescaler=");
+  APP_UART_WriteUint32(provenance->prescaler);
+  APP_UART_WriteString(" counter_hz=");
+  APP_UART_WriteUint32(provenance->counter_hz);
+  APP_UART_WriteString("\r\n");
+}
+#endif
 
 static void APP_UART_WriteInt32(int32_t value)
 {
@@ -1357,7 +1404,7 @@ static void APP_PrintApplicationClockConfiguration(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   2UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   3UL
 
 typedef struct
 {
@@ -1370,7 +1417,37 @@ typedef struct
   uint32_t hclk_hz;
   uint32_t pclk1_hz;
   uint32_t pclk2_hz;
+  uint32_t reset_origin_to_handoff_us_low;
+  uint32_t reset_origin_to_handoff_us_high;
+  uint32_t reset_origin_kind;
+  uint32_t handoff_bridge_counter_hz;
+  uint32_t handoff_bridge_counter_bits;
+  uint32_t handoff_bridge_status;
 } PQC_BootTimingMailbox;
+
+static void APP_ConfigureResetOriginHandoff(void)
+{
+  volatile const PQC_BootTimingMailbox *mailbox =
+      (volatile const PQC_BootTimingMailbox *)PQC_BOOT_TIMING_MAILBOX_ADDR;
+  PQC_TimebaseBootHandoff handoff = {0};
+
+  if ((mailbox->magic != PQC_BOOT_TIMING_MAILBOX_MAGIC) ||
+      (mailbox->version != PQC_BOOT_TIMING_MAILBOX_VERSION) ||
+      (mailbox->handoff_bridge_status != 1U))
+  {
+    PQC_TimebaseConfigureBootHandoff(NULL);
+    return;
+  }
+
+  handoff.reset_origin_to_handoff_us =
+      ((uint64_t)mailbox->reset_origin_to_handoff_us_high << 32) |
+      (uint64_t)mailbox->reset_origin_to_handoff_us_low;
+  handoff.bridge_counter_hz = mailbox->handoff_bridge_counter_hz;
+  handoff.bridge_counter_bits = mailbox->handoff_bridge_counter_bits;
+  handoff.reset_origin_kind = mailbox->reset_origin_kind;
+  handoff.valid = 1U;
+  PQC_TimebaseConfigureBootHandoff(&handoff);
+}
 
 static void APP_PrintWolfBootClock(const char *name, uint32_t value)
 {
@@ -1431,10 +1508,14 @@ int main(void)
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-  /* HAL_Init() establishes the first reliable millisecond time base visible to
-   * application firmware. Ready Metrics 2 uses this as its documented firmware
-   * boot origin; it is not claimed to include pre-HAL reset/startup time. */
-  app_firmware_boot_origin_tick_ms = HAL_GetTick();
+#ifdef SECURE_BOOT_APPLICATION
+  /* Capture the wolfBoot handoff record before the application clock tree is
+   * changed. The independent 1 MHz LPTIM2 bridge continues to run across the
+   * bootloader/application handoff and the application clock transition. */
+  APP_ConfigureResetOriginHandoff();
+#else
+  PQC_TimebaseConfigureBootHandoff(NULL);
+#endif
 
   /* USER CODE BEGIN Init */
 
@@ -1442,6 +1523,13 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
+  if (PQC_TimebaseInitialize() != 0)
+  {
+    Error_Handler();
+  }
+#if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST
+  APP_RunTimebaseHardwareSelfTest();
+#endif
 
   /* USER CODE BEGIN SysInit */
 
@@ -1452,6 +1540,9 @@ int main(void)
   MX_DMA_Init();
 #if PQC_UART_OUTPUT_MODE != 0
   MX_LPUART1_UART_Init();
+#endif
+#if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST && (PQC_UART_OUTPUT_MODE != 0)
+  APP_PrintTimebaseHardwareSelfTest();
 #endif
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
@@ -2103,8 +2194,7 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
 
 static int APP_RunReadyMetrics2Workload(void (*mark_complete)(void))
 {
-  return PQC_WolfMQTT_RunReadyMetrics2Application(
-      mark_complete, app_firmware_boot_origin_tick_ms);
+  return PQC_WolfMQTT_RunReadyMetrics2Application(mark_complete);
 }
 
 static void APP_PrintMemoryHighWatermark(void)

@@ -32,6 +32,8 @@ option(PQC_WOLFSSL_MEMORY_DIAGNOSTICS
     "Enable wolfSSL heap/failure UART diagnostics (changes timing)" OFF)
 option(PQC_WOLFSSL_ALLOCATION_PROVENANCE
     "Enable wolfSSL allocation source/type UART tracing (changes timing)" OFF)
+option(PQC_TIMEBASE_HARDWARE_SELF_TEST
+    "Enable a pre-workload 10 ms TIM2/HAL tick comparison marker for hardware validation" OFF)
 set(PQC_MLDSA_WORKSPACE_SIZE_BYTES "98304" CACHE STRING
     "Dedicated RAM3 ML-DSA scratch workspace size in bytes")
 
@@ -331,6 +333,7 @@ target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
     PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
     PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
     PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
+    PQC_TIMEBASE_HARDWARE_SELF_TEST=$<BOOL:${PQC_TIMEBASE_HARDWARE_SELF_TEST}>
 )
 
 # Link directories setup
@@ -344,6 +347,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfmqtt_build_only.c
     Core/Src/pqc_tls_instrumentation.c
+    Core/Src/pqc_timebase.c
     Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here

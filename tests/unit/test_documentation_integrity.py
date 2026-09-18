@@ -573,7 +573,10 @@ def test_deferred_register_rows_have_all_required_values() -> None:
         assert len(cells) == expected_cells, f"Malformed deferred-test row: {row}"
         assert all(cells), f"Deferred-test row contains an empty required field: {row}"
         assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
-        assert "./scripts/dev.ps1" in cells[6], f"Verification command is not explicit: {row}"
+        assert (
+            "./scripts/dev.ps1" in cells[6]
+            or "./scripts/dev.sh" in cells[6]
+        ), f"Verification command is not explicit: {row}"
 
 DOCUMENTATION_INDEX = "docs/README.md"
 PROJECT_DOCUMENT_PATTERNS = (
