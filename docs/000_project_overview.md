@@ -8,7 +8,7 @@ Docker-hosted Linux execution is the documented default for framework commands, 
 
 ## Current implementation
 
-The implemented baseline includes a CubeMX-generated HAL/CMSIS-RTOS v2 FreeRTOS application, direct-flash and relocated builds, generated-state preflight and build provenance, gateway flash/UART orchestration, wolfBoot build/sign/flash workflows, classical and ML-DSA-44/ML-DSA-65 secure-boot profiles, negative testing, repeated measurements, manifest-backed metrics, and JSON/CSV benchmark aggregation. GitHub Actions provides reproducible non-hardware validation without treating container output as hardware or runtime evidence.
+The implemented baseline includes a CubeMX-generated HAL/CMSIS-RTOS v2 FreeRTOS application, direct-flash and relocated builds, generated-state preflight and build provenance, gateway flash/UART orchestration, wolfBoot build/sign/flash workflows, selectable `single_bank`, `dual_bank_no_ota`, and `dual_bank_ota` firmware modes, authenticated dual-bank OTA staging/activation/confirmation/rollback, classical and ML-DSA-44/ML-DSA-65 secure-boot profiles, negative testing, repeated measurements, manifest-backed metrics, and JSON/CSV benchmark aggregation. GitHub Actions provides reproducible non-hardware validation without treating container output as hardware or runtime evidence.
 
 MQTT/TLS support is divided by evidence boundary:
 
@@ -18,7 +18,8 @@ MQTT/TLS support is divided by evidence boundary:
 - **STM32 local-only:** constrained lwIP/wolfSSL helper smokes, an unattached lwIP `netif` status boundary, and UDP loopback at `127.0.0.1` run without external networking.
 - **STM32 unavailable transport:** the project-owned wolfSSL transport callbacks report connect/read/write as unavailable and perform no socket I/O.
 - **STM32 fake/no-network MQTT:** wolfMQTT initializes and deinitializes from `defaultTask` against unavailable callbacks; broker connection, TLS handshake, publish, and reconnect remain unavailable.
-- **Future hardware-backed:** the ST67W61M1 backend, Wi-Fi association, hardware-backed IP, external TCP, STM32 TLS handshakes, real STM32 MQTT operations, and end-to-end classical or PQC/hybrid MQTT-over-TLS are not implemented.
+- **Hardware-backed runtime:** the ST67W61M1 backend, Wi-Fi association/DHCP, lwIP sockets, STM32 TLS transport/session handling, wolfMQTT operations, secure boot, and dual-bank OTA paths are implemented. Hardware evidence remains profile- and test-specific; implementation alone must not be generalized into success for unexecuted TLS, MQTT, impairment, benchmark, or OTA combinations.
+- **Future hardware-backed:** additional hardware validation remains future work for combinations and profiles that have not yet been executed on the target. This label refers to unvalidated coverage, not to the already implemented hardware-backed runtime paths above.
 
 Hardware, gateway, UART, runtime, timing, memory, MQTT/TLS, and benchmark claims require explicit logs, manifests, or equivalent evidence.
 
