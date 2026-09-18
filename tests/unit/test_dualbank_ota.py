@@ -171,21 +171,38 @@ def test_application_build_materializes_raw_binary_before_result_copy():
     assert 'ARTIFACT_CONVERSION_RETURN_CODE' in text
 
 
-def test_dev_wrapper_forwards_dualbank_ota_hardware_environment():
+def test_dualbank_hardware_test_is_self_bootstrapping_and_environment_isolated():
+    text = (ROOT / "tests/hardware/test_ota_dualbank_hw.py").read_text()
+    assert "ConfigResolver(ROOT)" in text
+    assert 'resolver.load_campaign("secure_boot")' in text
+    assert '"secure_boot": "ecdsa_p256"' in text
+    assert '"firmware_mode": "dual_bank_ota"' in text
+    assert "_bootstrap_ota_hardware_context" in text
+    assert 'baseline_results = workspace / "baseline-results"' in text
+    assert 'TEST_BUILD_ROOT = ROOT / "build" / "hardware-tests" / "dualbank-ota"' in text
+    assert 'plans_root = TEST_BUILD_ROOT / "ota-plans"' in text
+    assert 'shutil.rmtree(TEST_BUILD_ROOT, ignore_errors=True)' in text
+    assert 'workspace / "ota-plans"' not in text
+    assert '"prerequisites/wolfboot-builds/*/wolfboot.bin"' in text
+    assert '"prerequisites/signing/*/application_ecdsa_p256.bin"' in text
+    assert '"ota-prepare"' in text
+    assert '"ota-fault-plan"' in text
+    assert 'if name.startswith("PQC_OTA_HW")' in text
+    assert 'shutil.rmtree(root, ignore_errors=True)' in text
+    assert 'TEST_GENERATED_ROOT = ROOT / ".pqc-generated-state" / "hardware-tests" / "dualbank-ota"' in text
+    assert 'shutil.rmtree(TEST_GENERATED_ROOT, ignore_errors=True)' in text
+    assert "build/ota" not in text
+    assert "_require_env" not in text
+
+
+
+def test_pytest_hardware_uses_ephemeral_generated_state_and_build_volumes():
     text = (ROOT / "scripts/dev.sh").read_text()
-    for name in (
-        "PQC_OTA_HW",
-        "PQC_OTA_HW_CASE",
-        "PQC_OTA_HW_APP_PLAN",
-        "PQC_OTA_HW_ROLLBACK_PLAN",
-        "PQC_OTA_HW_MIGRATION_PLAN",
-        "PQC_OTA_HW_INTERRUPTED_PLAN",
-        "PQC_OTA_HW_CORRUPT_APP_PLAN",
-        "PQC_OTA_HW_INVALID_MANIFEST_PLAN",
-    ):
-        assert name in text
-    assert 'ota_env_args="$ota_env_args -e $ota_env_name"' in text
-    assert '$campaign_env_args $ota_env_args' in text
+    assert '--isolated-generated' in text
+    assert '--mount type=volume,target=/workspace/.pqc-generated-state' in text
+    assert '--mount type=volume,target=/workspace/build' in text
+    assert 'run_container --gateway --isolated-generated python -m pytest "$@"' in text
+    assert 'pytest-gateway)\n    run_container --gateway python -m pytest "$@"' in text
 
 
 def test_dualbank_run_provenance_retains_ota_record(tmp_path):
