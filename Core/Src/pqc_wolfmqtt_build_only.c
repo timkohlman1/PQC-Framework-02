@@ -1579,7 +1579,16 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=erase_inactive_bank_complete\r\n");
 
     (void)snprintf(data_topic, sizeof(data_topic), "pqc/control/ota/stm32/%s/data/#", run_id);
-    topic.topic_filter = data_topic; subscribe.packet_id = 421U;
+    /* MqttSubscribe carries internal message state. The request subscription
+     * above has already consumed this object, so rebuild both structures from
+     * zero before issuing the independent retained-data subscription. */
+    memset(&topic, 0, sizeof(topic));
+    topic.topic_filter = data_topic;
+    topic.qos = MQTT_QOS_1;
+    memset(&subscribe, 0, sizeof(subscribe));
+    subscribe.packet_id = 421U;
+    subscribe.topic_count = 1U;
+    subscribe.topics = &topic;
     /* Retained data can be delivered synchronously while SUBSCRIBE is being
      * processed. Enter OTA receive mode before subscribing so those messages
      * are parsed and written immediately rather than being overwritten in the
@@ -1595,8 +1604,11 @@ static int PQC_WolfMQTT_ProcessRetainedOta(
     result = MqttClient_Subscribe(client, &subscribe);
     if (result != MQTT_CODE_SUCCESS) {
         char marker[256];
+        const char *reason = message_context->ota_transfer_error != 0 ?
+            "parse_or_write_during_subscribe" : "subscribe";
         (void)snprintf(marker, sizeof(marker),
-            "PQC_OTA_APP phase=transfer_failed reason=subscribe result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            "PQC_OTA_APP phase=transfer_failed reason=%s result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            reason,
             result,
             (unsigned long)transfer.received_bootloader_bytes,
             (unsigned long)transfer.received_manifest_bytes,

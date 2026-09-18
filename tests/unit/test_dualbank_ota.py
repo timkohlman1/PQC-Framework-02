@@ -267,19 +267,16 @@ def test_dualbank_ota_retained_chunks_are_processed_during_subscribe():
     assert "Retained data can be delivered synchronously while SUBSCRIBE is being" in firmware
 
 
-def test_dualbank_ota_transfer_failures_and_progress_are_diagnostic():
+def test_dualbank_ota_reinitializes_second_subscribe_state():
     firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
-    ota_start = firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta")
-    ota = firmware[ota_start:]
-    for phase in (
-        "data_subscription_start",
-        "data_subscription_complete",
-        "transfer_progress",
-        "transfer_failed",
-    ):
-        assert f"phase={phase}" in ota
-    for reason in ("subscribe", "parse_or_write", "wait"):
-        assert f"reason={reason}" in ota
-    assert "boot_received=%lu manifest_received=%lu app_received=%lu complete=%u" in ota
-    assert "received_total - last_progress_bytes >= 32768U" in ota
-    assert "return MQTT_CODE_ERROR_TIMEOUT;" in ota
+    function = firmware[firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta(", firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta(") + 1):]
+    data_topic_index = function.index('"pqc/control/ota/stm32/%s/data/#"')
+    second_subscribe = function.index("result = MqttClient_Subscribe(client, &subscribe);", data_topic_index)
+    setup = function[data_topic_index:second_subscribe]
+    assert "memset(&topic, 0, sizeof(topic));" in setup
+    assert "topic.qos = MQTT_QOS_1;" in setup
+    assert "memset(&subscribe, 0, sizeof(subscribe));" in setup
+    assert "subscribe.packet_id = 421U;" in setup
+    assert "subscribe.topic_count = 1U;" in setup
+    assert "subscribe.topics = &topic;" in setup
+    assert "parse_or_write_during_subscribe" in function

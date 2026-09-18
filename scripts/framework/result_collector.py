@@ -130,38 +130,110 @@ def _topic_source(topic: str, run_id: str) -> str | None:
 
 
 def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...] = ("stm32",)) -> ResultCollectorValidation:
-    sources: dict[str, dict[str, Any]]={}
-    failures: list[str]=[]
-    records=0
+    """Validate one or more complete result epochs for each reporting source.
 
-    for lineno,line in enumerate(path.read_text(encoding="utf-8",errors="replace").splitlines(),1):
+    A reset-spanning run can legitimately contain multiple result streams from
+    the same physical source.  Each stream starts its sequence namespace at zero
+    and is closed by its own completion record.  Integrity is therefore checked
+    independently per completion-bounded epoch instead of treating a later boot
+    as duplicate chunks from the first boot.
+    """
+    sources: dict[str, dict[str, Any]] = {}
+    failures: list[str] = []
+    records = 0
+
+    def source_state(source: str) -> dict[str, Any]:
+        return sources.setdefault(
+            source,
+            {
+                "current_chunks": {},
+                "current_duplicates": [],
+                "streams": [],
+                "trailing_failures": [],
+                "records": 0,
+            },
+        )
+
+    def validate_stream(
+        source: str,
+        chunks: dict[int, bytes],
+        duplicate_sequences: list[int],
+        completion: dict[str, Any],
+        stream_index: int,
+    ) -> dict[str, Any]:
+        stream_failures: list[str] = []
+        duplicate = sorted(set(duplicate_sequences))
+        try:
+            expected_chunks = int(completion["chunk_count"]) if "chunk_count" in completion else None
+            expected_records = int(completion["record_count"]) if "record_count" in completion else None
+            expected_bytes = int(completion["logical_bytes"]) if "logical_bytes" in completion else None
+        except (TypeError, ValueError) as exc:
+            stream_failures.append(f"invalid completion metadata: {exc}")
+            expected_chunks = None
+            expected_records = None
+            expected_bytes = None
+        expected_sha = str(completion.get("logical_sha256")) if completion.get("logical_sha256") else None
+        missing = [i for i in range(expected_chunks or 0) if i not in chunks] if expected_chunks is not None else []
+        logical = b"".join(chunks[i] for i in sorted(chunks))
+        observed_sha = hashlib.sha256(logical).hexdigest() if chunks or expected_chunks == 0 else None
+        logical_record_count = sum(1 for line in logical.splitlines() if line.strip())
+
+        if duplicate:
+            stream_failures.append("duplicate chunk sequence(s)")
+        if missing:
+            stream_failures.append("missing chunk sequence(s)")
+        if expected_chunks is not None and len(chunks) != expected_chunks:
+            stream_failures.append("chunk count mismatch")
+        if expected_records is not None and logical_record_count != expected_records:
+            stream_failures.append("logical record count mismatch")
+        if expected_sha is not None and observed_sha != expected_sha:
+            stream_failures.append("logical buffer hash mismatch")
+        if expected_bytes is not None and len(logical) != expected_bytes:
+            stream_failures.append("logical byte count mismatch")
+
+        return {
+            "stream_index": stream_index,
+            "passed": not stream_failures,
+            "observed_chunk_count": len(chunks),
+            "expected_chunk_count": expected_chunks,
+            "observed_record_count": logical_record_count,
+            "expected_record_count": expected_records,
+            "expected_logical_bytes": expected_bytes,
+            "observed_logical_bytes": len(logical),
+            "duplicate_sequences": duplicate,
+            "missing_sequences": missing,
+            "expected_sha256": expected_sha,
+            "observed_sha256": observed_sha,
+            "failure_reasons": stream_failures,
+        }
+
+    for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if not line.strip():
             continue
         try:
-            outer=json.loads(line)
-            topic=str(outer.get("topic", ""))
-            payload=outer.get("payload")
+            outer = json.loads(line)
+            topic = str(outer.get("topic", ""))
+            payload = outer.get("payload")
             # mosquitto_sub %j emits a JSON metadata object whose own ``payload``
-            # member contains the application payload as a JSON string.  Keep the
+            # member contains the application payload as a JSON string. Keep the
             # raw capture unchanged, but unwrap that transport metadata for
-            # integrity validation.  The simpler direct-string form remains
-            # supported for deterministic fixtures and compatible clients.
+            # integrity validation.
             if isinstance(payload, dict) and "payload" in payload:
-                mqtt_payload=payload.get("payload")
-                obj=json.loads(mqtt_payload) if isinstance(mqtt_payload, str) else mqtt_payload
+                mqtt_payload = payload.get("payload")
+                obj = json.loads(mqtt_payload) if isinstance(mqtt_payload, str) else mqtt_payload
             else:
-                obj=json.loads(payload) if isinstance(payload,str) else payload
+                obj = json.loads(payload) if isinstance(payload, str) else payload
         except Exception as exc:
             failures.append(f"line {lineno}: invalid JSON envelope: {exc}")
             continue
-        if not isinstance(obj,dict):
+        if not isinstance(obj, dict):
             failures.append(f"line {lineno}: payload is not an object")
             continue
         if obj.get("run_id") != run_id:
             failures.append(f"line {lineno}: run_id mismatch")
             continue
-        source=str(obj.get("source", "")).strip()
-        topic_source=_topic_source(topic,run_id)
+        source = str(obj.get("source", "")).strip()
+        topic_source = _topic_source(topic, run_id)
         if not source:
             failures.append(f"line {lineno}: source missing")
             continue
@@ -172,86 +244,134 @@ def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...]
             failures.append(f"line {lineno}: source/topic mismatch")
             continue
 
-        state=sources.setdefault(source,{"chunks":{},"duplicates":[],"completions":[],"records":0})
-        kind=obj.get("type")
+        state = source_state(source)
+        kind = obj.get("type")
         if kind == "chunk":
             try:
-                seq=int(obj["sequence"])
-                encoded=str(obj["data_hex"])
-                data=bytes.fromhex(encoded)
+                seq = int(obj["sequence"])
+                encoded = str(obj["data_hex"])
+                data = bytes.fromhex(encoded)
             except Exception as exc:
                 failures.append(f"line {lineno}: invalid chunk: {exc}")
                 continue
-            if seq in state["chunks"]:
-                state["duplicates"].append(seq)
+            if seq in state["current_chunks"]:
+                state["current_duplicates"].append(seq)
             else:
-                state["chunks"][seq]=data
+                state["current_chunks"][seq] = data
         elif kind == "complete":
-            state["completions"].append(obj)
+            stream_index = len(state["streams"])
+            stream = validate_stream(
+                source,
+                state["current_chunks"],
+                state["current_duplicates"],
+                obj,
+                stream_index,
+            )
+            state["streams"].append(stream)
+            state["current_chunks"] = {}
+            state["current_duplicates"] = []
         else:
             failures.append(f"line {lineno}: unsupported record type {kind!r}")
             continue
         state["records"] += 1
         records += 1
 
-    source_results: dict[str,dict[str,Any]]={}
-    total_completions=0
-    total_chunks=0
-    expected_chunks_total=0
-    expected_records_total=0
-    have_expected_chunks=True
-    have_expected_records=True
+    source_results: dict[str, dict[str, Any]] = {}
+    total_completions = 0
+    total_chunks = 0
+    expected_chunks_total = 0
+    expected_records_total = 0
+    have_expected_chunks = True
+    have_expected_records = True
 
-    for source,state in sorted(sources.items()):
-        source_failures: list[str]=[]
-        chunks: dict[int,bytes]=state["chunks"]
-        duplicate=sorted(set(state["duplicates"]))
-        completions: list[dict[str,Any]]=state["completions"]
-        total_completions += len(completions)
-        total_chunks += len(chunks)
-        completion=completions[-1] if completions else None
-        expected_chunks=int(completion["chunk_count"]) if completion and "chunk_count" in completion else None
-        expected_records=int(completion["record_count"]) if completion and "record_count" in completion else None
-        expected_sha=str(completion.get("logical_sha256")) if completion and completion.get("logical_sha256") else None
-        if expected_chunks is None:
-            have_expected_chunks=False
-        else:
-            expected_chunks_total += expected_chunks
-        if expected_records is None:
-            have_expected_records=False
-        else:
-            expected_records_total += expected_records
-        missing=[i for i in range(expected_chunks or 0) if i not in chunks] if expected_chunks is not None else []
-        logical=b"".join(chunks[i] for i in sorted(chunks))
-        observed_sha=hashlib.sha256(logical).hexdigest() if chunks or expected_chunks == 0 else None
-        logical_record_count=sum(1 for line in logical.splitlines() if line.strip())
+    for source, state in sorted(sources.items()):
+        source_failures: list[str] = []
+        streams: list[dict[str, Any]] = list(state["streams"])
 
-        if len(completions) != 1:
-            source_failures.append(f"expected exactly one completion record, observed {len(completions)}")
-        if duplicate:
-            source_failures.append("duplicate chunk sequence(s)")
-        if missing:
-            source_failures.append("missing chunk sequence(s)")
-        if expected_chunks is not None and len(chunks) != expected_chunks:
-            source_failures.append("chunk count mismatch")
-        if expected_records is not None and logical_record_count != expected_records:
-            source_failures.append("logical record count mismatch")
-        if expected_sha is not None and observed_sha != expected_sha:
-            source_failures.append("logical buffer hash mismatch")
-        if completion and "logical_bytes" in completion and len(logical) != int(completion["logical_bytes"]):
-            source_failures.append("logical byte count mismatch")
+        if state["current_chunks"] or state["current_duplicates"]:
+            trailing = {
+                "stream_index": len(streams),
+                "passed": False,
+                "observed_chunk_count": len(state["current_chunks"]),
+                "expected_chunk_count": None,
+                "observed_record_count": sum(
+                    1
+                    for line in b"".join(
+                        state["current_chunks"][i] for i in sorted(state["current_chunks"])
+                    ).splitlines()
+                    if line.strip()
+                ),
+                "expected_record_count": None,
+                "expected_logical_bytes": None,
+                "observed_logical_bytes": sum(len(value) for value in state["current_chunks"].values()),
+                "duplicate_sequences": sorted(set(state["current_duplicates"])),
+                "missing_sequences": [],
+                "expected_sha256": None,
+                "observed_sha256": None,
+                "failure_reasons": ["completion record missing"],
+            }
+            streams.append(trailing)
 
-        source_results[source]={
+        if not streams:
+            source_failures.append("expected at least one completion record, observed 0")
+
+        for stream in streams:
+            stream_index = int(stream["stream_index"])
+            for reason in stream["failure_reasons"]:
+                source_failures.append(f"stream {stream_index}: {reason}")
+
+        total_completions += len(state["streams"])
+        total_chunks += sum(int(stream["observed_chunk_count"]) for stream in streams)
+
+        for stream in state["streams"]:
+            expected_chunks = stream["expected_chunk_count"]
+            expected_records = stream["expected_record_count"]
+            if expected_chunks is None:
+                have_expected_chunks = False
+            else:
+                expected_chunks_total += int(expected_chunks)
+            if expected_records is None:
+                have_expected_records = False
+            else:
+                expected_records_total += int(expected_records)
+
+        duplicate = sorted(
+            {
+                seq
+                for stream in streams
+                for seq in stream["duplicate_sequences"]
+            }
+        )
+        missing = sorted(
+            {
+                seq
+                for stream in streams
+                for seq in stream["missing_sequences"]
+            }
+        )
+
+        single_complete = state["streams"][0] if len(state["streams"]) == 1 and len(streams) == 1 else None
+        source_results[source] = {
             "passed": not source_failures,
-            "observed_chunk_count": len(chunks),
-            "expected_chunk_count": expected_chunks,
-            "observed_record_count": logical_record_count,
-            "expected_record_count": expected_records,
-            "completion_count": len(completions),
+            "stream_count": len(state["streams"]),
+            "observed_chunk_count": sum(int(stream["observed_chunk_count"]) for stream in streams),
+            "expected_chunk_count": (
+                sum(int(stream["expected_chunk_count"]) for stream in state["streams"])
+                if state["streams"] and all(stream["expected_chunk_count"] is not None for stream in state["streams"])
+                else None
+            ),
+            "observed_record_count": sum(int(stream["observed_record_count"]) for stream in streams),
+            "expected_record_count": (
+                sum(int(stream["expected_record_count"]) for stream in state["streams"])
+                if state["streams"] and all(stream["expected_record_count"] is not None for stream in state["streams"])
+                else None
+            ),
+            "completion_count": len(state["streams"]),
             "duplicate_sequences": duplicate,
             "missing_sequences": missing,
-            "expected_sha256": expected_sha,
-            "observed_sha256": observed_sha,
+            "expected_sha256": single_complete["expected_sha256"] if single_complete else None,
+            "observed_sha256": single_complete["observed_sha256"] if single_complete else None,
+            "streams": streams,
             "failure_reasons": source_failures,
         }
         failures.extend(f"{source}: {reason}" for reason in source_failures)
@@ -259,15 +379,31 @@ def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...]
     for expected_source in expected_sources:
         if expected_source not in sources:
             failures.append(f"required {expected_source} source missing")
-    unexpected_sources=sorted(set(sources).difference(expected_sources))
+    unexpected_sources = sorted(set(sources).difference(expected_sources))
     if unexpected_sources:
         failures.append("unexpected result source(s): " + ", ".join(unexpected_sources))
     if not sources:
         failures.append("no result sources observed")
 
-    only_source=next(iter(source_results.values())) if len(source_results)==1 else None
-    duplicate_all=tuple(sorted({seq for result in source_results.values() for seq in result["duplicate_sequences"]}))
-    missing_all=tuple(sorted({seq for result in source_results.values() for seq in result["missing_sequences"]}))
+    only_source = next(iter(source_results.values())) if len(source_results) == 1 else None
+    duplicate_all = tuple(
+        sorted(
+            {
+                seq
+                for result in source_results.values()
+                for seq in result["duplicate_sequences"]
+            }
+        )
+    )
+    missing_all = tuple(
+        sorted(
+            {
+                seq
+                for result in source_results.values()
+                for seq in result["missing_sequences"]
+            }
+        )
+    )
     return ResultCollectorValidation(
         not failures,
         records,
@@ -282,7 +418,6 @@ def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...]
         source_results,
         tuple(failures),
     )
-
 
 def stop_and_collect_gateway_result_collector(*, collector: GatewayResultCollector, repo_root: Path, result_dir: Path, runner: Callable[...,CommandExecution]=_run) -> GatewayResultCollectorResult:
     stop_script=f"kill -INT {collector.pid} 2>/dev/null || true; sleep 1; test -f {shlex.quote(collector.remote_stream_path)}"

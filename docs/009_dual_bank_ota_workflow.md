@@ -25,6 +25,8 @@ Post-swap, wolfBoot verifies the application at the same logical primary address
 
 OTA control/data belongs to the mandatory plaintext reporting broker on port 1886 and is outside experiment TLS and network impairment. `scripts/framework/ota.py` defines deterministic candidate metadata and retained bounded-chunk publication under `pqc/control/ota/stm32/<run-id>/...`. Do not carry OTA control over the experiment broker.
 
+The reporting broker is explicitly sized for the retained OTA burst rather than inheriting Mosquitto's default queued-message limit. `experiment/mqtt-broker/config/reporting/mosquitto.conf` sets `max_queued_messages 8192`. At the framework's 192-byte chunk size, the maximum supported 112 KiB bootloader, 16 KiB candidate manifest and 896 KiB signed application require 598 + 86 + 4779 data topics plus the retained completion marker (5,464 retained messages total). The 8,192-message bound therefore covers the complete supported candidate while remaining finite. This setting applies only to the impairment-exempt reporting broker; workload/experiment broker queue settings are not changed.
+
 ## Manual validation sequence
 
 From the repository root, resolve and execute one known-good secure-boot case first. Retain its result directory as the pre-update baseline. Build the candidate wolfBoot and candidate application using the normal framework paths, sign the application with the candidate bootloader's application key, construct the candidate-bank manifest payload from the exact candidate artifact hashes, and sign that manifest using a key already trusted by the currently active wolfBoot. Stage the three artifacts through the reporting-plane OTA delivery mechanism, verify complete byte counts and SHA-256 values before activation, then reset/activate.
@@ -163,3 +165,8 @@ prevents campaign build/flash reuse across incompatible layouts or key sets.
 ### Hardware-test generated storage
 
 `./scripts/dev.sh pytest-hardware` overlays `/workspace/.pqc-generated-state` and `/workspace/build` with anonymous Docker volumes. The self-contained dual-bank OTA hardware fixture creates its resolver-generated case under `/workspace/.pqc-generated-state/hardware-tests/dualbank-ota/` and creates OTA plans plus signing evidence under `/workspace/build/hardware-tests/dualbank-ota/`. Baseline and per-scenario result directories remain under pytest temporary storage. Because the container runs with `--rm`, the anonymous volumes are removed when the hardware-test invocation exits and no generated OTA setup is written back to the host repository.
+
+
+### Reset-spanning result collection
+
+A dual-bank OTA run can reboot the STM32 more than once while retaining the same framework `run_id`. Each application boot may publish a complete deferred STM32 result stream before OTA processing or confirmation. The gateway collector therefore treats every completion-bounded sequence as an independent **boot epoch** for that source: sequence numbers may restart at zero only after the preceding epoch has supplied its completion record. Every epoch is independently checked for duplicate or missing chunks, declared chunk/record/byte counts, and SHA-256 integrity. An unfinished trailing epoch remains a collection failure. This preserves transport-integrity checking while allowing activation, candidate confirmation, and rollback resets to remain inside one experiment run ID.

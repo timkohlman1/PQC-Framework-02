@@ -146,3 +146,73 @@ def test_common_topics_include_stm32_and_enabled_instruments():
     bundle={"experiment":{"instruments":{"energy":{"profile":"esp32_ina228"}}}}
     assert result_topics(bundle,"r") == ("pqc/result/stm32/r/#","pqc/instrument/energy/r/#")
     assert expected_result_sources(bundle) == ("stm32","energy")
+
+
+def test_collector_accepts_multiple_complete_boot_epochs_for_same_source(tmp_path):
+    run_id = "run-reset"
+    first = b'{"boot":1}\n'
+    second = b'{"boot":2}\n'
+    path = tmp_path / "raw.ndjson"
+    path.write_text(
+        "\n".join([
+            _line(
+                f"pqc/result/stm32/{run_id}/chunk",
+                {"type": "chunk", "source": "stm32", "run_id": run_id, "sequence": 0, "data_hex": first.hex()},
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/complete",
+                _complete("stm32", run_id, first, 1, 1),
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/chunk",
+                {"type": "chunk", "source": "stm32", "run_id": run_id, "sequence": 0, "data_hex": second.hex()},
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/complete",
+                _complete("stm32", run_id, second, 1, 1),
+            ),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_raw_stream(path, run_id)
+
+    assert result.passed
+    assert result.completion_count == 2
+    assert result.observed_chunk_count == 2
+    assert result.expected_chunk_count == 2
+    assert result.source_results["stm32"]["stream_count"] == 2
+    assert [stream["observed_sha256"] for stream in result.source_results["stm32"]["streams"]] == [
+        hashlib.sha256(first).hexdigest(),
+        hashlib.sha256(second).hexdigest(),
+    ]
+
+
+def test_collector_rejects_unfinished_trailing_boot_epoch(tmp_path):
+    run_id = "run-reset"
+    first = b'{"boot":1}\n'
+    second = b'{"boot":2}\n'
+    path = tmp_path / "raw.ndjson"
+    path.write_text(
+        "\n".join([
+            _line(
+                f"pqc/result/stm32/{run_id}/chunk",
+                {"type": "chunk", "source": "stm32", "run_id": run_id, "sequence": 0, "data_hex": first.hex()},
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/complete",
+                _complete("stm32", run_id, first, 1, 1),
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/chunk",
+                {"type": "chunk", "source": "stm32", "run_id": run_id, "sequence": 0, "data_hex": second.hex()},
+            ),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _parse_raw_stream(path, run_id)
+
+    assert not result.passed
+    assert result.completion_count == 1
+    assert any("completion record missing" in reason for reason in result.failure_reasons)
