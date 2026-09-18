@@ -43,15 +43,18 @@ def sample_profile() -> dict[str, object]:
 
 
 def install_fake_objcopy(monkeypatch, wolfboot_build) -> None:
-    def fake_run(command, cwd, stdout, stderr, text, check):
-        assert command[:3] == ["arm-none-eabi-objcopy", "-O", "binary"]
-        Path(command[-1]).write_bytes(b"fake wolfboot binary")
-        return subprocess.CompletedProcess(
-            args=command,
-            returncode=0,
-            stdout="",
-            stderr="",
-        )
+    original_run = subprocess.run
+
+    def fake_run(command, *args, **kwargs):
+        if command[:3] == ["arm-none-eabi-objcopy", "-O", "binary"]:
+            Path(command[-1]).write_bytes(b"fake wolfboot binary")
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+        return original_run(command, *args, **kwargs)
 
     monkeypatch.setattr(wolfboot_build.subprocess, "run", fake_run)
 
