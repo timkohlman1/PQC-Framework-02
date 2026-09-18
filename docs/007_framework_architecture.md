@@ -58,6 +58,8 @@ tools/wolfboot/lib/wolfssl
 
 Application work must not patch `tools/wolfboot/lib/wolfssl` merely because the same upstream wolfSSL files also exist there. The application build resolves `PQC_WOLFSSL_SOURCE_DIR` to `Middlewares/Third_Party/wolfSSL`.
 
+Because `Middlewares/Third_Party/wolfSSL` is a Git submodule, durable source changes use a two-repository workflow: commit and push the wolfSSL source change in the wolfSSL submodule first, then commit the updated wolfSSL gitlink/SHA in `PQC-Framework-02`. A parent commit cannot preserve uncommitted source edits inside the submodule.
+
 The top-level dependency policy is:
 
 - `Middlewares/Third_Party/wolfSSL` uses the project-controlled `https://github.com/timkohlman1/wolfssl-embedded.git` fork and is pinned by the parent repository to an exact commit. The configured tracking branch is `pqc-signing-tls-wolfssl`; reproducibility still comes from the recorded gitlink SHA.
