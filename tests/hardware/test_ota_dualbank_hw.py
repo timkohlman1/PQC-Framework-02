@@ -389,7 +389,7 @@ def test_application_update_explicit_bank_boot_and_confirmation_state_hw(
     ota_hw_context: OtaHardwareContext,
     tmp_path: Path,
 ):
-    """Prove bank/BFB2 swap, candidate wolfBoot/app execution and confirmation."""
+    """Prove physical-bank remap, candidate wolfBoot/app execution and confirmation."""
     completed, manifest_path = _run(ota_hw_context.case, ota_hw_context.app_plan, tmp_path / "state-proof-update")
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     _assert_delivery_manifest(manifest_path)
@@ -413,7 +413,12 @@ def test_application_update_explicit_bank_boot_and_confirmation_state_hw(
     )
     assert candidate_app is not None, f"candidate application execution not observed: {app}"
     candidate_bank = candidate_app.get("active_bank")
-    assert candidate_app.get("bfb2") != initial_bfb2, f"BFB2 did not change: {app}"
+    assert candidate_bank in {"1", "2"}
+    assert candidate_bank != initial_bank, f"physical bank did not change: {app}"
+    # active_bank is the live MEMRMP physical-bank mapping. BFB2 is the raw
+    # FLASH option-bit observation and is retained as evidence, but it is not
+    # required to differ at each runtime observation.
+    assert candidate_app.get("bfb2") in {"0", "1"}
 
     verification_lines = _verification_result_lines(uart)
     assert any(
@@ -449,6 +454,7 @@ def test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw(
     original_bank = request.get("active_bank")
     original_bfb2 = request.get("bfb2")
     assert original_bank in {"1", "2"}
+    assert original_bfb2 in {"0", "1"}
 
     candidate_app = next(
         (record for record in app
@@ -460,7 +466,9 @@ def test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw(
     )
     assert candidate_app is not None, f"candidate bank never became active: {app}"
     candidate_bank = candidate_app.get("active_bank")
-    assert candidate_app.get("bfb2") != original_bfb2
+    assert candidate_bank in {"1", "2"}
+    assert candidate_bank != original_bank, f"candidate physical bank did not become active: {app}"
+    assert candidate_app.get("bfb2") in {"0", "1"}
 
     withheld = next(
         (record for record in app
@@ -478,7 +486,8 @@ def test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw(
         None,
     )
     assert restored is not None, f"original physical bank did not resume after rollback: {app}"
-    assert restored.get("bfb2") == original_bfb2
+    assert restored.get("active_bank") == original_bank
+    assert restored.get("bfb2") in {"0", "1"}
 
     verification_lines = _verification_result_lines(uart)
     assert any(

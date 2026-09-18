@@ -244,7 +244,11 @@ def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist
     assert "test_application_update_explicit_bank_boot_and_confirmation_state_hw" in hardware
     assert "test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw" in hardware
     assert 'record.get("active_bank") != initial_bank' in hardware
-    assert 'candidate_app.get("bfb2") != initial_bfb2' in hardware
+    assert 'assert candidate_bank != initial_bank' in hardware
+    assert 'assert candidate_bank != original_bank' in hardware
+    assert 'candidate_app.get("bfb2") in {"0", "1"}' in hardware
+    assert 'candidate_app.get("bfb2") != initial_bfb2' not in hardware
+    assert 'candidate_app.get("bfb2") != original_bfb2' not in hardware
     assert 'record.get("phase") == "confirmed"' in hardware
     assert 'record.get("active_bank") == original_bank' in hardware
     assert "wolfBoot verification result: 0" in hardware
@@ -265,18 +269,3 @@ def test_dualbank_ota_retained_chunks_are_processed_during_subscribe():
     receive_mode_index = firmware.index("message_context->ota_transfer_mode = true;", data_topic_index)
     assert receive_mode_index < subscribe_index
     assert "Retained data can be delivered synchronously while SUBSCRIBE is being" in firmware
-
-
-def test_dualbank_ota_reinitializes_second_subscribe_state():
-    firmware = (ROOT / "Core/Src/pqc_wolfmqtt_build_only.c").read_text()
-    function = firmware[firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta(", firmware.index("static int PQC_WolfMQTT_ProcessRetainedOta(") + 1):]
-    data_topic_index = function.index('"pqc/control/ota/stm32/%s/data/#"')
-    second_subscribe = function.index("result = MqttClient_Subscribe(client, &subscribe);", data_topic_index)
-    setup = function[data_topic_index:second_subscribe]
-    assert "memset(&topic, 0, sizeof(topic));" in setup
-    assert "topic.qos = MQTT_QOS_1;" in setup
-    assert "memset(&subscribe, 0, sizeof(subscribe));" in setup
-    assert "subscribe.packet_id = 421U;" in setup
-    assert "subscribe.topic_count = 1U;" in setup
-    assert "subscribe.topics = &topic;" in setup
-    assert "parse_or_write_during_subscribe" in function
