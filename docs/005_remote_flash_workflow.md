@@ -95,6 +95,20 @@ Ad hoc bounded capture:
 
 Monitor output is useful for diagnosis but has no result manifest and does not establish image provenance by itself.
 
+## Automated hardware tests
+
+Hardware tests under `tests/hardware/` are expected to be self-contained framework workflows. The normal user contract is a single `pytest-hardware` invocation; the test should resolve/materialise its own case, create its own ephemeral build/generated state, run the framework-owned build/sign/flash/runtime path, capture its own evidence, and assert the result. Do not document pre-generated campaigns, manual CMake/build/sign/flash steps, prior result directories, or test-specific evidence-path environment variables as prerequisites for a default hardware test.
+
+For Request 13, the complete 1 MHz timebase validation is:
+
+```bash
+./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware
+```
+
+The test materialises a wolfBoot-enabled baseline case, enables `PQC_TIMEBASE_HARDWARE_SELF_TEST=ON` inside the isolated hardware-test build volume, executes the normal experiment runner so wolfBoot and the relocated application are built/signed/flashed together, reads the UART evidence created by that run, and verifies the requested delay, derived 1 MHz counter rate, unchanged HAL-tick behaviour, wolfBoot verification, and application startup. The flag is validation-only; because `pytest-hardware` overlays `/workspace/build` and `/workspace/.pqc-generated-state` with disposable Docker volumes, this self-test configuration does not become the normal host build configuration.
+
+Capability prerequisites such as gateway SSH access, flash-helper access, the UART device, physical hardware, credentials, brokers, and instruments remain external laboratory capabilities and are enforced through pytest capability gates. They are not manual test preparation steps.
+
 ## Broker boundary
 
 Broker deployment and host-side MQTT/TLS checks are separate from firmware flashing. Use `experiment/mqtt-broker/README.md`. Broker/client success is `host_side` or broker-side evidence only and cannot be promoted to STM32, UART, Wi-Fi, ST67W61M1, wolfSSL-on-STM32, wolfMQTT-on-STM32, or end-to-end wireless evidence.
