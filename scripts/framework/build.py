@@ -36,6 +36,7 @@ from framework.source import GitCommandExecution, GitRunner, capture_reproducibi
 from framework.tls_algorithms import cmake_boolean, resolve_tls_algorithm_set
 
 ARTIFACT_MISSING_RETURN_CODE = 3
+ARTIFACT_CONVERSION_RETURN_CODE = 4
 BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
@@ -94,6 +95,12 @@ def construct_build_command(preset: str = "Release") -> list[str]:
     """Construct the CMake build command for a preset."""
 
     return ["cmake", "--build", "--preset", preset]
+
+
+def construct_binary_command(elf_path: Path, binary_path: Path) -> list[str]:
+    """Construct the raw application binary conversion command."""
+
+    return ["arm-none-eabi-objcopy", "-O", "binary", str(elf_path), str(binary_path)]
 
 
 def default_runner(command: list[str], cwd: Path) -> CommandExecution:
@@ -369,10 +376,23 @@ def _write_application_selection(
     generated_dir = repo_root / "build" / configure_preset / "pqc_generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
     path = generated_dir / "pqc_application_selection.cmake"
+    firmware = bundle.get("experiment", {}).get("firmware", {})
+    firmware_mode = str(firmware.get("firmware_mode", "single_bank"))
+    dual_bank_enabled = 1 if bool(firmware.get("dual_bank_enabled", firmware_mode != "single_bank")) else 0
+    ota_enabled = 1 if bool(firmware.get("ota_enabled", firmware_mode == "dual_bank_ota")) else 0
+    standby_signing_keys = int(firmware.get("standby_signing_keys", 0))
+    if firmware_mode not in {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}:
+        raise ValueError(f"Unsupported firmware_mode: {firmware_mode}")
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ValueError("standby_signing_keys must be 0, 1, or 2")
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
         f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
-        f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n',
+        f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n'
+        f'set(PQC_FIRMWARE_MODE "{firmware_mode}")\n'
+        f'set(PQC_DUAL_BANK_ENABLED {dual_bank_enabled})\n'
+        f'set(PQC_OTA_ENABLED {ota_enabled})\n'
+        f'set(PQC_STANDBY_SIGNING_KEYS {standby_signing_keys})\n',
         encoding="utf-8",
     )
     return path, application
@@ -619,6 +639,13 @@ def execute_build(
     if return_code == 0 and not artifact_exists:
         return_code = ARTIFACT_MISSING_RETURN_CODE
 
+    binary_path = elf_path.with_suffix(".bin")
+    binary_execution: CommandExecution | None = None
+    if return_code == 0:
+        binary_execution = runner(construct_binary_command(elf_path, binary_path), repo_root_path)
+        if binary_execution.return_code != 0 or not binary_path.is_file():
+            return_code = ARTIFACT_CONVERSION_RETURN_CODE
+
     firmware_sha256 = calculate_file_sha256(elf_path) if return_code == 0 else None
     result_artifacts = copy_firmware_artifacts_to_result(elf_path, result_dir_path) if return_code == 0 else {}
     if return_code == 0 and firmware_sha256 is not None:
@@ -637,6 +664,17 @@ def execute_build(
         force_rebuild=force, build_purpose=build_purpose, build_identity=build_identity_value,
         firmware_application=firmware_application,
     )
+    if binary_execution is not None:
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(
+                "\nBinary artifact step\n"
+                "--------------------\n"
+                + _format_execution(binary_execution, repo_root_path)
+                + f"Binary artifact path: {binary_path}\n"
+                + f"Binary artifact exists: {str(binary_path.is_file()).lower()}\n"
+            )
+            if return_code == ARTIFACT_CONVERSION_RETURN_CODE:
+                log_file.write("Binary artifact conversion failed or did not create the expected .bin output.\n")
 
     build_record_path: Path | None = None
     build_record_manifest_path: Path | None = None

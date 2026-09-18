@@ -13,6 +13,8 @@
 #include "lwip/sockets.h"
 #include "pqc_wifi_config.h"
 #include "pqc_tls_instrumentation.h"
+#include "pqc_timebase.h"
+#include "pqc_result_buffer.h"
 #include "pqc_wolfssl_memory.h"
 
 #ifndef PQC_TLS_COMPILED
@@ -118,21 +120,45 @@ typedef struct {
     bool suppress_success_diagnostics;
 } PQC_WolfMQTTSocketContext;
 
+#ifndef PQC_OTA_ENABLED
+#define PQC_OTA_ENABLED 0
+#endif
+#ifndef PQC_DUAL_BANK_ENABLED
+#define PQC_DUAL_BANK_ENABLED 0
+#endif
+
 static PQC_WolfMQTTReadyMetrics2Snapshot s_ready_metrics_2_snapshot;
+
+#if PQC_OTA_ENABLED
+typedef struct PQC_OtaTransfer PQC_OtaTransfer;
+static int PQC_OTA_ParseAndWriteChunk(const char *payload, PQC_OtaTransfer *transfer);
+#endif
 
 typedef struct {
     bool received;
     bool transfer_mode;
+#if PQC_OTA_ENABLED
+    bool ota_transfer_mode;
+    bool ota_complete_seen;
+    int ota_transfer_error;
+    PQC_OtaTransfer *ota_transfer;
+#endif
     char payload[PQC_WOLFMQTT_BUFFER_SIZE];
     size_t payload_length;
     uint32_t transfer_expected_bytes;
     uint32_t transfer_received_bytes;
     uint32_t transfer_message_count;
-    uint32_t transfer_first_byte_tick_ms;
-    uint32_t transfer_last_byte_tick_ms;
+    uint64_t transfer_first_byte_us;
+    uint64_t transfer_last_byte_us;
     bool transfer_first_byte_valid;
     bool transfer_complete;
 } PQC_WolfMQTTMessageContext;
+
+#if PQC_OTA_ENABLED
+static int PQC_WolfMQTT_ProcessRetainedOta(
+    MqttClient *client, PQC_WolfMQTTMessageContext *message_context, const char *run_id);
+static int PQC_OTA_ConfirmActiveCandidateIfPending(void);
+#endif
 
 #if PQC_TLS_COMPILED
 #define PQC_WOLFSSL_RNG_READY_SPIN_LIMIT 1000000UL
@@ -716,7 +742,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         /* Paper-compatible TTFB starts at the TCP connection attempt. DNS is
          * intentionally excluded so the measured interval is TCP + TLS +
          * MQTT CONNECT request/first CONNACK response byte. */
-        socket_context->ready_metrics_2->ttfb_start_tick_ms = HAL_GetTick();
+        socket_context->ready_metrics_2->tcp_connect_start_us = PQC_TimebaseNowUs();
     }
     if ((result != 0) ||
         (lwip_connect(socket_context->socket_fd, (struct sockaddr *)&address, sizeof(address)) != 0)) {
@@ -725,12 +751,16 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     socket_context->tcp_connected = true;
     if (socket_context->ready_metrics_2 != NULL) {
-        uint32_t connected_tick = HAL_GetTick();
+        uint64_t connected_us = PQC_TimebaseNowUs();
+        uint64_t reset_relative_us = 0U;
         PQC_WolfMQTTReadyMetrics2Snapshot *metrics = socket_context->ready_metrics_2;
-        metrics->tcp_connected_tick_ms = connected_tick;
-        metrics->tcp_connect_ms = connected_tick - metrics->ttfb_start_tick_ms;
-        metrics->firmware_boot_to_tcp_connect_ms =
-            connected_tick - metrics->firmware_boot_origin_tick_ms;
+        metrics->tcp_connected_us = connected_us;
+        metrics->tcp_connect_us = PQC_TimebaseElapsedUs(
+            metrics->tcp_connect_start_us, connected_us);
+        if (PQC_TimebaseResetRelativeUs(connected_us, &reset_relative_us)) {
+            metrics->reset_to_tcp_connect_us = reset_relative_us;
+            metrics->reset_origin_valid = 1U;
+        }
         metrics->tcp_timing_valid = 1U;
     }
     result = MQTT_CODE_SUCCESS;
@@ -916,9 +946,12 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         const PQC_TLSInstrumentationSnapshot *tls_metrics =
             PQC_TLS_InstrumentationSnapshot();
         PQC_WolfMQTTReadyMetrics2Snapshot *metrics = socket_context->ready_metrics_2;
-        metrics->tls_complete_tick_ms = tls_metrics->handshake_end_tick_ms;
-        metrics->firmware_boot_to_tls_complete_ms =
-            metrics->tls_complete_tick_ms - metrics->firmware_boot_origin_tick_ms;
+        uint64_t reset_relative_us = 0U;
+        metrics->tls_complete_us = tls_metrics->handshake_end_us;
+        if (PQC_TimebaseResetRelativeUs(metrics->tls_complete_us, &reset_relative_us)) {
+            metrics->reset_to_tls_complete_us = reset_relative_us;
+            metrics->reset_origin_valid = 1U;
+        }
         metrics->tls_timing_valid = 1U;
     }
     if (result != WOLFSSL_SUCCESS) {
@@ -989,12 +1022,16 @@ static int PQC_WolfMQTT_LwIPRead(void *context, byte *buffer, int length, int ti
     if ((result > 0) && c->mqtt_first_response_armed &&
         (c->ready_metrics_2 != NULL) &&
         (c->ready_metrics_2->mqtt_first_response_valid == 0U)) {
-        uint32_t first_byte_tick = HAL_GetTick();
+        uint64_t first_byte_us = PQC_TimebaseNowUs();
+        uint64_t reset_relative_us = 0U;
         PQC_WolfMQTTReadyMetrics2Snapshot *metrics = c->ready_metrics_2;
-        metrics->mqtt_first_response_tick_ms = first_byte_tick;
-        metrics->ttfb_ms = first_byte_tick - metrics->ttfb_start_tick_ms;
-        metrics->firmware_boot_to_mqtt_first_response_ms =
-            first_byte_tick - metrics->firmware_boot_origin_tick_ms;
+        metrics->mqtt_first_response_us = first_byte_us;
+        metrics->mqtt_first_response_elapsed_us = PQC_TimebaseElapsedUs(
+            metrics->tcp_connect_start_us, first_byte_us);
+        if (PQC_TimebaseResetRelativeUs(first_byte_us, &reset_relative_us)) {
+            metrics->reset_to_mqtt_first_response_us = reset_relative_us;
+            metrics->reset_origin_valid = 1U;
+        }
         metrics->mqtt_first_response_valid = 1U;
     }
     return result;
@@ -1029,12 +1066,12 @@ static int PQC_WolfMQTT_MessageCallback(MqttClient *client, MqttMessage *message
 
     if (context->transfer_mode) {
         if ((message->buffer_len > 0U) && !context->transfer_first_byte_valid) {
-            context->transfer_first_byte_tick_ms = HAL_GetTick();
+            context->transfer_first_byte_us = PQC_TimebaseNowUs();
             context->transfer_first_byte_valid = true;
         }
         if (message->buffer_len > 0U) {
             context->transfer_received_bytes += (uint32_t)message->buffer_len;
-            context->transfer_last_byte_tick_ms = HAL_GetTick();
+            context->transfer_last_byte_us = PQC_TimebaseNowUs();
         }
         if (msg_done != 0U) {
             context->transfer_message_count++;
@@ -1044,6 +1081,32 @@ static int PQC_WolfMQTT_MessageCallback(MqttClient *client, MqttMessage *message
         }
         return MQTT_CODE_SUCCESS;
     }
+
+#if PQC_OTA_ENABLED
+    if (context->ota_transfer_mode) {
+        if (msg_new != 0U) {
+            context->payload_length = 0U;
+            context->payload[0] = '\0';
+        }
+        available = sizeof(context->payload) - 1U - context->payload_length;
+        copy_length = message->buffer_len < available ? message->buffer_len : available;
+        if (copy_length > 0U) {
+            memcpy(context->payload + context->payload_length, message->buffer, copy_length);
+            context->payload_length += copy_length;
+            context->payload[context->payload_length] = '\0';
+        }
+        if (msg_done != 0U) {
+            if (strcmp(context->payload, "complete") == 0) {
+                context->ota_complete_seen = true;
+            } else if (context->ota_transfer == NULL ||
+                       PQC_OTA_ParseAndWriteChunk(context->payload, context->ota_transfer) != 0) {
+                context->ota_transfer_error = MQTT_CODE_ERROR_BAD_ARG;
+            }
+            context->received = true;
+        }
+        return context->ota_transfer_error == 0 ? MQTT_CODE_SUCCESS : context->ota_transfer_error;
+    }
+#endif
 
     (void)msg_new;
     available = sizeof(context->payload) - 1U - context->payload_length;
@@ -1069,6 +1132,21 @@ static int PQC_WolfMQTT_PublishTopic(
     publish.packet_id = packet_id;
     publish.buffer = (byte *)payload;
     publish.total_len = (word32)strlen(payload);
+    return MqttClient_Publish(client, &publish);
+}
+
+static int PQC_WolfMQTT_ClearRetainedTopic(MqttClient *client, const char *topic, word16 packet_id)
+{
+    MqttPublish publish;
+    static byte empty = 0U;
+    if (client == NULL || topic == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(&publish, 0, sizeof(publish));
+    publish.topic_name = topic;
+    publish.qos = MQTT_QOS_1;
+    publish.retain = 1;
+    publish.packet_id = packet_id;
+    publish.buffer = &empty;
+    publish.total_len = 0U;
     return MqttClient_Publish(client, &publish);
 }
 
@@ -1151,6 +1229,13 @@ int PQC_WolfMQTT_PublishDeferredResults(
         run_id,(unsigned long)record_count,(unsigned long)chunk_count,(unsigned long)length,
         (unsigned long)dropped_record_count,overflowed?"true":"false",logical_sha256);
     result=PQC_WolfMQTT_PublishTopic(&client,topic,payload,60001U);
+#if PQC_OTA_ENABLED
+    if(result==MQTT_CODE_SUCCESS) {
+        int ota_result=PQC_WolfMQTT_ProcessRetainedOta(&client,&message_context,run_id);
+        if(ota_result!=MQTT_CODE_SUCCESS) result=ota_result;
+        else if(PQC_OTA_ConfirmActiveCandidateIfPending()!=0) result=MQTT_CODE_ERROR_NETWORK;
+    }
+#endif
 
 cleanup_mqtt:
     (void)MqttClient_Disconnect(&client);
@@ -1160,6 +1245,512 @@ cleanup_client:
     MqttClient_DeInit(&client);
     return result;
 }
+
+#if PQC_OTA_ENABLED
+#define PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS 0x10000100UL
+#define PQC_OTA_BOOT_EVENT_MAILBOX_MAGIC 0x504F424DUL
+#define PQC_OTA_BOOT_EVENT_MAILBOX_VERSION 1U
+#define PQC_OTA_BOOT_EVENT_CAPACITY 12U
+#define PQC_OTA_BOOT_EVENT_START 1U
+#define PQC_OTA_BOOT_EVENT_MANIFEST_AUTH 2U
+#define PQC_OTA_BOOT_EVENT_APPLICATION_AUTH 3U
+#define PQC_OTA_BOOT_EVENT_SWAP_REQUESTED 4U
+#define PQC_OTA_BOOT_EVENT_CANDIDATE_FIRST_BOOT 5U
+#define PQC_OTA_BOOT_EVENT_ROLLBACK_REQUESTED 6U
+
+typedef struct {
+    uint32_t phase;
+    uint32_t active_bank;
+    uint32_t bfb2;
+    uint32_t from_bank;
+    uint32_t to_bank;
+    uint32_t target_bank;
+    uint32_t migration;
+} PQC_OtaBootEvent;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t count;
+    uint32_t reserved;
+    PQC_OtaBootEvent events[PQC_OTA_BOOT_EVENT_CAPACITY];
+} PQC_OtaBootEventMailbox;
+
+static void PQC_OTA_EmitBootEventMailbox(void)
+{
+    volatile PQC_OtaBootEventMailbox *mailbox =
+        (volatile PQC_OtaBootEventMailbox *)(uintptr_t)PQC_OTA_BOOT_EVENT_MAILBOX_ADDRESS;
+    uint32_t count, i;
+    char marker[256];
+    if (mailbox->magic != PQC_OTA_BOOT_EVENT_MAILBOX_MAGIC ||
+        mailbox->version != PQC_OTA_BOOT_EVENT_MAILBOX_VERSION ||
+        mailbox->count > PQC_OTA_BOOT_EVENT_CAPACITY)
+        return;
+    count = mailbox->count;
+    for (i = 0U; i < count; ++i) {
+        const volatile PQC_OtaBootEvent *event = &mailbox->events[i];
+        switch (event->phase) {
+            case PQC_OTA_BOOT_EVENT_START:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=start active_bank=%lu bfb2=%lu\r\n",
+                    (unsigned long)event->active_bank, (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_MANIFEST_AUTH:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_manifest_authenticated target_bank=%lu migration=%lu\r\n",
+                    (unsigned long)event->target_bank, (unsigned long)event->migration);
+                break;
+            case PQC_OTA_BOOT_EVENT_APPLICATION_AUTH:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_application_authenticated target_bank=%lu\r\n",
+                    (unsigned long)event->target_bank);
+                break;
+            case PQC_OTA_BOOT_EVENT_SWAP_REQUESTED:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=swap_requested from_bank=%lu to_bank=%lu bfb2_before=%lu\r\n",
+                    (unsigned long)event->from_bank, (unsigned long)event->to_bank,
+                    (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_CANDIDATE_FIRST_BOOT:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=candidate_first_boot active_bank=%lu bfb2=%lu\r\n",
+                    (unsigned long)event->active_bank, (unsigned long)event->bfb2);
+                break;
+            case PQC_OTA_BOOT_EVENT_ROLLBACK_REQUESTED:
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_BOOT phase=rollback_requested from_bank=%lu to_bank=%lu bfb2_before=%lu\r\n",
+                    (unsigned long)event->from_bank, (unsigned long)event->to_bank,
+                    (unsigned long)event->bfb2);
+                break;
+            default:
+                continue;
+        }
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    mailbox->count = 0U;
+}
+
+#define PQC_OTA_BANK_BYTES 0x00100000UL
+#define PQC_OTA_INACTIVE_BASE 0x08100000UL
+#define PQC_OTA_BOOTLOADER_BYTES 0x0001C000UL
+#define PQC_OTA_MANIFEST_ADDRESS 0x0811C000UL
+#define PQC_OTA_MANIFEST_BYTES 0x00004000UL
+#define PQC_OTA_APPLICATION_ADDRESS 0x08120000UL
+#define PQC_OTA_APPLICATION_BYTES 0x000E0000UL
+#define PQC_OTA_ACTIVE_MANIFEST_ADDRESS 0x0801C000UL
+#define PQC_OTA_MARKER_STAGED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 24UL)
+#define PQC_OTA_MARKER_BOOTED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 16UL)
+#define PQC_OTA_MARKER_CONFIRMED_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 8UL)
+#define PQC_OTA_MARKER_STAGED 0x5354414745445035ULL
+#define PQC_OTA_MARKER_BOOTED 0x424F4F5445445035ULL
+#define PQC_OTA_MARKER_CONFIRMED 0x434F4E4649524D35ULL
+#define PQC_OTA_MANIFEST_PAYLOAD_FLAGS_ADDRESS (PQC_OTA_ACTIVE_MANIFEST_ADDRESS + 0x3000UL + 8UL)
+#define PQC_OTA_FLAG_TEST_NO_CONFIRM 0x80000000UL
+#define PQC_OTA_CONTROL_WAIT_MS 250
+#define PQC_OTA_TRANSFER_WAIT_MS 30000
+
+struct PQC_OtaTransfer {
+    uint32_t flags;
+    uint32_t bootloader_bytes;
+    uint32_t manifest_bytes;
+    uint32_t application_bytes;
+    uint8_t bootloader_sha256[32];
+    uint8_t manifest_sha256[32];
+    uint8_t application_sha256[32];
+    bool activate;
+    uint32_t received_bootloader_bytes;
+    uint32_t received_manifest_bytes;
+    uint32_t received_application_bytes;
+};
+
+
+static bool PQC_OTA_MarkerIs(uint32_t address, uint64_t expected)
+{
+    return (*(const volatile uint64_t *)(uintptr_t)address == expected);
+}
+
+static uint32_t PQC_OTA_ActivePhysicalBank(void)
+{
+    return (READ_BIT(SYSCFG->MEMRMP, SYSCFG_MEMRMP_FB_MODE) == 0U) ? 1U : 2U;
+}
+
+static uint32_t PQC_OTA_Bfb2Enabled(void)
+{
+    return (READ_BIT(FLASH->OPTR, FLASH_OPTR_BFB2) != 0U) ? 1U : 0U;
+}
+
+static void PQC_OTA_LogApplicationState(const char *phase)
+{
+    char marker[224];
+    const bool staged = PQC_OTA_MarkerIs(PQC_OTA_MARKER_STAGED_ADDRESS, PQC_OTA_MARKER_STAGED);
+    const bool booted = PQC_OTA_MarkerIs(PQC_OTA_MARKER_BOOTED_ADDRESS, PQC_OTA_MARKER_BOOTED);
+    const bool confirmed = PQC_OTA_MarkerIs(PQC_OTA_MARKER_CONFIRMED_ADDRESS, PQC_OTA_MARKER_CONFIRMED);
+    (void)snprintf(marker, sizeof(marker),
+        "PQC_OTA_APP phase=%s active_bank=%lu bfb2=%lu staged=%u booted=%u confirmed=%u\r\n",
+        phase,
+        (unsigned long)PQC_OTA_ActivePhysicalBank(),
+        (unsigned long)PQC_OTA_Bfb2Enabled(),
+        staged ? 1U : 0U,
+        booted ? 1U : 0U,
+        confirmed ? 1U : 0U);
+    PQC_WolfMQTT_DiagnosticMarker(marker);
+}
+
+static int PQC_OTA_ConfirmActiveCandidateIfPending(void)
+{
+#ifdef SECURE_BOOT_APPLICATION
+    PQC_OTA_EmitBootEventMailbox();
+    const bool staged = PQC_OTA_MarkerIs(PQC_OTA_MARKER_STAGED_ADDRESS, PQC_OTA_MARKER_STAGED);
+    const bool booted = PQC_OTA_MarkerIs(PQC_OTA_MARKER_BOOTED_ADDRESS, PQC_OTA_MARKER_BOOTED);
+    const bool confirmed = PQC_OTA_MarkerIs(PQC_OTA_MARKER_CONFIRMED_ADDRESS, PQC_OTA_MARKER_CONFIRMED);
+    PQC_OTA_LogApplicationState("boot_state");
+    if (staged && booted && !confirmed) {
+        const uint32_t manifest_flags = *(const volatile uint32_t *)(uintptr_t)PQC_OTA_MANIFEST_PAYLOAD_FLAGS_ADDRESS;
+        if ((manifest_flags & PQC_OTA_FLAG_TEST_NO_CONFIRM) != 0U) {
+            PQC_OTA_LogApplicationState("confirmation_withheld");
+            PQC_WolfMQTT_DiagnosticMarker("PQC OTA: test candidate intentionally left unconfirmed; reset for rollback\r\n");
+            NVIC_SystemReset();
+        }
+        uint64_t marker = PQC_OTA_MARKER_CONFIRMED;
+        if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+        __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, PQC_OTA_MARKER_CONFIRMED_ADDRESS, marker) != HAL_OK) {
+            (void)HAL_FLASH_Lock();
+            return -1;
+        }
+        (void)HAL_FLASH_Lock();
+        PQC_OTA_LogApplicationState("confirmed");
+        PQC_WolfMQTT_DiagnosticMarker("PQC OTA: candidate application confirmed; reset to commit\r\n");
+        NVIC_SystemReset();
+    }
+#endif
+    return 0;
+}
+
+static uint32_t PQC_OTA_InactivePhysicalBank(void)
+{
+    return (READ_BIT(SYSCFG->MEMRMP, SYSCFG_MEMRMP_FB_MODE) == 0U) ? FLASH_BANK_2 : FLASH_BANK_1;
+}
+
+static int PQC_OTA_EraseInactiveBank(void)
+{
+    FLASH_EraseInitTypeDef erase = {0};
+    uint32_t page_error = 0U;
+    HAL_StatusTypeDef rc;
+    if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+    erase.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase.Banks = PQC_OTA_InactivePhysicalBank();
+    erase.Page = 0U;
+    erase.NbPages = FLASH_BANK_SIZE / FLASH_PAGE_SIZE;
+    rc = HAL_FLASHEx_Erase(&erase, &page_error);
+    (void)HAL_FLASH_Lock();
+    return rc == HAL_OK ? 0 : -1;
+}
+
+static int PQC_OTA_Write(uint32_t address, const uint8_t *data, size_t length)
+{
+    size_t offset = 0U;
+    if (data == NULL || address < PQC_OTA_INACTIVE_BASE ||
+        (address + length) > (PQC_OTA_INACTIVE_BASE + PQC_OTA_BANK_BYTES)) return -1;
+    if (HAL_FLASH_Unlock() != HAL_OK) return -1;
+    while (offset < length) {
+        uint64_t value = UINT64_MAX;
+        size_t amount = length - offset;
+        if (amount > 8U) amount = 8U;
+        memcpy(&value, data + offset, amount);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, address + offset, value) != HAL_OK) {
+            (void)HAL_FLASH_Lock(); return -1;
+        }
+        offset += amount;
+    }
+    (void)HAL_FLASH_Lock();
+    return 0;
+}
+
+static bool PQC_OTA_HashMatches(uint32_t address, uint32_t length, const uint8_t expected[32])
+{
+    uint8_t digest[32];
+    PQC_ResultBufferHashData((const uint8_t *)(uintptr_t)address, length, digest);
+    return memcmp(digest, expected, sizeof(digest)) == 0;
+}
+
+static int PQC_OTA_HexNibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool PQC_OTA_ParseHash(const char *text, uint8_t output[32])
+{
+    unsigned int i;
+    if (text == NULL || strlen(text) != 64U) return false;
+    for (i = 0U; i < 32U; ++i) {
+        int high = PQC_OTA_HexNibble(text[2U * i]);
+        int low = PQC_OTA_HexNibble(text[2U * i + 1U]);
+        if (high < 0 || low < 0) return false;
+        output[i] = (uint8_t)((high << 4) | low);
+    }
+    return true;
+}
+
+static bool PQC_OTA_ParseRequest(const char *payload, PQC_OtaTransfer *transfer)
+{
+    char boot_hash[65], manifest_hash[65], app_hash[65];
+    unsigned long flags, boot_bytes, manifest_bytes, app_bytes, activate;
+    if (payload == NULL || transfer == NULL) return false;
+    if (sscanf(payload,
+               "request|%lu|%lu|%64[^|]|%lu|%64[^|]|%lu|%64[^|]|%lu",
+               &flags, &boot_bytes, boot_hash, &manifest_bytes, manifest_hash,
+               &app_bytes, app_hash, &activate) != 8) return false;
+    if (boot_bytes == 0UL || boot_bytes > PQC_OTA_BOOTLOADER_BYTES ||
+        manifest_bytes == 0UL || manifest_bytes > PQC_OTA_MANIFEST_BYTES ||
+        app_bytes == 0UL || app_bytes > PQC_OTA_APPLICATION_BYTES) return false;
+    memset(transfer, 0, sizeof(*transfer));
+    transfer->flags = (uint32_t)flags;
+    transfer->bootloader_bytes = (uint32_t)boot_bytes;
+    transfer->manifest_bytes = (uint32_t)manifest_bytes;
+    transfer->application_bytes = (uint32_t)app_bytes;
+    transfer->activate = activate != 0UL;
+    return PQC_OTA_ParseHash(boot_hash, transfer->bootloader_sha256) &&
+           PQC_OTA_ParseHash(manifest_hash, transfer->manifest_sha256) &&
+           PQC_OTA_ParseHash(app_hash, transfer->application_sha256);
+}
+
+static int PQC_OTA_ParseAndWriteChunk(const char *payload, PQC_OtaTransfer *transfer)
+{
+    char region[16];
+    char hex[385];
+    unsigned long offset;
+    uint8_t bytes[192];
+    size_t hex_len, amount, i;
+    uint32_t base, limit;
+    uint32_t *received;
+    if (sscanf(payload, "%15[^|]|%lu|%384s", region, &offset, hex) != 3) return -1;
+    hex_len = strlen(hex);
+    if ((hex_len & 1U) != 0U || hex_len == 0U || hex_len > sizeof(bytes) * 2U) return -1;
+    amount = hex_len / 2U;
+    for (i = 0U; i < amount; ++i) {
+        int high = PQC_OTA_HexNibble(hex[2U * i]);
+        int low = PQC_OTA_HexNibble(hex[2U * i + 1U]);
+        if (high < 0 || low < 0) return -1;
+        bytes[i] = (uint8_t)((high << 4) | low);
+    }
+    if (strcmp(region, "bootloader") == 0) {
+        base = PQC_OTA_INACTIVE_BASE; limit = transfer->bootloader_bytes; received = &transfer->received_bootloader_bytes;
+    } else if (strcmp(region, "manifest") == 0) {
+        base = PQC_OTA_MANIFEST_ADDRESS; limit = transfer->manifest_bytes; received = &transfer->received_manifest_bytes;
+    } else if (strcmp(region, "application") == 0) {
+        base = PQC_OTA_APPLICATION_ADDRESS; limit = transfer->application_bytes; received = &transfer->received_application_bytes;
+    } else return -1;
+    if (offset + amount > limit) return -1;
+    if (PQC_OTA_Write(base + (uint32_t)offset, bytes, amount) != 0) return -1;
+    if ((uint32_t)(offset + amount) > *received) *received = (uint32_t)(offset + amount);
+    return 0;
+}
+
+static int PQC_WolfMQTT_ProcessRetainedOta(
+    MqttClient *client, PQC_WolfMQTTMessageContext *message_context, const char *run_id)
+{
+    MqttSubscribe subscribe;
+    MqttTopic topic;
+    PQC_OtaTransfer transfer;
+    char request_topic[192];
+    char data_topic[192];
+    int result;
+    bool complete = false;
+    uint32_t last_progress_bytes = 0U;
+
+    if (client == NULL || message_context == NULL || run_id == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    (void)snprintf(request_topic, sizeof(request_topic), "pqc/control/ota/stm32/%s/request", run_id);
+    memset(&topic, 0, sizeof(topic)); topic.topic_filter = request_topic; topic.qos = MQTT_QOS_1;
+    memset(&subscribe, 0, sizeof(subscribe)); subscribe.packet_id = 420U; subscribe.topic_count = 1U; subscribe.topics = &topic;
+    result = MqttClient_Subscribe(client, &subscribe);
+    if (result != MQTT_CODE_SUCCESS) return result;
+    memset(message_context->payload, 0, sizeof(message_context->payload)); message_context->payload_length = 0U; message_context->received = false;
+    result = MqttClient_WaitMessage(client, PQC_OTA_CONTROL_WAIT_MS);
+    if (result != MQTT_CODE_SUCCESS || !message_context->received) return MQTT_CODE_SUCCESS; /* no OTA requested */
+    if (!PQC_OTA_ParseRequest(message_context->payload, &transfer)) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=request_accepted active_bank=%lu inactive_bank=%lu bfb2=%lu flags=%lu boot_bytes=%lu manifest_bytes=%lu app_bytes=%lu\r\n",
+            (unsigned long)PQC_OTA_ActivePhysicalBank(),
+            (unsigned long)(PQC_OTA_ActivePhysicalBank() == 1U ? 2U : 1U),
+            (unsigned long)PQC_OTA_Bfb2Enabled(),
+            (unsigned long)transfer.flags,
+            (unsigned long)transfer.bootloader_bytes,
+            (unsigned long)transfer.manifest_bytes,
+            (unsigned long)transfer.application_bytes);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=erase_inactive_bank_start\r\n");
+    if (PQC_OTA_EraseInactiveBank() != 0) return MQTT_CODE_ERROR_NETWORK;
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=erase_inactive_bank_complete\r\n");
+
+    (void)snprintf(data_topic, sizeof(data_topic), "pqc/control/ota/stm32/%s/data/#", run_id);
+    topic.topic_filter = data_topic; subscribe.packet_id = 421U;
+    /* Retained data can be delivered synchronously while SUBSCRIBE is being
+     * processed. Enter OTA receive mode before subscribing so those messages
+     * are parsed and written immediately rather than being overwritten in the
+     * single-message scratch buffer. */
+    message_context->ota_transfer_mode = true;
+    message_context->ota_complete_seen = false;
+    message_context->ota_transfer_error = 0;
+    message_context->ota_transfer = &transfer;
+    message_context->payload_length = 0U;
+    message_context->payload[0] = '\0';
+    message_context->received = false;
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=data_subscription_start\r\n");
+    result = MqttClient_Subscribe(client, &subscribe);
+    if (result != MQTT_CODE_SUCCESS) {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_failed reason=subscribe result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            result,
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+        message_context->ota_transfer_mode = false;
+        message_context->ota_transfer = NULL;
+        return result;
+    }
+    {
+        char marker[256];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=data_subscription_complete boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    if (message_context->ota_transfer_error != 0) {
+        char marker[256];
+        result = message_context->ota_transfer_error;
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_failed reason=parse_or_write result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+            result,
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes,
+            message_context->ota_complete_seen ? 1U : 0U);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+        message_context->ota_transfer_mode = false;
+        message_context->ota_transfer = NULL;
+        return result;
+    }
+
+    last_progress_bytes = transfer.received_bootloader_bytes +
+        transfer.received_manifest_bytes + transfer.received_application_bytes;
+    complete = message_context->ota_complete_seen;
+    while (!complete ||
+           transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
+           transfer.received_manifest_bytes != transfer.manifest_bytes ||
+           transfer.received_application_bytes != transfer.application_bytes) {
+        message_context->received = false;
+        result = MqttClient_WaitMessage(client, PQC_OTA_TRANSFER_WAIT_MS);
+        if (result != MQTT_CODE_SUCCESS) {
+            char marker[256];
+            (void)snprintf(marker, sizeof(marker),
+                "PQC_OTA_APP phase=transfer_failed reason=wait result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                result,
+                (unsigned long)transfer.received_bootloader_bytes,
+                (unsigned long)transfer.received_manifest_bytes,
+                (unsigned long)transfer.received_application_bytes,
+                message_context->ota_complete_seen ? 1U : 0U);
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+            message_context->ota_transfer_mode = false;
+            message_context->ota_transfer = NULL;
+            return MQTT_CODE_ERROR_TIMEOUT;
+        }
+        if (message_context->ota_transfer_error != 0) {
+            char marker[256];
+            result = message_context->ota_transfer_error;
+            (void)snprintf(marker, sizeof(marker),
+                "PQC_OTA_APP phase=transfer_failed reason=parse_or_write result=%d boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                result,
+                (unsigned long)transfer.received_bootloader_bytes,
+                (unsigned long)transfer.received_manifest_bytes,
+                (unsigned long)transfer.received_application_bytes,
+                message_context->ota_complete_seen ? 1U : 0U);
+            PQC_WolfMQTT_DiagnosticMarker(marker);
+            message_context->ota_transfer_mode = false;
+            message_context->ota_transfer = NULL;
+            return result;
+        }
+        complete = message_context->ota_complete_seen;
+        {
+            uint32_t received_total = transfer.received_bootloader_bytes +
+                transfer.received_manifest_bytes + transfer.received_application_bytes;
+            if ((received_total - last_progress_bytes >= 32768U) || complete) {
+                char marker[256];
+                (void)snprintf(marker, sizeof(marker),
+                    "PQC_OTA_APP phase=transfer_progress boot_received=%lu manifest_received=%lu app_received=%lu complete=%u\r\n",
+                    (unsigned long)transfer.received_bootloader_bytes,
+                    (unsigned long)transfer.received_manifest_bytes,
+                    (unsigned long)transfer.received_application_bytes,
+                    complete ? 1U : 0U);
+                PQC_WolfMQTT_DiagnosticMarker(marker);
+                last_progress_bytes = received_total;
+            }
+        }
+    }
+    message_context->ota_transfer_mode = false;
+    message_context->ota_transfer = NULL;
+    if (transfer.received_bootloader_bytes != transfer.bootloader_bytes ||
+        transfer.received_manifest_bytes != transfer.manifest_bytes ||
+        transfer.received_application_bytes != transfer.application_bytes) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        char marker[224];
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_OTA_APP phase=transfer_complete boot_received=%lu manifest_received=%lu app_received=%lu\r\n",
+            (unsigned long)transfer.received_bootloader_bytes,
+            (unsigned long)transfer.received_manifest_bytes,
+            (unsigned long)transfer.received_application_bytes);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
+    if (!PQC_OTA_HashMatches(PQC_OTA_INACTIVE_BASE, transfer.bootloader_bytes, transfer.bootloader_sha256) ||
+        !PQC_OTA_HashMatches(PQC_OTA_MANIFEST_ADDRESS, transfer.manifest_bytes, transfer.manifest_sha256) ||
+        !PQC_OTA_HashMatches(PQC_OTA_APPLICATION_ADDRESS, transfer.application_bytes, transfer.application_sha256)) return MQTT_CODE_ERROR_BAD_ARG;
+    {
+        uint64_t staged = PQC_OTA_MARKER_STAGED;
+        if (PQC_OTA_Write(PQC_OTA_MANIFEST_ADDRESS + PQC_OTA_MANIFEST_BYTES - 24U,
+                          (const uint8_t *)&staged, sizeof(staged)) != 0)
+            return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=hashes_verified result=passed\r\n");
+    PQC_WolfMQTT_DiagnosticMarker("PQC_OTA_APP phase=staged_marker_written staged=1\r\n");
+    PQC_WolfMQTT_DiagnosticMarker("PQC OTA: staged candidate bank hashes verified\r\n");
+    /* Clear only the retained request trigger before reset. Stale retained data
+     * chunks are inert without a request and may be cleaned by the host after
+     * evidence collection. This prevents an accepted update from replaying on
+     * the newly active bank. */
+    if (PQC_WolfMQTT_ClearRetainedTopic(client, request_topic, 422U) != MQTT_CODE_SUCCESS)
+        return MQTT_CODE_ERROR_NETWORK;
+    if (transfer.activate) {
+        PQC_OTA_LogApplicationState("activation_reset");
+        PQC_WolfMQTT_DiagnosticMarker("PQC OTA: activation reset requested\r\n");
+        NVIC_SystemReset();
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+int PQC_WolfMQTT_ServiceRetainedOta(PQC_OtaStatus *status)
+{
+    if (status == NULL) return MQTT_CODE_ERROR_BAD_ARG;
+    memset(status, 0, sizeof(*status));
+    status->schema_version = PQC_OTA_SCHEMA_VERSION;
+    status->active_physical_bank = (PQC_OTA_InactivePhysicalBank() == FLASH_BANK_2) ? 1U : 2U;
+    status->inactive_physical_bank = status->active_physical_bank == 1U ? 2U : 1U;
+    return MQTT_CODE_SUCCESS;
+}
+#endif /* PQC_OTA_ENABLED */
 
 const char *PQC_WolfMQTT_BackendName(PQC_WolfMQTTBackend backend)
 {
@@ -1354,6 +1945,36 @@ static int PQC_WolfMQTT_AppendTimingRecord(
     return 0;
 }
 
+static int PQC_WolfMQTT_AppendPhaseTimingRecord(
+    char *buffer,
+    size_t buffer_size,
+    size_t *offset,
+    const PQC_TLSTimingAggregate *timing,
+    bool prepend_comma)
+{
+    int written;
+    if ((buffer == NULL) || (offset == NULL) ||
+        (timing == NULL) || (*offset >= buffer_size)) {
+        return -1;
+    }
+    written = snprintf(buffer + *offset, buffer_size - *offset,
+        "%s[%lu,%lu,%lu,%lu,%lu,%lu,%llu,%llu]",
+        prepend_comma ? "," : "",
+        (unsigned long)timing->count,
+        (unsigned long)timing->total_cycles,
+        (unsigned long)timing->min_cycles,
+        (unsigned long)timing->max_cycles,
+        (unsigned long)timing->first_start_cycle,
+        (unsigned long)timing->last_end_cycle,
+        (unsigned long long)timing->first_start_us,
+        (unsigned long long)timing->last_end_us);
+    if ((written <= 0) || ((size_t)written >= (buffer_size - *offset))) {
+        return -1;
+    }
+    *offset += (size_t)written;
+    return 0;
+}
+
 static int PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(
     MqttClient *client,
     word16 packet_id,
@@ -1368,7 +1989,7 @@ static int PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(
     const PQC_TLSInstrumentationSnapshot *tls = PQC_TLS_InstrumentationSnapshot();
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"tls_primitive_timing\",\"schema_version\":1,"
+        "{\"type\":\"tls_primitive_timing\",\"schema_version\":2,\"timing_source\":\"dwt_cycles\","
         "\"part\":%u,\"first_index\":%u,\"last_index\":%u,\"values\":[",
         part, first, last);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
@@ -1398,45 +2019,75 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
     int result;
     const PQC_WolfMQTTReadyMetrics2Snapshot *metrics = &s_ready_metrics_2_snapshot;
     const PQC_TLSInstrumentationSnapshot *tls = PQC_TLS_InstrumentationSnapshot();
+    const PQC_TimebaseProvenance *timebase = PQC_TimebaseGetProvenance();
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"experiment_timing\",\"schema_version\":1,"
-        "\"ttfb_definition\":\"tcp_connect_start_to_first_mqtt_connack_plaintext_byte\","
-        "\"dns_included\":false,\"tcp_connect_ms\":%lu,\"ttfb_ms\":%lu,"
-        "\"mqtt_connect_ms\":%lu,\"legacy_connect_timing_ms\":%lu,"
-        "\"tls_timing_valid\":%u,\"first_response_valid\":%u}",
-        (unsigned long)metrics->tcp_connect_ms,
-        (unsigned long)metrics->ttfb_ms,
-        (unsigned long)metrics->mqtt_connect_ms,
-        (unsigned long)metrics->legacy_connect_timing_ms,
-        (unsigned int)metrics->tls_timing_valid,
-        (unsigned int)metrics->mqtt_first_response_valid);
+        "{\"type\":\"application_timebase\",\"schema_version\":2,"
+        "\"source\":\"TIM2\",\"timer_input_clock_hz\":%lu,\"prescaler\":%lu,"
+        "\"counter_hz\":%lu,\"counter_bits\":%lu,"
+        "\"wrap_handling\":\"update_irq_64bit_extension\","
+        "\"reset_origin_valid\":%u,\"reset_origin_kind\":%lu,"
+        "\"reset_origin_to_application_timebase_us\":%llu,"
+        "\"handoff_bridge\":\"LPTIM2_HSI16_DIV16\","
+        "\"firmware_elf_sha256_source\":\"run_manifest\"}",
+        (unsigned long)timebase->timer_input_clock_hz,
+        (unsigned long)timebase->prescaler,
+        (unsigned long)timebase->counter_hz,
+        (unsigned long)timebase->counter_bits,
+        (unsigned int)timebase->reset_origin_valid,
+        (unsigned long)timebase->reset_origin_kind,
+        (unsigned long long)timebase->reset_origin_to_application_timebase_us);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     result = PQC_WolfMQTT_PublishText(client, payload, 6U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"boot_timing\",\"schema_version\":1,"
-        "\"firmware_boot_origin\":\"post_hal_init\","
-        "\"boot_to_tcp_connect_ms\":%lu,\"boot_to_tls_complete_ms\":%lu,"
-        "\"boot_to_mqtt_first_response_ms\":%lu,\"boot_to_mqtt_connected_ms\":%lu,"
-        "\"boot_to_application_first_byte_ms\":%lu,\"boot_to_application_last_byte_ms\":%lu,"
-        "\"boot_to_ready_publish_ms\":%lu}",
-        (unsigned long)metrics->firmware_boot_to_tcp_connect_ms,
-        (unsigned long)metrics->firmware_boot_to_tls_complete_ms,
-        (unsigned long)metrics->firmware_boot_to_mqtt_first_response_ms,
-        (unsigned long)metrics->firmware_boot_to_mqtt_connected_ms,
-        (unsigned long)metrics->firmware_boot_to_application_first_byte_ms,
-        (unsigned long)metrics->firmware_boot_to_application_last_byte_ms,
-        (unsigned long)metrics->firmware_boot_to_ready_publish_ms);
+        "{\"type\":\"experiment_timing\",\"schema_version\":2,"
+        "\"mqtt_first_response_definition\":\"tcp_connect_start_to_first_mqtt_connack_plaintext_byte\","
+        "\"dns_included\":false,\"tcp_connect_us\":%llu,"
+        "\"mqtt_first_response_us\":%llu,\"mqtt_connect_us\":%llu,"
+        "\"legacy_connect_timing_us\":%llu,"
+        "\"tcp_connect_ms_legacy\":%lu,\"ttfb_ms_legacy\":%lu,"
+        "\"mqtt_connect_ms_legacy\":%lu,\"legacy_connect_timing_ms\":%lu,"
+        "\"tls_timing_valid\":%u,\"first_response_valid\":%u}",
+        (unsigned long long)metrics->tcp_connect_us,
+        (unsigned long long)metrics->mqtt_first_response_elapsed_us,
+        (unsigned long long)metrics->mqtt_connect_us,
+        (unsigned long long)metrics->legacy_connect_timing_us,
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->tcp_connect_us),
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->mqtt_first_response_elapsed_us),
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->mqtt_connect_us),
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->legacy_connect_timing_us),
+        (unsigned int)metrics->tls_timing_valid,
+        (unsigned int)metrics->mqtt_first_response_valid);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     result = PQC_WolfMQTT_PublishText(client, payload, 7U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"tls_handshake_timing\",\"schema_version\":1,"
+        "{\"type\":\"boot_timing\",\"schema_version\":2,"
+        "\"reset_origin\":\"wolfboot_entry\",\"reset_origin_valid\":%u,"
+        "\"reset_to_tcp_connect_us\":%llu,\"reset_to_tls_complete_us\":%llu,"
+        "\"reset_to_mqtt_first_response_us\":%llu,\"reset_to_mqtt_connected_us\":%llu,"
+        "\"reset_to_application_first_byte_us\":%llu,"
+        "\"reset_to_application_last_byte_us\":%llu,\"reset_to_ready_publish_us\":%llu}",
+        (unsigned int)metrics->reset_origin_valid,
+        (unsigned long long)metrics->reset_to_tcp_connect_us,
+        (unsigned long long)metrics->reset_to_tls_complete_us,
+        (unsigned long long)metrics->reset_to_mqtt_first_response_us,
+        (unsigned long long)metrics->reset_to_mqtt_connected_us,
+        (unsigned long long)metrics->reset_to_application_first_byte_us,
+        (unsigned long long)metrics->reset_to_application_last_byte_us,
+        (unsigned long long)metrics->reset_to_ready_publish_us);
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    result = PQC_WolfMQTT_PublishText(client, payload, 8U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"tls_handshake_timing\",\"schema_version\":2,"
         "\"available\":%u,\"result\":%d,\"cycle_counter_available\":%u,"
-        "\"elapsed_cycles\":%lu,\"elapsed_ms\":%lu,"
+        "\"elapsed_cycles\":%lu,\"elapsed_us\":%llu,\"elapsed_ms_legacy\":%lu,"
+        "\"timing_sources\":\"dwt_cycles+application_timebase_us\","
         "\"stack_before_min_free_bytes\":%lu,\"stack_after_min_free_bytes\":%lu,"
         "\"heap_before_free_bytes\":%lu,\"heap_after_free_bytes\":%lu,"
         "\"heap_before_min_ever_free_bytes\":%lu,\"heap_after_min_ever_free_bytes\":%lu}",
@@ -1444,7 +2095,8 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
         tls->handshake_result,
         (unsigned int)tls->cycle_counter_available,
         (unsigned long)tls->handshake_elapsed_cycles,
-        (unsigned long)tls->handshake_elapsed_ms,
+        (unsigned long long)tls->handshake_elapsed_us,
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(tls->handshake_elapsed_us),
         (unsigned long)tls->stack_before_min_free_bytes,
         (unsigned long)tls->stack_after_min_free_bytes,
         (unsigned long)tls->heap_before_free_bytes,
@@ -1452,41 +2104,42 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
         (unsigned long)tls->heap_before_min_ever_free_bytes,
         (unsigned long)tls->heap_after_min_ever_free_bytes);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    result = PQC_WolfMQTT_PublishText(client, payload, 8U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 9U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"tls_phase_timing\",\"schema_version\":1,\"values\":[");
+        "{\"type\":\"tls_phase_timing\",\"schema_version\":2,\"values\":[");
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     offset = (size_t)written;
     for (index = 0U; index < (unsigned int)PQC_TLS_PHASE_COUNT; ++index) {
-        if (PQC_WolfMQTT_AppendTimingRecord(payload, sizeof(payload), &offset,
+        if (PQC_WolfMQTT_AppendPhaseTimingRecord(payload, sizeof(payload), &offset,
                 &tls->phases[index], index != 0U) != 0) {
             return -1;
         }
     }
     if (offset + 3U >= sizeof(payload)) return -1;
     payload[offset++] = ']'; payload[offset++] = '}'; payload[offset] = '\0';
-    result = PQC_WolfMQTT_PublishText(client, payload, 9U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 10U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
-    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 10U, 1U, 0U, 3U);
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 11U, 1U, 0U, 3U);
     if (result != MQTT_CODE_SUCCESS) return result;
-    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 11U, 2U, 4U, 7U);
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 12U, 2U, 4U, 7U);
     if (result != MQTT_CODE_SUCCESS) return result;
-    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 12U, 3U, 8U, 11U);
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 13U, 3U, 8U, 11U);
     if (result != MQTT_CODE_SUCCESS) return result;
-    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 13U, 4U, 12U, 15U);
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 14U, 4U, 12U, 15U);
     if (result != MQTT_CODE_SUCCESS) return result;
-    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 14U, 5U, 16U, 19U);
+    result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(client, 15U, 5U, 16U, 19U);
     if (result != MQTT_CODE_SUCCESS) return result;
     result = PQC_WolfMQTT_PublishReadyMetrics2PrimitivePart(
-        client, 15U, 6U, 20U, (unsigned int)PQC_TLS_PRIMITIVE_COUNT - 1U);
+        client, 16U, 6U, 20U, (unsigned int)PQC_TLS_PRIMITIVE_COUNT - 1U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"tls_x509_verify_timing\",\"schema_version\":1,"
-        "\"count\":%u,\"overflow\":%u,\"elapsed_cycles\":[%lu,%lu,%lu,%lu]}",
+        "{\"type\":\"tls_x509_verify_timing\",\"schema_version\":2,"
+        "\"timing_source\":\"dwt_cycles\",\"count\":%u,\"overflow\":%u,"
+        "\"elapsed_cycles\":[%lu,%lu,%lu,%lu]}",
         (unsigned int)tls->x509_verify_invocation_count,
         (unsigned int)tls->x509_verify_invocation_overflow,
         (unsigned long)tls->x509_verify_invocations[0].elapsed_cycles,
@@ -1494,55 +2147,53 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
         (unsigned long)tls->x509_verify_invocations[2].elapsed_cycles,
         (unsigned long)tls->x509_verify_invocations[3].elapsed_cycles);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    result = PQC_WolfMQTT_PublishText(client, payload, 16U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 17U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"application_transfer_timing\",\"schema_version\":1,"
+        "{\"type\":\"application_transfer_timing\",\"schema_version\":2,"
         "\"ttlb_definition\":\"tcp_connect_start_to_last_byte_of_requested_application_payload\","
         "\"direction\":\"broker_to_stm32\",\"payload_bytes\":%lu,"
         "\"received_bytes\":%lu,\"message_count\":%lu,\"chunk_bytes\":%u,"
-        "\"application_ttfb_ms\":%lu,\"ttlb_ms\":%lu,"
-        "\"request_to_first_byte_ms\":%lu,\"application_transfer_ms\":%lu,"
+        "\"application_ttfb_us\":%llu,\"ttlb_us\":%llu,"
+        "\"request_to_first_byte_us\":%llu,\"application_transfer_us\":%llu,"
         "\"first_byte_valid\":%u,\"last_byte_valid\":%u,\"complete_valid\":%u}",
         (unsigned long)metrics->transfer_payload_bytes,
         (unsigned long)metrics->transfer_received_bytes,
         (unsigned long)metrics->transfer_message_count,
         (unsigned int)PQC_MQTT_TRANSFER_CHUNK_BYTES,
-        (unsigned long)metrics->application_ttfb_ms,
-        (unsigned long)metrics->ttlb_ms,
-        (unsigned long)metrics->application_request_to_first_byte_ms,
-        (unsigned long)metrics->application_transfer_ms,
+        (unsigned long long)metrics->application_ttfb_us,
+        (unsigned long long)metrics->ttlb_us,
+        (unsigned long long)metrics->application_request_to_first_byte_us,
+        (unsigned long long)metrics->application_transfer_us,
         (unsigned int)metrics->application_first_byte_valid,
         (unsigned int)metrics->application_last_byte_valid,
         (unsigned int)metrics->transfer_complete_valid);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    result = PQC_WolfMQTT_PublishText(client, payload, 17U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 18U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":1,"
-        "\"status\":\"success\",\"message_count\":17}");
+        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":2,"
+        "\"status\":\"success\",\"message_count\":18}");
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    return PQC_WolfMQTT_PublishText(client, payload, 18U);
+    return PQC_WolfMQTT_PublishText(client, payload, 19U);
 }
 
-int PQC_WolfMQTT_RunReadyMetrics2Application(
-    void (*mark_complete)(void),
-    uint32_t firmware_boot_origin_tick_ms)
+int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
 {
     MqttClient client; MqttNet network; MqttConnect connect;
     MqttSubscribe transfer_subscribe; MqttTopic transfer_topic; MqttPublish transfer_request;
     PQC_WolfMQTTSocketContext socket_context; PQC_WolfMQTTMessageContext message_context;
     byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
     char marker[256];
-    TickType_t legacy_connect_started, legacy_connect_finished;
+    uint64_t legacy_connect_started_us, legacy_connect_finished_us;
     int result;
 
     memset(&s_ready_metrics_2_snapshot, 0, sizeof(s_ready_metrics_2_snapshot));
-    s_ready_metrics_2_snapshot.schema_version = 1U;
-    s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms =
-        firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.schema_version = 2U;
+    s_ready_metrics_2_snapshot.reset_origin_valid =
+        PQC_TimebaseGetProvenance()->reset_origin_valid;
 
     memset(&client, 0, sizeof(client)); memset(&network, 0, sizeof(network));
     memset(&socket_context, 0, sizeof(socket_context)); memset(&message_context, 0, sizeof(message_context));
@@ -1565,7 +2216,7 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     /* Legacy Ready Metrics timing is retained separately for continuity. The
      * paper-comparable TTFB origin is captured later, immediately before the
      * actual lwip_connect() call and therefore excludes DNS resolution. */
-    legacy_connect_started = xTaskGetTickCount();
+    legacy_connect_started_us = PQC_TimebaseNowUs();
     result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST,
         (word16)PQC_MQTT_BROKER_PORT, PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_client;
@@ -1577,18 +2228,20 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     connect.client_id = PQC_MQTT_CLIENT_ID;
     result = MqttClient_Connect(&client, &connect);
     socket_context.mqtt_first_response_armed = false;
-    legacy_connect_finished = xTaskGetTickCount();
-    s_ready_metrics_2_snapshot.legacy_connect_timing_ms =
-        (uint32_t)((legacy_connect_finished - legacy_connect_started) * portTICK_PERIOD_MS);
+    legacy_connect_finished_us = PQC_TimebaseNowUs();
+    s_ready_metrics_2_snapshot.legacy_connect_timing_us = PQC_TimebaseElapsedUs(
+        legacy_connect_started_us, legacy_connect_finished_us);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_network;
 
-    s_ready_metrics_2_snapshot.mqtt_connected_tick_ms = HAL_GetTick();
-    s_ready_metrics_2_snapshot.mqtt_connect_ms =
-        s_ready_metrics_2_snapshot.mqtt_connected_tick_ms -
-        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
-    s_ready_metrics_2_snapshot.firmware_boot_to_mqtt_connected_ms =
-        s_ready_metrics_2_snapshot.mqtt_connected_tick_ms -
-        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.mqtt_connected_us = PQC_TimebaseNowUs();
+    s_ready_metrics_2_snapshot.mqtt_connect_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.tcp_connect_start_us,
+        s_ready_metrics_2_snapshot.mqtt_connected_us);
+    if (PQC_TimebaseResetRelativeUs(
+            s_ready_metrics_2_snapshot.mqtt_connected_us,
+            &s_ready_metrics_2_snapshot.reset_to_mqtt_connected_us)) {
+        s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
+    }
     s_ready_metrics_2_snapshot.mqtt_connected_valid = 1U;
 
     /* Paper-aligned TTLB workload. The application requests a fixed amount of
@@ -1621,7 +2274,7 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
     transfer_request.buffer = (byte *)PQC_MQTT_TRANSFER_REQUEST_PAYLOAD;
     transfer_request.total_len = (word32)strlen(PQC_MQTT_TRANSFER_REQUEST_PAYLOAD);
 
-    s_ready_metrics_2_snapshot.application_request_tick_ms = HAL_GetTick();
+    s_ready_metrics_2_snapshot.application_request_us = PQC_TimebaseNowUs();
     result = MqttClient_Publish(&client, &transfer_request);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
 
@@ -1637,39 +2290,44 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
         goto cleanup_mqtt;
     }
 
-    s_ready_metrics_2_snapshot.application_first_byte_tick_ms =
-        message_context.transfer_first_byte_tick_ms;
-    s_ready_metrics_2_snapshot.application_last_byte_tick_ms =
-        message_context.transfer_last_byte_tick_ms;
-    s_ready_metrics_2_snapshot.application_ttfb_ms =
-        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
-        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
-    s_ready_metrics_2_snapshot.ttlb_ms =
-        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
-        s_ready_metrics_2_snapshot.ttfb_start_tick_ms;
-    s_ready_metrics_2_snapshot.application_request_to_first_byte_ms =
-        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
-        s_ready_metrics_2_snapshot.application_request_tick_ms;
-    s_ready_metrics_2_snapshot.application_transfer_ms =
-        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
-        s_ready_metrics_2_snapshot.application_first_byte_tick_ms;
+    s_ready_metrics_2_snapshot.application_first_byte_us =
+        message_context.transfer_first_byte_us;
+    s_ready_metrics_2_snapshot.application_last_byte_us =
+        message_context.transfer_last_byte_us;
+    s_ready_metrics_2_snapshot.application_ttfb_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.tcp_connect_start_us,
+        s_ready_metrics_2_snapshot.application_first_byte_us);
+    s_ready_metrics_2_snapshot.ttlb_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.tcp_connect_start_us,
+        s_ready_metrics_2_snapshot.application_last_byte_us);
+    s_ready_metrics_2_snapshot.application_request_to_first_byte_us =
+        PQC_TimebaseElapsedUs(
+            s_ready_metrics_2_snapshot.application_request_us,
+            s_ready_metrics_2_snapshot.application_first_byte_us);
+    s_ready_metrics_2_snapshot.application_transfer_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.application_first_byte_us,
+        s_ready_metrics_2_snapshot.application_last_byte_us);
     s_ready_metrics_2_snapshot.transfer_payload_bytes =
         (uint32_t)PQC_MQTT_TRANSFER_PAYLOAD_BYTES;
     s_ready_metrics_2_snapshot.transfer_received_bytes =
         message_context.transfer_received_bytes;
     s_ready_metrics_2_snapshot.transfer_message_count =
         message_context.transfer_message_count;
-    s_ready_metrics_2_snapshot.firmware_boot_to_application_first_byte_ms =
-        s_ready_metrics_2_snapshot.application_first_byte_tick_ms -
-        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
-    s_ready_metrics_2_snapshot.firmware_boot_to_application_last_byte_ms =
-        s_ready_metrics_2_snapshot.application_last_byte_tick_ms -
-        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    if (PQC_TimebaseResetRelativeUs(
+            s_ready_metrics_2_snapshot.application_first_byte_us,
+            &s_ready_metrics_2_snapshot.reset_to_application_first_byte_us)) {
+        s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
+    }
+    if (PQC_TimebaseResetRelativeUs(
+            s_ready_metrics_2_snapshot.application_last_byte_us,
+            &s_ready_metrics_2_snapshot.reset_to_application_last_byte_us)) {
+        s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
+    }
     s_ready_metrics_2_snapshot.application_first_byte_valid = 1U;
     s_ready_metrics_2_snapshot.application_last_byte_valid = 1U;
     s_ready_metrics_2_snapshot.transfer_complete_valid = 1U;
-    s_ready_metrics_2_snapshot.measurement_complete_tick_ms =
-        s_ready_metrics_2_snapshot.application_last_byte_tick_ms;
+    s_ready_metrics_2_snapshot.measurement_complete_us =
+        s_ready_metrics_2_snapshot.application_last_byte_us;
     message_context.transfer_mode = false;
 
     /* Compatibility evidence is published only after the paper-aligned
@@ -1677,10 +2335,12 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(
      * otherwise perturb the measured TTLB. */
     result = PQC_WolfMQTT_PublishText(&client, "ready", 4U);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_mqtt;
-    s_ready_metrics_2_snapshot.ready_published_tick_ms = HAL_GetTick();
-    s_ready_metrics_2_snapshot.firmware_boot_to_ready_publish_ms =
-        s_ready_metrics_2_snapshot.ready_published_tick_ms -
-        s_ready_metrics_2_snapshot.firmware_boot_origin_tick_ms;
+    s_ready_metrics_2_snapshot.ready_published_us = PQC_TimebaseNowUs();
+    if (PQC_TimebaseResetRelativeUs(
+            s_ready_metrics_2_snapshot.ready_published_us,
+            &s_ready_metrics_2_snapshot.reset_to_ready_publish_us)) {
+        s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
+    }
     s_ready_metrics_2_snapshot.ready_publish_valid = 1U;
 
     /* All scientific result serialization/publication is deferred until after

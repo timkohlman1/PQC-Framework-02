@@ -538,6 +538,7 @@ def build_run_provenance_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "wolfboot_build",
         "runtime_services",
         "measurement_instruments",
+        "ota",
     )
     payload = {
         "schema": {"name": "pqc-run-provenance", "version": 1},

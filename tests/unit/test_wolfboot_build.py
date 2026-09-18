@@ -42,6 +42,23 @@ def sample_profile() -> dict[str, object]:
     }
 
 
+def install_fake_objcopy(monkeypatch, wolfboot_build) -> None:
+    original_run = subprocess.run
+
+    def fake_run(command, *args, **kwargs):
+        if command[:3] == ["arm-none-eabi-objcopy", "-O", "binary"]:
+            Path(command[-1]).write_bytes(b"fake wolfboot binary")
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(wolfboot_build.subprocess, "run", fake_run)
+
+
 def write_keytools_makefile(source_dir: Path) -> Path:
     makefile_path = source_dir / "tools" / "keytools" / "Makefile"
     makefile_path.parent.mkdir(parents=True)
@@ -110,6 +127,9 @@ def write_stm32l4_source(source_dir: Path) -> Path:
         "void hal_init(void)\n"
         "{\n"
         "    clockconfig(0);\n"
+        "}\n"
+        "void hal_prepare_boot(void)\n"
+        "{\n"
         "}\n",
         encoding="utf-8",
     )
@@ -157,8 +177,9 @@ def test_default_wolfboot_runner_tolerates_non_utf8_build_output(monkeypatch, tm
     assert "�" in execution.stdout
     assert "�" in execution.stderr
 
-def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path):
+def test_execute_wolfboot_build_applies_project_local_config_and_records_artifact(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -187,29 +208,37 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "#include \"stm32l4xx_hal_pwr_ex.h\"" in patched_hal_conf
         patched_image_source = image_source_path.read_text(encoding="utf-8")
         patched_hal_source = hal_source_path.read_text(encoding="utf-8")
-        assert "PQC_BOOT_TIMING_MAILBOX_MAGIC" in patched_image_source
-        assert "pqc_boot_timing_write_mailbox" in patched_image_source
-        assert "elapsed_cycles" in patched_image_source
-        assert "PQC_BOOT_RCC_BASE" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_MSI" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSI" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_HSE" in patched_image_source
-        assert "#define PQC_BOOT_RCC_CFGR_SWS_PLL" in patched_image_source
-        assert "PQC_BOOT_PQC_BOOT_RCC_CFGR_SWS_" not in patched_image_source
-        assert "PQC_BOOT_RCC_CFGR" in patched_image_source
-        assert "RCC->" not in patched_image_source
-        assert "RCC_PLLCFGR_PLLSRC_Msk" not in patched_image_source
-        assert "RCC_PLLSOURCE_HSI" not in patched_image_source
-        assert "verification_result" in patched_image_source
-        assert "max_stack_used_bytes" in patched_image_source
-        assert "PQC_BOOT_STACK_UNAVAILABLE" in patched_image_source
-        assert "pqc_boot_stack_high_water" not in patched_image_source
-        assert "pqc_boot_stack_paint" not in patched_image_source
-        assert "PQC_BOOT_STACK_SENTINEL" not in patched_image_source
-        assert "WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR" in patched_image_source
+        assert "PQC_BOOT_TIMING_WRAPPER_V3" in patched_image_source
+        assert "pqc_boot_timing_verification_start" in patched_image_source
+        assert "pqc_boot_timing_verification_finish" in patched_image_source
+        assert "pqc_boot_timing_write_mailbox" not in patched_image_source
+        assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 3UL" in patched_hal_source
+        assert "pqc_boot_reset_origin_start" in patched_hal_source
+        assert "pqc_boot_reset_origin_clock_ready" in patched_hal_source
+        assert "pqc_boot_timing_prepare_handoff" in patched_hal_source
+        assert "pqc_boot_reset_origin_valid" in patched_hal_source
+        assert "LPTIM2" in patched_hal_source
+        assert "RCC_LPTIM2CLKSOURCE_HSI" in patched_hal_source
+        assert "PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL" in patched_hal_source
+        assert "pqc_boot_bridge_start(uint32_t *counter_start_cycle)" in patched_hal_source
+        assert "*counter_start_cycle = PQC_BOOT_DWT_CYCCNT" in patched_hal_source
+        assert "reset_origin_to_handoff_us_low" in patched_hal_source
+        assert "handoff_bridge_status" in patched_hal_source
+        assert "elapsed_cycles" in patched_hal_source
+        assert "verification_result" in patched_hal_source
+        assert "max_stack_used_bytes" in patched_hal_source
+        assert "PQC_BOOT_STACK_UNAVAILABLE" in patched_hal_source
         assert "wolfBoot_printf" not in patched_image_source
         assert "pqc_boot_timing_uart_write" not in patched_hal_source
         assert "uart_printf" not in patched_hal_source
+        hal_init_start = patched_hal_source.index("void hal_init(void)")
+        origin_start = patched_hal_source.index("pqc_boot_reset_origin_start();", hal_init_start)
+        clockconfig = patched_hal_source.index("clockconfig(0);", hal_init_start)
+        clock_ready = patched_hal_source.index("pqc_boot_reset_origin_clock_ready();", hal_init_start)
+        assert origin_start < clockconfig < clock_ready
+        prepare_start = patched_hal_source.index("void hal_prepare_boot(void)")
+        assert patched_hal_source.index("pqc_boot_timing_prepare_handoff();", prepare_start) > prepare_start
         artifact_path.write_text("fake wolfboot elf", encoding="utf-8")
         return wolfboot_build.WolfBootCommandExecution(
             command=command,
@@ -242,7 +271,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert result.boot_timing_instrumentation_patch_enabled is True
     assert result.boot_timing_instrumentation_patch_applied is True
     assert result.boot_timing_image_path == image_source_path
-    assert result.boot_timing_hal_path is None
+    assert result.boot_timing_hal_path == hal_source_path
     assert makefile_path.read_text(encoding="utf-8") == original_makefile_text
     assert hal_conf_path.read_text(encoding="utf-8") == original_hal_conf_text
     assert image_source_path.read_text(encoding="utf-8") == original_image_source_text
@@ -252,6 +281,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert result.artifact_sha256 == expected_sha256
     assert result.retained_artifact_path == result.result_dir / "wolfboot.elf"
     assert (result.result_dir / "wolfboot.elf").read_text(encoding="utf-8") == "fake wolfboot elf"
+    assert (result.result_dir / "wolfboot.bin").read_bytes() == b"fake wolfboot binary"
     assert calls == [(["make", "WOLFBOOT_ROOT=.", "wolfboot.elf"], source_dir)]
     assert manifest["result"] == "wolfboot_build_passed"
     assert manifest["wolfboot_build"]["config_applied"] is True
@@ -266,7 +296,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_enabled"] is True
     assert manifest["wolfboot_build"]["boot_timing_instrumentation_patch_applied"] is True
     assert manifest["wolfboot_build"]["boot_timing_image_path"] == str(image_source_path)
-    assert manifest["wolfboot_build"]["boot_timing_hal_path"] is None
+    assert manifest["wolfboot_build"]["boot_timing_hal_path"] == str(hal_source_path)
     assert manifest["wolfboot_build"]["fingerprint_status"] == "available"
     assert len(manifest["wolfboot_build"]["fingerprint"]) == 64
     assert manifest["wolfboot_build"]["fingerprint_algorithm"] == "sha256-secure-boot-inputs-v1"
@@ -283,8 +313,9 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
     assert f"Generated config path: {source_dir / '.config'}" in build_log
 
 
-def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp_path):
+def test_execute_wolfboot_build_synchronizes_generated_key_to_canonical_path(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -458,8 +489,9 @@ def test_validate_wolfboot_build_profile_accepts_mldsa44():
     wolfboot_build.validate_wolfboot_build_profile(profile)
 
 
-def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_path):
+def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -502,8 +534,9 @@ def test_execute_wolfboot_build_removes_stale_host_tool_outputs_before_make(tmp_
         assert not stale_path.exists()
 
 
-def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_path):
+def test_execute_wolfboot_build_preserves_matching_key_and_keystore_tuple(tmp_path, monkeypatch):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -595,9 +628,10 @@ def test_execute_wolfboot_build_rejects_existing_key_when_keystore_is_missing(tm
 
 
 def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_make(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"
@@ -668,6 +702,7 @@ def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_mak
 
 def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkeypatch, tmp_path):
     wolfboot_build = load_wolfboot_build_module()
+    install_fake_objcopy(monkeypatch, wolfboot_build)
     repo_root = tmp_path / "repo"
     source_dir = repo_root / "tools" / "wolfboot"
     artifact_path = source_dir / "wolfboot.elf"

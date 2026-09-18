@@ -237,6 +237,20 @@ SECTIONS
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
   /* Dedicated wolfSSL/wolfCrypt ML-DSA scratch workspace. */
+  /* Retain the 32 KiB deferred result/evidence buffer in RAM3.
+   * Keep it independent from the heavily-used RAM1 .bss/heap/stack region and
+   * from the ML-DSA workspace so map-file accounting remains explicit. */
+  .pqc_result_buffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    __pqc_result_buffer_start__ = .;
+    KEEP(*(.pqc_result_buffer))
+    . = ALIGN(32);
+    __pqc_result_buffer_end__ = .;
+  } >RAM3
+  __pqc_result_buffer_size__ = __pqc_result_buffer_end__ - __pqc_result_buffer_start__;
+  ASSERT(__pqc_result_buffer_size__ <= 0x8000, "PQC result buffer exceeds 32 KiB reservation")
+
   .pqc_mldsa_workspace (NOLOAD) :
   {
     . = ALIGN(8);

@@ -798,11 +798,23 @@ def test_execute_build_always_invokes_configure_and_build(tmp_path):
         if command[:2] == ["cmake", "--build"]:
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_bytes(b"firmware")
+        elif command and command[0] == "arm-none-eabi-objcopy":
+            Path(command[-1]).write_bytes(b"firmware-bin")
         return build.CommandExecution(command, 0, "ok", "", 0.01)
 
     result = build.execute_build(sample_bundle(), repo_root, result_dir, runner=runner)
     assert result.return_code == 0
-    assert calls == [["cmake", "--preset", "Release"], ["cmake", "--build", "--preset", "Release"]]
+    assert calls == [
+        ["cmake", "--preset", "Release"],
+        ["cmake", "--build", "--preset", "Release"],
+        [
+            "arm-none-eabi-objcopy",
+            "-O",
+            "binary",
+            str(artifact),
+            str(artifact.with_suffix(".bin")),
+        ],
+    ]
     assert result.build_skipped is False
     assert result.build_fingerprint is None
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -839,6 +851,10 @@ def test_write_application_selection_uses_profile_application(tmp_path):
         'set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")\n'
         'set(PQC_UART_LOG_LEVEL "info")\n'
         'set(PQC_UART_OUTPUT_MODE "minimal")\n'
+        'set(PQC_FIRMWARE_MODE "single_bank")\n'
+        'set(PQC_DUAL_BANK_ENABLED 0)\n'
+        'set(PQC_OTA_ENABLED 0)\n'
+        'set(PQC_STANDBY_SIGNING_KEYS 0)\n'
     )
 
 

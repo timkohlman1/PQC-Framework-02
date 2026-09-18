@@ -10,7 +10,8 @@ typedef struct {
     size_t block_used;
 } PQC_SHA256Context;
 
-static uint8_t s_buffer[PQC_RESULT_BUFFER_CAPACITY_BYTES];
+static uint8_t s_buffer[PQC_RESULT_BUFFER_CAPACITY_BYTES]
+    __attribute__((section(".pqc_result_buffer"), aligned(32), used));
 static size_t s_used;
 static uint32_t s_records;
 static uint32_t s_dropped;
@@ -87,5 +88,6 @@ drop:
 const uint8_t *PQC_ResultBufferData(void){return s_buffer;}
 size_t PQC_ResultBufferSize(void){return s_used;}
 void PQC_ResultBufferStatusGet(PQC_ResultBufferStatus *status){if(status==NULL)return; status->schema_version=PQC_RESULT_SCHEMA_VERSION; status->record_count=s_records; status->dropped_record_count=s_dropped; status->used_bytes=(uint32_t)s_used; status->overflowed=s_overflowed?1U:0U;}
-void PQC_ResultBufferSha256(uint8_t digest[32]){PQC_SHA256Context ctx;if(digest==NULL)return;sha256_init(&ctx);sha256_update(&ctx,s_buffer,s_used);sha256_final(&ctx,digest);}
+void PQC_ResultBufferHashData(const uint8_t *data, size_t length, uint8_t digest[32]){PQC_SHA256Context ctx;if(digest==NULL)return;if(data==NULL&&length!=0U){memset(digest,0,32U);return;}sha256_init(&ctx);sha256_update(&ctx,data,length);sha256_final(&ctx,digest);}
+void PQC_ResultBufferSha256(uint8_t digest[32]){PQC_ResultBufferHashData(s_buffer,s_used,digest);}
 void PQC_ResultBufferSha256Hex(char output[65]){static const char hex[]="0123456789abcdef";uint8_t digest[32];unsigned int i;if(output==NULL)return;PQC_ResultBufferSha256(digest);for(i=0U;i<32U;i++){output[2U*i]=hex[digest[i]>>4];output[2U*i+1U]=hex[digest[i]&0x0fU];}output[64]='\0';}

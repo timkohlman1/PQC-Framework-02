@@ -573,7 +573,10 @@ def test_deferred_register_rows_have_all_required_values() -> None:
         assert len(cells) == expected_cells, f"Malformed deferred-test row: {row}"
         assert all(cells), f"Deferred-test row contains an empty required field: {row}"
         assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
-        assert "./scripts/dev.ps1" in cells[6], f"Verification command is not explicit: {row}"
+        assert (
+            "./scripts/dev.ps1" in cells[6]
+            or "./scripts/dev.sh" in cells[6]
+        ), f"Verification command is not explicit: {row}"
 
 DOCUMENTATION_INDEX = "docs/README.md"
 PROJECT_DOCUMENT_PATTERNS = (
@@ -809,3 +812,19 @@ def test_wolfssl_dependency_ownership_is_explicit_and_consistent() -> None:
 
     assert "Application TLS/wolfCrypt builds use the top-level `Middlewares/Third_Party/wolfSSL` submodule" in readme
 
+
+
+def test_hardware_test_standard_is_self_contained() -> None:
+    guide = _read("AI_BUILD_GUIDE.md")
+    workflow = _read("docs/001_ai_feature_request_workflow.md")
+    architecture = _read("docs/007_framework_architecture.md")
+    flash = _read("docs/005_remote_flash_workflow.md")
+
+    assert "Hardware tests must be self-contained by default" in guide
+    assert "Hardware-test design standard" in workflow
+    assert "Hardware tests are self-contained by default" in architecture
+    assert "pre-generated campaigns" in workflow
+    assert "test-specific environment variables" in workflow
+    assert "Automated hardware tests" in flash
+    assert "test_application_timebase_hw.py" in flash
+    assert "PQC_TIMEBASE_UART_LOG" not in architecture.split("| DTR-015 |", 1)[1].splitlines()[0]

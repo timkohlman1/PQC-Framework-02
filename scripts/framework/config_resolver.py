@@ -20,6 +20,8 @@ import yaml
 SCHEMA_VERSION = 1
 RESOLVER_VERSION = 1
 AUTH_MODES = {"server", "mutual"}
+FIRMWARE_MODES = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}
+STANDBY_SIGNING_KEY_COUNTS = {0, 1, 2}
 PROFILE_DIRS = {
     "target": Path("targets"),
     "gateway": Path("gateways"),
@@ -219,6 +221,23 @@ class ConfigResolver:
             raise ResolutionError(f"unsupported auth_mode: {auth_mode}")
         if auth_mode not in tls_auth.data["supported_modes"]:
             raise ResolutionError(f"tls_auth '{tls_auth.profile_id}' does not support auth_mode '{auth_mode}'")
+        firmware_mode = str(choices.get("firmware_mode", "single_bank"))
+        if firmware_mode not in FIRMWARE_MODES:
+            raise ResolutionError(
+                "firmware_mode must be one of: " + ", ".join(sorted(FIRMWARE_MODES))
+            )
+        try:
+            standby_signing_keys = int(choices.get("standby_signing_keys", 0))
+        except (TypeError, ValueError) as exc:
+            raise ResolutionError("standby_signing_keys must be 0, 1, or 2") from exc
+        if standby_signing_keys not in STANDBY_SIGNING_KEY_COUNTS:
+            raise ResolutionError("standby_signing_keys must be 0, 1, or 2")
+        secure_signing = secure_boot.data.get("signing", {})
+        if standby_signing_keys and not bool(secure_signing.get("requires_private_key")):
+            raise ResolutionError(
+                "standby_signing_keys requires a signed secure-boot profile; "
+                "integrity-only profiles do not have firmware signing keys"
+            )
         effective_workload = _deep_merge(workload.data, workload_overrides)
         uart_mode = str(effective_workload.get("uart_output_mode", "minimal"))
         if uart_mode not in {"disabled", "minimal", "full"}:
@@ -245,6 +264,8 @@ class ConfigResolver:
         public_choices = {
             "tls_kex": tls_kex.profile_id, "tls_auth": tls_auth.profile_id, "auth_mode": auth_mode,
             "secure_boot": secure_boot.profile_id, "network_condition": network.profile_id,
+            "firmware_mode": firmware_mode,
+            "standby_signing_keys": standby_signing_keys,
         }
         if transfer:
             public_choices["payload_bytes"] = int(transfer["payload_bytes"])
@@ -266,6 +287,8 @@ class ConfigResolver:
             "auth_mode": auth_mode,
             "secure_boot": secure_boot.profile_id,
             "workload": workload.profile_id,
+            "firmware_mode": firmware_mode,
+            "standby_signing_keys": standby_signing_keys,
         }
         if transfer:
             firmware_choices["payload_bytes"] = int(transfer["payload_bytes"])
@@ -421,7 +444,11 @@ class ConfigResolver:
             "board": board_id, "host": host_id, "boot": "direct_flash",
             "firmware": {"application": workload["firmware_application"], "uart_log_level": workload.get("uart_log_level", "info"),
                          "uart_output_mode": workload.get("uart_output_mode", "minimal"),
-                         "mode": "direct_flash", "artifact": target["build"]["artifact"]},
+                         "mode": "direct_flash", "artifact": target["build"]["artifact"],
+                         "firmware_mode": str(c.get("firmware_mode", "single_bank")),
+                         "dual_bank_enabled": str(c.get("firmware_mode", "single_bank")) != "single_bank",
+                         "ota_enabled": str(c.get("firmware_mode", "single_bank")) == "dual_bank_ota",
+                         "standby_signing_keys": int(c.get("standby_signing_keys", 0))},
             "network": {"wifi": {"ssid": ssid, "psk": psk}, "ipv4": {"mode": target["network"]["ipv4_mode"]},
                         "packet_capture": {"enabled": True, "interface": gateway["network"]["capture_interface"]},
                         "degradation": network.get("impairment", {})},

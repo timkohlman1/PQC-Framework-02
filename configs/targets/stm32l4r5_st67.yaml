@@ -17,6 +17,11 @@ capabilities:
   standalone_mlkem_tls: true
   wolfboot: true
   energy_sync_gpio: true
+  firmware_modes:
+  - single_bank
+  - dual_bank_no_ota
+  - dual_bank_ota
+  max_standby_signing_keys: 2
 network:
   ipv4_mode: dhcp
   wifi:

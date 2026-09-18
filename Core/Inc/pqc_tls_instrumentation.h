@@ -56,8 +56,8 @@ typedef struct
     uint32_t max_cycles;
     uint32_t first_start_cycle;
     uint32_t last_end_cycle;
-    uint32_t first_start_tick_ms;
-    uint32_t last_end_tick_ms;
+    uint64_t first_start_us;
+    uint64_t last_end_us;
 } PQC_TLSTimingAggregate;
 
 #define PQC_TLS_X509_VERIFY_INVOCATION_CAPACITY 4U
@@ -74,9 +74,9 @@ typedef struct
     uint32_t handshake_start_cycle;
     uint32_t handshake_end_cycle;
     uint32_t handshake_elapsed_cycles;
-    uint32_t handshake_start_tick_ms;
-    uint32_t handshake_end_tick_ms;
-    uint32_t handshake_elapsed_ms;
+    uint64_t handshake_start_us;
+    uint64_t handshake_end_us;
+    uint64_t handshake_elapsed_us;
     uint32_t stack_before_min_free_bytes;
     uint32_t stack_after_min_free_bytes;
     uint32_t heap_before_free_bytes;

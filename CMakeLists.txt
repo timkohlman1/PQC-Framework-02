@@ -32,6 +32,8 @@ option(PQC_WOLFSSL_MEMORY_DIAGNOSTICS
     "Enable wolfSSL heap/failure UART diagnostics (changes timing)" OFF)
 option(PQC_WOLFSSL_ALLOCATION_PROVENANCE
     "Enable wolfSSL allocation source/type UART tracing (changes timing)" OFF)
+option(PQC_TIMEBASE_HARDWARE_SELF_TEST
+    "Enable a pre-workload 10 ms TIM2/HAL tick comparison marker for hardware validation" OFF)
 set(PQC_MLDSA_WORKSPACE_SIZE_BYTES "98304" CACHE STRING
     "Dedicated RAM3 ML-DSA scratch workspace size in bytes")
 
@@ -111,6 +113,10 @@ message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
 set(PQC_UART_LOG_LEVEL "info")
 set(PQC_UART_OUTPUT_MODE "minimal")
+set(PQC_FIRMWARE_MODE "single_bank")
+set(PQC_DUAL_BANK_ENABLED 0)
+set(PQC_OTA_ENABLED 0)
+set(PQC_STANDBY_SIGNING_KEYS 0)
 set(PQC_APPLICATION_SELECTION_FILE "${CMAKE_BINARY_DIR}/pqc_generated/pqc_application_selection.cmake")
 if(EXISTS "${PQC_APPLICATION_SELECTION_FILE}")
     include("${PQC_APPLICATION_SELECTION_FILE}")
@@ -125,6 +131,21 @@ else()
     message(FATAL_ERROR "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}")
 endif()
 message("STM32 MQTT application: " ${PQC_STM32_MQTT_APPLICATION})
+if(NOT PQC_FIRMWARE_MODE STREQUAL "single_bank" AND
+   NOT PQC_FIRMWARE_MODE STREQUAL "dual_bank_no_ota" AND
+   NOT PQC_FIRMWARE_MODE STREQUAL "dual_bank_ota")
+    message(FATAL_ERROR "Unsupported PQC_FIRMWARE_MODE: ${PQC_FIRMWARE_MODE}")
+endif()
+if(PQC_OTA_ENABLED AND NOT PQC_DUAL_BANK_ENABLED)
+    message(FATAL_ERROR "PQC_OTA_ENABLED requires PQC_DUAL_BANK_ENABLED")
+endif()
+if(PQC_STANDBY_SIGNING_KEYS LESS 0 OR PQC_STANDBY_SIGNING_KEYS GREATER 2)
+    message(FATAL_ERROR "PQC_STANDBY_SIGNING_KEYS must be 0, 1, or 2")
+endif()
+message("Firmware mode: " ${PQC_FIRMWARE_MODE})
+message("Dual-bank compiled: " ${PQC_DUAL_BANK_ENABLED})
+message("OTA compiled: " ${PQC_OTA_ENABLED})
+message("Standby signing keys: " ${PQC_STANDBY_SIGNING_KEYS})
 
 
 # Create an executable object type
@@ -309,6 +330,10 @@ target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
     BUILDING_WOLFMQTT
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
+    PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
+    PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
+    PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
+    PQC_TIMEBASE_HARDWARE_SELF_TEST=$<BOOL:${PQC_TIMEBASE_HARDWARE_SELF_TEST}>
 )
 
 # Link directories setup
@@ -322,6 +347,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_network_interface.c
     Core/Src/pqc_wolfmqtt_build_only.c
     Core/Src/pqc_tls_instrumentation.c
+    Core/Src/pqc_timebase.c
     Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
@@ -357,6 +383,9 @@ endif()
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_TLS_COMPILED=${PQC_TLS_COMPILED}
+    PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
+    PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
+    PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
     WOLFMQTT_USER_SETTINGS
     WOLFMQTT_NO_STDIO
     USER_VECT_TAB_ADDRESS

@@ -25,6 +25,7 @@ bool PQC_ResultBufferAppendText(uint32_t iteration, const char *context, const c
 const uint8_t *PQC_ResultBufferData(void);
 size_t PQC_ResultBufferSize(void);
 void PQC_ResultBufferStatusGet(PQC_ResultBufferStatus *status);
+void PQC_ResultBufferHashData(const uint8_t *data, size_t length, uint8_t digest[32]);
 void PQC_ResultBufferSha256(uint8_t digest[32]);
 void PQC_ResultBufferSha256Hex(char output[65]);
 

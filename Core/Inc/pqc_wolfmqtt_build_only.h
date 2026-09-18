@@ -41,42 +41,41 @@ typedef struct
     int last_result;
 } PQC_WolfMQTTBuildOnlyStatus;
 
-/* Ready Metrics 2 stores end-to-end application timing in RAM while the
- * benchmark-critical path is active. All fields are HAL/FreeRTOS millisecond
- * ticks or durations derived from those ticks. The firmware boot origin is the
- * first reliable HAL tick captured immediately after HAL_Init(). */
+/* Ready Metrics 2 stores research timing in microseconds from the dedicated
+ * 1 MHz application timebase. Millisecond compatibility fields are derived
+ * only when serializing legacy output; HAL/FreeRTOS ticks remain OS timing. */
 typedef struct
 {
     uint32_t schema_version;
-    uint32_t firmware_boot_origin_tick_ms;
-    uint32_t ttfb_start_tick_ms;
-    uint32_t tcp_connected_tick_ms;
-    uint32_t tls_complete_tick_ms;
-    uint32_t mqtt_first_response_tick_ms;
-    uint32_t mqtt_connected_tick_ms;
-    uint32_t application_request_tick_ms;
-    uint32_t application_first_byte_tick_ms;
-    uint32_t application_last_byte_tick_ms;
-    uint32_t ready_published_tick_ms;
-    uint32_t measurement_complete_tick_ms;
-    uint32_t tcp_connect_ms;
-    uint32_t ttfb_ms;
-    uint32_t mqtt_connect_ms;
-    uint32_t application_ttfb_ms;
-    uint32_t ttlb_ms;
-    uint32_t application_request_to_first_byte_ms;
-    uint32_t application_transfer_ms;
+    uint64_t tcp_connect_start_us;
+    uint64_t tcp_connected_us;
+    uint64_t tls_complete_us;
+    uint64_t mqtt_first_response_us;
+    uint64_t mqtt_connected_us;
+    uint64_t application_request_us;
+    uint64_t application_first_byte_us;
+    uint64_t application_last_byte_us;
+    uint64_t ready_published_us;
+    uint64_t measurement_complete_us;
+    uint64_t tcp_connect_us;
+    uint64_t mqtt_first_response_elapsed_us;
+    uint64_t mqtt_connect_us;
+    uint64_t application_ttfb_us;
+    uint64_t ttlb_us;
+    uint64_t application_request_to_first_byte_us;
+    uint64_t application_transfer_us;
+    uint64_t legacy_connect_timing_us;
+    uint64_t reset_to_tcp_connect_us;
+    uint64_t reset_to_tls_complete_us;
+    uint64_t reset_to_mqtt_first_response_us;
+    uint64_t reset_to_mqtt_connected_us;
+    uint64_t reset_to_application_first_byte_us;
+    uint64_t reset_to_application_last_byte_us;
+    uint64_t reset_to_ready_publish_us;
     uint32_t transfer_payload_bytes;
     uint32_t transfer_received_bytes;
     uint32_t transfer_message_count;
-    uint32_t firmware_boot_to_tcp_connect_ms;
-    uint32_t firmware_boot_to_tls_complete_ms;
-    uint32_t firmware_boot_to_mqtt_first_response_ms;
-    uint32_t firmware_boot_to_mqtt_connected_ms;
-    uint32_t firmware_boot_to_application_first_byte_ms;
-    uint32_t firmware_boot_to_application_last_byte_ms;
-    uint32_t firmware_boot_to_ready_publish_ms;
-    uint32_t legacy_connect_timing_ms;
+    uint8_t reset_origin_valid;
     uint8_t tcp_timing_valid;
     uint8_t tls_timing_valid;
     uint8_t mqtt_first_response_valid;
@@ -98,9 +97,7 @@ int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status);
 
 int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void));
 
-int PQC_WolfMQTT_RunReadyMetrics2Application(
-    void (*mark_complete)(void),
-    uint32_t firmware_boot_origin_tick_ms);
+int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void));
 
 int PQC_WolfMQTT_PublishDeferredResults(
     const uint8_t *data,
@@ -109,6 +106,37 @@ int PQC_WolfMQTT_PublishDeferredResults(
     uint32_t record_count,
     uint32_t dropped_record_count,
     bool overflowed);
+
+#ifndef PQC_OTA_ENABLED
+#define PQC_OTA_ENABLED 0
+#endif
+
+#if PQC_OTA_ENABLED
+#define PQC_OTA_SCHEMA_VERSION 1U
+#define PQC_OTA_FLAG_BOOTLOADER_MIGRATION 0x00000001UL
+
+typedef struct
+{
+    uint32_t schema_version;
+    uint32_t flags;
+    uint32_t active_physical_bank;
+    uint32_t inactive_physical_bank;
+    uint32_t expected_bootloader_bytes;
+    uint32_t expected_manifest_bytes;
+    uint32_t expected_application_bytes;
+    uint32_t received_bootloader_bytes;
+    uint32_t received_manifest_bytes;
+    uint32_t received_application_bytes;
+    uint8_t staged_hashes_valid;
+    uint8_t activation_requested;
+} PQC_OtaStatus;
+
+/* OTA transport is carried only on the impairment-exempt plaintext reporting
+ * broker. The service consumes retained, bounded chunks after deferred result
+ * publication, verifies complete-bank hashes, and only then resets for wolfBoot
+ * candidate-bank authentication/activation. */
+int PQC_WolfMQTT_ServiceRetainedOta(PQC_OtaStatus *status);
+#endif /* PQC_OTA_ENABLED */
 
 const PQC_WolfMQTTReadyMetrics2Snapshot *PQC_WolfMQTT_ReadyMetrics2Snapshot(void);
 

@@ -93,6 +93,22 @@ Extraction command pattern:
 Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
 ```
 
+## Hardware-test design standard
+
+When an implementation adds or materially updates a test under `tests/hardware/`, the default design is self-contained orchestration rather than retained-log replay or a documented sequence of manual prerequisite commands. A normal `pytest-hardware` invocation should:
+
+1. capability-gate the real laboratory dependencies it needs;
+2. resolve or materialise its own canonical test case/configuration;
+3. prepare its own build, signing, broker, gateway, or other framework-owned prerequisites;
+4. execute the real framework path that owns flashing/runtime behaviour;
+5. capture the evidence it needs during that execution;
+6. assert the hardware/runtime result from that captured evidence; and
+7. clean up test-owned temporary/generated state.
+
+Do not make pre-generated campaigns, manual CMake/build/sign/flash steps, prior result directories, or test-specific environment variables prerequisites for the default hardware-test invocation. External capabilities such as a reachable gateway, configured credentials, flash helper, UART device, broker infrastructure, or physical instruments remain legitimate capability gates because the test cannot create those laboratory resources. Optional selectors may narrow a profile matrix, but the default selected case must remain runnable without test-specific setup.
+
+Use existing self-bootstrapping hardware tests, such as the dual-bank OTA hardware workflow, as the preferred orchestration pattern when adding new coverage. Retained-log parsers may exist as helper/unit coverage, but they do not replace the self-contained hardware test when the feature can be exercised through the framework.
+
 ## Safety rules
 
 - Do not implement future phases early.

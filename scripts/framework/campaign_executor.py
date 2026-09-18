@@ -816,6 +816,9 @@ class CampaignExecutor:
             "--campaign-condition-identity", cid,
             "--campaign-repetition-index", str(repetition),
         ]
+        ota_plan = case.get("execution", {}).get("ota_plan") if isinstance(case.get("execution"), dict) else None
+        if ota_plan:
+            command.extend(["--ota-plan", str(ota_plan)])
         if policy.reset_between_runs == "none":
             command.append("--skip-hardware-reset")
         log_path = campaign_root / "logs" / f"{case['id']}-rep-{repetition:04d}.log"

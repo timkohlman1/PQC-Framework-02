@@ -96,6 +96,7 @@ from framework.packet_capture import (
     stop_and_collect_gateway_packet_capture,
 )
 from framework.result_collector import (
+    reporting_config,
     start_gateway_result_collector,
     stop_and_collect_gateway_result_collector,
 )
@@ -108,6 +109,9 @@ from framework.network_degradation import (
 from framework.tls_algorithms import TLS_GROUPS, resolve_tls_algorithm_set
 from framework.config_resolver import ConfigResolver, ResolutionError, render_wolfboot_config
 from framework.signing import execute_application_signing
+from framework.ota import (
+    build_manifest_payload, candidate_from_files, deliver_retained_plan, make_fault_plan, write_plan,
+)
 from framework.secure_boot_flash import (
     SecureBootFlashProfileError,
     _classical_profile_metadata,
@@ -257,7 +261,7 @@ def _parse_ready_metrics_subscriber_output(
 def _parse_ready_metrics_2_subscriber_output(
     output: str, *, response_topic: str
 ) -> dict[str, Any]:
-    """Validate the fixed Ready Metrics 2 broker result bundle."""
+    """Validate the Ready Metrics 2 microsecond timing/result bundle."""
 
     payloads: list[str] = []
     prefix = response_topic + " "
@@ -291,80 +295,105 @@ def _parse_ready_metrics_2_subscriber_output(
     for decoded in decoded_messages:
         by_type.setdefault(str(decoded.get("type", "")), []).append(decoded)
 
-    timing = by_type.get("experiment_timing", [])
-    timing_message = timing[0] if len(timing) == 1 else {}
+    timebase_messages = by_type.get("application_timebase", [])
+    timebase = timebase_messages[0] if len(timebase_messages) == 1 else {}
+    timebase_valid = (
+        len(timebase_messages) == 1
+        and timebase.get("schema_version") == 2
+        and timebase.get("source") == "TIM2"
+        and isinstance(timebase.get("timer_input_clock_hz"), int)
+        and timebase["timer_input_clock_hz"] > 0
+        and isinstance(timebase.get("prescaler"), int)
+        and timebase["prescaler"] >= 0
+        and timebase.get("counter_hz") == 1_000_000
+        and timebase.get("counter_bits") == 32
+        and timebase.get("wrap_handling") == "update_irq_64bit_extension"
+        and timebase.get("reset_origin_valid") in (0, 1)
+        and isinstance(timebase.get("reset_origin_to_application_timebase_us"), int)
+        and timebase["reset_origin_to_application_timebase_us"] >= 0
+        and timebase.get("firmware_elf_sha256_source") == "run_manifest"
+    )
+    if timebase_valid:
+        expected_hz = timebase["timer_input_clock_hz"] // (timebase["prescaler"] + 1)
+        timebase_valid = expected_hz == 1_000_000
+
+    timing_messages = by_type.get("experiment_timing", [])
+    timing_message = timing_messages[0] if len(timing_messages) == 1 else {}
     timing_fields = (
-        "tcp_connect_ms",
-        "ttfb_ms",
-        "mqtt_connect_ms",
-        "legacy_connect_timing_ms",
+        "tcp_connect_us",
+        "mqtt_first_response_us",
+        "mqtt_connect_us",
+        "legacy_connect_timing_us",
     )
     timing_valid = (
-        len(timing) == 1
-        and timing_message.get("schema_version") == 1
-        and timing_message.get("ttfb_definition")
+        len(timing_messages) == 1
+        and timing_message.get("schema_version") == 2
+        and timing_message.get("mqtt_first_response_definition")
         == "tcp_connect_start_to_first_mqtt_connack_plaintext_byte"
         and timing_message.get("dns_included") is False
         and all(
-            isinstance(timing_message.get(field), int)
-            and timing_message[field] >= 0
+            isinstance(timing_message.get(field), int) and timing_message[field] >= 0
             for field in timing_fields
         )
         and timing_message.get("first_response_valid") == 1
-        and timing_message["ttfb_ms"] >= timing_message["tcp_connect_ms"]
+        and timing_message["mqtt_first_response_us"] >= timing_message["tcp_connect_us"]
     )
 
     boot_messages = by_type.get("boot_timing", [])
     boot_message = boot_messages[0] if len(boot_messages) == 1 else {}
     boot_fields = (
-        "boot_to_tcp_connect_ms",
-        "boot_to_tls_complete_ms",
-        "boot_to_mqtt_first_response_ms",
-        "boot_to_mqtt_connected_ms",
-        "boot_to_application_first_byte_ms",
-        "boot_to_application_last_byte_ms",
-        "boot_to_ready_publish_ms",
+        "reset_to_tcp_connect_us",
+        "reset_to_tls_complete_us",
+        "reset_to_mqtt_first_response_us",
+        "reset_to_mqtt_connected_us",
+        "reset_to_application_first_byte_us",
+        "reset_to_application_last_byte_us",
+        "reset_to_ready_publish_us",
     )
-    boot_fields_are_non_negative = (
+    boot_fields_non_negative = (
         len(boot_messages) == 1
         and all(
-            isinstance(boot_message.get(field), int)
-            and boot_message[field] >= 0
+            isinstance(boot_message.get(field), int) and boot_message[field] >= 0
             for field in boot_fields
         )
     )
     tls_timing_valid = timing_message.get("tls_timing_valid")
-    if tls_timing_valid == 1:
-        boot_order_valid = (
-            boot_message["boot_to_application_last_byte_ms"]
-            >= boot_message["boot_to_application_first_byte_ms"]
-            >= boot_message["boot_to_mqtt_connected_ms"]
-            >= boot_message["boot_to_mqtt_first_response_ms"]
-            >= boot_message["boot_to_tls_complete_ms"]
-            >= boot_message["boot_to_tcp_connect_ms"]
-        ) if boot_fields_are_non_negative else False
+    reset_origin_valid = boot_message.get("reset_origin_valid")
+    if boot_fields_non_negative and reset_origin_valid == 1:
+        if tls_timing_valid == 1:
+            boot_order_valid = (
+                boot_message["reset_to_ready_publish_us"]
+                >= boot_message["reset_to_application_last_byte_us"]
+                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["reset_to_mqtt_connected_us"]
+                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_tls_complete_us"]
+                >= boot_message["reset_to_tcp_connect_us"]
+            )
+        else:
+            boot_order_valid = (
+                boot_message["reset_to_tls_complete_us"] == 0
+                and boot_message["reset_to_ready_publish_us"]
+                >= boot_message["reset_to_application_last_byte_us"]
+                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["reset_to_mqtt_connected_us"]
+                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_tcp_connect_us"]
+            )
+    elif boot_fields_non_negative and reset_origin_valid == 0:
+        boot_order_valid = all(boot_message[field] == 0 for field in boot_fields)
     else:
-        # Plaintext Ready Metrics 2 has no TLS-complete event. Preserve zero as
-        # the explicit unavailable value and validate the remaining TCP/MQTT
-        # ordering without inventing a synthetic TLS boundary.
-        boot_order_valid = (
-            boot_message["boot_to_tls_complete_ms"] == 0
-            and boot_message["boot_to_application_last_byte_ms"]
-            >= boot_message["boot_to_application_first_byte_ms"]
-            >= boot_message["boot_to_mqtt_connected_ms"]
-            >= boot_message["boot_to_mqtt_first_response_ms"]
-            >= boot_message["boot_to_tcp_connect_ms"]
-        ) if boot_fields_are_non_negative else False
+        boot_order_valid = False
 
     boot_valid = (
         len(boot_messages) == 1
-        and boot_message.get("schema_version") == 1
-        and boot_message.get("firmware_boot_origin") == "post_hal_init"
-        and boot_fields_are_non_negative
+        and boot_message.get("schema_version") == 2
+        and boot_message.get("reset_origin") == "wolfboot_entry"
+        and reset_origin_valid in (0, 1)
+        and reset_origin_valid == timebase.get("reset_origin_valid")
         and tls_timing_valid in (0, 1)
+        and boot_fields_non_negative
         and boot_order_valid
-        and boot_message["boot_to_ready_publish_ms"]
-        >= boot_message["boot_to_application_last_byte_ms"]
     )
 
     connect_messages = by_type.get("connect_timing", [])
@@ -394,11 +423,12 @@ def _parse_ready_metrics_2_subscriber_output(
             for item in memory_messages
         )
     )
+
     handshake_messages = by_type.get("tls_handshake_timing", [])
     handshake = handshake_messages[0] if len(handshake_messages) == 1 else {}
     handshake_fields = (
         "elapsed_cycles",
-        "elapsed_ms",
+        "elapsed_us",
         "stack_before_min_free_bytes",
         "stack_after_min_free_bytes",
         "heap_before_free_bytes",
@@ -408,20 +438,28 @@ def _parse_ready_metrics_2_subscriber_output(
     )
     handshake_valid = (
         len(handshake_messages) == 1
-        and handshake.get("schema_version") == 1
+        and handshake.get("schema_version") == 2
         and handshake.get("available") in (0, 1)
         and isinstance(handshake.get("result"), int)
         and handshake.get("cycle_counter_available") in (0, 1)
+        and handshake.get("timing_sources") == "dwt_cycles+application_timebase_us"
         and all(
             isinstance(handshake.get(field), int) and handshake[field] >= 0
             for field in handshake_fields
         )
     )
 
-    def _valid_timing_record(record: Any) -> bool:
+    def _valid_cycle_record(record: Any) -> bool:
         return (
             isinstance(record, list)
             and len(record) == 6
+            and all(isinstance(value, int) and value >= 0 for value in record)
+        )
+
+    def _valid_phase_record(record: Any) -> bool:
+        return (
+            isinstance(record, list)
+            and len(record) == 8
             and all(isinstance(value, int) and value >= 0 for value in record)
         )
 
@@ -429,10 +467,10 @@ def _parse_ready_metrics_2_subscriber_output(
     phase_values = phase_messages[0].get("values") if len(phase_messages) == 1 else None
     phase_valid = (
         len(phase_messages) == 1
-        and phase_messages[0].get("schema_version") == 1
+        and phase_messages[0].get("schema_version") == 2
         and isinstance(phase_values, list)
         and len(phase_values) == 5
-        and all(_valid_timing_record(record) for record in phase_values)
+        and all(_valid_phase_record(record) for record in phase_values)
     )
 
     primitive_ranges = [(0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 24)]
@@ -440,17 +478,17 @@ def _parse_ready_metrics_2_subscriber_output(
     if primitive_valid:
         for part, (first_index, last_index) in enumerate(primitive_ranges, start=1):
             message = next(
-                (item for item in primitive_messages if item.get("part") == part),
-                {},
+                (item for item in primitive_messages if item.get("part") == part), {}
             )
             values = message.get("values")
             if not (
-                message.get("schema_version") == 1
+                message.get("schema_version") == 2
+                and message.get("timing_source") == "dwt_cycles"
                 and message.get("first_index") == first_index
                 and message.get("last_index") == last_index
                 and isinstance(values, list)
                 and len(values) == (last_index - first_index + 1)
-                and all(_valid_timing_record(record) for record in values)
+                and all(_valid_cycle_record(record) for record in values)
             ):
                 primitive_valid = False
                 break
@@ -460,7 +498,8 @@ def _parse_ready_metrics_2_subscriber_output(
     x509_cycles = x509.get("elapsed_cycles")
     x509_valid = (
         len(x509_messages) == 1
-        and x509.get("schema_version") == 1
+        and x509.get("schema_version") == 2
+        and x509.get("timing_source") == "dwt_cycles"
         and isinstance(x509.get("count"), int)
         and 0 <= x509["count"] <= 4
         and x509.get("overflow") in (0, 1)
@@ -468,40 +507,33 @@ def _parse_ready_metrics_2_subscriber_output(
         and len(x509_cycles) == 4
         and all(isinstance(value, int) and value >= 0 for value in x509_cycles)
     )
-
     tls_bundle_valid = handshake_valid and phase_valid and primitive_valid and x509_valid
 
     transfer_messages = by_type.get("application_transfer_timing", [])
     transfer_message = transfer_messages[0] if len(transfer_messages) == 1 else {}
     transfer_numeric_fields = (
-        "payload_bytes",
-        "received_bytes",
-        "message_count",
-        "chunk_bytes",
-        "application_ttfb_ms",
-        "ttlb_ms",
-        "request_to_first_byte_ms",
-        "application_transfer_ms",
+        "payload_bytes", "received_bytes", "message_count", "chunk_bytes",
+        "application_ttfb_us", "ttlb_us", "request_to_first_byte_us",
+        "application_transfer_us",
     )
     transfer_valid = (
         len(transfer_messages) == 1
-        and transfer_message.get("schema_version") == 1
+        and transfer_message.get("schema_version") == 2
         and transfer_message.get("ttlb_definition")
         == "tcp_connect_start_to_last_byte_of_requested_application_payload"
         and transfer_message.get("direction") == "broker_to_stm32"
         and all(
-            isinstance(transfer_message.get(field), int)
-            and transfer_message[field] >= 0
+            isinstance(transfer_message.get(field), int) and transfer_message[field] >= 0
             for field in transfer_numeric_fields
         )
         and transfer_message["payload_bytes"] > 0
         and transfer_message["received_bytes"] == transfer_message["payload_bytes"]
         and transfer_message["message_count"] > 0
         and 0 < transfer_message["chunk_bytes"] <= 400
-        and transfer_message["application_ttfb_ms"] >= timing_message.get("ttfb_ms", 0)
-        and transfer_message["ttlb_ms"] >= transfer_message["application_ttfb_ms"]
-        and transfer_message["application_transfer_ms"]
-        <= transfer_message["ttlb_ms"]
+        and transfer_message["application_ttfb_us"]
+        >= timing_message.get("mqtt_first_response_us", 0)
+        and transfer_message["ttlb_us"] >= transfer_message["application_ttfb_us"]
+        and transfer_message["application_transfer_us"] <= transfer_message["ttlb_us"]
         and transfer_message.get("first_byte_valid") == 1
         and transfer_message.get("last_byte_valid") == 1
         and transfer_message.get("complete_valid") == 1
@@ -509,15 +541,16 @@ def _parse_ready_metrics_2_subscriber_output(
 
     complete_valid = (
         len(complete_messages) == 1
-        and complete_messages[0].get("schema_version") == 1
+        and complete_messages[0].get("schema_version") == 2
         and complete_messages[0].get("status") == "success"
-        and complete_messages[0].get("message_count") == 17
+        and complete_messages[0].get("message_count") == 18
     )
     passed = (
-        len(payloads) == 17
+        len(payloads) == 18
         and ready_count == 1
         and connect_valid
         and memory_valid
+        and timebase_valid
         and timing_valid
         and boot_valid
         and tls_bundle_valid
@@ -533,7 +566,9 @@ def _parse_ready_metrics_2_subscriber_output(
         "connect_count": len(connect_messages),
         "memory_count": len(memory_messages),
         "memory_sequences": memory_sequences,
-        "timing_count": len(timing),
+        "timebase_valid": timebase_valid,
+        "application_timebase": timebase if timebase_valid else None,
+        "timing_count": len(timing_messages),
         "timing_valid": timing_valid,
         "experiment_timing": timing_message if timing_valid else None,
         "boot_timing": boot_message if boot_valid else None,
@@ -1530,9 +1565,19 @@ def _execute_mqtt_e2e_uart_capture(
     result_dir: Path,
     duration_seconds: int,
     restart_command: str | None,
+    ota_plan: Path | None = None,
     manage_broker_lifecycle: bool = True,
     manage_network_condition: bool = True,
 ):
+    ota_wait_mode: str | None = None
+    if ota_plan is not None:
+        ota_plan_path = Path(ota_plan)
+        if not ota_plan_path.is_absolute():
+            ota_plan_path = repo_root / ota_plan_path
+        ota_plan_payload = json.loads(ota_plan_path.read_text(encoding="utf-8"))
+        if not ota_plan_payload.get("negative_test_fault"):
+            ota_wait_mode = "rollback" if ota_plan_payload.get("test_no_confirm") else "confirmed"
+
     broker_log_since = datetime.now(timezone.utc).isoformat()
     if manage_broker_lifecycle:
         broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
@@ -1575,6 +1620,33 @@ def _execute_mqtt_e2e_uart_capture(
                 stop_broker=False, log_since=broker_log_since,
             )
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "result_collector_start"
+
+    if ota_plan is not None:
+        plan_path = Path(ota_plan)
+        if not plan_path.is_absolute():
+            plan_path = repo_root / plan_path
+        reporting_host, reporting_port = reporting_config(bundle)
+        ota_delivery = deliver_retained_plan(
+            plan_path=plan_path,
+            repo_root=repo_root,
+            gateway_target=gateway_ssh_target(bundle["host"]),
+            reporting_host=reporting_host,
+            reporting_port=reporting_port,
+            run_id=result_dir.name,
+        )
+        update_manifest(result_dir / "manifest.json", {"ota": {
+            "requested": True,
+            "plan": str(plan_path),
+            "transport": "reporting_mqtt_plaintext",
+            "impairment_exempt": True,
+            "delivery": ota_delivery,
+        }})
+        if int(ota_delivery.get("return_code", 1)) != 0:
+            stop_and_collect_gateway_result_collector(collector=result_collector, repo_root=repo_root, result_dir=result_dir)
+            if manage_broker_lifecycle:
+                _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+            return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, "ota_delivery"
+        emit_progress("ota", "Candidate bank queued on reporting control plane", detail=f"Plan: {plan_path}.")
 
     packet_capture, packet_capture_start = start_gateway_packet_capture(
         bundle=bundle,
@@ -1676,6 +1748,8 @@ def _execute_mqtt_e2e_uart_capture(
     expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
+    if ota_wait_mode is not None:
+        hard_limit_seconds = max(hard_limit_seconds, 240)
     max_attempts = int(orchestration.get("max_publish_attempts", max(1, hard_limit_seconds - 2)))
     completion_grace_seconds = int(orchestration.get("completion_grace_seconds", 3))
     boot_marker = str(experiment["uart"]["expected_boot_message"])
@@ -1818,6 +1892,7 @@ def _execute_mqtt_e2e_uart_capture(
         + f"{restart_command} 1>&2; reset_rc=$?; "
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
         + f'reporting_completion_topic={shlex.quote(reporting_completion_topic)}; reporting_complete_seen=0; '
+        + 'ota_terminal_seen=0; '
     )
     subscriber_cleanup = (
         f'docker rm -f "{oqs_subscriber_name}" >/dev/null 2>&1 || true; '
@@ -1841,16 +1916,53 @@ def _execute_mqtt_e2e_uart_capture(
             + f'if [ -s "{transfer_responder_log}" ]; then echo "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN" 1>&2; '
             + f'cat "{transfer_responder_log}" 1>&2; echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; fi; '
         )
+    if ota_wait_mode == "confirmed":
+        ota_terminal_probe = (
+            'if grep -Fq "PQC_OTA_APP phase=confirmed " "$uart_file"; '
+            'then ota_terminal_seen=1; break; fi; '
+        )
+    elif ota_wait_mode == "rollback":
+        ota_terminal_probe = (
+            'if grep -Fq "PQC_OTA_APP phase=confirmation_withheld " "$uart_file" && '
+            '[ "$(grep -Fc \'PQC_OTA_APP phase=boot_state \' "$uart_file" 2>/dev/null || true)" -ge 2 ]; '
+            'then ota_terminal_seen=1; break; fi; '
+        )
+    else:
+        ota_terminal_probe = ""
+
+    reporting_break = "" if ota_wait_mode is not None else " break;"
+    if ota_wait_mode is not None:
+        completion_stop = (
+            f'if [ "$ota_terminal_seen" -eq 1 ]; then sleep {completion_grace_seconds}; '
+            'kill "$capture_pid" 2>/dev/null || true; fi; '
+        )
+        completion_status = (
+            'termination_reason=hard_timeout; '
+            '[ "$ota_terminal_seen" -eq 1 ] && termination_reason=ota_terminal; '
+            'normalized_capture_rc=$capture_rc; '
+            '[ "$ota_terminal_seen" -eq 1 ] && normalized_capture_rc=0; '
+        )
+    else:
+        completion_stop = (
+            f'if [ "$reporting_complete_seen" -eq 1 ]; then sleep {completion_grace_seconds}; '
+            'kill "$capture_pid" 2>/dev/null || true; fi; '
+        )
+        completion_status = (
+            'termination_reason=hard_timeout; '
+            '[ "$reporting_complete_seen" -eq 1 ] && termination_reason=reporting_complete; '
+            'normalized_capture_rc=$capture_rc; '
+            '[ "$reporting_complete_seen" -eq 1 ] && normalized_capture_rc=0; '
+        )
+
     common_suffix = (
-        f'if [ "$reporting_complete_seen" -eq 1 ]; then sleep {completion_grace_seconds}; kill "$capture_pid" 2>/dev/null || true; fi; '
-        'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
+        completion_stop
+        + 'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
         + f'if [ "$reporting_complete_seen" -eq 0 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
-        + 'termination_reason=hard_timeout; [ "$reporting_complete_seen" -eq 1 ] && termination_reason=reporting_complete; '
-        + 'normalized_capture_rc=$capture_rc; [ "$reporting_complete_seen" -eq 1 ] && normalized_capture_rc=0; '
+        + completion_status
         + 'cat "$uart_file"; '
         + 'response_count=$(grep -c . "$response_file" || true); response=$(paste -sd, "$response_file"); '
         + "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
@@ -1860,7 +1972,8 @@ def _execute_mqtt_e2e_uart_capture(
             common_prefix
             + 'while kill -0 "$capture_pid" 2>/dev/null; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + ota_terminal_probe
             + 'sleep 1; done; '
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
@@ -1874,7 +1987,8 @@ def _execute_mqtt_e2e_uart_capture(
             + 'attempts=0; publish_failures=0; publish_rc=0; '
             + f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; break; fi; '
+            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + ota_terminal_probe
             + f"sleep {publish_interval}; "
             + 'attempts=$((attempts + 1)); '
             + f"{mqtt_pub} -h {client_host} -p {client_port} {tls_args} -i {shlex.quote(publisher_client_id)} -t {command_topic} -m {command_value} >/tmp/pqc-mqtt-e2e-publisher.$$ 2>&1; publish_rc=$?; "
@@ -2366,8 +2480,64 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 
 
 
+def _dualbank_ota_wolfboot_config(
+    config_text: str, *, firmware_mode: str, standby_signing_keys: int
+) -> str:
+    """Apply experiment-selected firmware layout and key-count settings."""
+    modes = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}
+    if firmware_mode not in modes:
+        raise ConfigError(
+            "firmware_mode must be one of: " + ", ".join(sorted(modes))
+        )
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ConfigError("standby_signing_keys must be 0, 1, or 2")
+
+    if firmware_mode == "single_bank":
+        overrides = {
+            "DUALBANK_SWAP?": "0",
+            "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
+            "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08100000",
+            "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+            "WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x081E0000",
+        }
+        remove = set()
+    else:
+        overrides = {
+            "DUALBANK_SWAP?": "1",
+            "WOLFBOOT_PARTITION_BOOT_ADDRESS": "0x08020000",
+            "WOLFBOOT_PARTITION_UPDATE_ADDRESS": "0x08120000",
+            "WOLFBOOT_PARTITION_SIZE": "0x000E0000",
+            "WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x0",
+        }
+        remove = set()
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    standby_define_seen = False
+    for line in config_text.splitlines():
+        key = line.split("=", 1)[0] if "=" in line else None
+        if key in remove:
+            continue
+        if key in overrides:
+            lines.append(f"{key}={overrides[key]}")
+            seen.add(key)
+            continue
+        if line.startswith("CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS="):
+            lines.append(f"CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS={standby_signing_keys}")
+            standby_define_seen = True
+            continue
+        lines.append(line)
+    for key, value in overrides.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+    if not standby_define_seen:
+        lines.append(f"CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS={standby_signing_keys}")
+    return "\n".join(lines) + "\n"
+
+
 def load_secure_boot_profile_section(
-    *, target_profile: Path | str, algorithm: str, section: str
+    *, target_profile: Path | str, algorithm: str, section: str,
+    firmware_mode: str = "single_bank", standby_signing_keys: int = 0
 ) -> tuple[dict[str, Any], Path]:
     """Resolve a secure-boot compatibility section from canonical profiles.
 
@@ -2401,6 +2571,12 @@ def load_secure_boot_profile_section(
     signing = secure_boot.get("signing", {})
     requires_private_key = bool(signing.get("requires_private_key"))
     tuple_id = signing.get("tuple_id")
+    if firmware_mode not in {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}:
+        raise ConfigError(f"unsupported firmware_mode: {firmware_mode}")
+    if standby_signing_keys not in {0, 1, 2}:
+        raise ConfigError("standby_signing_keys must be 0, 1, or 2")
+    if tuple_id and standby_signing_keys:
+        tuple_id = f"{tuple_id}-standby{standby_signing_keys}"
     tuple_dir = None if not tuple_id else f"secrets/wolfboot/tuples/{tuple_id}"
     private_key = None if tuple_dir is None else f"{tuple_dir}/private_key.der"
     boot_profile = f"wolfboot_{compat_id}" if compat_id != "integrity_sha256" else "wolfboot_integrity"
@@ -2463,14 +2639,25 @@ def load_secure_boot_profile_section(
         })
         build = dict(resolved.get("build", {}))
         build.pop("config_template", None)
-        build["config_content"] = render_wolfboot_config(canonical_target, secure_boot)
+        build["config_content"] = _dualbank_ota_wolfboot_config(
+            render_wolfboot_config(canonical_target, secure_boot),
+            firmware_mode=firmware_mode,
+            standby_signing_keys=standby_signing_keys,
+        )
         build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
+        build["firmware_mode"] = firmware_mode
+        build["standby_signing_keys"] = standby_signing_keys
+        build["standby_keygen_option"] = packaging_option
         if requires_private_key and private_key and tuple_dir and tuple_id:
             build["signing_key"] = private_key
             signing_tuple = dict(build.get("signing_tuple", {}))
             signing_tuple.update({
                 "tuple_id": tuple_id,
                 "directory": tuple_dir,
+                "standby_private_keys": [
+                    f"standby_key_{index}.der"
+                    for index in range(1, standby_signing_keys + 1)
+                ],
             })
             build["signing_tuple"] = signing_tuple
             # Preserve the raw ECC256 public-key export contract used by the
@@ -2499,6 +2686,8 @@ def load_secure_boot_profile_section(
             "require_input_build_provenance": True,
             "retained_signed_image": f"application_{image_stem}.bin",
             "status": "canonical_request10_profile",
+            "firmware_mode": firmware_mode,
+            "standby_signing_keys": standby_signing_keys,
         })
         binary = dict(resolved.get("binary_conversion", {}))
         binary.update({
@@ -2528,6 +2717,10 @@ def load_secure_boot_profile_section(
                     "tuple_id": tuple_id,
                     "directory": tuple_dir,
                     "public_key": "public_key.der" if canonical_id == "ecdsa_p256" else "keystore.c",
+                    "standby_private_keys": [
+                        f"standby_key_{index}.der"
+                        for index in range(1, standby_signing_keys + 1)
+                    ],
                 })
                 resolved["signing_tuple"] = signing_tuple
         else:
@@ -2566,6 +2759,10 @@ def load_secure_boot_profile_section(
                 "unsigned_application_artifact": input_image,
                 "signed_application_artifact": signed_image,
                 "signed_application_offset": "0x08020000",
+                "inactive_bank_wolfboot_offset": "0x08100000",
+                "inactive_bank_manifest_offset": "0x0811C000",
+                "inactive_bank_application_offset": "0x08120000",
+                "hardware_dual_bank": True,
                 "signing_private_key": private_key,
             },
         })
@@ -3206,6 +3403,18 @@ def load_experiment_bundle(experiment_path: Path | str) -> dict[str, dict[str, A
     return bundle
 
 
+def _firmware_mode_choices_from_bundle(bundle: dict[str, dict[str, Any]]) -> tuple[str, int]:
+    experiment = bundle.get("experiment", {})
+    resolved = experiment.get("resolved_configuration", {})
+    choices = resolved.get("choices", {}) if isinstance(resolved, dict) else {}
+    if not isinstance(choices, dict):
+        choices = {}
+    firmware = experiment.get("firmware", {})
+    mode = str(choices.get("firmware_mode", firmware.get("firmware_mode", "single_bank")))
+    standby = int(choices.get("standby_signing_keys", firmware.get("standby_signing_keys", 0)))
+    return mode, standby
+
+
 def load_secure_boot_experiment_bundle(
     experiment_path: Path | str,
     *,
@@ -3215,11 +3424,14 @@ def load_secure_boot_experiment_bundle(
     """Compose a generated canonical case with the selected wolfBoot runtime settings."""
 
     bundle = load_experiment_bundle(experiment_path)
+    firmware_mode, standby_signing_keys = _firmware_mode_choices_from_bundle(bundle)
     experiment_defaults, _ = load_secure_boot_profile_section(
-        target_profile=target_profile, algorithm=algorithm, section="experiment"
+        target_profile=target_profile, algorithm=algorithm, section="experiment",
+        firmware_mode=firmware_mode, standby_signing_keys=standby_signing_keys
     )
     boot_config, _ = load_secure_boot_profile_section(
-        target_profile=target_profile, algorithm=algorithm, section="boot"
+        target_profile=target_profile, algorithm=algorithm, section="boot",
+        firmware_mode=firmware_mode, standby_signing_keys=standby_signing_keys
     )
     experiment_config = _merge_config(bundle["experiment"], experiment_defaults)
     validate_experiment_config(experiment_config)
@@ -3279,6 +3491,8 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
             f"Gateway profile: {selections.get('gateway', 'unavailable')}",
             f"Workload profile: {selections.get('workload', 'unavailable')}",
             f"Secure-boot profile: {choices.get('secure_boot', 'unavailable')}",
+            f"Firmware mode: {choices.get('firmware_mode', 'single_bank')}",
+            f"Standby signing keys: {choices.get('standby_signing_keys', 0)}",
             f"Network condition: {choices.get('network_condition', 'unavailable')}",
         ])
 
@@ -3378,9 +3592,22 @@ def format_status_summary(bundle: dict[str, dict[str, Any]]) -> str:
 
 
 def run_status_command(args: argparse.Namespace) -> int:
-    """Run the status command."""
+    """Run the status command using the same effective boot selection as ``run``.
 
-    bundle = load_experiment_bundle(args.experiment)
+    Canonical resolved cases carry the secure-boot choice in ``choices``.  Status
+    must therefore compose the secure-boot compatibility bundle before rendering
+    the target/runtime section; otherwise the base target's direct-flash defaults
+    are displayed even though ``run`` will execute through wolfBoot.
+    """
+
+    secure_boot = _resolved_case_secure_boot_choice(args.experiment)
+    if secure_boot:
+        bundle = load_secure_boot_experiment_bundle(
+            args.experiment,
+            algorithm=secure_boot,
+        )
+    else:
+        bundle = load_experiment_bundle(args.experiment)
     print(format_status_summary(bundle))
     return 0
 
@@ -3676,6 +3903,7 @@ def run_build_flash_command(args: argparse.Namespace) -> int:
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
+            ota_plan=getattr(args, "ota_plan", None),
         )
         uart_return_code = uart_result.return_code
         uart_duration_seconds = uart_result.duration_seconds
@@ -4152,7 +4380,11 @@ def _compose_wolfboot_run_bundle(
             **{
                 key: value
                 for key, value in original_experiment.get("firmware", {}).items()
-                if key in {"application", "uart_log_level"}
+                if key in {
+                    "application", "uart_log_level", "uart_output_mode",
+                    "firmware_mode", "dual_bank_enabled", "ota_enabled",
+                    "standby_signing_keys",
+                }
             },
         },
         "secure_boot_benchmark_profile": dict(
@@ -4280,6 +4512,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if getattr(args, "ota_plan", None) is not None and args.firmware_mode != "dual_bank_ota":
+        print(
+            "Error: --ota-plan requires resolved firmware_mode=dual_bank_ota.",
+            file=sys.stderr,
+        )
+        return 2
 
     repo_root = repo_root_from_experiment_path(args.experiment)
     bundle = _compose_wolfboot_run_bundle(
@@ -4298,6 +4536,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "mode": "wolfboot",
                 "algorithm": args.boot_algorithm,
                 "target_profile": str(args.target_profile),
+                "firmware_mode": args.firmware_mode,
+                "standby_signing_keys": args.standby_signing_keys,
                 "source_experiment": str(args.experiment),
             }
         },
@@ -4319,6 +4559,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         target_profile=args.target_profile,
         algorithm=args.boot_algorithm,
         section="build",
+        firmware_mode=args.firmware_mode,
+        standby_signing_keys=args.standby_signing_keys,
     )
     validate_wolfboot_build_profile_config(build_profile)
     emit_progress("boot", "Building wolfBoot", detail=f"Algorithm: {args.boot_algorithm}.")
@@ -4357,6 +4599,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         target_profile=args.target_profile,
         algorithm=args.boot_algorithm,
         section="signing",
+        firmware_mode=args.firmware_mode,
+        standby_signing_keys=args.standby_signing_keys,
     )
     signing_profile = _retarget_signing_profile_build_preset(
         signing_profile,
@@ -4460,6 +4704,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "sha256": signing_result.signed_image_sha256,
                 "result_artifact": signing_result.retained_signed_image_path.name,
                 "result_artifact_path": str(signing_result.retained_signed_image_path),
+                "evidence_role": "signed_application",
             }
         },
     )
@@ -4505,6 +4750,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
             result_dir=result_dir,
             duration_seconds=args.uart_duration_seconds,
             restart_command=_monitor_restart_command(bundle, None),
+            ota_plan=getattr(args, "ota_plan", None),
         )
     else:
         uart_result, final_return_code, failure_stage = _execute_uart_capture_with_optional_gateway_packet_capture(
@@ -4677,6 +4923,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         result_dir=result_dir,
         duration_seconds=args.uart_duration_seconds,
         restart_command=(None if getattr(args, "skip_hardware_reset", False) else _monitor_restart_command(bundle, None)),
+        ota_plan=getattr(args, "ota_plan", None),
         manage_broker_lifecycle=not getattr(args, "campaign_managed_broker", False),
         manage_network_condition=not getattr(args, "campaign_managed_condition", False),
     )
@@ -4737,6 +4984,20 @@ def _resolved_case_secure_boot_choice(experiment_path: Path | str) -> str | None
     return secure_boot.strip()
 
 
+def _resolved_case_firmware_choices(experiment_path: Path | str) -> tuple[str, int]:
+    try:
+        import yaml as _yaml
+        raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    except Exception:
+        return "single_bank", 0
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return "single_bank", 0
+    choices = raw.get("choices", {})
+    if not isinstance(choices, dict):
+        return "single_bank", 0
+    return str(choices.get("firmware_mode", "single_bank")), int(choices.get("standby_signing_keys", 0))
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
@@ -4772,6 +5033,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             or canonical_boot_algorithm
             or "integrity_sha256"
         )
+        args.firmware_mode, args.standby_signing_keys = _resolved_case_firmware_choices(args.experiment)
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)
@@ -4993,6 +5255,99 @@ def _monitor_restart_command(bundle: dict[str, dict[str, Any]], override: str | 
             return str(helper)
 
     return DEFAULT_RESTART_COMMAND
+
+
+def run_ota_prepare_command(args: argparse.Namespace) -> int:
+    """Create and sign the authenticated dual-bank OTA candidate manifest."""
+    repo_root = Path(__file__).resolve().parents[1]
+    bootloader = Path(args.bootloader)
+    application = Path(args.signed_application)
+    if not bootloader.is_absolute(): bootloader = repo_root / bootloader
+    if not application.is_absolute(): application = repo_root / application
+    work = Path(args.output_dir)
+    if not work.is_absolute(): work = repo_root / work
+    work.mkdir(parents=True, exist_ok=True)
+    payload = work / "candidate_manifest.bin"
+    try:
+        manifest = build_manifest_payload(
+            bootloader=bootloader,
+            signed_application=application,
+            migration=bool(args.migration),
+            test_no_confirm=bool(args.test_no_confirm),
+            output=payload,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"OTA candidate preparation failed: {exc}", file=sys.stderr)
+        return 2
+
+    profile, _ = load_secure_boot_profile_section(
+        target_profile=args.target_profile,
+        algorithm=args.recovery_boot_algorithm,
+        section="signing",
+    )
+    profile = dict(profile)
+    profile["id"] = f"ota_recovery_{args.recovery_boot_algorithm}"
+    profile["description"] = "Authenticated dual-bank OTA candidate manifest."
+    profile["input_image"] = str(payload.relative_to(repo_root))
+    profile["signed_image"] = str((work / "candidate_manifest_v1_signed.bin").relative_to(repo_root))
+    profile["retained_signed_image"] = "candidate_manifest_signed.bin"
+    profile["require_input_build_provenance"] = False
+    profile["binary_conversion"] = {"enabled": False}
+    profile.pop("input_elf", None)
+    signing_result = execute_application_signing(
+        profile=profile,
+        repo_root=repo_root,
+        results_root=work / "evidence",
+    )
+    if signing_result.return_code != 0:
+        print(signing_result.failure_reason or "OTA manifest signing failed", file=sys.stderr)
+        return signing_result.return_code
+    try:
+        candidate = candidate_from_files(
+            bootloader=bootloader,
+            signed_application=application,
+            signed_manifest=signing_result.signed_image_path,
+            migration=bool(args.migration),
+            test_no_confirm=bool(args.test_no_confirm),
+        )
+        plan_path = write_plan(candidate, work / "ota-plan.json")
+    except (OSError, ValueError) as exc:
+        print(f"OTA plan creation failed: {exc}", file=sys.stderr)
+        return 2
+    print(plan_path)
+    return 0
+
+
+def run_ota_fault_plan_command(args: argparse.Namespace) -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        path = make_fault_plan(
+            plan_path=Path(args.plan), repo_root=repo_root,
+            output_dir=Path(args.output_dir), fault=args.fault,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"OTA fault-plan creation failed: {exc}", file=sys.stderr)
+        return 2
+    print(path)
+    return 0
+
+
+def run_ota_deliver_command(args: argparse.Namespace) -> int:
+    """Publish a prepared candidate bank through the impairment-exempt reporting broker."""
+    repo_root = Path(__file__).resolve().parents[1]
+    bundle = load_experiment_bundle(args.experiment)
+    host, port = reporting_config(bundle)
+    target = gateway_ssh_target(bundle["host"])
+    result = deliver_retained_plan(
+        plan_path=Path(args.plan),
+        repo_root=repo_root,
+        gateway_target=target,
+        reporting_host=host,
+        reporting_port=port,
+        run_id=args.run_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return int(result["return_code"])
 
 
 def run_monitor_command(args: argparse.Namespace) -> int:
@@ -6392,6 +6747,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Successful profile-preparation manifest required by --runtime-only.",
     )
+    run_parser.add_argument(
+        "--ota-plan",
+        type=Path,
+        default=None,
+        help="Queue a prepared dual-bank OTA plan on the reporting plane during this run.",
+    )
     run_parser.add_argument("--campaign-managed-broker", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-managed-condition", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--skip-hardware-reset", action="store_true", help=argparse.SUPPRESS)
@@ -6401,6 +6762,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--campaign-repetition-index", type=int, default=None, help=argparse.SUPPRESS)
     run_parser.set_defaults(func=run_full_baseline_command)
 
+
+    ota_prepare_parser = subparsers.add_parser(
+        "ota-prepare",
+        help="Build and sign an authenticated STM32L4R5 dual-bank OTA candidate manifest.",
+    )
+    ota_prepare_parser.add_argument("--bootloader", required=True, type=Path)
+    ota_prepare_parser.add_argument("--signed-application", required=True, type=Path)
+    ota_prepare_parser.add_argument("--recovery-boot-algorithm", required=True)
+    ota_prepare_parser.add_argument("--migration", action="store_true")
+    ota_prepare_parser.add_argument("--test-no-confirm", action="store_true", help="Hardware-test only: force a successful candidate runtime to reset without confirmation so rollback can be verified.")
+    ota_prepare_parser.add_argument("--output-dir", type=Path, default=Path("build/ota"))
+    ota_prepare_parser.add_argument("--target-profile", type=Path, default=Path("configs/targets/stm32l4r5_wolfboot.yaml"))
+    ota_prepare_parser.set_defaults(func=run_ota_prepare_command)
+
+    ota_fault_parser = subparsers.add_parser(
+        "ota-fault-plan", help="Create an isolated negative-test OTA plan from a valid plan."
+    )
+    ota_fault_parser.add_argument("--plan", required=True, type=Path)
+    ota_fault_parser.add_argument("--fault", required=True, choices=("invalid-manifest", "corrupt-application", "interrupted"))
+    ota_fault_parser.add_argument("--output-dir", type=Path, default=Path("build/ota/faults"))
+    ota_fault_parser.set_defaults(func=run_ota_fault_plan_command)
+
+    ota_deliver_parser = subparsers.add_parser(
+        "ota-deliver",
+        help="Publish a prepared dual-bank candidate through the reporting MQTT control plane.",
+    )
+    ota_deliver_parser.add_argument("--experiment", required=True, type=Path)
+    ota_deliver_parser.add_argument("--plan", required=True, type=Path)
+    ota_deliver_parser.add_argument("--run-id", required=True)
+    ota_deliver_parser.set_defaults(func=run_ota_deliver_command)
 
     wolfboot_build_parser = subparsers.add_parser(
         "build-wolfboot",

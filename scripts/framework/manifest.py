@@ -1052,12 +1052,16 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
                     artifact(role, record.get("path") or record.get("artifact_path"), "build", "cmake/ninja")
         elif firmware.get("result_artifact") or firmware.get("result_artifact_path"):
             retained_artifact = firmware.get("result_artifact_path") or firmware.get("result_artifact")
-            suffix = Path(str(retained_artifact)).suffix.lower()
-            retained_role = {
-                ".elf": "application_elf",
-                ".hex": "application_hex",
-                ".bin": "application_binary",
-            }.get(suffix, "firmware_image")
+            explicit_role = firmware.get("evidence_role")
+            if isinstance(explicit_role, str) and explicit_role.strip():
+                retained_role = explicit_role.strip()
+            else:
+                suffix = Path(str(retained_artifact)).suffix.lower()
+                retained_role = {
+                    ".elf": "application_elf",
+                    ".hex": "application_hex",
+                    ".bin": "application_binary",
+                }.get(suffix, "firmware_image")
             artifact(retained_role, str(retained_artifact), "preparation_reuse", "framework.build_records", "reused")
 
     flash = updates.get("flash")
