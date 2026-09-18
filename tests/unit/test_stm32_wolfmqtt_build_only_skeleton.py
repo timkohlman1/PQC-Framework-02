@@ -156,8 +156,8 @@ def test_handshake_instrumentation_does_not_change_network_task_size():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
     assert ".stack_size = 2048 * 4" in main_c
-    assert "PQC_TLS_InstrumentationHandshakeBegin();" in mqtt_source
-    assert "PQC_TLS_InstrumentationHandshakeEnd(result);" in mqtt_source
+    assert "PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);" in mqtt_source
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_EVENT_HANDSHAKE, result);" in mqtt_source
 
 
 def test_mlkem_resource_controls_avoid_large_client_key_share_stack_object():

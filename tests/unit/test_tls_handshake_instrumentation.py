@@ -10,9 +10,9 @@ def read(path: str) -> str:
 def test_tls_handshake_boundary_defers_diagnostics_until_after_connect():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")
 
-    begin = source.index("PQC_TLS_InstrumentationHandshakeBegin();")
+    begin = source.index("PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);")
     connect = source.index("result = wolfSSL_connect(socket_context->tls);", begin)
-    end = source.index("PQC_TLS_InstrumentationHandshakeEnd(result);", connect)
+    end = source.index("PQC_TLS_InstrumentationEnd(PQC_TLS_EVENT_HANDSHAKE, result);", connect)
     report = source.index("PQC_TLS_InstrumentationReport(", end)
 
     critical = source[begin:end]
@@ -28,8 +28,8 @@ def test_stack_and_heap_measurements_bracket_but_do_not_enter_handshake():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")
 
     pre_stack = source.index("stack_before_words = uxTaskGetStackHighWaterMark(NULL);")
-    begin = source.index("PQC_TLS_InstrumentationHandshakeBegin();")
-    end = source.index("PQC_TLS_InstrumentationHandshakeEnd(result);")
+    begin = source.index("PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);")
+    end = source.index("PQC_TLS_InstrumentationEnd(PQC_TLS_EVENT_HANDSHAKE, result);")
     post_stack = source.index("stack_after_words = uxTaskGetStackHighWaterMark(NULL);", end)
 
     assert pre_stack < begin < end < post_stack
@@ -45,8 +45,8 @@ def test_tls13_phase_hooks_cover_requested_receive_transitions():
         "PQC_TLS_PHASE_CERTIFICATE_VERIFY",
         "PQC_TLS_PHASE_FINISHED",
     ):
-        assert f"PQC_TLS_InstrumentationPhaseBegin({phase})" in source
-        assert f"PQC_TLS_InstrumentationPhaseEnd({phase})" in source
+        assert f"PQC_TLS_InstrumentationBegin({phase})" in source
+        assert f"PQC_TLS_InstrumentationEnd({phase}, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)" in source
 
 
 def test_crypto_hooks_cover_selected_tls_primitives():
@@ -84,10 +84,10 @@ def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
     assert pss_call in verify_rsa_sign
     assert pkcs1_call in verify_rsa_sign
     assert verify_rsa_sign.count(
-        "PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        "PQC_TLS_InstrumentationBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
     ) >= 2
     assert verify_rsa_sign.count(
-        "PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)"
     ) >= 2
 
     rsa_verify_start = internal.index("int RsaVerify(")
@@ -96,11 +96,11 @@ def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
 
     assert "wc_RsaSSL_VerifyInline(in, inSz, out, key);" in rsa_verify
     assert (
-        "PQC_TLS_InstrumentationPrimitiveBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        "PQC_TLS_InstrumentationBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
         in rsa_verify
     )
     assert (
-        "PQC_TLS_InstrumentationPrimitiveEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
+        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)"
         in rsa_verify
     )
 
@@ -108,7 +108,7 @@ def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
 def test_instrumentation_report_is_post_handshake_only():
     source = read("Core/Src/pqc_tls_instrumentation.c")
 
-    end_fn = source.index("void PQC_TLS_InstrumentationHandshakeEnd")
+    end_fn = source.index("void PQC_TLS_InstrumentationEnd")
     report_fn = source.index("void PQC_TLS_InstrumentationReport")
     assert end_fn < report_fn
     assert "snprintf" not in source[end_fn:report_fn]
@@ -139,7 +139,7 @@ def test_successful_tls_setup_path_does_not_emit_uart_before_handshake():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")
 
     method = source.index("tls_method = wolfTLSv1_3_client_method();")
-    begin = source.index("PQC_TLS_InstrumentationHandshakeBegin();", method)
+    begin = source.index("PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);", method)
     setup = source[method:begin]
 
     # Diagnostics in this range are failure-only branches. The prior
@@ -161,13 +161,26 @@ def test_handshake_summary_is_split_into_bounded_timing_and_memory_records():
     assert 'PQC_TLS_HANDSHAKE_METRICS result=' not in source
 
 
-def test_primitive_report_does_not_publish_fake_zero_tick_timestamps():
+def test_primitive_report_captures_both_available_clock_sources():
     source = read("Core/Src/pqc_tls_instrumentation.c")
     primitive_report = source[source.index('"PQC_TLS_PRIMITIVE name=%s'): ]
 
-    assert 'timing_source=dwt_cycles' in primitive_report
+    assert 'timing_source=dwt_cycles elapsed_time_source=monotonic_us' in primitive_report
+    assert 'total_us=%s' in primitive_report
+    assert 'first_start_us=%s' in primitive_report
+    assert 'last_end_us=%s' in primitive_report
     assert 'first_start_tick_ms=' not in primitive_report
     assert 'last_end_tick_ms=' not in primitive_report
+
+
+def test_public_instrumentation_api_is_generic_and_event_parameterised():
+    header = read("Core/Inc/pqc_tls_instrumentation.h")
+
+    assert "PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event)" in header
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLSInstrumentationEvent event, int32_t result)" in header
+    assert "PQC_TLS_InstrumentationHandshakeBegin" not in header
+    assert "PQC_TLS_InstrumentationPhaseBegin" not in header
+    assert "PQC_TLS_InstrumentationPrimitiveBegin" not in header
 
 
 
@@ -297,7 +310,7 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
 def test_tls_dns_resolution_does_not_emit_success_uart_before_handshake():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")
     resolve = source.index("result = PQC_WolfMQTT_ResolveBroker(")
-    begin = source.index("PQC_TLS_InstrumentationHandshakeBegin();", resolve)
+    begin = source.index("PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);", resolve)
     pre_handshake = source[resolve:begin]
 
     assert "host, &address, !socket_context->tls_requested" in pre_handshake

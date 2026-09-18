@@ -76,6 +76,10 @@ def test_result_contract_identifies_microseconds_and_cycles_separately():
     assert 'timebase.get("counter_hz") == 1_000_000' in parser
     assert 'x509.get("timing_source") == "dwt_cycles"' in parser
     assert 'handshake.get("timing_sources") == "dwt_cycles+application_timebase_us"' in parser
+    assert '"rtfb_us", "rtlb_us", "ttfb_us", "ttlb_us"' in parser
+    assert '"req_tfb_us", "req_tlb_us", "application_transfer_us"' in parser
+    assert 'application_timing_checkpoints' in parser
+    assert 'operational_wolfboot_entry' in parser
 
 
 def test_manifest_boundary_keeps_application_timings_in_raw_result_stream():
@@ -83,6 +87,9 @@ def test_manifest_boundary_keeps_application_timings_in_raw_result_stream():
     run_evidence = _text("scripts/framework/run_evidence.py")
     # Request 16 architecture keeps scientific timing fields out of the immutable
     # run manifest; exact ELF identity remains build/deployment provenance.
+    for field in ("rtfb_us", "rtlb_us", "ttfb_us", "ttlb_us", "req_tfb_us", "req_tlb_us"):
+        assert field not in manifest
+        assert field not in run_evidence
     assert "application_ttfb_us" not in manifest
     assert "application_ttfb_us" not in run_evidence
     assert "sha256" in manifest.lower() or "sha256" in run_evidence.lower()

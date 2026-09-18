@@ -2388,6 +2388,145 @@ static void APP_ResultBufferWriteLine(const char *text)
   (void)PQC_ResultBufferAppendText(0U, "tls", text);
 }
 
+static void APP_FormatU64(uint64_t value, char *buffer, size_t buffer_size)
+{
+  char reversed[21];
+  size_t count = 0U;
+  size_t index;
+
+  if ((buffer == NULL) || (buffer_size == 0U))
+  {
+    return;
+  }
+
+  do
+  {
+    reversed[count++] = (char)('0' + (value % 10ULL));
+    value /= 10ULL;
+  } while ((value != 0ULL) && (count < sizeof(reversed)));
+
+  if (count >= buffer_size)
+  {
+    buffer[0] = '\0';
+    return;
+  }
+
+  for (index = 0U; index < count; index++)
+  {
+    buffer[index] = reversed[count - index - 1U];
+  }
+  buffer[count] = '\0';
+}
+
+static void APP_BufferReadyMetrics2Evidence(void)
+{
+  const PQC_WolfMQTTReadyMetrics2Snapshot *metrics =
+      PQC_WolfMQTT_ReadyMetrics2Snapshot();
+  const PQC_TimebaseProvenance *timebase = PQC_TimebaseGetProvenance();
+  char line[768];
+  char u64_a[24];
+  char u64_b[24];
+  char u64_c[24];
+  char u64_d[24];
+  char u64_e[24];
+  char u64_f[24];
+  char u64_g[24];
+  int written;
+
+  if ((metrics == NULL) || (timebase == NULL) ||
+      (metrics->schema_version != 3U) ||
+      (metrics->transfer_complete_valid == 0U))
+  {
+    return;
+  }
+
+  /* Ready Metrics 2 records are serialized only after the selected workload
+   * has returned, so formatting/result-buffer work cannot perturb the measured
+   * TCP/request/payload intervals. The outer result-buffer envelope supplies
+   * source/iteration/context; these compact records preserve the scientific
+   * checkpoints and derived values for later offline ingestion. */
+  APP_FormatU64(timebase->reset_origin_to_application_timebase_us, u64_a, sizeof(u64_a));
+  written = snprintf(
+      line, sizeof(line),
+      "PQC_RM2_TIMEBASE schema=3 source=TIM2 timer_input_clock_hz=%lu "
+      "prescaler=%lu counter_hz=%lu counter_bits=%lu "
+      "wrap_handling=update_irq_64bit_extension "
+      "reset_origin=operational_wolfboot_entry reset_origin_valid=%u "
+      "reset_origin_kind=%lu reset_origin_to_application_timebase_us=%s "
+      "handoff_bridge=LPTIM2_HSI16_DIV16 firmware_elf_sha256_source=run_manifest",
+      (unsigned long)timebase->timer_input_clock_hz,
+      (unsigned long)timebase->prescaler,
+      (unsigned long)timebase->counter_hz,
+      (unsigned long)timebase->counter_bits,
+      (unsigned int)timebase->reset_origin_valid,
+      (unsigned long)timebase->reset_origin_kind,
+      u64_a);
+  if ((written > 0) && ((size_t)written < sizeof(line)))
+  {
+    (void)PQC_ResultBufferAppendText(0U, "rm2_timebase", line);
+  }
+
+  APP_FormatU64(timebase->reset_origin_to_application_timebase_us, u64_a, sizeof(u64_a));
+  APP_FormatU64(metrics->tcp_connect_start_us, u64_b, sizeof(u64_b));
+  APP_FormatU64(metrics->mqtt_readiness_checkpoint_us, u64_c, sizeof(u64_c));
+  APP_FormatU64(metrics->mqtt_readiness_us, u64_d, sizeof(u64_d));
+  APP_FormatU64(metrics->application_request_us, u64_e, sizeof(u64_e));
+  APP_FormatU64(metrics->application_first_byte_us, u64_f, sizeof(u64_f));
+  APP_FormatU64(metrics->application_last_byte_us, u64_g, sizeof(u64_g));
+  written = snprintf(
+      line, sizeof(line),
+      "PQC_RM2_CHECKPOINTS schema=3 reset_origin=operational_wolfboot_entry "
+      "reset_origin_valid=%u reset_origin_to_application_timebase_us=%s "
+      "tcp_connect_start_us=%s mqtt_readiness_checkpoint_us=%s "
+      "mqtt_readiness_definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte "
+      "mqtt_readiness_us=%s mqtt_readiness_valid=%u application_request_us=%s "
+      "application_first_byte_us=%s application_last_byte_us=%s",
+      (unsigned int)metrics->reset_origin_valid,
+      u64_a, u64_b, u64_c, u64_d,
+      (unsigned int)metrics->mqtt_readiness_valid,
+      u64_e, u64_f, u64_g);
+  if ((written > 0) && ((size_t)written < sizeof(line)))
+  {
+    (void)PQC_ResultBufferAppendText(0U, "rm2_checkpoints", line);
+  }
+
+  APP_FormatU64(metrics->rtfb_us, u64_a, sizeof(u64_a));
+  APP_FormatU64(metrics->rtlb_us, u64_b, sizeof(u64_b));
+  APP_FormatU64(metrics->ttfb_us, u64_c, sizeof(u64_c));
+  APP_FormatU64(metrics->ttlb_us, u64_d, sizeof(u64_d));
+  APP_FormatU64(metrics->req_tfb_us, u64_e, sizeof(u64_e));
+  APP_FormatU64(metrics->req_tlb_us, u64_f, sizeof(u64_f));
+  APP_FormatU64(metrics->application_transfer_us, u64_g, sizeof(u64_g));
+  written = snprintf(
+      line, sizeof(line),
+      "PQC_RM2_METRICS schema=3 metric_contract=ready_metrics_2_canonical_v3 "
+      "payload_bytes=%lu received_bytes=%lu chunk_bytes=%lu "
+      "rtfb_us=%s rtlb_us=%s ttfb_us=%s ttlb_us=%s "
+      "req_tfb_us=%s req_tlb_us=%s application_transfer_us=%s "
+      "reset_metrics_valid=%u complete_valid=%u",
+      (unsigned long)metrics->transfer_payload_bytes,
+      (unsigned long)metrics->transfer_received_bytes,
+      (unsigned long)metrics->transfer_chunk_bytes,
+      u64_a, u64_b, u64_c, u64_d, u64_e, u64_f, u64_g,
+      (unsigned int)metrics->reset_origin_valid,
+      (unsigned int)metrics->transfer_complete_valid);
+  if ((written > 0) && ((size_t)written < sizeof(line)))
+  {
+    (void)PQC_ResultBufferAppendText(0U, "rm2_metrics", line);
+  }
+
+  APP_FormatU64(metrics->measurement_complete_us, u64_a, sizeof(u64_a));
+  written = snprintf(
+      line, sizeof(line),
+      "PQC_RM2_COMPLETE schema=3 status=success record_count=4 "
+      "measurement_complete_us=%s",
+      u64_a);
+  if ((written > 0) && ((size_t)written < sizeof(line)))
+  {
+    (void)PQC_ResultBufferAppendText(0U, "rm2_complete", line);
+  }
+}
+
 static void APP_BufferMemoryEvidence(void)
 {
   char line[768];
@@ -2466,6 +2605,7 @@ void StartNetworkTask(void *argument)
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
+  APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
   (void)PQC_ResultBufferAppendText(0U, "application", "workload_complete");

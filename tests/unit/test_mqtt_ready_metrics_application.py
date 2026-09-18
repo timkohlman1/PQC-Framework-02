@@ -115,16 +115,41 @@ def test_ready_metrics_2_application_uses_microsecond_timebase_and_deferred_repo
     assert "Core/Src/pqc_timebase.c" in cmake
     assert "PQC_WolfMQTTReadyMetrics2Snapshot" in header
     assert "tcp_connect_start_us = PQC_TimebaseNowUs();" in source
-    assert "mqtt_first_response_us" in source
+    assert "mqtt_readiness_checkpoint_us" in source
     assert "application_request_us = PQC_TimebaseNowUs();" in source
     assert "transfer_first_byte_us = PQC_TimebaseNowUs();" in source
     assert "transfer_last_byte_us = PQC_TimebaseNowUs();" in source
     assert "HAL_GetTick()" not in source
     assert "xTaskGetTickCount()" not in source[source.index("int PQC_WolfMQTT_RunReadyMetrics2Application("):]
     assert 'application_timebase' in source
-    assert '"schema_version\\":2' in source
-    assert "application_ttfb_us" in source
-    assert "ttlb_us" in source
+    assert '"schema_version\\":3' in source
+    for field in ("rtfb_us", "rtlb_us", "ttfb_us", "ttlb_us", "req_tfb_us", "req_tlb_us"):
+        assert field in source
+    assert "application_ttfb_us" not in source
+    assert "request_to_first_byte_us" not in source
+    assert "ttfb_ms_legacy" not in source
+    assert "mqtt_readiness_definition" in source
+    assert "application_timing_checkpoints" in source
+    assert "PQC_RM2_METRICS schema=3 ttfb_us=" in source
+    assert "PQC_RM2_RESET schema=3 reset_origin=operational_wolfboot_entry" in source
+    assert "PQC_RM2_MQTT_READINESS schema=3" in source
+    main = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    assert "APP_BufferReadyMetrics2Evidence();" in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_timebase", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_checkpoints", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_metrics", line)' in main
+    assert 'PQC_ResultBufferAppendText(0U, "rm2_complete", line)' in main
+    assert "PQC_RM2_TIMEBASE schema=3" in main
+    assert "PQC_RM2_CHECKPOINTS schema=3" in main
+    assert "PQC_RM2_METRICS schema=3 metric_contract=ready_metrics_2_canonical_v3" in main
+    assert "mqtt_readiness_definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte" in main
+    assert "application_ttfb_us" not in main
+    network_task = main[main.index("void StartNetworkTask(void *argument)"):]
+    assert network_task.index("app_measurement_active = false;") < network_task.index(
+        "APP_BufferReadyMetrics2Evidence();"
+    ) < network_task.index("PQC_WolfMQTT_PublishDeferredResults(")
+    assert "transfer_chunk_bytes" in header
+    assert "s_ready_metrics_2_snapshot.transfer_chunk_bytes" in source
     rm2_source = source[source.index("int PQC_WolfMQTT_RunReadyMetrics2Application("):]
     assert rm2_source.index("while (!message_context.transfer_complete)") < rm2_source.index(
         'result = PQC_WolfMQTT_PublishText(&client, "ready", 4U);'
@@ -134,53 +159,76 @@ def test_ready_metrics_2_application_uses_microsecond_timebase_and_deferred_repo
 def _rm2_bundle(*, tls: bool, reset_origin: bool) -> list[str]:
     phase = [1, 1, 1, 1, 1, 1, 10, 20] if tls else [0] * 8
     primitive_ranges = [(1, 0, 3), (2, 4, 7), (3, 8, 11), (4, 12, 15), (5, 16, 19), (6, 20, 24)]
+    if tls:
+        tcp_start = 100_000
+        mqtt_ready_checkpoint = 3_120_000
+        app_request = 3_200_000
+        app_first = 3_400_000
+        app_last = 5_100_000
+        reset_offset = 1_000_000 if reset_origin else 0
+    else:
+        tcp_start = 10_000
+        mqtt_ready_checkpoint = 45_000
+        app_request = 50_000
+        app_first = 60_000
+        app_last = 510_000
+        reset_offset = 0
+
+    ttfb = app_first - tcp_start
+    ttlb = app_last - tcp_start
+    req_tfb = app_first - app_request
+    req_tlb = app_last - app_request
+    application_transfer = app_last - app_first
+    rtfb = reset_offset + app_first if reset_origin else 0
+    rtlb = reset_offset + app_last if reset_origin else 0
+
     messages: list[dict] = [
         {"type": "connect_timing", "milliseconds": 3200 if tls else 40, "tls_mode": "classical_tls_server_auth" if tls else "plaintext"},
         {"type": "memory_metrics", "sequence": 1, "stack_high_water_words": 900, "heap_free_bytes": 8000, "heap_min_ever_bytes": 7000},
         {"type": "memory_metrics", "sequence": 2, "stack_high_water_words": 890, "heap_free_bytes": 7900, "heap_min_ever_bytes": 6900},
         {
-            "type": "application_timebase", "schema_version": 2, "source": "TIM2",
+            "type": "application_timebase", "schema_version": 3, "source": "TIM2",
             "timer_input_clock_hz": 120000000, "prescaler": 119,
             "counter_hz": 1000000, "counter_bits": 32,
             "wrap_handling": "update_irq_64bit_extension",
+            "reset_origin": "operational_wolfboot_entry",
             "reset_origin_valid": 1 if reset_origin else 0,
             "reset_origin_kind": 1 if reset_origin else 0,
-            "reset_origin_to_application_timebase_us": 1000000 if reset_origin else 0,
+            "reset_origin_to_application_timebase_us": reset_offset,
             "handoff_bridge": "LPTIM2_HSI16_DIV16",
             "firmware_elf_sha256_source": "run_manifest",
         },
         {
-            "type": "experiment_timing", "schema_version": 2,
-            "mqtt_first_response_definition": "tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
+            "type": "experiment_timing", "schema_version": 3,
+            "mqtt_readiness_definition": "tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
             "dns_included": False, "tcp_connect_us": 20000 if tls else 6000,
-            "mqtt_first_response_us": 3020000 if tls else 35000,
+            "mqtt_readiness_us": mqtt_ready_checkpoint - tcp_start,
             "mqtt_connect_us": 3030000 if tls else 35000,
             "legacy_connect_timing_us": 3200000 if tls else 40000,
             "tcp_connect_ms_legacy": 20 if tls else 6,
-            "ttfb_ms_legacy": 3020 if tls else 35,
+            "mqtt_readiness_ms_legacy": (mqtt_ready_checkpoint - tcp_start) // 1000,
             "mqtt_connect_ms_legacy": 3030 if tls else 35,
             "legacy_connect_timing_ms": 3200 if tls else 40,
-            "tls_timing_valid": 1 if tls else 0, "first_response_valid": 1,
+            "tls_timing_valid": 1 if tls else 0, "mqtt_readiness_valid": 1,
         },
     ]
     if reset_origin:
         boot = {
-            "reset_to_tcp_connect_us": 1100000,
-            "reset_to_tls_complete_us": 4000000 if tls else 0,
-            "reset_to_mqtt_first_response_us": 4100000 if tls else 1129000,
-            "reset_to_mqtt_connected_us": 4110000 if tls else 1129000,
-            "reset_to_application_first_byte_us": 4300000 if tls else 1144000,
-            "reset_to_application_last_byte_us": 6000000 if tls else 1594000,
-            "reset_to_ready_publish_us": 6010000 if tls else 1595000,
+            "reset_to_tcp_connect_us": reset_offset + tcp_start,
+            "reset_to_tls_complete_us": 4_000_000 if tls else 0,
+            "reset_to_mqtt_readiness_us": reset_offset + mqtt_ready_checkpoint,
+            "reset_to_mqtt_connected_us": 4_130_000 if tls else reset_offset + mqtt_ready_checkpoint,
+            "rtfb_us": rtfb,
+            "rtlb_us": rtlb,
+            "reset_to_ready_publish_us": rtlb + 10_000,
         }
     else:
         boot = {key: 0 for key in (
             "reset_to_tcp_connect_us", "reset_to_tls_complete_us",
-            "reset_to_mqtt_first_response_us", "reset_to_mqtt_connected_us",
-            "reset_to_application_first_byte_us", "reset_to_application_last_byte_us",
-            "reset_to_ready_publish_us",
+            "reset_to_mqtt_readiness_us", "reset_to_mqtt_connected_us",
+            "rtfb_us", "rtlb_us", "reset_to_ready_publish_us",
         )}
-    messages.append({"type": "boot_timing", "schema_version": 2, "reset_origin": "wolfboot_entry", "reset_origin_valid": 1 if reset_origin else 0, **boot})
+    messages.append({"type": "boot_timing", "schema_version": 3, "reset_origin": "operational_wolfboot_entry", "reset_origin_valid": 1 if reset_origin else 0, **boot})
     messages.extend([
         {
             "type": "tls_handshake_timing", "schema_version": 2,
@@ -212,21 +260,28 @@ def _rm2_bundle(*, tls: bool, reset_origin: bool) -> list[str]:
          "timing_source": "dwt_cycles", "count": 2 if tls else 0,
          "overflow": 0, "elapsed_cycles": [1, 2, 0, 0] if tls else [0, 0, 0, 0]},
         {
-            "type": "application_transfer_timing", "schema_version": 2,
-            "ttlb_definition": "tcp_connect_start_to_last_byte_of_requested_application_payload",
-            "direction": "broker_to_stm32", "payload_bytes": 204800,
-            "received_bytes": 204800, "message_count": 512, "chunk_bytes": 400,
-            "application_ttfb_us": 3300000 if tls else 50000,
-            "ttlb_us": 5000000 if tls else 500000,
-            "request_to_first_byte_us": 100000 if tls else 10000,
-            "application_transfer_us": 1700000 if tls else 450000,
-            "application_ttfb_ms_legacy": 3300 if tls else 50,
-            "ttlb_ms_legacy": 5000 if tls else 500,
-            "request_to_first_byte_ms_legacy": 100 if tls else 10,
-            "application_transfer_ms_legacy": 1700 if tls else 450,
-            "first_byte_valid": 1, "last_byte_valid": 1, "complete_valid": 1,
+            "type": "application_timing_checkpoints", "schema_version": 3,
+            "reset_origin": "operational_wolfboot_entry",
+            "reset_origin_valid": 1 if reset_origin else 0,
+            "reset_origin_to_application_timebase_us": reset_offset,
+            "tcp_connect_start_us": tcp_start,
+            "mqtt_readiness_checkpoint_us": mqtt_ready_checkpoint,
+            "application_request_us": app_request,
+            "application_first_byte_us": app_first,
+            "application_last_byte_us": app_last,
         },
-        {"type": "ready_metrics_2_complete", "schema_version": 2, "status": "success", "message_count": 18},
+        {
+            "type": "application_transfer_timing", "schema_version": 3,
+            "metric_contract": "ready_metrics_2_canonical_v3",
+            "payload_bytes": 204800, "received_bytes": 204800, "chunk_bytes": 400,
+            "rtfb_us": rtfb, "rtlb_us": rtlb,
+            "ttfb_us": ttfb, "ttlb_us": ttlb,
+            "req_tfb_us": req_tfb, "req_tlb_us": req_tlb,
+            "application_transfer_us": application_transfer,
+            "reset_metrics_valid": 1 if reset_origin else 0,
+            "complete_valid": 1,
+        },
+        {"type": "ready_metrics_2_complete", "schema_version": 3, "status": "success", "message_count": 19},
     ])
     return ["ready", *(json.dumps(message, separators=(",", ":")) for message in messages)]
 
@@ -239,14 +294,20 @@ def test_ready_metrics_2_subscriber_contract_accepts_complete_result_bundle():
     evidence = cli._parse_ready_metrics_2_subscriber_output(output, response_topic=topic)
 
     assert evidence["passed"] is True
-    assert evidence["message_count"] == 18
+    assert evidence["message_count"] == 19
     assert evidence["timebase_valid"] is True
     assert evidence["timing_valid"] is True
     assert evidence["boot_timing_valid"] is True
     assert evidence["primitive_parts"] == [1, 2, 3, 4, 5, 6]
     assert evidence["complete_valid"] is True
-    assert evidence["experiment_timing"]["mqtt_first_response_us"] == 3020000
+    assert evidence["experiment_timing"]["mqtt_readiness_us"] == 3020000
+    assert evidence["checkpoints_valid"] is True
+    assert evidence["application_transfer_timing"]["ttfb_us"] == 3300000
     assert evidence["application_transfer_timing"]["ttlb_us"] == 5000000
+    assert evidence["application_transfer_timing"]["req_tfb_us"] == 200000
+    assert evidence["application_transfer_timing"]["req_tlb_us"] == 1900000
+    assert evidence["application_transfer_timing"]["rtfb_us"] == 4400000
+    assert evidence["application_transfer_timing"]["rtlb_us"] == 6100000
 
 
 def test_ready_metrics_2_subscriber_contract_rejects_wrong_first_response_definition():
@@ -254,7 +315,7 @@ def test_ready_metrics_2_subscriber_contract_rejects_wrong_first_response_defini
     topic = "pqc/test/response"
     messages = _rm2_bundle(tls=True, reset_origin=True)
     decoded = json.loads(messages[5])
-    decoded["mqtt_first_response_definition"] = "before_dns_to_connack"
+    decoded["mqtt_readiness_definition"] = "before_dns_to_connack"
     decoded["dns_included"] = True
     messages[5] = json.dumps(decoded, separators=(",", ":"))
     output = "\n".join(f"{topic} {message}" for message in messages) + "\n"
@@ -262,6 +323,23 @@ def test_ready_metrics_2_subscriber_contract_rejects_wrong_first_response_defini
     assert evidence["passed"] is False
     assert evidence["timing_valid"] is False
 
+
+
+def test_ready_metrics_2_subscriber_contract_rejects_ambiguous_legacy_metric_names():
+    cli = _load_experiment_cli()
+    topic = "pqc/test/response"
+    messages = _rm2_bundle(tls=True, reset_origin=True)
+    transfer_index = next(
+        index for index, item in enumerate(messages)
+        if item != "ready" and json.loads(item).get("type") == "application_transfer_timing"
+    )
+    decoded = json.loads(messages[transfer_index])
+    decoded["application_ttfb_us"] = decoded.pop("ttfb_us")
+    messages[transfer_index] = json.dumps(decoded, separators=(",", ":"))
+    output = "\n".join(f"{topic} {message}" for message in messages) + "\n"
+    evidence = cli._parse_ready_metrics_2_subscriber_output(output, response_topic=topic)
+    assert evidence["passed"] is False
+    assert evidence["transfer_valid"] is False
 
 def test_ready_metrics_2_subscriber_contract_accepts_plaintext_without_reset_origin():
     cli = _load_experiment_cli()
