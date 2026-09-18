@@ -116,7 +116,7 @@ typedef struct {
     unsigned int tls_recv_bytes;
     unsigned int tls_send_bytes;
     PQC_WolfMQTTReadyMetrics2Snapshot *ready_metrics_2;
-    bool mqtt_first_response_armed;
+    bool mqtt_readiness_armed;
     bool suppress_success_diagnostics;
 } PQC_WolfMQTTSocketContext;
 
@@ -739,9 +739,11 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         !socket_context->suppress_success_diagnostics);
     address.sin_port = lwip_htons(port);
     if ((result == 0) && (socket_context->ready_metrics_2 != NULL)) {
-        /* Paper-compatible TTFB starts at the TCP connection attempt. DNS is
-         * intentionally excluded so the measured interval is TCP + TLS +
-         * MQTT CONNECT request/first CONNACK response byte. */
+        /* Canonical TTFB starts at the TCP connection attempt. DNS is
+         * intentionally excluded. The interval continues through TCP/TLS/MQTT
+         * setup, the application transfer request, and the first requested
+         * application-payload byte. MQTT CONNACK readiness is a separate
+         * checkpoint and is never labelled TTFB. */
         socket_context->ready_metrics_2->tcp_connect_start_us = PQC_TimebaseNowUs();
     }
     if ((result != 0) ||
@@ -1019,20 +1021,20 @@ static int PQC_WolfMQTT_LwIPRead(void *context, byte *buffer, int length, int ti
         result = lwip_recv(c->socket_fd, buffer, (size_t)length, 0);
     }
 
-    if ((result > 0) && c->mqtt_first_response_armed &&
+    if ((result > 0) && c->mqtt_readiness_armed &&
         (c->ready_metrics_2 != NULL) &&
-        (c->ready_metrics_2->mqtt_first_response_valid == 0U)) {
+        (c->ready_metrics_2->mqtt_readiness_valid == 0U)) {
         uint64_t first_byte_us = PQC_TimebaseNowUs();
         uint64_t reset_relative_us = 0U;
         PQC_WolfMQTTReadyMetrics2Snapshot *metrics = c->ready_metrics_2;
-        metrics->mqtt_first_response_us = first_byte_us;
-        metrics->mqtt_first_response_elapsed_us = PQC_TimebaseElapsedUs(
+        metrics->mqtt_readiness_checkpoint_us = first_byte_us;
+        metrics->mqtt_readiness_us = PQC_TimebaseElapsedUs(
             metrics->tcp_connect_start_us, first_byte_us);
         if (PQC_TimebaseResetRelativeUs(first_byte_us, &reset_relative_us)) {
-            metrics->reset_to_mqtt_first_response_us = reset_relative_us;
+            metrics->reset_to_mqtt_readiness_us = reset_relative_us;
             metrics->reset_origin_valid = 1U;
         }
-        metrics->mqtt_first_response_valid = 1U;
+        metrics->mqtt_readiness_valid = 1U;
     }
     return result;
 }
@@ -2074,10 +2076,11 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
 
     PQC_WolfMQTT_FormatU64(timebase->reset_origin_to_application_timebase_us, u64_a, sizeof(u64_a));
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"application_timebase\",\"schema_version\":2,"
+        "{\"type\":\"application_timebase\",\"schema_version\":3,"
         "\"source\":\"TIM2\",\"timer_input_clock_hz\":%lu,\"prescaler\":%lu,"
         "\"counter_hz\":%lu,\"counter_bits\":%lu,"
         "\"wrap_handling\":\"update_irq_64bit_extension\","
+        "\"reset_origin\":\"operational_wolfboot_entry\","
         "\"reset_origin_valid\":%u,\"reset_origin_kind\":%lu,"
         "\"reset_origin_to_application_timebase_us\":%s,"
         "\"handoff_bridge\":\"LPTIM2_HSI16_DIV16\","
@@ -2094,43 +2097,42 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
     if (result != MQTT_CODE_SUCCESS) return result;
 
     PQC_WolfMQTT_FormatU64(metrics->tcp_connect_us, u64_a, sizeof(u64_a));
-    PQC_WolfMQTT_FormatU64(metrics->mqtt_first_response_elapsed_us, u64_b, sizeof(u64_b));
+    PQC_WolfMQTT_FormatU64(metrics->mqtt_readiness_us, u64_b, sizeof(u64_b));
     PQC_WolfMQTT_FormatU64(metrics->mqtt_connect_us, u64_c, sizeof(u64_c));
     PQC_WolfMQTT_FormatU64(metrics->legacy_connect_timing_us, u64_d, sizeof(u64_d));
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"experiment_timing\",\"schema_version\":2,"
-        "\"mqtt_first_response_definition\":\"tcp_connect_start_to_first_mqtt_connack_plaintext_byte\","
+        "{\"type\":\"experiment_timing\",\"schema_version\":3,"
+        "\"mqtt_readiness_definition\":\"tcp_connect_start_to_first_mqtt_connack_plaintext_byte\","
         "\"dns_included\":false,\"tcp_connect_us\":%s,"
-        "\"mqtt_first_response_us\":%s,\"mqtt_connect_us\":%s,"
+        "\"mqtt_readiness_us\":%s,\"mqtt_connect_us\":%s,"
         "\"legacy_connect_timing_us\":%s,"
-        "\"tcp_connect_ms_legacy\":%lu,\"ttfb_ms_legacy\":%lu,"
+        "\"tcp_connect_ms_legacy\":%lu,\"mqtt_readiness_ms_legacy\":%lu,"
         "\"mqtt_connect_ms_legacy\":%lu,\"legacy_connect_timing_ms\":%lu,"
-        "\"tls_timing_valid\":%u,\"first_response_valid\":%u}",
+        "\"tls_timing_valid\":%u,\"mqtt_readiness_valid\":%u}",
         u64_a, u64_b, u64_c, u64_d,
         (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->tcp_connect_us),
-        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->mqtt_first_response_elapsed_us),
+        (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->mqtt_readiness_us),
         (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->mqtt_connect_us),
         (unsigned long)PQC_TimebaseLegacyMilliseconds(metrics->legacy_connect_timing_us),
         (unsigned int)metrics->tls_timing_valid,
-        (unsigned int)metrics->mqtt_first_response_valid);
+        (unsigned int)metrics->mqtt_readiness_valid);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     result = PQC_WolfMQTT_PublishText(client, payload, 7U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
     PQC_WolfMQTT_FormatU64(metrics->reset_to_tcp_connect_us, u64_a, sizeof(u64_a));
     PQC_WolfMQTT_FormatU64(metrics->reset_to_tls_complete_us, u64_b, sizeof(u64_b));
-    PQC_WolfMQTT_FormatU64(metrics->reset_to_mqtt_first_response_us, u64_c, sizeof(u64_c));
+    PQC_WolfMQTT_FormatU64(metrics->reset_to_mqtt_readiness_us, u64_c, sizeof(u64_c));
     PQC_WolfMQTT_FormatU64(metrics->reset_to_mqtt_connected_us, u64_d, sizeof(u64_d));
-    PQC_WolfMQTT_FormatU64(metrics->reset_to_application_first_byte_us, u64_e, sizeof(u64_e));
-    PQC_WolfMQTT_FormatU64(metrics->reset_to_application_last_byte_us, u64_f, sizeof(u64_f));
+    PQC_WolfMQTT_FormatU64(metrics->rtfb_us, u64_e, sizeof(u64_e));
+    PQC_WolfMQTT_FormatU64(metrics->rtlb_us, u64_f, sizeof(u64_f));
     PQC_WolfMQTT_FormatU64(metrics->reset_to_ready_publish_us, u64_g, sizeof(u64_g));
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"boot_timing\",\"schema_version\":2,"
-        "\"reset_origin\":\"wolfboot_entry\",\"reset_origin_valid\":%u,"
+        "{\"type\":\"boot_timing\",\"schema_version\":3,"
+        "\"reset_origin\":\"operational_wolfboot_entry\",\"reset_origin_valid\":%u,"
         "\"reset_to_tcp_connect_us\":%s,\"reset_to_tls_complete_us\":%s,"
-        "\"reset_to_mqtt_first_response_us\":%s,\"reset_to_mqtt_connected_us\":%s,"
-        "\"reset_to_application_first_byte_us\":%s,"
-        "\"reset_to_application_last_byte_us\":%s,\"reset_to_ready_publish_us\":%s}",
+        "\"reset_to_mqtt_readiness_us\":%s,\"reset_to_mqtt_connected_us\":%s,"
+        "\"rtfb_us\":%s,\"rtlb_us\":%s,\"reset_to_ready_publish_us\":%s}",
         (unsigned int)metrics->reset_origin_valid,
         u64_a, u64_b, u64_c, u64_d, u64_e, u64_f, u64_g);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
@@ -2205,35 +2207,58 @@ static int PQC_WolfMQTT_PublishReadyMetrics2ResultBundle(
     result = PQC_WolfMQTT_PublishText(client, payload, 17U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
-    PQC_WolfMQTT_FormatU64(metrics->application_ttfb_us, u64_a, sizeof(u64_a));
-    PQC_WolfMQTT_FormatU64(metrics->ttlb_us, u64_b, sizeof(u64_b));
-    PQC_WolfMQTT_FormatU64(metrics->application_request_to_first_byte_us, u64_c, sizeof(u64_c));
-    PQC_WolfMQTT_FormatU64(metrics->application_transfer_us, u64_d, sizeof(u64_d));
+    /* Preserve the underlying checkpoints alongside the derived metrics so
+     * every Ready Metrics 2 interval can be mechanically re-derived offline.
+     * These are TIM2 application-domain timestamps except for the explicit
+     * reset-origin-to-application offset. */
+    PQC_WolfMQTT_FormatU64(timebase->reset_origin_to_application_timebase_us, u64_a, sizeof(u64_a));
+    PQC_WolfMQTT_FormatU64(metrics->tcp_connect_start_us, u64_b, sizeof(u64_b));
+    PQC_WolfMQTT_FormatU64(metrics->mqtt_readiness_checkpoint_us, u64_c, sizeof(u64_c));
+    PQC_WolfMQTT_FormatU64(metrics->application_request_us, u64_d, sizeof(u64_d));
+    PQC_WolfMQTT_FormatU64(metrics->application_first_byte_us, u64_e, sizeof(u64_e));
+    PQC_WolfMQTT_FormatU64(metrics->application_last_byte_us, u64_f, sizeof(u64_f));
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"application_transfer_timing\",\"schema_version\":2,"
-        "\"ttlb_definition\":\"tcp_connect_start_to_last_byte_of_requested_application_payload\","
-        "\"direction\":\"broker_to_stm32\",\"payload_bytes\":%lu,"
-        "\"received_bytes\":%lu,\"message_count\":%lu,\"chunk_bytes\":%u,"
-        "\"application_ttfb_us\":%s,\"ttlb_us\":%s,"
-        "\"request_to_first_byte_us\":%s,\"application_transfer_us\":%s,"
-        "\"first_byte_valid\":%u,\"last_byte_valid\":%u,\"complete_valid\":%u}",
-        (unsigned long)metrics->transfer_payload_bytes,
-        (unsigned long)metrics->transfer_received_bytes,
-        (unsigned long)metrics->transfer_message_count,
-        (unsigned int)PQC_MQTT_TRANSFER_CHUNK_BYTES,
-        u64_a, u64_b, u64_c, u64_d,
-        (unsigned int)metrics->application_first_byte_valid,
-        (unsigned int)metrics->application_last_byte_valid,
-        (unsigned int)metrics->transfer_complete_valid);
+        "{\"type\":\"application_timing_checkpoints\",\"schema_version\":3,"
+        "\"reset_origin\":\"operational_wolfboot_entry\",\"reset_origin_valid\":%u,"
+        "\"reset_origin_to_application_timebase_us\":%s,"
+        "\"tcp_connect_start_us\":%s,\"mqtt_readiness_checkpoint_us\":%s,"
+        "\"application_request_us\":%s,\"application_first_byte_us\":%s,"
+        "\"application_last_byte_us\":%s}",
+        (unsigned int)metrics->reset_origin_valid,
+        u64_a, u64_b, u64_c, u64_d, u64_e, u64_f);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
     result = PQC_WolfMQTT_PublishText(client, payload, 18U);
     if (result != MQTT_CODE_SUCCESS) return result;
 
+    PQC_WolfMQTT_FormatU64(metrics->rtfb_us, u64_a, sizeof(u64_a));
+    PQC_WolfMQTT_FormatU64(metrics->rtlb_us, u64_b, sizeof(u64_b));
+    PQC_WolfMQTT_FormatU64(metrics->ttfb_us, u64_c, sizeof(u64_c));
+    PQC_WolfMQTT_FormatU64(metrics->ttlb_us, u64_d, sizeof(u64_d));
+    PQC_WolfMQTT_FormatU64(metrics->req_tfb_us, u64_e, sizeof(u64_e));
+    PQC_WolfMQTT_FormatU64(metrics->req_tlb_us, u64_f, sizeof(u64_f));
+    PQC_WolfMQTT_FormatU64(metrics->application_transfer_us, u64_g, sizeof(u64_g));
     written = snprintf(payload, sizeof(payload),
-        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":2,"
-        "\"status\":\"success\",\"message_count\":18}");
+        "{\"type\":\"application_transfer_timing\",\"schema_version\":3,"
+        "\"metric_contract\":\"ready_metrics_2_canonical_v3\","
+        "\"payload_bytes\":%lu,\"received_bytes\":%lu,\"chunk_bytes\":%u,"
+        "\"rtfb_us\":%s,\"rtlb_us\":%s,\"ttfb_us\":%s,\"ttlb_us\":%s,"
+        "\"req_tfb_us\":%s,\"req_tlb_us\":%s,\"application_transfer_us\":%s,"
+        "\"reset_metrics_valid\":%u,\"complete_valid\":%u}",
+        (unsigned long)metrics->transfer_payload_bytes,
+        (unsigned long)metrics->transfer_received_bytes,
+        (unsigned int)PQC_MQTT_TRANSFER_CHUNK_BYTES,
+        u64_a, u64_b, u64_c, u64_d, u64_e, u64_f, u64_g,
+        (unsigned int)metrics->reset_origin_valid,
+        (unsigned int)metrics->transfer_complete_valid);
     if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
-    return PQC_WolfMQTT_PublishText(client, payload, 19U);
+    result = PQC_WolfMQTT_PublishText(client, payload, 19U);
+    if (result != MQTT_CODE_SUCCESS) return result;
+
+    written = snprintf(payload, sizeof(payload),
+        "{\"type\":\"ready_metrics_2_complete\",\"schema_version\":3,"
+        "\"status\":\"success\",\"message_count\":19}");
+    if ((written <= 0) || ((size_t)written >= sizeof(payload))) return -1;
+    return PQC_WolfMQTT_PublishText(client, payload, 20U);
 }
 
 int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
@@ -2247,7 +2272,7 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
     int result;
 
     memset(&s_ready_metrics_2_snapshot, 0, sizeof(s_ready_metrics_2_snapshot));
-    s_ready_metrics_2_snapshot.schema_version = 2U;
+    s_ready_metrics_2_snapshot.schema_version = 3U;
     s_ready_metrics_2_snapshot.reset_origin_valid =
         PQC_TimebaseGetProvenance()->reset_origin_valid;
 
@@ -2269,21 +2294,21 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
     if (result != MQTT_CODE_SUCCESS) goto cleanup_tls;
     client.ctx = &message_context;
 
-    /* Legacy Ready Metrics timing is retained separately for continuity. The
-     * paper-comparable TTFB origin is captured later, immediately before the
-     * actual lwip_connect() call and therefore excludes DNS resolution. */
+    /* Legacy Ready Metrics connect timing is retained separately for continuity.
+     * Canonical Ready Metrics 2 TTFB/TTLB use the TCP-connect-start checkpoint
+     * captured immediately before lwip_connect(); DNS is excluded. */
     legacy_connect_started_us = PQC_TimebaseNowUs();
     result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST,
         (word16)PQC_MQTT_BROKER_PORT, PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
     if (result != MQTT_CODE_SUCCESS) goto cleanup_client;
 
-    socket_context.mqtt_first_response_armed = true;
+    socket_context.mqtt_readiness_armed = true;
     memset(&connect, 0, sizeof(connect));
     connect.keep_alive_sec = PQC_WOLFMQTT_KEEPALIVE_SECONDS;
     connect.clean_session = 1;
     connect.client_id = PQC_MQTT_CLIENT_ID;
     result = MqttClient_Connect(&client, &connect);
-    socket_context.mqtt_first_response_armed = false;
+    socket_context.mqtt_readiness_armed = false;
     legacy_connect_finished_us = PQC_TimebaseNowUs();
     s_ready_metrics_2_snapshot.legacy_connect_timing_us = PQC_TimebaseElapsedUs(
         legacy_connect_started_us, legacy_connect_finished_us);
@@ -2300,12 +2325,11 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
     }
     s_ready_metrics_2_snapshot.mqtt_connected_valid = 1U;
 
-    /* Paper-aligned TTLB workload. The application requests a fixed amount of
-     * data and the broker-side responder sends that payload back over this
-     * already-established MQTT/TLS connection. The TTLB origin remains the
-     * TCP connect start, matching Kampanakis/Childs-Klein. No application
-     * diagnostics or result formatting occurs until the final response byte
-     * has been received. */
+    /* Ready Metrics 2 transfer workload. The application requests a fixed
+     * amount of data and the broker-side responder sends that payload over the
+     * established MQTT/TLS connection. TTFB/TTLB remain TCP-connect-relative;
+     * ReqTFB/ReqTLB are request-relative. No application diagnostics or result
+     * formatting occurs until the final requested payload byte is received. */
     memset(&transfer_topic, 0, sizeof(transfer_topic));
     transfer_topic.topic_filter = PQC_MQTT_TRANSFER_RESPONSE_TOPIC;
     transfer_topic.qos = MQTT_QOS_0;
@@ -2350,16 +2374,18 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
         message_context.transfer_first_byte_us;
     s_ready_metrics_2_snapshot.application_last_byte_us =
         message_context.transfer_last_byte_us;
-    s_ready_metrics_2_snapshot.application_ttfb_us = PQC_TimebaseElapsedUs(
+    s_ready_metrics_2_snapshot.ttfb_us = PQC_TimebaseElapsedUs(
         s_ready_metrics_2_snapshot.tcp_connect_start_us,
         s_ready_metrics_2_snapshot.application_first_byte_us);
     s_ready_metrics_2_snapshot.ttlb_us = PQC_TimebaseElapsedUs(
         s_ready_metrics_2_snapshot.tcp_connect_start_us,
         s_ready_metrics_2_snapshot.application_last_byte_us);
-    s_ready_metrics_2_snapshot.application_request_to_first_byte_us =
-        PQC_TimebaseElapsedUs(
-            s_ready_metrics_2_snapshot.application_request_us,
-            s_ready_metrics_2_snapshot.application_first_byte_us);
+    s_ready_metrics_2_snapshot.req_tfb_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.application_request_us,
+        s_ready_metrics_2_snapshot.application_first_byte_us);
+    s_ready_metrics_2_snapshot.req_tlb_us = PQC_TimebaseElapsedUs(
+        s_ready_metrics_2_snapshot.application_request_us,
+        s_ready_metrics_2_snapshot.application_last_byte_us);
     s_ready_metrics_2_snapshot.application_transfer_us = PQC_TimebaseElapsedUs(
         s_ready_metrics_2_snapshot.application_first_byte_us,
         s_ready_metrics_2_snapshot.application_last_byte_us);
@@ -2371,12 +2397,12 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
         message_context.transfer_message_count;
     if (PQC_TimebaseResetRelativeUs(
             s_ready_metrics_2_snapshot.application_first_byte_us,
-            &s_ready_metrics_2_snapshot.reset_to_application_first_byte_us)) {
+            &s_ready_metrics_2_snapshot.rtfb_us)) {
         s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
     }
     if (PQC_TimebaseResetRelativeUs(
             s_ready_metrics_2_snapshot.application_last_byte_us,
-            &s_ready_metrics_2_snapshot.reset_to_application_last_byte_us)) {
+            &s_ready_metrics_2_snapshot.rtlb_us)) {
         s_ready_metrics_2_snapshot.reset_origin_valid = 1U;
     }
     s_ready_metrics_2_snapshot.application_first_byte_valid = 1U;
@@ -2385,6 +2411,36 @@ int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void))
     s_ready_metrics_2_snapshot.measurement_complete_us =
         s_ready_metrics_2_snapshot.application_last_byte_us;
     message_context.transfer_mode = false;
+
+    /* UART remains diagnostic/fallback evidence rather than the normal
+     * structured-result transport. Emit the canonical names only after the
+     * final requested payload byte so formatting cannot perturb the measured
+     * Ready Metrics 2 intervals. */
+    {
+        char metric_a[21], metric_b[21], metric_c[21], metric_d[21], metric_e[21];
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.ttfb_us, metric_a, sizeof(metric_a));
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.ttlb_us, metric_b, sizeof(metric_b));
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.req_tfb_us, metric_c, sizeof(metric_c));
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.req_tlb_us, metric_d, sizeof(metric_d));
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.application_transfer_us, metric_e, sizeof(metric_e));
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_RM2_METRICS schema=3 ttfb_us=%s ttlb_us=%s req_tfb_us=%s req_tlb_us=%s application_transfer_us=%s\r\n",
+            metric_a, metric_b, metric_c, metric_d, metric_e);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.rtfb_us, metric_a, sizeof(metric_a));
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.rtlb_us, metric_b, sizeof(metric_b));
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_RM2_RESET schema=3 reset_origin=operational_wolfboot_entry valid=%u rtfb_us=%s rtlb_us=%s\r\n",
+            (unsigned int)s_ready_metrics_2_snapshot.reset_origin_valid, metric_a, metric_b);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+
+        PQC_WolfMQTT_FormatU64(s_ready_metrics_2_snapshot.mqtt_readiness_us, metric_a, sizeof(metric_a));
+        (void)snprintf(marker, sizeof(marker),
+            "PQC_RM2_MQTT_READINESS schema=3 definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte mqtt_readiness_us=%s\r\n",
+            metric_a);
+        PQC_WolfMQTT_DiagnosticMarker(marker);
+    }
 
     /* Compatibility evidence is published only after the paper-aligned
      * transfer has finished so it cannot warm the TCP congestion window or

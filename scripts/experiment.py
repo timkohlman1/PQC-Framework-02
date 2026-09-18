@@ -299,8 +299,9 @@ def _parse_ready_metrics_2_subscriber_output(
     timebase = timebase_messages[0] if len(timebase_messages) == 1 else {}
     timebase_valid = (
         len(timebase_messages) == 1
-        and timebase.get("schema_version") == 2
+        and timebase.get("schema_version") == 3
         and timebase.get("source") == "TIM2"
+        and timebase.get("reset_origin") == "operational_wolfboot_entry"
         and isinstance(timebase.get("timer_input_clock_hz"), int)
         and timebase["timer_input_clock_hz"] > 0
         and isinstance(timebase.get("prescaler"), int)
@@ -321,22 +322,24 @@ def _parse_ready_metrics_2_subscriber_output(
     timing_message = timing_messages[0] if len(timing_messages) == 1 else {}
     timing_fields = (
         "tcp_connect_us",
-        "mqtt_first_response_us",
+        "mqtt_readiness_us",
         "mqtt_connect_us",
         "legacy_connect_timing_us",
     )
     timing_valid = (
         len(timing_messages) == 1
-        and timing_message.get("schema_version") == 2
-        and timing_message.get("mqtt_first_response_definition")
+        and timing_message.get("schema_version") == 3
+        and timing_message.get("mqtt_readiness_definition")
         == "tcp_connect_start_to_first_mqtt_connack_plaintext_byte"
         and timing_message.get("dns_included") is False
         and all(
             isinstance(timing_message.get(field), int) and timing_message[field] >= 0
             for field in timing_fields
         )
-        and timing_message.get("first_response_valid") == 1
-        and timing_message["mqtt_first_response_us"] >= timing_message["tcp_connect_us"]
+        and timing_message.get("mqtt_readiness_valid") == 1
+        and timing_message["mqtt_readiness_us"] >= timing_message["tcp_connect_us"]
+        and "ttfb_ms_legacy" not in timing_message
+        and "mqtt_first_response_us" not in timing_message
     )
 
     boot_messages = by_type.get("boot_timing", [])
@@ -344,10 +347,10 @@ def _parse_ready_metrics_2_subscriber_output(
     boot_fields = (
         "reset_to_tcp_connect_us",
         "reset_to_tls_complete_us",
-        "reset_to_mqtt_first_response_us",
+        "reset_to_mqtt_readiness_us",
         "reset_to_mqtt_connected_us",
-        "reset_to_application_first_byte_us",
-        "reset_to_application_last_byte_us",
+        "rtfb_us",
+        "rtlb_us",
         "reset_to_ready_publish_us",
     )
     boot_fields_non_negative = (
@@ -363,10 +366,10 @@ def _parse_ready_metrics_2_subscriber_output(
         if tls_timing_valid == 1:
             boot_order_valid = (
                 boot_message["reset_to_ready_publish_us"]
-                >= boot_message["reset_to_application_last_byte_us"]
-                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["rtlb_us"]
+                >= boot_message["rtfb_us"]
                 >= boot_message["reset_to_mqtt_connected_us"]
-                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_mqtt_readiness_us"]
                 >= boot_message["reset_to_tls_complete_us"]
                 >= boot_message["reset_to_tcp_connect_us"]
             )
@@ -374,10 +377,10 @@ def _parse_ready_metrics_2_subscriber_output(
             boot_order_valid = (
                 boot_message["reset_to_tls_complete_us"] == 0
                 and boot_message["reset_to_ready_publish_us"]
-                >= boot_message["reset_to_application_last_byte_us"]
-                >= boot_message["reset_to_application_first_byte_us"]
+                >= boot_message["rtlb_us"]
+                >= boot_message["rtfb_us"]
                 >= boot_message["reset_to_mqtt_connected_us"]
-                >= boot_message["reset_to_mqtt_first_response_us"]
+                >= boot_message["reset_to_mqtt_readiness_us"]
                 >= boot_message["reset_to_tcp_connect_us"]
             )
     elif boot_fields_non_negative and reset_origin_valid == 0:
@@ -387,8 +390,8 @@ def _parse_ready_metrics_2_subscriber_output(
 
     boot_valid = (
         len(boot_messages) == 1
-        and boot_message.get("schema_version") == 2
-        and boot_message.get("reset_origin") == "wolfboot_entry"
+        and boot_message.get("schema_version") == 3
+        and boot_message.get("reset_origin") == "operational_wolfboot_entry"
         and reset_origin_valid in (0, 1)
         and reset_origin_valid == timebase.get("reset_origin_valid")
         and tls_timing_valid in (0, 1)
@@ -509,44 +512,99 @@ def _parse_ready_metrics_2_subscriber_output(
     )
     tls_bundle_valid = handshake_valid and phase_valid and primitive_valid and x509_valid
 
+    checkpoint_messages = by_type.get("application_timing_checkpoints", [])
+    checkpoints = checkpoint_messages[0] if len(checkpoint_messages) == 1 else {}
+    checkpoint_fields = (
+        "reset_origin_to_application_timebase_us",
+        "tcp_connect_start_us",
+        "mqtt_readiness_checkpoint_us",
+        "application_request_us",
+        "application_first_byte_us",
+        "application_last_byte_us",
+    )
+    checkpoints_valid = (
+        len(checkpoint_messages) == 1
+        and checkpoints.get("schema_version") == 3
+        and checkpoints.get("reset_origin") == "operational_wolfboot_entry"
+        and checkpoints.get("reset_origin_valid") in (0, 1)
+        and checkpoints.get("reset_origin_valid") == reset_origin_valid
+        and all(
+            isinstance(checkpoints.get(field), int) and checkpoints[field] >= 0
+            for field in checkpoint_fields
+        )
+        and checkpoints["reset_origin_to_application_timebase_us"]
+        == timebase.get("reset_origin_to_application_timebase_us")
+        and checkpoints["mqtt_readiness_checkpoint_us"] >= checkpoints["tcp_connect_start_us"]
+        and checkpoints["application_request_us"] >= checkpoints["mqtt_readiness_checkpoint_us"]
+        and timing_message.get("mqtt_readiness_us")
+        == checkpoints["mqtt_readiness_checkpoint_us"] - checkpoints["tcp_connect_start_us"]
+        and checkpoints["application_first_byte_us"] >= checkpoints["application_request_us"]
+        and checkpoints["application_last_byte_us"] >= checkpoints["application_first_byte_us"]
+    )
+
     transfer_messages = by_type.get("application_transfer_timing", [])
     transfer_message = transfer_messages[0] if len(transfer_messages) == 1 else {}
     transfer_numeric_fields = (
-        "payload_bytes", "received_bytes", "message_count", "chunk_bytes",
-        "application_ttfb_us", "ttlb_us", "request_to_first_byte_us",
-        "application_transfer_us",
+        "payload_bytes", "received_bytes", "chunk_bytes",
+        "rtfb_us", "rtlb_us", "ttfb_us", "ttlb_us",
+        "req_tfb_us", "req_tlb_us", "application_transfer_us",
     )
     transfer_valid = (
         len(transfer_messages) == 1
-        and transfer_message.get("schema_version") == 2
-        and transfer_message.get("ttlb_definition")
-        == "tcp_connect_start_to_last_byte_of_requested_application_payload"
-        and transfer_message.get("direction") == "broker_to_stm32"
+        and transfer_message.get("schema_version") == 3
+        and transfer_message.get("metric_contract") == "ready_metrics_2_canonical_v3"
         and all(
             isinstance(transfer_message.get(field), int) and transfer_message[field] >= 0
             for field in transfer_numeric_fields
         )
         and transfer_message["payload_bytes"] > 0
         and transfer_message["received_bytes"] == transfer_message["payload_bytes"]
-        and transfer_message["message_count"] > 0
         and 0 < transfer_message["chunk_bytes"] <= 400
-        and transfer_message["application_ttfb_us"]
-        >= timing_message.get("mqtt_first_response_us", 0)
-        and transfer_message["ttlb_us"] >= transfer_message["application_ttfb_us"]
-        and transfer_message["application_transfer_us"] <= transfer_message["ttlb_us"]
-        and transfer_message.get("first_byte_valid") == 1
-        and transfer_message.get("last_byte_valid") == 1
         and transfer_message.get("complete_valid") == 1
+        and transfer_message.get("reset_metrics_valid") == reset_origin_valid
+        and "application_ttfb_us" not in transfer_message
+        and "request_to_first_byte_us" not in transfer_message
+        and checkpoints_valid
+        and transfer_message["ttfb_us"]
+        == checkpoints["application_first_byte_us"] - checkpoints["tcp_connect_start_us"]
+        and transfer_message["ttlb_us"]
+        == checkpoints["application_last_byte_us"] - checkpoints["tcp_connect_start_us"]
+        and transfer_message["req_tfb_us"]
+        == checkpoints["application_first_byte_us"] - checkpoints["application_request_us"]
+        and transfer_message["req_tlb_us"]
+        == checkpoints["application_last_byte_us"] - checkpoints["application_request_us"]
+        and transfer_message["application_transfer_us"]
+        == checkpoints["application_last_byte_us"] - checkpoints["application_first_byte_us"]
+        and (
+            (
+                reset_origin_valid == 1
+                and transfer_message["rtfb_us"]
+                == checkpoints["reset_origin_to_application_timebase_us"]
+                + checkpoints["application_first_byte_us"]
+                and transfer_message["rtlb_us"]
+                == checkpoints["reset_origin_to_application_timebase_us"]
+                + checkpoints["application_last_byte_us"]
+                and boot_message.get("rtfb_us") == transfer_message["rtfb_us"]
+                and boot_message.get("rtlb_us") == transfer_message["rtlb_us"]
+            )
+            or (
+                reset_origin_valid == 0
+                and transfer_message["rtfb_us"] == 0
+                and transfer_message["rtlb_us"] == 0
+                and boot_message.get("rtfb_us") == 0
+                and boot_message.get("rtlb_us") == 0
+            )
+        )
     )
 
     complete_valid = (
         len(complete_messages) == 1
-        and complete_messages[0].get("schema_version") == 2
+        and complete_messages[0].get("schema_version") == 3
         and complete_messages[0].get("status") == "success"
-        and complete_messages[0].get("message_count") == 18
+        and complete_messages[0].get("message_count") == 19
     )
     passed = (
-        len(payloads) == 18
+        len(payloads) == 19
         and ready_count == 1
         and connect_valid
         and memory_valid
@@ -554,6 +612,7 @@ def _parse_ready_metrics_2_subscriber_output(
         and timing_valid
         and boot_valid
         and tls_bundle_valid
+        and checkpoints_valid
         and transfer_valid
         and complete_valid
         and invalid_json_count == 0
@@ -575,6 +634,8 @@ def _parse_ready_metrics_2_subscriber_output(
         "boot_timing_valid": boot_valid,
         "tls_bundle_valid": tls_bundle_valid,
         "primitive_parts": primitive_parts,
+        "checkpoints_valid": checkpoints_valid,
+        "application_timing_checkpoints": checkpoints if checkpoints_valid else None,
         "transfer_valid": transfer_valid,
         "application_transfer_timing": transfer_message if transfer_valid else None,
         "complete_valid": complete_valid,
@@ -1323,11 +1384,13 @@ def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[
         markers = [
             "ST67 DHCP: result=passed",
             "MQTT application: profile=mqtt_ready_metrics_2 state=workload_start",
-            "PQC_RM2_TTFB definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
-            "PQC_RM2_TTLB definition=tcp_connect_start_to_last_byte_of_requested_application_payload",
+            "PQC_RM2_METRICS schema=3 ttfb_us=",
+            "PQC_RM2_RESET schema=3 reset_origin=operational_wolfboot_entry",
+            "PQC_RM2_MQTT_READINESS schema=3 definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte",
+            "MQTT application: profile=mqtt_ready_metrics_2 state=workload_stopped result=",
             "PQC_APP_PUBLISH sequence=1 type=ready result=0",
             "PQC_APP_PUBLISH sequence=2 type=connect_timing",
-            "PQC_APP_PUBLISH sequence=17 type=ready_metrics_2_complete result=0",
+            "PQC_APP_PUBLISH sequence=18 type=ready_metrics_2_complete result=0",
             _mqtt_completion_marker(bundle),
         ]
         evidence_class = mqtt.get("evidence_class") if isinstance(mqtt, dict) else None

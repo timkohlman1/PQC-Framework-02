@@ -1,3 +1,8 @@
+# Ready Metrics 2 canonical timing contract (schema v3):
+# RTFB/RTLB use the operational wolfBoot-entry reset origin; TTFB/TTLB use
+# TCP-connect start; ReqTFB/ReqTLB use the application transfer request.
+# The first MQTT CONNACK/plaintext response byte is MQTT readiness only and
+# must never be labelled TTFB. application_transfer_us is first-to-final byte.
 schema_version: 1
 profile_type: workload
 id: ready_metrics_2
