@@ -244,7 +244,11 @@ def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist
     assert "test_application_update_explicit_bank_boot_and_confirmation_state_hw" in hardware
     assert "test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw" in hardware
     assert 'record.get("active_bank") != initial_bank' in hardware
-    assert 'candidate_app.get("bfb2") != initial_bfb2' in hardware
+    assert 'assert candidate_bank != initial_bank' in hardware
+    assert 'assert candidate_bank != original_bank' in hardware
+    assert 'candidate_app.get("bfb2") in {"0", "1"}' in hardware
+    assert 'candidate_app.get("bfb2") != initial_bfb2' not in hardware
+    assert 'candidate_app.get("bfb2") != original_bfb2' not in hardware
     assert 'record.get("phase") == "confirmed"' in hardware
     assert 'record.get("active_bank") == original_bank' in hardware
     assert "wolfBoot verification result: 0" in hardware

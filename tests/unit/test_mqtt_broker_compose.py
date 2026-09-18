@@ -741,6 +741,24 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
     assert "./runtime/tls-keylog/" not in compose
 
 
+
+def test_reporting_broker_queue_capacity_covers_maximum_retained_ota_burst_without_changing_workload_brokers():
+    reporting_config = _read(BROKER_ROOT / "config" / "reporting" / "mosquitto.conf")
+    compose = _read(BROKER_ROOT / "compose.yaml")
+
+    # Maximum supported OTA candidate at 192-byte retained chunks:
+    # 112 KiB bootloader + 16 KiB manifest + 896 KiB application + completion marker
+    # = 598 + 86 + 4779 + 1 = 5464 retained messages.
+    assert "max_queued_messages 8192" in reporting_config
+    assert 8192 > 5464
+
+    for profile in ("classical", "classical-server-auth", "oqs", "oqs-mtls"):
+        workload_config = _read(BROKER_ROOT / "config" / profile / "mosquitto.conf")
+        assert "max_queued_messages 8192" not in workload_config
+
+    reporting = _service_block(compose, "mqtt-reporting")
+    assert "./config/reporting/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in reporting
+
 def test_reporting_acl_matches_result_instrument_and_control_namespaces():
     acl = _read(BROKER_ROOT / "config" / "reporting" / "aclfile")
     lines = [

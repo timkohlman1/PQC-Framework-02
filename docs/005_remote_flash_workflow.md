@@ -6,7 +6,7 @@ This document owns the current Docker-wrapper direct-flash, secure-boot, and UAR
 
 Gateway identity is owned by `configs/gateways/pqc_gateway1.yaml` and explained in `docs/002_host_gateway_setup.md`. Board/ST-LINK/UART hardware identity is owned by `docs/003_stm32_board_setup.md`.
 
-All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` to select Debug compiler settings without changing the flash addresses.
+Direct-flash builds use the normal application layout. wolfBoot-secured builds use the relocated application vector at `0x08023000`, while the flash/update mechanism is selected by `firmware_mode`: `single_bank`, `dual_bank_no_ota`, or `dual_bank_ota`. Release is the default compiler configuration. Add `--debug` to select Debug compiler settings without changing the selected mode's flash addresses.
 
 ## Direct-flash workflow
 
@@ -221,7 +221,13 @@ Replace the example address with the actual device address. When the MAC is omit
 
 ## Relocated secure-boot build defaults
 
-All firmware builds use the fixed wolfBoot-relocated layout. Release is the default build mode and `--debug` selects the Debug compiler configuration without changing the flash addresses. The primary slot begins at `0x08020000`; its 12 KiB manifest reserve ends at `0x08022FFF`; the application vector table begins at `0x08023000`. The default wolfBoot mode is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. It therefore does not require or resolve a signing tuple. ML-DSA-44, ML-DSA-65, and ML-DSA-87 remain explicit non-default signing evaluation profiles.
+wolfBoot-secured firmware keeps the signed application slot at offset `0x20000` and the application vector at logical `0x08023000`, after the 12 KiB image-header reserve. The selected update mechanism is build-affecting:
+
+- `single_bank` retains the legacy primary/update/software-swap layout and compiles out hardware BFB2 swapping and application OTA handling.
+- `dual_bank_no_ota` uses two symmetric 1 MiB physical banks, each with a 128 KiB wolfBoot/metadata reservation followed by an 896 KiB signed application slot; BFB2 bank switching is available, while application OTA handling is compiled out.
+- `dual_bank_ota` uses the same symmetric dual-bank layout and enables reporting-plane OTA staging, activation, confirmation, and rollback.
+
+Release is the default build mode and `--debug` selects Debug compiler configuration without changing the selected firmware mode's addresses. The default wolfBoot algorithm is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. It therefore does not require or resolve a signing tuple. Signing profiles remain explicit non-default selections.
 
 
 ### MQTT TLS packet decryption

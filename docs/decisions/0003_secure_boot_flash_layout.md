@@ -8,6 +8,18 @@ Accepted for Phase 10d.
 
 2026-06-29
 
+## Current applicability
+
+This decision record preserves the rationale for the original single-bank software-swap layout. It is not the sole current firmware layout.
+
+The resolved `firmware_mode` selects the operative layout:
+
+- `single_bank` retains the primary/update/software-swap model described by this decision, with the current 12 KiB image-header reserve and logical application vector at `0x08023000`.
+- `dual_bank_no_ota` uses two symmetric 1 MiB physical banks and hardware BFB2 bank switching, while compiling out application OTA handling.
+- `dual_bank_ota` uses the same symmetric dual-bank layout and enables authenticated reporting-plane OTA staging, activation, confirmation, and rollback.
+
+For both dual-bank modes, each physical bank reserves 128 KiB at offset `0x00000` for wolfBoot and candidate metadata and places the 896 KiB signed application slot at bank offset `0x20000`. `docs/009_dual_bank_ota_workflow.md` is the current operational authority for that layout. The historical 256-byte image-header and `0x08020100` entry assumptions below describe the state when this decision was first recorded; current secure-boot builds use the 12 KiB reserve and logical vector `0x08023000`.
+
 ## Context
 
 The project target is the NUCLEO-L4R5ZI-P / STM32L4R5 direct-flash STM32 HAL baseline. The board has 2 MB of internal flash starting at `0x08000000`.
@@ -141,6 +153,6 @@ wolfboot.elf SHA-256: 535b729aee2e112291761f7e3d60e46b094eb9079c09fd66529bd70b7b
 A successful `wolfboot.elf` build is not evidence that this layout flashes, signs, swaps, updates, or boots correctly. Those checks remain later phases and require user-provided signing, flashing, hardware, and UART evidence.
 
 
-## Relocated secure-boot build defaults
+## Current relocated secure-boot defaults
 
-All firmware builds use the fixed wolfBoot-relocated layout. Release is the default build mode and `--debug` selects the Debug compiler configuration without changing the flash addresses. The primary slot begins at `0x08020000`; its 12 KiB manifest reserve ends at `0x08022FFF`; the application vector table begins at `0x08023000`. The default wolfBoot mode is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication. ML-DSA-44, ML-DSA-65, and ML-DSA-87 remain explicit non-default signing evaluation profiles.
+Current wolfBoot-secured builds use a 12 KiB image-header reserve and logical application vector `0x08023000`. The flash/update layout is not fixed globally: it is selected by `firmware_mode` as described in the current-applicability section above. Release is the default build mode and `--debug` changes compiler configuration without changing the selected mode's addresses. The default wolfBoot algorithm is `integrity_sha256`, which verifies the image SHA-256 digest but performs no signature or signing-key authentication.
