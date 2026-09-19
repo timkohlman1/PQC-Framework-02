@@ -44,6 +44,17 @@ typedef struct
 /* Ready Metrics 2 stores research timing in microseconds from the dedicated
  * 1 MHz application timebase. Millisecond compatibility fields are derived
  * only when serializing legacy output; HAL/FreeRTOS ticks remain OS timing. */
+
+typedef struct
+{
+    uint32_t requested_handshakes;
+    uint32_t completed_handshakes;
+    uint32_t successful_handshakes;
+    uint32_t failed_handshakes;
+    uint32_t reporting_epochs_published;
+    int last_result;
+} PQC_WolfMQTTTLSRepeatSummary;
+
 typedef struct
 {
     uint32_t schema_version;
@@ -100,6 +111,10 @@ int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status);
 int PQC_WolfMQTT_RunReadyMetricsApplication(void (*mark_complete)(void));
 
 int PQC_WolfMQTT_RunReadyMetrics2Application(void (*mark_complete)(void));
+
+int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
+    uint32_t handshakes_per_run,
+    PQC_WolfMQTTTLSRepeatSummary *summary);
 
 int PQC_WolfMQTT_PublishDeferredResults(
     const uint8_t *data,

@@ -248,6 +248,24 @@ class ConfigResolver:
             chunk = int(_require(transfer, "chunk_bytes", f"workload {workload.profile_id}.transfer"))
             if payload <= 0 or chunk <= 0 or chunk > payload:
                 raise ResolutionError("workload transfer payload/chunk must be positive and chunk <= payload")
+        iterations = effective_workload.get("iterations", {})
+        if iterations:
+            if not isinstance(iterations, dict):
+                raise ResolutionError(f"workload {workload.profile_id}.iterations must be a mapping")
+            handshakes = iterations.get("handshakes_per_run")
+            if not isinstance(handshakes, int) or isinstance(handshakes, bool) or not (1 <= handshakes <= 1000):
+                raise ResolutionError("workload iterations.handshakes_per_run must be an integer from 1 to 1000")
+            required_iteration_semantics = {
+                "reset_between_handshakes": False,
+                "fresh_tcp_connection": True,
+                "fresh_tls_context": True,
+                "session_resumption": False,
+            }
+            for field, expected in required_iteration_semantics.items():
+                if iterations.get(field) is not expected:
+                    raise ResolutionError(
+                        f"workload iterations.{field} must be {str(expected).lower()} for independent full TLS handshakes"
+                    )
         services = selections.get("services", {})
         exp = self.load_service("mqtt_broker", str(services["experiment_broker"]))
         rep = self.load_service("mqtt_broker", str(services["reporting_broker"]))
@@ -270,6 +288,8 @@ class ConfigResolver:
         if transfer:
             public_choices["payload_bytes"] = int(transfer["payload_bytes"])
             public_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
+        if iterations:
+            public_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
         selection_record = {
             "target": target.profile_id, "gateway": gateway.profile_id,
             "services": {"experiment_broker": exp.profile_id, "reporting_broker": rep.profile_id},
@@ -293,6 +313,8 @@ class ConfigResolver:
         if transfer:
             firmware_choices["payload_bytes"] = int(transfer["payload_bytes"])
             firmware_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
+        if iterations:
+            firmware_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
         firmware_id = _identity({
             "schema_version": SCHEMA_VERSION,
             "resolver_version": RESOLVER_VERSION,
@@ -372,6 +394,9 @@ class ConfigResolver:
         broker = exp_service["listener"]
         topics_prefix = f"pqc/experiments/stm32/{kex['id']}/{auth_mode}"
         transfer = workload.get("transfer", {})
+        iterations = workload.get("iterations", {}) if isinstance(workload.get("iterations", {}), dict) else {}
+        handshakes_per_run = int(iterations.get("handshakes_per_run", 1)) if iterations else 1
+        runtime_hard_limit_seconds = max(180, handshakes_per_run * 60)
         mqtt: dict[str, Any] = {
             "schema_version": 1, "enabled": True,
             "evidence_class": "stm32_st67_classical_tls_e2e" if klass == "classical" else "stm32_st67_pqc_hybrid_tls_e2e" if klass == "hybrid_pqc" else "stm32_st67_pqc_tls_e2e",
@@ -381,7 +406,9 @@ class ConfigResolver:
             "topics": {"command": topics_prefix + "/command", "response": topics_prefix + "/response"},
             "command_payload": "run", "correlation_payload": f"pqc-stm32-{kex['id']}-{auth_mode}-ok",
             "reconnect_attempts": 1,
-            "orchestration": {"host": gateway["network"]["address"], "completion_grace_seconds": 3, "hard_limit_seconds": 180},
+            "orchestration": {"host": gateway["network"]["address"], "completion_grace_seconds": 3,
+                              "hard_limit_seconds": runtime_hard_limit_seconds,
+                              "expected_stm32_result_epochs": handshakes_per_run},
             "tls": {"tls_version": "tls1.3", "mode": tls_mode, "authentication": auth_mode,
                     "certificate_profile": auth["id"], "server_signature_algorithm": auth["tls"]["signature_scheme"],
                     "key_exchange_group": kex["id"]},
@@ -455,6 +482,7 @@ class ConfigResolver:
             "mqtt": mqtt,
             "uart": {"expected_boot_message": target["uart"]["expected_boot_message"], "expected_tick_message": target["uart"]["expected_tick_message"]},
             "services": {"experiment_broker": s["services"]["experiment_broker"], "reporting_broker": s["services"]["reporting_broker"]},
+            "workload": {"id": workload["id"], "iterations": dict(iterations)},
             "structured_reporting": {"enabled": True, "schema_version": 1},
             "reporting": {
                 "host": reporting_service["listener"]["host"],

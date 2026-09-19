@@ -502,10 +502,49 @@ def test_broker_evidence_is_mandatory_and_fatal_errors_fail_the_run():
     assert 'BROKER_FATAL_LOG_PATTERNS' in source
     assert '"broker_log_write_failure", "unable to open log file"' in source
     assert '"unexpected_broker_tls_error", "ssl/tls alert bad certificate"' in source
-    assert '"required_for_pass": True' in source
+    # MQTT packet-routing evidence is mandatory for MQTT workloads, but
+    # inapplicable to the TLS-only repeated-handshake workload.  The runner
+    # must retain the explicit workload-specific contract, rather than a
+    # hard-coded True literal that rejects the TLS-only exception.
+    assert '"required_for_pass": not tls_handshake_repeat_application' in source
+    assert 'tls_handshake_repeat=tls_handshake_repeat_application' in source
     assert 'failure_stage = "broker_log_unavailable"' in source
     assert 'failure_stage = "broker_message_evidence"' in source
     assert '"broker_log_integrity": broker_log_integrity' in source
+
+    # Check the parser and the independent fatal-log scanner at runtime.
+    cli = load_experiment_module()
+    kwargs = {
+        "stm32_client_id": "stm32",
+        "publisher_client_id": "publisher",
+        "subscriber_client_id": "subscriber",
+        "command_topic": "experiment/command",
+        "response_topic": "experiment/response",
+    }
+    tls_only = cli._parse_mqtt_broker_message_evidence(
+        "New connection from 192.0.2.1:12345 on port 8883.\n",
+        tls_handshake_repeat=True,
+        **kwargs,
+    )
+    assert tls_only["evidence_contract"] == "tls_handshake_repeat_tls_only"
+    assert tls_only["status"] == "not_applicable"
+    assert tls_only["passed"] is True
+    for device_initiated in (False, True):
+        mqtt_evidence = cli._parse_mqtt_broker_message_evidence(
+            "New connection from 192.0.2.1:12345 on port 8883.\n",
+            device_initiated=device_initiated,
+            **kwargs,
+        )
+        assert mqtt_evidence["passed"] is False
+
+    for fatal_log in (
+        "Error: Unable to open log file",
+        "OpenSSL Error: ssl/tls alert bad certificate",
+    ):
+        assert cli._scan_mqtt_broker_fatal_evidence(fatal_log)["passed"] is False
+    assert cli._scan_mqtt_broker_fatal_evidence(
+        "New connection from 192.0.2.1:12345 on port 8883."
+    )["passed"] is True
 
 
 def test_subscriber_artifact_is_rebuilt_from_completed_capture_and_verified():
