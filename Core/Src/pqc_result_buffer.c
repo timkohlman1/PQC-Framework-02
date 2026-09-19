@@ -52,38 +52,83 @@ static void sha256_init(PQC_SHA256Context *ctx) {
 static void sha256_update(PQC_SHA256Context *ctx,const uint8_t *data,size_t length){ size_t n; ctx->bit_count+=(uint64_t)length*8U; while(length){ n=64U-ctx->block_used; if(n>length)n=length; memcpy(ctx->block+ctx->block_used,data,n); ctx->block_used+=n; data+=n; length-=n; if(ctx->block_used==64U){sha256_transform(ctx,ctx->block);ctx->block_used=0U;}}}
 static void sha256_final(PQC_SHA256Context *ctx,uint8_t digest[32]){ uint64_t bits=ctx->bit_count; unsigned int i; ctx->block[ctx->block_used++]=0x80U; if(ctx->block_used>56U){while(ctx->block_used<64U)ctx->block[ctx->block_used++]=0U;sha256_transform(ctx,ctx->block);ctx->block_used=0U;} while(ctx->block_used<56U)ctx->block[ctx->block_used++]=0U; for(i=0U;i<8U;i++)ctx->block[63U-i]=(uint8_t)(bits>>(8U*i)); sha256_transform(ctx,ctx->block); for(i=0U;i<8U;i++){digest[4U*i]=(uint8_t)(ctx->state[i]>>24);digest[4U*i+1U]=(uint8_t)(ctx->state[i]>>16);digest[4U*i+2U]=(uint8_t)(ctx->state[i]>>8);digest[4U*i+3U]=(uint8_t)ctx->state[i];}}
 
-static bool append_escaped(char *output, size_t output_size, size_t *used, const char *text) {
-    size_t i;
-    for (i=0U; text != NULL && text[i] != '\0'; ++i) {
-        char c=text[i]; const char *escape=NULL; char single[2]={c,'\0'};
-        if(c=='"') escape="\\\""; else if(c=='\\') escape="\\\\"; else if(c=='\n') escape="\\n"; else if(c=='\r') escape="\\r"; else if(c=='\t') escape="\\t"; else escape=single;
-        { size_t n=strlen(escape); if((*used+n)>=output_size) return false; memcpy(output+*used,escape,n); *used+=n; }
+/* Compute the encoded length before writing: a failed append is atomic. */
+static bool escaped_length_within(const char *text, size_t budget, size_t *encoded_length)
+{
+    size_t used = 0U;
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor != 0U) {
+        const unsigned char c = *cursor++;
+        const size_t width = (c == '"' || c == '\\' || c == '\n' ||
+                              c == '\r' || c == '\t') ? 2U : 1U;
+        if (width > budget - used) {
+            return false;
+        }
+        used += width;
     }
+    *encoded_length = used;
     return true;
+}
+
+static size_t write_escaped(uint8_t *output, const char *text)
+{
+    size_t used = 0U;
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor != 0U) {
+        const unsigned char c = *cursor++;
+        char escaped = '\0';
+        if (c == '"') escaped = '"';
+        else if (c == '\\') escaped = '\\';
+        else if (c == '\n') escaped = 'n';
+        else if (c == '\r') escaped = 'r';
+        else if (c == '\t') escaped = 't';
+        if (escaped != '\0') {
+            output[used++] = '\\';
+            output[used++] = (uint8_t)escaped;
+        } else {
+            output[used++] = c;
+        }
+    }
+    return used;
 }
 
 void PQC_ResultBufferReset(void) { s_used=0U; s_records=0U; s_dropped=0U; s_overflowed=false; }
 
-bool PQC_ResultBufferAppendText(uint32_t iteration, const char *context, const char *text) {
-    char record[768]; size_t used=0U; int n;
-    const char *safe_context=(context!=NULL)?context:"unspecified";
-    const char *safe_text=(text!=NULL)?text:"";
-    n=snprintf(record,sizeof(record),"{\"schema_version\":%u,\"source\":\"stm32\",\"iteration\":%lu,\"context\":\"",PQC_RESULT_SCHEMA_VERSION,(unsigned long)iteration);
-    if (n < 0 || (size_t)n >= sizeof(record)) goto drop;
-    used = (size_t)n;
-    if(!append_escaped(record,sizeof(record),&used,safe_context)) goto drop;
-    if (used + 10U >= sizeof(record)) goto drop;
-    memcpy(record + used, "\",\"text\":\"", 10U);
-    used += 10U;
-    if(!append_escaped(record,sizeof(record),&used,safe_text)) goto drop;
-    if (used + 3U >= sizeof(record)) goto drop;
-    record[used++] = '"';
-    record[used++] = '}';
-    record[used++] = '\n';
-    if(s_used+used>PQC_RESULT_BUFFER_CAPACITY_BYTES) goto drop;
-    memcpy(s_buffer+s_used,record,used); s_used+=used; s_records++; return true;
+bool PQC_ResultBufferAppendText(uint32_t iteration, const char *context, const char *text)
+{
+    /* No allocation and no 768-byte intermediate record. A JSON record remains
+     * a single line even when its text is longer than the old scratch buffer. */
+    char prefix[96];
+    const char *safe_context = (context != NULL) ? context : "unspecified";
+    const char *safe_text = (text != NULL) ? text : "";
+    static const char separator[] = "\",\"text\":\"";
+    static const char suffix[] = "\"}\n";
+    size_t remaining, prefix_size, context_size, text_size, needed, offset;
+    int n = snprintf(prefix, sizeof(prefix),
+                     "{\"schema_version\":%u,\"source\":\"stm32\",\"iteration\":%lu,\"context\":\"",
+                     PQC_RESULT_SCHEMA_VERSION, (unsigned long)iteration);
+    if (n < 0 || (size_t)n >= sizeof(prefix)) goto drop;
+    prefix_size = (size_t)n;
+    remaining = PQC_RESULT_BUFFER_CAPACITY_BYTES - s_used;
+    if (prefix_size + sizeof(separator) - 1U + sizeof(suffix) - 1U > remaining) goto drop;
+    remaining -= prefix_size + sizeof(separator) - 1U + sizeof(suffix) - 1U;
+    if (!escaped_length_within(safe_context, remaining, &context_size)) goto drop;
+    remaining -= context_size;
+    if (!escaped_length_within(safe_text, remaining, &text_size)) goto drop;
+    needed = prefix_size + context_size + sizeof(separator) - 1U + text_size + sizeof(suffix) - 1U;
+    offset = s_used;
+    memcpy(s_buffer + offset, prefix, prefix_size); offset += prefix_size;
+    offset += write_escaped(s_buffer + offset, safe_context);
+    memcpy(s_buffer + offset, separator, sizeof(separator) - 1U); offset += sizeof(separator) - 1U;
+    offset += write_escaped(s_buffer + offset, safe_text);
+    memcpy(s_buffer + offset, suffix, sizeof(suffix) - 1U); offset += sizeof(suffix) - 1U;
+    s_used += needed;
+    s_records++;
+    return true;
 drop:
-    s_dropped++; s_overflowed=true; return false;
+    s_dropped++;
+    s_overflowed = true;
+    return false;
 }
 const uint8_t *PQC_ResultBufferData(void){return s_buffer;}
 size_t PQC_ResultBufferSize(void){return s_used;}
