@@ -47,6 +47,7 @@
 #include "task.h"
 #include "pqc_ram_accounting.h"
 #include "pqc_result_buffer.h"
+#include "pqc_boot_evidence.h"
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
 /* USER CODE END Includes */
@@ -1408,7 +1409,7 @@ static void APP_PrintApplicationClockConfiguration(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   3UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   5UL
 
 typedef struct
 {
@@ -1427,6 +1428,15 @@ typedef struct
   uint32_t handoff_bridge_counter_hz;
   uint32_t handoff_bridge_counter_bits;
   uint32_t handoff_bridge_status;
+  uint32_t integrity_cycles;
+  int32_t integrity_result;
+  uint32_t integrity_valid;
+  uint32_t authenticity_cycles;
+  int32_t authenticity_result;
+  uint32_t authenticity_valid;
+  uint32_t signature_algorithm_id;
+  uint32_t signature_parameter_bits;
+  uint32_t declared_signature_capacity_bytes;
 } PQC_BootTimingMailbox;
 
 static void APP_ConfigureResetOriginHandoff(void)
@@ -1470,18 +1480,34 @@ static void APP_PrintWolfBootVerificationTiming(void)
   if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
       (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
   {
-    APP_UART_WriteString("wolfBoot verification cycles: ");
-    APP_UART_WriteUint32(mailbox->elapsed_cycles);
-    APP_UART_WriteString(" cycles\r\n");
-
-    APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
-    //APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
-    //APP_PrintWolfBootClock("pclk1_hz", mailbox->pclk1_hz);
-    //APP_PrintWolfBootClock("pclk2_hz", mailbox->pclk2_hz);
-
-    APP_UART_WriteString("wolfBoot verification result: ");
-    APP_UART_WriteUint32(mailbox->verification_result);
+    APP_UART_WriteString("wolfBoot timing mailbox version: 5\r\n");
+    APP_UART_WriteString("wolfBoot integrity valid: ");
+    APP_UART_WriteUint32(mailbox->integrity_valid);
     APP_UART_WriteString("\r\n");
+    if (mailbox->integrity_valid != 0U && mailbox->integrity_cycles != 0U)
+    {
+      APP_UART_WriteString("wolfBoot integrity cycles: ");
+      APP_UART_WriteUint32(mailbox->integrity_cycles);
+      APP_UART_WriteString(" cycles\r\n");
+      APP_UART_WriteString("wolfBoot integrity result: ");
+      APP_UART_WriteInt32(mailbox->integrity_result);
+      APP_UART_WriteString("\r\n");
+    }
+    APP_UART_WriteString("wolfBoot authenticity valid: ");
+    APP_UART_WriteUint32(mailbox->authenticity_valid);
+    APP_UART_WriteString("\r\n");
+    if (mailbox->authenticity_valid != 0U && mailbox->authenticity_cycles != 0U)
+    {
+      APP_UART_WriteString("wolfBoot authenticity cycles: ");
+      APP_UART_WriteUint32(mailbox->authenticity_cycles);
+      APP_UART_WriteString(" cycles\r\n");
+      APP_UART_WriteString("wolfBoot authenticity result: ");
+      APP_UART_WriteInt32(mailbox->authenticity_result);
+      APP_UART_WriteString("\r\n");
+    }
+    /* The legacy generic marker is not a valid typed measurement in v4. */
+    APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
+    APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
 
     if (mailbox->max_stack_used_bytes != 0xFFFFFFFFUL)
     {
@@ -1492,6 +1518,115 @@ static void APP_PrintWolfBootVerificationTiming(void)
   }
 }
 #endif
+
+#ifdef SECURE_BOOT_APPLICATION
+/* Identifier is written by the instrumented bootloader, not inferred from TLS.
+ * Values intentionally match the version-5 build-profile identity catalogue. */
+static const char *PQC_BootSignatureAlgorithmName(uint32_t id)
+{
+  switch (id)
+  {
+    case 1U: return "integrity_sha256";
+    case 2U: return "ecdsa_p256";
+    case 3U: return "ed25519";
+    case 4U: return "rsa2048";
+    case 5U: return "ecc384";
+    case 6U: return "ecc521";
+    case 7U: return "ed448";
+    case 8U: return "rsa3072";
+    case 9U: return "rsa4096";
+    case 10U: return "mldsa44";
+    case 11U: return "mldsa65";
+    case 12U: return "mldsa87";
+    default: return "unknown";
+  }
+}
+
+#endif /* SECURE_BOOT_APPLICATION */
+
+/* Preserve the bootloader-owned RAM2 record until deferred publication.
+ * This is intentionally outside the bootloader and application timing windows;
+ * no UART, broker connection, or heap allocation is used in verification. */
+void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
+{
+#ifdef SECURE_BOOT_APPLICATION
+  const volatile PQC_BootTimingMailbox *mailbox =
+      (const volatile PQC_BootTimingMailbox *)(uintptr_t)PQC_BOOT_TIMING_MAILBOX_ADDR;
+  char line[448];
+  uint32_t magic = mailbox->magic;
+  uint32_t version = mailbox->version;
+  if ((magic != PQC_BOOT_TIMING_MAILBOX_MAGIC) ||
+      (version != PQC_BOOT_TIMING_MAILBOX_VERSION))
+  {
+    (void)PQC_ResultBufferAppendText(iteration, "secure_boot",
+        "PQC_SECURE_BOOT schema=1 mailbox_status=unavailable reason=invalid_magic_or_version");
+    return;
+  }
+  /* Algorithm metadata is serialized only after workload measurement. A zero
+   * parameter or capacity means unavailable, never a measured zero-byte key. */
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT_PROFILE schema=1 mailbox_version=%lu "
+      "signature_algorithm=%s integrity_algorithm=sha256 "
+      "signature_parameter_bits=%lu declared_signature_capacity_bytes=%lu "
+      "signature_parameter_available=%lu declared_signature_capacity_available=%lu "
+      "public_key_size_bytes=unavailable",
+      (unsigned long)version,
+      PQC_BootSignatureAlgorithmName(mailbox->signature_algorithm_id),
+      (unsigned long)mailbox->signature_parameter_bits,
+      (unsigned long)mailbox->declared_signature_capacity_bytes,
+      (unsigned long)(mailbox->signature_parameter_bits != 0U),
+      (unsigned long)(mailbox->declared_signature_capacity_bytes != 0U));
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  /* The v5 schema has no checksum or boot nonce: magic/version are structural
+   * checks, not proof against stale or corrupted retained SRAM contents. */
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT schema=1 mailbox_version=%lu mailbox_status=present "
+      "verification_type=integrity_sha256 measurement_valid=%lu cycles=%lu "
+      "result=%ld sysclk_hz=%lu hclk_hz=%lu signature_algorithm=%s",
+      (unsigned long)version,
+      (unsigned long)((mailbox->integrity_valid != 0U) &&
+                      (mailbox->integrity_cycles != 0U) && (mailbox->hclk_hz != 0U)),
+      (unsigned long)mailbox->integrity_cycles,
+      (long)mailbox->integrity_result,
+      (unsigned long)mailbox->sysclk_hz, (unsigned long)mailbox->hclk_hz,
+      PQC_BootSignatureAlgorithmName(mailbox->signature_algorithm_id));
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT schema=1 mailbox_version=%lu mailbox_status=present "
+      "verification_type=signature_authenticity measurement_valid=%lu cycles=%lu "
+      "result=%ld sysclk_hz=%lu hclk_hz=%lu signature_algorithm=%s "
+      "measurement_status=%s",
+      (unsigned long)version,
+      (unsigned long)((mailbox->authenticity_valid != 0U) &&
+                      (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U)),
+      (unsigned long)mailbox->authenticity_cycles,
+      (long)mailbox->authenticity_result,
+      (unsigned long)mailbox->sysclk_hz, (unsigned long)mailbox->hclk_hz,
+      PQC_BootSignatureAlgorithmName(mailbox->signature_algorithm_id),
+      mailbox->signature_algorithm_id == 1U ? "not_applicable" :
+      ((mailbox->authenticity_valid != 0U) &&
+       (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U))
+      ? "measured" : "unavailable");
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT_HANDOFF schema=1 mailbox_version=%lu "
+      "origin_kind=%lu reset_origin_to_handoff_us_high=%lu "
+      "reset_origin_to_handoff_us_low=%lu bridge_counter_hz=%lu "
+      "bridge_counter_bits=%lu bridge_status=%lu",
+      (unsigned long)version,
+      (unsigned long)mailbox->reset_origin_kind,
+      (unsigned long)mailbox->reset_origin_to_handoff_us_high,
+      (unsigned long)mailbox->reset_origin_to_handoff_us_low,
+      (unsigned long)mailbox->handoff_bridge_counter_hz,
+      (unsigned long)mailbox->handoff_bridge_counter_bits,
+      (unsigned long)mailbox->handoff_bridge_status);
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+#else
+  (void)iteration;
+#endif
+}
 
 /* USER CODE END 0 */
 
@@ -2620,6 +2755,7 @@ void StartNetworkTask(void *argument)
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
+  PQC_BootEvidenceAppendToResultBuffer(0U);
   (void)PQC_ResultBufferAppendText(0U, "application", "workload_complete");
   {
     PQC_ResultBufferStatus result_status;

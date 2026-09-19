@@ -239,6 +239,34 @@ secure-boot experiment profile
 The secure-boot workflow must not infer timing, stack, heap, or hardware success from host-side behaviour. Runtime metrics must come from explicit firmware/UART markers.
 
 
+### Request 14 secure-boot timing work in progress (not validated)
+
+The bootloader-local DWT instrumentation records SHA-256 image-integrity and
+signature-authenticity function calls as separate operations in a version-4 RAM2
+mailbox. The application emits typed UART diagnostic markers, and the host can
+parse those raw markers separately from the immutable run-capture manifest.
+A missing or zero-cycle record is unavailable, not a zero-cost verification.
+The existing 1 MHz LPTIM2/TIM2 reset-origin bridge is unchanged.
+
+**This is not yet a validated secure-boot reference baseline.** The current
+function-level records are not bound to a selected image, physical bank, or
+verification attempt. They can include candidate-manifest or recovery
+verification and must not be aggregated as normal active-application
+verification. Complete-image verification excluding intermediate UART output,
+bootloader-total execution, application-image SHA-256 identity, and explicit
+bootloader source/build provenance are not yet implemented in these records.
+The maintained secure-boot hardware matrix and corrupt-image rejection test
+remain outstanding; no hardware validity claim follows from the source patch.
+
+Deferred test entry: feature=Request 14 typed secure-boot verification;
+missing layer=hardware and gateway integration; reason=requires physical STM32,
+controlled corruption and gateway evidence; capability=instrumented wolfBoot,
+flash/reset/UART and retained run evidence; intended tests=
+`tests/hardware/test_secure_boot_integrity_hw.py` and
+`tests/integration/test_secure_boot_integrity_in.py`;
+eventual verification=`./scripts/dev.sh pytest-hardware`;
+status=deferred pending attempt-bound instrumentation and hardware validation.
+
 ## STM32 MQTT/TLS target architecture
 
 MQTT/TLS client development is split between hardware-independent preparation and future ST67W61M1-dependent validation. The target ownership model is:
@@ -976,3 +1004,15 @@ The STM32 result path uses a bounded 32 KiB preallocated SRAM buffer in RAM3. Ex
 The ordered event store is preallocated at compile time (`PQC_TLS_INSTRUMENTATION_EVENT_CAPACITY`) and performs no allocation, text formatting, UART output or MQTT publication inside a measured span. Exhausting the capacity does not overwrite earlier records. Aggregate accumulation continues where possible, while `event_overflowed`, `event_truncated`, `dropped_event_count` and `hierarchy_incomplete` make the ordered evidence explicitly incomplete. Duplicate begins, unmatched ends, non-LIFO end ordering and spans left active when the handshake closes increment the invalid-sequence state rather than being silently normalised. The deferred serializer emits one `PQC_TLS_EVENT_BUFFER` status record followed by sequence-addressable `PQC_TLS_EVENT` records after the workload returns.
 
 The wolfSSL hooks remain thin calls at the existing application, `tls13.c`, `tls.c`, `internal.c` and wolfCrypt sites. The ML-KEM key-generation and decapsulation hooks are shared between standalone and hybrid TLS groups; the compile-time resolved active parameter set selects the ML-KEM-512, ML-KEM-768 or ML-KEM-1024 semantic event identity at those same call sites. `scripts/framework/tls_instrumentation.py` derives the expected semantic event set from the resolved KEX group, certificate/signature profile and authentication mode, accepting both the final `effective_non_secret_parameters.mqtt.tls` resolved-case snapshot layout and the historical `experiment.mqtt.tls` layout. It qualifies ordered hierarchy records together with retained primitive aggregates without mutating the immutable run manifest. A missing required operation is represented as an explicit `unavailable` qualification result with a reason rather than being converted to a zero-valued measurement.
+
+### Request 14 — retained RAM2 secure-boot MQTT evidence (partial implementation)
+
+The application linker scripts reserve the first 1 KiB of RAM2 (`0x10000000` through `0x100003FF`) for existing wolfBoot timing (`0x10000000`) and OTA event (`0x10000100`) mailboxes. The allocatable RAM2 region begins at `0x10000400`. This prevents application linker-allocated data from overlapping either mailbox, but it does not by itself prove retention through hardware reset, against explicit application/bootloader writes, or under every OTA path. The normal application-timebase handoff continues to read mailbox version 5 from its original fixed address.
+
+Following the measured workload, `PQC_BootEvidenceAppendToResultBuffer` serializes the retained version-5 mailbox into the existing deferred STM32 result buffer using `secure_boot` context records for SHA-256 integrity verification, signature/authenticity verification, and reset-origin handoff. The individual records retain raw DWT cycles, verification result, validity, and bootloader SYSCLK/HCLK; no CPU-frequency assumption or UART timing marker is required to transfer these fields. Absent magic/version yields an explicit unavailable record. Zero cycles and absent HCLK are invalid; an absent signature sample is *not measured* (this mailbox alone cannot distinguish non-applicability from a skipped/failed signed attempt).
+
+Normal workloads add the boot records before calculating the result-buffer SHA-256 and MQTT completion metadata. Repeated TLS workloads add them once, in the first completed per-iteration reporting epoch, after its measured interval. They do not publish an extra untracked MQTT message or change expected completion counts. The original RAM2 record remains in place; formatted evidence is copied only after measurement. The v5 mailbox has no nonce/checksum, image hash, bootloader provenance, complete-image verification cycles, or total secure-boot execution interval: these cannot be inferred from its existing fields. This partial change does **not** establish the full Request 14 timing/evidence contract or repeated-run hardware validation.
+
+Deferred test entry: feature=Request 14 persistent RAM2 mailbox and secure-boot MQTT evidence; missing layer=containerized application build, gateway/hardware continuous-run retention and reporting; reason=source-level/host-only checks do not prove retained SRAM or publish behaviour; required capability=STM32/ST67, gateway, broker, maintained secure-boot cases; intended test=`tests/hardware/test_secure_boot_mqtt_evidence_hw.py`; eventual verification=`./scripts/dev.sh experiment-gateway run --experiment <resolved integrity_sha256 case>` and inspect `mqtt-reporting-raw.ndjson` then signed profiles, OTA and repeat-handshake cases; status=deferred, source-level tests only.
+
+Request 14 algorithm identity extension (schema v5): the instrumented bootloader writes a compact ID for the resolved secure-boot algorithm into the RAM2 mailbox. The application decodes it into the `PQC_SECURE_BOOT_PROFILE` result and includes the identity on both verification records, independently of TLS profile identity. A parameter-bit field reports RSA modulus or ECDSA curve size only where the profile determines it; it is unavailable (zero with documented unavailable semantics) for EdDSA, ML-DSA, and integrity-only profiles. The optional declared signature capacity is not an actual signature length; `declared_signature_capacity_available=0` means that the resolved build profile did not supply this value. Integrity-only authenticity reports `measurement_status=not_applicable`, while an absent signed-profile timing record reports `unavailable`. The real public-key encoding size is explicitly unavailable until derived from verified key material outside the timing interval. This version change requires matching bootloader and relocated application builds; version-4 mailboxes are rejected rather than reinterpreted. No hashing, key parsing, UART or network transmission is added inside verification intervals.

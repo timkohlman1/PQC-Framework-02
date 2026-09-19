@@ -15,6 +15,7 @@
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
 #include "pqc_result_buffer.h"
+#include "pqc_boot_evidence.h"
 #include "pqc_wolfssl_memory.h"
 
 #ifndef PQC_TLS_COMPILED
@@ -2052,6 +2053,10 @@ int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
         PQC_WolfMQTT_TLSRepeatAppendStatus(
             iteration, &socket_context, connect_result, disconnect_result,
             cleanup_ok, failure_stage);
+        /* Publish the persistent boot record only in the first reporting epoch. */
+        if (iteration == 0U) {
+            PQC_BootEvidenceAppendToResultBuffer(iteration);
+        }
         (void)PQC_ResultBufferAppendText(iteration, "application", "handshake_iteration_complete");
         PQC_ResultBufferStatusGet(&result_status);
         PQC_ResultBufferSha256Hex(result_sha256);

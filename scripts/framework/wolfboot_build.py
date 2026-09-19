@@ -387,6 +387,26 @@ def _temporarily_patch_boot_timing_instrumentation(
             f"wolfBoot STM32L4 HAL source not found for boot timing patch: {hal_path}"
         )
 
+    # A small, fixed on-device identity avoids key parsing or hashing in wolfBoot.
+    algorithm_ids = {
+        "integrity_sha256": 1, "ecdsa_p256": 2, "ed25519": 3,
+        "rsa2048": 4, "ecc384": 5, "ecc521": 6,
+        "ed448": 7, "rsa3072": 8, "rsa4096": 9,
+        "mldsa44": 10, "mldsa65": 11, "mldsa87": 12,
+    }
+    algorithm_name = str(_required(profile, "signature_algorithm"))
+    algorithm_id = algorithm_ids[algorithm_name]
+    # RSA modulus / ECDSA curve size are parameters, NOT encoded key lengths.
+    parameter_bits = {
+        "ecdsa_p256": 256, "ecc384": 384, "ecc521": 521,
+        "rsa2048": 2048, "rsa3072": 3072, "rsa4096": 4096,
+    }.get(algorithm_name, 0)
+    # Profile-specified signature capacity is not necessarily actual signature length.
+    declared_signature_size = profile.get("signature_size_bytes")
+    if declared_signature_size is None:
+        declared_signature_size = 0
+    if not isinstance(declared_signature_size, int) or not 0 <= declared_signature_size <= 65535:
+        raise WolfBootBuildProfileError("signature_size_bytes must be a nonnegative integer <= 65535")
     original_image_text = image_path.read_text(encoding="utf-8")
     original_hal_text = hal_path.read_text(encoding="utf-8")
     image_marker = "PQC_BOOT_TIMING_WRAPPER_V3"
@@ -398,6 +418,33 @@ def _temporarily_patch_boot_timing_instrumentation(
     hal_original_to_restore: str | None = original_hal_text
 
     if image_marker not in patched_image_text:
+        integrity_signature = "int wolfBoot_verify_integrity(struct wolfBoot_image *img)\n{"
+        if patched_image_text.count(integrity_signature) != 1:
+            raise WolfBootBuildProfileError("Could not identify unique wolfBoot integrity verification implementation")
+        patched_image_text = patched_image_text.replace(
+            integrity_signature,
+            "#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n"
+            "static int wolfBoot_verify_integrity_impl(struct wolfBoot_image *img)\n"
+            "#else\nint wolfBoot_verify_integrity(struct wolfBoot_image *img)\n#endif\n{",
+            1,
+        )
+        integrity_end = "#ifdef WOLFBOOT_ELF_FLASH_SCATTER"
+        integrity_wrapper = r'''#if defined(WOLFBOOT_PQC_BOOT_TIMING)
+/* PQC_BOOT_INTEGRITY_WRAPPER_V4: excludes mailbox writes and reporting. */
+void pqc_boot_timing_integrity_finish(uint32_t start_cycles, int result);
+int wolfBoot_verify_integrity(struct wolfBoot_image *img)
+{
+    uint32_t start_cycles = *(volatile uint32_t *)0xE0001004UL;
+    int ret = wolfBoot_verify_integrity_impl(img);
+    uint32_t end_cycles = *(volatile uint32_t *)0xE0001004UL;
+    pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret);
+    return ret;
+}
+#endif
+'''
+        if integrity_end not in patched_image_text:
+            raise WolfBootBuildProfileError("Could not locate integrity function end marker")
+        patched_image_text = patched_image_text.replace(integrity_end, integrity_wrapper + "\n" + integrity_end, 1)
         signature = "#else\nint wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n{"
         replacement = (
             "#else\n"
@@ -419,7 +466,7 @@ def _temporarily_patch_boot_timing_instrumentation(
 #if defined(WOLFBOOT_PQC_BOOT_TIMING)
 /* PQC_BOOT_TIMING_WRAPPER_V3 */
 void pqc_boot_timing_verification_start(uint32_t *start_cycles);
-void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification_result);
+void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result);
 
 int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 {
@@ -427,7 +474,8 @@ int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
     int ret;
     pqc_boot_timing_verification_start(&start_cycles);
     ret = wolfBoot_verify_authenticity_impl(img);
-    pqc_boot_timing_verification_finish(start_cycles, ret);
+    uint32_t end_cycles = *(volatile uint32_t *)0xE0001004UL;
+    pqc_boot_timing_verification_finish(end_cycles - start_cycles, ret);
     return ret;
 }
 #endif
@@ -452,7 +500,7 @@ int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 #define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
 #endif
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION 3UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 5UL
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
 #define PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY 1UL
 #define PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL
@@ -482,6 +530,15 @@ struct pqc_boot_timing_mailbox {
     uint32_t handoff_bridge_counter_hz;
     uint32_t handoff_bridge_counter_bits;
     uint32_t handoff_bridge_status;
+    uint32_t integrity_cycles;
+    int32_t integrity_result;
+    uint32_t integrity_valid;
+    uint32_t authenticity_cycles;
+    int32_t authenticity_result;
+    uint32_t authenticity_valid;
+    uint32_t signature_algorithm_id;
+    uint32_t signature_parameter_bits;
+    uint32_t declared_signature_capacity_bytes;
 };
 
 static uint64_t pqc_boot_reset_prefix_us;
@@ -588,6 +645,18 @@ static uint32_t pqc_boot_bridge_elapsed_us(void)
 
 static void pqc_boot_reset_origin_start(void)
 {
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    mailbox->magic = 0U;
+    mailbox->integrity_cycles = 0U;
+    mailbox->integrity_result = 0;
+    mailbox->integrity_valid = 0U;
+    mailbox->authenticity_cycles = 0U;
+    mailbox->authenticity_result = 0;
+    mailbox->authenticity_valid = 0U;
+    mailbox->signature_algorithm_id = PQC_BOOT_SIGNATURE_ALGORITHM_ID;
+    mailbox->signature_parameter_bits = PQC_BOOT_SIGNATURE_PARAMETER_BITS;
+    mailbox->declared_signature_capacity_bytes = PQC_BOOT_DECLARED_SIGNATURE_CAPACITY_BYTES;
     uint32_t entry_hclk_hz;
     uint32_t start_cycles;
     uint32_t sysclk_hz, pclk1_hz, pclk2_hz;
@@ -622,7 +691,7 @@ void pqc_boot_timing_verification_start(uint32_t *start_cycles)
     if (start_cycles != NULL) *start_cycles = PQC_BOOT_DWT_CYCCNT;
 }
 
-void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification_result)
+void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
         (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
@@ -630,7 +699,10 @@ void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification
     pqc_boot_reported_clocks(&sysclk_hz, &hclk_hz, &pclk1_hz, &pclk2_hz);
     mailbox->magic = 0U;
     mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
-    mailbox->elapsed_cycles = PQC_BOOT_DWT_CYCCNT - start_cycles;
+    mailbox->authenticity_cycles = elapsed_cycles;
+    mailbox->authenticity_result = verification_result;
+    mailbox->authenticity_valid = mailbox->authenticity_cycles != 0U;
+    mailbox->elapsed_cycles = mailbox->authenticity_cycles;
     mailbox->verification_result = (uint32_t)verification_result;
     mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     mailbox->sysclk_hz = sysclk_hz;
@@ -643,6 +715,25 @@ void pqc_boot_timing_verification_finish(uint32_t start_cycles, int verification
     mailbox->handoff_bridge_counter_hz = PQC_BOOT_HANDOFF_BRIDGE_HZ;
     mailbox->handoff_bridge_counter_bits = PQC_BOOT_HANDOFF_BRIDGE_BITS;
     mailbox->handoff_bridge_status = 0U;
+    mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
+}
+
+void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    uint32_t sysclk_hz, hclk_hz, pclk1_hz, pclk2_hz;
+    pqc_boot_reported_clocks(&sysclk_hz, &hclk_hz, &pclk1_hz, &pclk2_hz);
+    mailbox->magic = 0U;
+    mailbox->version = PQC_BOOT_TIMING_MAILBOX_VERSION;
+    mailbox->integrity_cycles = elapsed_cycles;
+    mailbox->integrity_result = result;
+    mailbox->integrity_valid = (elapsed_cycles != 0U);
+    mailbox->sysclk_hz = sysclk_hz;
+    mailbox->hclk_hz = hclk_hz;
+    mailbox->pclk1_hz = pclk1_hz;
+    mailbox->pclk2_hz = pclk2_hz;
+    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
@@ -667,6 +758,12 @@ static void pqc_boot_timing_prepare_handoff(void)
 }
 #endif
 '''
+        helper = (
+            "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID " + str(algorithm_id) + "UL\n"
+            "#define PQC_BOOT_SIGNATURE_PARAMETER_BITS " + str(parameter_bits) + "UL\n"
+            "#define PQC_BOOT_DECLARED_SIGNATURE_CAPACITY_BYTES " + str(declared_signature_size) + "UL\n"
+            + helper
+        )
         if helper_anchor not in patched_hal_text:
             raise WolfBootBuildProfileError(
                 "Could not locate STM32L4 DMB helper for reset-origin timing patch"

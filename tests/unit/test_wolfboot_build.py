@@ -100,6 +100,13 @@ def write_wolfboot_image_source(source_dir: Path) -> Path:
         "#include <stdint.h>\n"
         "#include \"printf.h\"\n"
         "struct wolfBoot_image;\n"
+        "int wolfBoot_verify_integrity(struct wolfBoot_image *img)\n"
+        "{\n"
+        "    (void)img;\n"
+        "    return 0;\n"
+        "}\n"
+        "#ifdef WOLFBOOT_ELF_FLASH_SCATTER\n"
+        "#endif\n"
         "#else\n"
         "int wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n"
         "{\n"
@@ -209,11 +216,17 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         patched_image_source = image_source_path.read_text(encoding="utf-8")
         patched_hal_source = hal_source_path.read_text(encoding="utf-8")
         assert "PQC_BOOT_TIMING_WRAPPER_V3" in patched_image_source
+        assert "PQC_BOOT_INTEGRITY_WRAPPER_V4" in patched_image_source
+        assert "wolfBoot_verify_integrity_impl" in patched_image_source
         assert "pqc_boot_timing_verification_start" in patched_image_source
         assert "pqc_boot_timing_verification_finish" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" not in patched_image_source
         assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
-        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 3UL" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 5UL" in patched_hal_source
+        assert "void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result)" in patched_hal_source
+        assert "mailbox->authenticity_cycles = elapsed_cycles;" in patched_hal_source
+        assert "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID 2UL" in patched_hal_source
+        assert "mailbox->signature_algorithm_id = PQC_BOOT_SIGNATURE_ALGORITHM_ID;" in patched_hal_source
         assert "pqc_boot_reset_origin_start" in patched_hal_source
         assert "pqc_boot_reset_origin_clock_ready" in patched_hal_source
         assert "pqc_boot_timing_prepare_handoff" in patched_hal_source

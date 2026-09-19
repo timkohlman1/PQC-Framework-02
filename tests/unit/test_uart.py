@@ -736,3 +736,34 @@ def test_parse_final_ram_accounting_markers():
     assert evidence["heap_used_bytes"] == 86952
     assert evidence["ram_accounting"] == accounting
     assert "does not reconstruct stack depth used before main()" in evidence["limitations"]
+
+
+def test_typed_boot_verification_is_explicit_and_uses_bootloader_hclk():
+    uart = load_uart_module()
+    output = ("wolfBoot timing mailbox version: 4\n"
+              "wolfBoot integrity valid: 1\n"
+              "wolfBoot integrity cycles: 80000 cycles\n"
+              "wolfBoot integrity result: 0\n"
+              "wolfBoot authenticity valid: 0\n"
+              "wolfBoot clock hclk_hz: 80000000\n"
+              "application clock sysclk_hz: 120000000\n")
+    evidence = uart.parse_typed_boot_verification(output)
+    assert evidence["operations"]["integrity"] == {
+        "verification_type": "sha256_image_integrity", "status": "available",
+        "cycles": 80000, "result_code": 0, "time_ms": 1.0,
+    }
+    assert evidence["operations"]["authenticity"]["status"] == "unavailable"
+    assert uart._boot_timing_evidence(output)["verification_cycles"] is None
+
+
+def test_typed_boot_verification_rejects_zero_and_missing_evidence():
+    uart = load_uart_module()
+    output = ("wolfBoot timing mailbox version: 4\n"
+              "wolfBoot integrity valid: 1\n"
+              "wolfBoot integrity cycles: 0 cycles\n"
+              "wolfBoot integrity result: 0\n"
+              "wolfBoot clock hclk_hz: 80000000\n")
+    value = uart.parse_typed_boot_verification(output)["operations"]["integrity"]
+    assert value["status"] == "unavailable"
+    assert value["cycles"] is None and value["time_ms"] is None
+    assert uart.parse_typed_boot_verification("wolfBoot verification cycles: 500 cycles")["operations"]["integrity"]["status"] == "unavailable"
