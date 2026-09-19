@@ -59,7 +59,7 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
         '#include <stdint.h>\n#include <stdio.h>\n#include "pqc_result_buffer.h"\n'
         '#define SECURE_BOOT_APPLICATION 1\n'
         '#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL\n'
-        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 5UL\n'
+        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 6UL\n'
         + structure
         + 'static PQC_BootTimingMailbox test_mailbox;\n'
         + '#define PQC_BOOT_TIMING_MAILBOX_ADDR ((uintptr_t)&test_mailbox)\n'
@@ -72,6 +72,11 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
             test_mailbox.integrity_valid = 1U;
             test_mailbox.integrity_cycles = 23752531U;
             test_mailbox.integrity_result = 0;
+            test_mailbox.verified_image_digest_valid = 1U;
+            test_mailbox.verified_image_part = 0U;
+            test_mailbox.verified_image_fw_size = 204800U;
+            for (unsigned int i = 0U; i < 32U; ++i)
+                test_mailbox.verified_image_sha256[i] = (uint8_t)i;
             test_mailbox.sysclk_hz = 80000000U;
             test_mailbox.hclk_hz = 80000000U;
             PQC_ResultBufferReset();
@@ -96,15 +101,29 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
     )
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
     records = [json.loads(line) for line in result.stdout.splitlines()]
-    assert len(records) == 5
+    assert len(records) == 6
     assert all(record["context"] == "secure_boot" for record in records)
     assert "PQC_SECURE_BOOT_PROFILE" in records[0]["text"]
     assert "signature_algorithm=mldsa87" in records[0]["text"]
     assert "public_key_size_bytes=unavailable" in records[0]["text"]
-    assert "verification_type=integrity_sha256 measurement_valid=1 cycles=23752531 result=0" in records[1]["text"]
-    assert "hclk_hz=80000000" in records[1]["text"]
-    assert "signature_algorithm=mldsa87" in records[1]["text"]
-    assert "verification_type=signature_authenticity measurement_valid=0" in records[2]["text"]
+    assert "verification_type=integrity_sha256 measurement_valid=1 cycles=23752531 result=0" in records[2]["text"]
+    assert "hclk_hz=80000000" in records[2]["text"]
     assert "signature_algorithm=mldsa87" in records[2]["text"]
-    assert "PQC_SECURE_BOOT_HANDOFF" in records[3]["text"]
-    assert "mailbox_status=unavailable" in records[4]["text"]
+    assert "verification_type=signature_authenticity measurement_valid=0" in records[3]["text"]
+    assert "signature_algorithm=mldsa87" in records[3]["text"]
+    assert "PQC_SECURE_BOOT_IMAGE" in records[1]["text"]
+    assert "image_sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" in records[1]["text"]
+    assert "packaged_image_sha256=unavailable" in records[1]["text"]
+    assert "PQC_SECURE_BOOT_HANDOFF" in records[4]["text"]
+    assert "mailbox_status=unavailable" in records[5]["text"]
+
+
+def test_verified_image_identity_captured_after_dwt_end():
+    """No new hash computation or flash access is added to the DWT interval."""
+    build = Path('scripts/framework/wolfboot_build.py').read_text(encoding='utf-8')
+    wrapper = build[build.index('/* PQC_BOOT_INTEGRITY_WRAPPER_V4:'):build.index("\n'''", build.index('/* PQC_BOOT_INTEGRITY_WRAPPER_V4:'))]
+    assert wrapper.index('end_cycles =') < wrapper.index('    pqc_boot_timing_integrity_finish(end_cycles')
+    assert 'pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret, img)' in wrapper
+    assert 'mailbox->verified_image_sha256[i] = img->sha_hash[i];' in build
+    assert 'if ((result == 0) && (img != NULL) && (img->sha_hash != NULL)' in build
+    assert 'WOLFBOOT_SHA_DIGEST_SIZE == 32U' in build

@@ -431,13 +431,13 @@ def _temporarily_patch_boot_timing_instrumentation(
         integrity_end = "#ifdef WOLFBOOT_ELF_FLASH_SCATTER"
         integrity_wrapper = r'''#if defined(WOLFBOOT_PQC_BOOT_TIMING)
 /* PQC_BOOT_INTEGRITY_WRAPPER_V4: excludes mailbox writes and reporting. */
-void pqc_boot_timing_integrity_finish(uint32_t start_cycles, int result);
+void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result, struct wolfBoot_image *img);
 int wolfBoot_verify_integrity(struct wolfBoot_image *img)
 {
     uint32_t start_cycles = *(volatile uint32_t *)0xE0001004UL;
     int ret = wolfBoot_verify_integrity_impl(img);
     uint32_t end_cycles = *(volatile uint32_t *)0xE0001004UL;
-    pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret);
+    pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret, img);
     return ret;
 }
 #endif
@@ -500,7 +500,7 @@ int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 #define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
 #endif
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION 5UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 6UL
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
 #define PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY 1UL
 #define PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL
@@ -539,6 +539,11 @@ struct pqc_boot_timing_mailbox {
     uint32_t signature_algorithm_id;
     uint32_t signature_parameter_bits;
     uint32_t declared_signature_capacity_bytes;
+    /* SHA-256 image-content digest validated by wolfBoot; not the full .bin hash. */
+    uint32_t verified_image_digest_valid;
+    uint32_t verified_image_part;
+    uint32_t verified_image_fw_size;
+    uint8_t verified_image_sha256[32];
 };
 
 static uint64_t pqc_boot_reset_prefix_us;
@@ -657,6 +662,10 @@ static void pqc_boot_reset_origin_start(void)
     mailbox->signature_algorithm_id = PQC_BOOT_SIGNATURE_ALGORITHM_ID;
     mailbox->signature_parameter_bits = PQC_BOOT_SIGNATURE_PARAMETER_BITS;
     mailbox->declared_signature_capacity_bytes = PQC_BOOT_DECLARED_SIGNATURE_CAPACITY_BYTES;
+    mailbox->verified_image_digest_valid = 0U;
+    mailbox->verified_image_part = 0U;
+    mailbox->verified_image_fw_size = 0U;
+    { unsigned int i; for (i = 0U; i < 32U; ++i) mailbox->verified_image_sha256[i] = 0U; }
     uint32_t entry_hclk_hz;
     uint32_t start_cycles;
     uint32_t sysclk_hz, pclk1_hz, pclk2_hz;
@@ -718,7 +727,7 @@ void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verificati
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
-void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result)
+void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result, struct wolfBoot_image *img)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
         (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
@@ -729,6 +738,17 @@ void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result)
     mailbox->integrity_cycles = elapsed_cycles;
     mailbox->integrity_result = result;
     mailbox->integrity_valid = (elapsed_cycles != 0U);
+    /* The DWT end snapshot was taken in image.c before this copy. */
+    mailbox->verified_image_digest_valid = 0U;
+    if ((result == 0) && (img != NULL) && (img->sha_hash != NULL) &&
+        (WOLFBOOT_SHA_DIGEST_SIZE == 32U)) {
+        unsigned int i;
+        mailbox->verified_image_part = img->part;
+        mailbox->verified_image_fw_size = img->fw_size;
+        for (i = 0U; i < 32U; ++i)
+            mailbox->verified_image_sha256[i] = img->sha_hash[i];
+        mailbox->verified_image_digest_valid = 1U;
+    }
     mailbox->sysclk_hz = sysclk_hz;
     mailbox->hclk_hz = hclk_hz;
     mailbox->pclk1_hz = pclk1_hz;

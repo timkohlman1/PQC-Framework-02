@@ -222,7 +222,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "pqc_boot_timing_verification_finish" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" not in patched_image_source
         assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
-        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 5UL" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 6UL" in patched_hal_source
         assert "void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result)" in patched_hal_source
         assert "mailbox->authenticity_cycles = elapsed_cycles;" in patched_hal_source
         assert "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID 2UL" in patched_hal_source

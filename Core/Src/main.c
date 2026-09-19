@@ -1409,7 +1409,7 @@ static void APP_PrintApplicationClockConfiguration(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   5UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   6UL
 
 typedef struct
 {
@@ -1437,6 +1437,10 @@ typedef struct
   uint32_t signature_algorithm_id;
   uint32_t signature_parameter_bits;
   uint32_t declared_signature_capacity_bytes;
+  uint32_t verified_image_digest_valid;
+  uint32_t verified_image_part;
+  uint32_t verified_image_fw_size;
+  uint8_t verified_image_sha256[32];
 } PQC_BootTimingMailbox;
 
 static void APP_ConfigureResetOriginHandoff(void)
@@ -1480,7 +1484,7 @@ static void APP_PrintWolfBootVerificationTiming(void)
   if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
       (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
   {
-    APP_UART_WriteString("wolfBoot timing mailbox version: 5\r\n");
+    APP_UART_WriteString("wolfBoot timing mailbox version: 6\r\n");
     APP_UART_WriteString("wolfBoot integrity valid: ");
     APP_UART_WriteUint32(mailbox->integrity_valid);
     APP_UART_WriteString("\r\n");
@@ -1577,7 +1581,40 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
       (unsigned long)(mailbox->signature_parameter_bits != 0U),
       (unsigned long)(mailbox->declared_signature_capacity_bytes != 0U));
   (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
-  /* The v5 schema has no checksum or boot nonce: magic/version are structural
+  /* Only the already-validated image-content SHA-256 is copied. This is
+   * deliberately NOT the SHA-256 of the entire signed/packaged .bin file. */
+  if ((mailbox->verified_image_digest_valid == 1U) &&
+      (mailbox->integrity_valid != 0U) && (mailbox->integrity_result == 0))
+  {
+    static const char hex_digits[] = "0123456789abcdef";
+    char digest_hex[65];
+    uint32_t digest_i;
+    for (digest_i = 0U; digest_i < 32U; ++digest_i)
+    {
+      uint8_t byte = mailbox->verified_image_sha256[digest_i];
+      digest_hex[2U * digest_i] = hex_digits[byte >> 4];
+      digest_hex[2U * digest_i + 1U] = hex_digits[byte & 0xFU];
+    }
+    digest_hex[64] = '\0';
+    (void)snprintf(line, sizeof(line),
+        "PQC_SECURE_BOOT_IMAGE schema=1 mailbox_version=%lu "
+        "identity_kind=wolfboot_verified_image_content_sha256 "
+        "image_sha256=%s image_part=%lu image_fw_size_bytes=%lu "
+        "packaged_image_sha256=unavailable",
+        (unsigned long)version, digest_hex,
+        (unsigned long)mailbox->verified_image_part,
+        (unsigned long)mailbox->verified_image_fw_size);
+  }
+  else
+  {
+    (void)snprintf(line, sizeof(line),
+        "PQC_SECURE_BOOT_IMAGE schema=1 mailbox_version=%lu "
+        "identity_kind=wolfboot_verified_image_content_sha256 "
+        "image_sha256=unavailable reason=integrity_not_verified "
+        "packaged_image_sha256=unavailable", (unsigned long)version);
+  }
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  /* The v6 schema has no checksum or boot nonce: magic/version are structural
    * checks, not proof against stale or corrupted retained SRAM contents. */
   (void)snprintf(line, sizeof(line),
       "PQC_SECURE_BOOT schema=1 mailbox_version=%lu mailbox_status=present "
