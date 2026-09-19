@@ -388,10 +388,15 @@ def _write_application_selection(
     workload = bundle.get("experiment", {}).get("workload", {})
     iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
     handshakes_per_run = int(iterations.get("handshakes_per_run", 1)) if isinstance(iterations, dict) else 1
+    repeat_selection = (
+        f'set(PQC_TLS_HANDSHAKES_PER_RUN {handshakes_per_run})\n'
+        if application == "tls_handshake_repeat"
+        else ""
+    )
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
-        f'set(PQC_TLS_HANDSHAKES_PER_RUN {handshakes_per_run})\n'
-        f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
+        + repeat_selection
+        + f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
         f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n'
         f'set(PQC_FIRMWARE_MODE "{firmware_mode}")\n'
         f'set(PQC_DUAL_BANK_ENABLED {dual_bank_enabled})\n'

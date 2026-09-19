@@ -95,6 +95,8 @@
 
 __attribute__((weak)) void PQC_WolfMQTT_DiagnosticMarker(const char *marker) { (void)marker; }
 
+static void PQC_WolfMQTT_FormatU64(uint64_t value, char *buffer, size_t buffer_size);
+
 typedef struct {
     int socket_fd;
 #if PQC_TLS_COMPILED
@@ -1891,6 +1893,7 @@ static void PQC_WolfMQTT_TLSRepeatAppendStatus(
     const char *failure_stage)
 {
     char line[768];
+    char handshake_elapsed_us[32];
     const PQC_TLSInstrumentationSnapshot *snapshot = PQC_TLS_InstrumentationSnapshot();
     const bool mutual = strcmp(PQC_MQTT_TLS_AUTHENTICATION, "mutual") == 0;
     const bool authentication_verified =
@@ -1900,6 +1903,11 @@ static void PQC_WolfMQTT_TLSRepeatAppendStatus(
         (!mutual || (socket_context->client_certificate_loaded &&
                      socket_context->client_private_key_loaded));
 
+    PQC_WolfMQTT_FormatU64(
+        socket_context->tls_handshake_attempted ? snapshot->handshake_elapsed_us : 0ULL,
+        handshake_elapsed_us,
+        sizeof(handshake_elapsed_us));
+
     (void)snprintf(line, sizeof(line),
         "PQC_TLS_REPEAT_ITERATION schema=1 iteration=%lu handshake=%lu "
         "tcp_outcome=%s tls_outcome=%s connect_result=%d failure_stage=%s "
@@ -1908,7 +1916,7 @@ static void PQC_WolfMQTT_TLSRepeatAppendStatus(
         "ca_loaded=%u peer_identity_configured=%u client_certificate_loaded=%u "
         "client_private_key_loaded=%u authentication_verified=%u "
         "fresh_tcp_connection=1 fresh_tls_context=1 session_resumption=0 "
-        "timing_source=TIM2_1MHz handshake_elapsed_us=%llu "
+        "timing_source=TIM2_1MHz handshake_elapsed_us=%s "
         "instrumentation_available=%u instrumentation_overflow=%u "
         "instrumentation_truncated=%u instrumentation_incomplete=%u "
         "disconnect_result=%d cleanup_ok=%u",
@@ -1929,7 +1937,7 @@ static void PQC_WolfMQTT_TLSRepeatAppendStatus(
         socket_context->client_certificate_loaded ? 1U : 0U,
         socket_context->client_private_key_loaded ? 1U : 0U,
         authentication_verified ? 1U : 0U,
-        (unsigned long long)(socket_context->tls_handshake_attempted ? snapshot->handshake_elapsed_us : 0ULL),
+        handshake_elapsed_us,
         socket_context->tls_handshake_attempted ? 1U : 0U,
         socket_context->tls_handshake_attempted ? (unsigned int)snapshot->event_overflowed : 0U,
         socket_context->tls_handshake_attempted ? (unsigned int)snapshot->event_truncated : 0U,

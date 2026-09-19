@@ -1300,11 +1300,26 @@ def _parse_mqtt_broker_message_evidence(
     command_topic: str,
     response_topic: str,
     device_initiated: bool = False,
+    tls_handshake_repeat: bool = False,
     transfer_request_topic: str | None = None,
     transfer_response_topic: str | None = None,
     transfer_responder_client_id: str = "pqc-host-rm2-transfer-publisher",
 ) -> dict[str, Any]:
-    """Parse independent Mosquitto packet-routing evidence for one E2E run."""
+    """Parse workload-specific Mosquitto packet-routing evidence for one E2E run."""
+
+    if tls_handshake_repeat:
+        # Request 12 opens independent TCP/TLS contexts but intentionally does
+        # not establish an MQTT client session on the experiment broker. Its
+        # telemetry is published separately over the reporting broker; the
+        # normal MQTT CONNECT/SUBSCRIBE/PUBLISH checks do not apply here.
+        # Broker-log availability and fatal-error checks remain mandatory in
+        # the caller, as does reporting-collector capture validation.
+        return {
+            "evidence_contract": "tls_handshake_repeat_tls_only",
+            "status": "not_applicable",
+            "reason": "no_experiment_broker_mqtt_session_or_message_exchange",
+            "passed": True,
+        }
 
     lines = log_text.splitlines()
 
@@ -1830,10 +1845,9 @@ def _execute_mqtt_e2e_uart_capture(
     device_initiated_application = ready_metrics_application or tls_handshake_repeat_application
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = (
-        0 if tls_handshake_repeat_application
-        else (1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
-    )
+    expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
+    if tls_handshake_repeat_application:
+        expected_response_count = 0
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     if ota_wait_mode is not None:
@@ -2055,6 +2069,7 @@ def _execute_mqtt_e2e_uart_capture(
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
+        + f'if [ "$expected_reporting_completions" -eq 1 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
         + f'reporting_completion_count=$(grep -Fc "$reporting_completion_topic" {reporting_stream} 2>/dev/null || true); '
         + 'if [ "$reporting_completion_count" -ge "$expected_reporting_completions" ]; then reporting_complete_seen=1; fi; '
         + completion_status
@@ -2348,6 +2363,7 @@ def _execute_mqtt_e2e_uart_capture(
                 command_topic=str(topics["command"]),
                 response_topic=str(topics["response"]),
                 device_initiated=ready_metrics_application,
+                tls_handshake_repeat=tls_handshake_repeat_application,
                 transfer_request_topic=(
                     str(transfer.get("request_topic"))
                     if ready_metrics_2_application
@@ -2360,7 +2376,9 @@ def _execute_mqtt_e2e_uart_capture(
                 ),
             ),
             "available": bool(broker_log_text.strip()),
-            "required_for_pass": True,
+            # The log must still be collected and pass fatal-error scanning;
+            # only MQTT packet-routing evidence is inapplicable to TLS-only.
+            "required_for_pass": not tls_handshake_repeat_application,
         }
     if passed and degradation_cleanup_result is not None and degradation_cleanup_result.return_code != 0:
         passed = False

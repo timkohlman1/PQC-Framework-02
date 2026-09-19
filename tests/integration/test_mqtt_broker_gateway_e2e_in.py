@@ -16,7 +16,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_ROOT = REPO_ROOT / "experiment" / "mqtt-broker"
 SCRIPT_PATH = BROKER_ROOT / "scripts" / "mqtt_broker_ctl.py"
-HOST_CONFIG = REPO_ROOT / "configs" / "hosts" / "gateway.yaml"
 
 
 def _load_ctl_module():
@@ -102,7 +101,7 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
     pqc_require_capabilities("gateway", strict_mode="gateway")
 
     module = _load_ctl_module()
-    host = module.load_host_config(HOST_CONFIG)
+    host = module.load_host_config(REPO_ROOT / module.DEFAULT_GATEWAY_CONFIG)
     if not host.address:
         pytest.skip("configs/gateways/pqc_gateway1.yaml is missing network.address for external TLS validation")
 
@@ -112,7 +111,7 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
         pytest.skip(f"Docker/Compose unavailable on gateway: {docker_probe.stderr or docker_probe.stdout}")
 
     suffix = uuid.uuid4().hex[:10]
-    remote_root = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-{suffix}"
+    remote_root = f"/tmp/pqc-framework-pytest-mqtt-broker-{suffix}"
     remote_dir = f"{remote_root}/experiment/mqtt-broker"
     project_name = f"pqc-mqtt-pytest-{suffix}"
     port = 28000 + (int(suffix[:4], 16) % 10000)
@@ -137,8 +136,6 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
 
         deploy_args = module.build_parser().parse_args([
             "deploy",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
@@ -148,8 +145,6 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
 
         start_args = module.build_parser().parse_args([
             "start",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
@@ -185,8 +180,6 @@ def test_mqtt_broker_gateway_temp_deploy_start_tls_stop_cleanup(tmp_path, pqc_re
         message = f"pqc-classical-pubsub-{suffix}"
         mqtt_args = module.build_parser().parse_args([
             "validate-classical-mqtt",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
@@ -228,14 +221,14 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(
     pqc_require_capabilities("gateway", strict_mode="gateway")
 
     module = _load_ctl_module()
-    host = module.load_host_config(HOST_CONFIG)
+    host = module.load_host_config(REPO_ROOT / module.DEFAULT_GATEWAY_CONFIG)
     target = module.ssh_target(host)
     docker_probe = _ssh(target, "docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1")
     if docker_probe.returncode != 0:
         pytest.skip(f"Docker/Compose unavailable on gateway: {docker_probe.stderr or docker_probe.stdout}")
 
     suffix = uuid.uuid4().hex[:10]
-    remote_root = f"~/pqc-framework-02/tmp/pytest-mqtt-broker-oqs-{suffix}"
+    remote_root = f"/tmp/pqc-framework-pytest-mqtt-broker-oqs-{suffix}"
     remote_dir = f"{remote_root}/experiment/mqtt-broker"
     project_name = f"pqc-mqtt-oqs-pytest-{suffix}"
     port = 38000 + (int(suffix[:4], 16) % 10000)
@@ -248,8 +241,6 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(
     try:
         deploy_args = module.build_parser().parse_args([
             "deploy",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
@@ -261,8 +252,6 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(
 
         start_args = module.build_parser().parse_args([
             "start",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
@@ -279,8 +268,6 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(
             try:
                 validate_args = module.build_parser().parse_args([
                     "validate-oqs-tls",
-                    "--host-config",
-                    str(HOST_CONFIG),
                     "--remote-dir",
                     remote_dir,
                     "--project-name",
@@ -307,8 +294,6 @@ def test_mqtt_broker_gateway_oqs_temp_deploy_start_server_auth_tls_stop_cleanup(
         message = f"pqc-oqs-pubsub-{suffix}"
         mqtt_args = module.build_parser().parse_args([
             "validate-oqs-mqtt",
-            "--host-config",
-            str(HOST_CONFIG),
             "--remote-dir",
             remote_dir,
             "--project-name",
