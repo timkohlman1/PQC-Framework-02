@@ -46,7 +46,7 @@ def test_tls13_phase_hooks_cover_requested_receive_transitions():
         "PQC_TLS_PHASE_FINISHED",
     ):
         assert f"PQC_TLS_InstrumentationBegin({phase})" in source
-        assert f"PQC_TLS_InstrumentationEnd({phase}, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)" in source
+        assert f"PQC_TLS_InstrumentationEnd({phase}, ret)" in source
 
 
 def test_crypto_hooks_cover_selected_tls_primitives():
@@ -87,7 +87,7 @@ def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
         "PQC_TLS_InstrumentationBegin(PQC_TLS_PRIMITIVE_RSA_VERIFY)"
     ) >= 2
     assert verify_rsa_sign.count(
-        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)"
+        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, ret)"
     ) >= 2
 
     rsa_verify_start = internal.index("int RsaVerify(")
@@ -100,7 +100,7 @@ def test_rsa_verify_instrumentation_covers_pss_and_pkcs1_software_paths():
         in rsa_verify
     )
     assert (
-        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED)"
+        "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_RSA_VERIFY, ret)"
         in rsa_verify
     )
 
@@ -155,7 +155,7 @@ def test_successful_tls_setup_path_does_not_emit_uart_before_handshake():
 def test_handshake_summary_is_split_into_bounded_timing_and_memory_records():
     source = read("Core/Src/pqc_tls_instrumentation.c")
 
-    assert 'char line[320];' in source
+    assert 'char line[384];' in source
     assert 'PQC_TLS_HANDSHAKE_TIMING result=' in source
     assert 'PQC_TLS_HANDSHAKE_MEMORY ' in source
     assert 'PQC_TLS_HANDSHAKE_METRICS result=' not in source
@@ -181,6 +181,9 @@ def test_public_instrumentation_api_is_generic_and_event_parameterised():
     assert "PQC_TLS_InstrumentationHandshakeBegin" not in header
     assert "PQC_TLS_InstrumentationPhaseBegin" not in header
     assert "PQC_TLS_InstrumentationPrimitiveBegin" not in header
+    assert "PQC_TLS_InstrumentationSetContext(uint32_t iteration, uint32_t handshake_index)" in header
+    assert "PQC_TLS_INSTRUMENTATION_EVENT_CAPACITY" in header
+    assert "PQC_TLSInstrumentationRecord" in header
 
 
 
@@ -306,6 +309,62 @@ def test_tls_ready_metrics_validator_requires_profile_specific_instrumentation()
             assert "PQC_TLS_PRIMITIVE name=mldsa65_verify" in markers
         if mutual and signature == "mldsa65":
             assert "PQC_TLS_PRIMITIVE name=mldsa65_sign" in markers
+
+
+def test_all_tls_hook_end_calls_propagate_meaningful_results():
+    hook_files = (
+        "Middlewares/Third_Party/wolfSSL/src/tls13.c",
+        "Middlewares/Third_Party/wolfSSL/src/tls.c",
+        "Middlewares/Third_Party/wolfSSL/src/internal.c",
+        "Middlewares/Third_Party/wolfSSL/wolfcrypt/src/asn.c",
+        "Middlewares/Third_Party/wolfSSL/wolfcrypt/src/kdf.c",
+        "Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha256.c",
+        "Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha512.c",
+    )
+
+    for path in hook_files:
+        source = read(path)
+        assert "PQC_TLS_InstrumentationEnd(" in source
+        assert "PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED" not in source
+
+
+def test_verification_hooks_normalize_separate_validity_outputs():
+    internal = read("Middlewares/Third_Party/wolfSSL/src/internal.c")
+    tls13 = read("Middlewares/Third_Party/wolfSSL/src/tls13.c")
+    asn = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/asn.c")
+
+    assert "((ssl->eccVerifyRes != 0) ? 0 : VERIFY_SIGN_ERROR)" in internal
+    assert "((res == 1) ? 0 : SIG_VERIFY_E)" in tls13
+    assert "((sigCtx->verify != 0) ? 0 : ASN_SIG_CONFIRM_E)" in asn
+
+
+def test_common_tls_hook_families_pass_underlying_return_code():
+    tls13 = read("Middlewares/Third_Party/wolfSSL/src/tls13.c")
+    tls = read("Middlewares/Third_Party/wolfSSL/src/tls.c")
+    internal = read("Middlewares/Third_Party/wolfSSL/src/internal.c")
+    kdf = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/kdf.c")
+    sha256 = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha256.c")
+    sha512 = read("Middlewares/Third_Party/wolfSSL/wolfcrypt/src/sha512.c")
+
+    for phase in (
+        "PQC_TLS_PHASE_SERVER_HELLO",
+        "PQC_TLS_PHASE_ENCRYPTED_EXTENSIONS",
+        "PQC_TLS_PHASE_CERTIFICATE",
+        "PQC_TLS_PHASE_CERTIFICATE_VERIFY",
+        "PQC_TLS_PHASE_FINISHED",
+    ):
+        assert f"PQC_TLS_InstrumentationEnd({phase}, ret)" in tls13
+
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_MLKEM512_KEYGEN, ret)" in tls
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_X25519_KEYGEN, ret)" in internal
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_X509_VERIFY, ret)" in internal
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_HKDF_EXTRACT, ret)" in kdf
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_HKDF_EXPAND, ret)" in kdf
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_SHA256, pqcRet)" in sha256
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_SHA256, ret)" in sha256
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_SHA384, pqcRet)" in sha512
+    assert "PQC_TLS_InstrumentationEnd(PQC_TLS_PRIMITIVE_SHA384, ret)" in sha512
+
 
 def test_tls_dns_resolution_does_not_emit_success_uart_before_handshake():
     source = read("Core/Src/pqc_wolfmqtt_build_only.c")

@@ -9,12 +9,19 @@ typedef struct
 {
     uint32_t start_cycle;
     uint64_t start_us;
+    uint16_t record_index;
     uint8_t active;
 } PQC_TLSSpan;
 
+#define PQC_TLS_ACTIVE_STACK_CAPACITY 16U
+
 static PQC_TLSInstrumentationSnapshot s_snapshot;
 static PQC_TLSSpan s_event_spans[PQC_TLS_EVENT_COUNT];
+static PQC_TLSInstrumentationEvent s_active_stack[PQC_TLS_ACTIVE_STACK_CAPACITY];
+static uint8_t s_active_depth;
 static uint8_t s_handshake_active;
+static uint32_t s_pending_iteration;
+static uint32_t s_pending_handshake_index;
 
 static uint32_t PQC_TLS_ReadCycleCounter(void)
 {
@@ -87,6 +94,39 @@ static uint32_t PQC_TLS_PrimitiveIndex(PQC_TLSInstrumentationEvent event)
     return (uint32_t)(event - PQC_TLS_PRIMITIVE_FIRST);
 }
 
+static uint8_t PQC_TLS_EventNeedsOrderedRecord(PQC_TLSInstrumentationEvent event)
+{
+    /* SHA-2 hooks are intentionally aggregate-only in the ordered hierarchy.
+     * A normal TLS 1.3 handshake may invoke the digest helpers hundreds of
+     * times, which would crowd out the semantic phase/security records that
+     * the bounded hierarchy exists to preserve. Their existing aggregate
+     * count/total/min/max timing remains authoritative evidence. */
+    return (event != PQC_TLS_PRIMITIVE_SHA256) &&
+           (event != PQC_TLS_PRIMITIVE_SHA384);
+}
+
+static uint8_t PQC_TLS_EventLevel(PQC_TLSInstrumentationEvent event)
+{
+    if (event == PQC_TLS_EVENT_HANDSHAKE) {
+        return PQC_TLS_LEVEL_WORKLOAD;
+    }
+    if (PQC_TLS_IsPhase(event) != 0U) {
+        return PQC_TLS_LEVEL_PROTOCOL_PHASE;
+    }
+    if (event == PQC_TLS_PRIMITIVE_X509_VERIFY) {
+        return PQC_TLS_LEVEL_SECURITY_FUNCTION;
+    }
+    return PQC_TLS_LEVEL_CRYPTO_OPERATION;
+}
+
+static void PQC_TLS_MarkHierarchyIncomplete(void)
+{
+    s_snapshot.hierarchy_incomplete = 1U;
+    if (s_snapshot.invalid_sequence_count != UINT16_MAX) {
+        s_snapshot.invalid_sequence_count++;
+    }
+}
+
 static void PQC_TLS_Accumulate(
     PQC_TLSTimingAggregate *aggregate,
     uint32_t start_cycle,
@@ -119,6 +159,97 @@ static void PQC_TLS_Accumulate(
     aggregate->last_end_us = end_us;
 }
 
+static uint16_t PQC_TLS_CurrentParentSequence(void)
+{
+    int depth;
+    for (depth = (int)s_active_depth - 1; depth >= 0; --depth) {
+        PQC_TLSInstrumentationEvent parent_event = s_active_stack[depth];
+        uint16_t record_index = s_event_spans[parent_event].record_index;
+        if (record_index != PQC_TLS_EVENT_PARENT_NONE &&
+            record_index < s_snapshot.event_record_count) {
+            return s_snapshot.events[record_index].sequence;
+        }
+    }
+    return PQC_TLS_EVENT_PARENT_NONE;
+}
+
+static uint16_t PQC_TLS_ReserveEventRecord(PQC_TLSInstrumentationEvent event)
+{
+    uint16_t index;
+    PQC_TLSInstrumentationRecord *record;
+
+    if (s_snapshot.event_record_count >= PQC_TLS_INSTRUMENTATION_EVENT_CAPACITY) {
+        s_snapshot.event_overflowed = 1U;
+        s_snapshot.event_truncated = 1U;
+        s_snapshot.hierarchy_incomplete = 1U;
+        if (s_snapshot.dropped_event_count != UINT16_MAX) {
+            s_snapshot.dropped_event_count++;
+        }
+        return PQC_TLS_EVENT_PARENT_NONE;
+    }
+
+    index = s_snapshot.event_record_count++;
+    record = &s_snapshot.events[index];
+    memset(record, 0, sizeof(*record));
+    record->sequence = index;
+    record->parent_sequence = PQC_TLS_CurrentParentSequence();
+    record->semantic_event = (uint16_t)event;
+    record->level = PQC_TLS_EventLevel(event);
+    record->depth = s_active_depth;
+    record->result = PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED;
+    return index;
+}
+
+static void PQC_TLS_PushActive(PQC_TLSInstrumentationEvent event)
+{
+    if (s_active_depth >= PQC_TLS_ACTIVE_STACK_CAPACITY) {
+        s_snapshot.event_truncated = 1U;
+        s_snapshot.hierarchy_incomplete = 1U;
+        PQC_TLS_MarkHierarchyIncomplete();
+        return;
+    }
+    s_active_stack[s_active_depth++] = event;
+}
+
+static void PQC_TLS_RemoveActive(PQC_TLSInstrumentationEvent event)
+{
+    int index;
+
+    if (s_active_depth == 0U) {
+        PQC_TLS_MarkHierarchyIncomplete();
+        return;
+    }
+
+    if (s_active_stack[s_active_depth - 1U] == event) {
+        s_active_depth--;
+        return;
+    }
+
+    /* A mismatched end is retained as incomplete evidence instead of silently
+     * repairing the hierarchy. Remove the matching entry, if present, so a
+     * later valid span can still be recorded without corrupting the stack. */
+    PQC_TLS_MarkHierarchyIncomplete();
+    for (index = (int)s_active_depth - 2; index >= 0; --index) {
+        if (s_active_stack[index] == event) {
+            uint8_t move;
+            for (move = (uint8_t)index; move + 1U < s_active_depth; ++move) {
+                s_active_stack[move] = s_active_stack[move + 1U];
+            }
+            s_active_depth--;
+            return;
+        }
+    }
+}
+
+void PQC_TLS_InstrumentationSetContext(uint32_t iteration, uint32_t handshake_index)
+{
+    if (s_handshake_active != 0U) {
+        return;
+    }
+    s_pending_iteration = iteration;
+    s_pending_handshake_index = handshake_index;
+}
+
 void PQC_TLS_InstrumentationSetPreMemory(
     uint32_t stack_min_free_bytes,
     uint32_t heap_free_bytes,
@@ -132,6 +263,7 @@ void PQC_TLS_InstrumentationSetPreMemory(
 void PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event)
 {
     PQC_TLSSpan *span;
+    uint16_t record_index;
 
     if (event >= PQC_TLS_EVENT_COUNT) return;
 
@@ -143,7 +275,11 @@ void PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event)
 
         memset(&s_snapshot, 0, sizeof(s_snapshot));
         memset(s_event_spans, 0, sizeof(s_event_spans));
+        memset(s_active_stack, 0, sizeof(s_active_stack));
+        s_active_depth = 0U;
 
+        s_snapshot.iteration = s_pending_iteration;
+        s_snapshot.handshake_index = s_pending_handshake_index;
         s_snapshot.stack_before_min_free_bytes = stack_before;
         s_snapshot.heap_before_free_bytes = heap_before;
         s_snapshot.heap_before_min_ever_free_bytes = heap_min_before;
@@ -158,12 +294,31 @@ void PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event)
     }
 
     span = &s_event_spans[event];
-    if (span->active != 0U) return;
+    if (span->active != 0U) {
+        PQC_TLS_MarkHierarchyIncomplete();
+        return;
+    }
 
-    /* Clock reads are the final work at begin: no formatting or I/O occurs. */
+    if (PQC_TLS_EventNeedsOrderedRecord(event) != 0U) {
+        record_index = PQC_TLS_ReserveEventRecord(event);
+        PQC_TLS_PushActive(event);
+    }
+    else {
+        record_index = PQC_TLS_EVENT_PARENT_NONE;
+    }
+    span->record_index = record_index;
+    span->active = 1U;
+
+    /* Clock reads remain the final non-trivial work at begin. No allocation,
+     * formatting, UART or network I/O occurs on this path. */
     span->start_us = PQC_TimebaseNowUs();
     span->start_cycle = PQC_TLS_ReadCycleCounter();
-    span->active = 1U;
+
+    if (record_index != PQC_TLS_EVENT_PARENT_NONE) {
+        PQC_TLSInstrumentationRecord *record = &s_snapshot.events[record_index];
+        record->start_cycle = span->start_cycle;
+        record->start_us = span->start_us;
+    }
 
     if (event == PQC_TLS_EVENT_HANDSHAKE) {
         s_snapshot.handshake_start_us = span->start_us;
@@ -181,21 +336,51 @@ void PQC_TLS_InstrumentationEnd(PQC_TLSInstrumentationEvent event, int32_t resul
     if ((event != PQC_TLS_EVENT_HANDSHAKE) && !s_handshake_active) return;
 
     span = &s_event_spans[event];
-    if (span->active == 0U) return;
+    if (span->active == 0U) {
+        PQC_TLS_MarkHierarchyIncomplete();
+        return;
+    }
 
     /* Clock reads are the first work at end: no formatting or I/O occurs. */
     end_cycle = PQC_TLS_ReadCycleCounter();
     end_us = PQC_TimebaseNowUs();
     span->active = 0U;
 
+    if (span->record_index != PQC_TLS_EVENT_PARENT_NONE &&
+        span->record_index < s_snapshot.event_record_count) {
+        PQC_TLSInstrumentationRecord *record = &s_snapshot.events[span->record_index];
+        record->end_cycle = end_cycle;
+        record->elapsed_cycles = end_cycle - span->start_cycle;
+        record->end_us = end_us;
+        record->elapsed_us = PQC_TimebaseElapsedUs(span->start_us, end_us);
+        record->completed = 1U;
+        record->result = result;
+        record->result_available =
+            result == PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED ? 0U : 1U;
+    }
+
+    if (PQC_TLS_EventNeedsOrderedRecord(event) != 0U) {
+        PQC_TLS_RemoveActive(event);
+    }
+
     if (event == PQC_TLS_EVENT_HANDSHAKE) {
+        unsigned int i;
         s_snapshot.handshake_end_cycle = end_cycle;
         s_snapshot.handshake_end_us = end_us;
         s_snapshot.handshake_result = (int)result;
-        s_snapshot.handshake_elapsed_cycles =
-            end_cycle - span->start_cycle;
-        s_snapshot.handshake_elapsed_us =
-            PQC_TimebaseElapsedUs(span->start_us, end_us);
+        s_snapshot.handshake_elapsed_cycles = end_cycle - span->start_cycle;
+        s_snapshot.handshake_elapsed_us = PQC_TimebaseElapsedUs(span->start_us, end_us);
+
+        for (i = 0U; i < (unsigned int)PQC_TLS_EVENT_COUNT; ++i) {
+            if (s_event_spans[i].active != 0U) {
+                s_event_spans[i].active = 0U;
+                PQC_TLS_MarkHierarchyIncomplete();
+            }
+        }
+        if (s_active_depth != 0U) {
+            s_active_depth = 0U;
+            PQC_TLS_MarkHierarchyIncomplete();
+        }
         s_handshake_active = 0U;
         return;
     }
@@ -291,15 +476,33 @@ static const char *PQC_TLS_PrimitiveName(uint32_t primitive)
     return primitive < PQC_TLS_PRIMITIVE_COUNT ? names[primitive] : "unknown";
 }
 
+static const char *PQC_TLS_EventName(PQC_TLSInstrumentationEvent event)
+{
+    if (event == PQC_TLS_EVENT_HANDSHAKE) return "handshake";
+    if (PQC_TLS_IsPhase(event) != 0U) return PQC_TLS_PhaseName(PQC_TLS_PhaseIndex(event));
+    if (PQC_TLS_IsPrimitive(event) != 0U) return PQC_TLS_PrimitiveName(PQC_TLS_PrimitiveIndex(event));
+    return "unknown";
+}
+
+static const char *PQC_TLS_EventKind(uint8_t level)
+{
+    switch (level) {
+        case PQC_TLS_LEVEL_WORKLOAD: return "workload";
+        case PQC_TLS_LEVEL_PROTOCOL_PHASE: return "protocol_phase";
+        case PQC_TLS_LEVEL_SECURITY_FUNCTION: return "security_function";
+        case PQC_TLS_LEVEL_CRYPTO_OPERATION: return "cryptographic_operation";
+        default: return "unknown";
+    }
+}
+
 void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
 {
-    char line[320];
+    char line[384];
     unsigned int i;
     if (write_line == NULL) return;
 
-    /* Keep timing and memory on separate bounded records. The original combined
-     * record exceeded its UART formatting buffer on hardware and concatenated
-     * the first phase record onto a truncated handshake line. */
+    /* Keep timing and memory on separate bounded records. Formatting happens
+     * only after the measured handshake/workload boundary. */
     {
         char start_us[21];
         char end_us[21];
@@ -333,6 +536,51 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
         (unsigned long)s_snapshot.heap_before_min_ever_free_bytes,
         (unsigned long)s_snapshot.heap_after_min_ever_free_bytes);
     write_line(line);
+
+    (void)snprintf(line, sizeof(line),
+        "PQC_TLS_EVENT_BUFFER schema=1 iteration=%lu handshake=%lu count=%u capacity=%u "
+        "dropped=%u overflow=%u truncated=%u incomplete=%u invalid_sequence_count=%u\r\n",
+        (unsigned long)s_snapshot.iteration,
+        (unsigned long)s_snapshot.handshake_index,
+        (unsigned int)s_snapshot.event_record_count,
+        (unsigned int)PQC_TLS_INSTRUMENTATION_EVENT_CAPACITY,
+        (unsigned int)s_snapshot.dropped_event_count,
+        (unsigned int)s_snapshot.event_overflowed,
+        (unsigned int)s_snapshot.event_truncated,
+        (unsigned int)s_snapshot.hierarchy_incomplete,
+        (unsigned int)s_snapshot.invalid_sequence_count);
+    write_line(line);
+
+    for (i = 0U; i < (unsigned int)s_snapshot.event_record_count; ++i) {
+        const PQC_TLSInstrumentationRecord *record = &s_snapshot.events[i];
+        char start_us[21];
+        char end_us[21];
+        char elapsed_us[21];
+        int parent_sequence = record->parent_sequence == PQC_TLS_EVENT_PARENT_NONE
+            ? -1 : (int)record->parent_sequence;
+        PQC_TLS_FormatU64(record->start_us, start_us, sizeof(start_us));
+        PQC_TLS_FormatU64(record->end_us, end_us, sizeof(end_us));
+        PQC_TLS_FormatU64(record->elapsed_us, elapsed_us, sizeof(elapsed_us));
+        (void)snprintf(line, sizeof(line),
+            "PQC_TLS_EVENT sequence=%u parent_sequence=%d level=%u depth=%u kind=%s "
+            "name=%s completed=%u result_available=%u result=%ld "
+            "start_cycle=%lu end_cycle=%lu elapsed_cycles=%lu "
+            "start_us=%s end_us=%s elapsed_us=%s\r\n",
+            (unsigned int)record->sequence,
+            parent_sequence,
+            (unsigned int)record->level,
+            (unsigned int)record->depth,
+            PQC_TLS_EventKind(record->level),
+            PQC_TLS_EventName((PQC_TLSInstrumentationEvent)record->semantic_event),
+            (unsigned int)record->completed,
+            (unsigned int)record->result_available,
+            (long)record->result,
+            (unsigned long)record->start_cycle,
+            (unsigned long)record->end_cycle,
+            (unsigned long)record->elapsed_cycles,
+            start_us, end_us, elapsed_us);
+        write_line(line);
+    }
 
     for (i = 0U; i < (unsigned int)PQC_TLS_PHASE_COUNT; ++i) {
         const PQC_TLSTimingAggregate *m = &s_snapshot.phases[i];
@@ -395,8 +643,7 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
     }
 
     for (i = 0U; i < (unsigned int)s_snapshot.x509_verify_invocation_count; ++i) {
-        const PQC_TLSInvocationTiming *record =
-            &s_snapshot.x509_verify_invocations[i];
+        const PQC_TLSInvocationTiming *record = &s_snapshot.x509_verify_invocations[i];
         char start_us[21];
         char end_us[21];
         char elapsed_us[21];

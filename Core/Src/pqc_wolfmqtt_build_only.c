@@ -921,6 +921,10 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
             (uint32_t)heap_before_free,
             (uint32_t)heap_before_min);
 
+        /* Context selection is outside the measured interval. Request 12 may
+         * advance these identifiers for repeated handshakes in one boot. */
+        PQC_TLS_InstrumentationSetContext(0U, 0U);
+
         /* No UART, formatting, stack scanning, or heap queries are permitted
          * between the generic handshake begin/end markers. */
         PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);
