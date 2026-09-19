@@ -111,6 +111,7 @@ message("TLS ML-KEM-512/768/1024 standalone: " ${PQC_TLS_ENABLE_MLKEM_512} "/" $
 message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${PQC_TLS_ENABLE_MLDSA_65_SIGN})
 
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
+set(PQC_TLS_HANDSHAKES_PER_RUN 1)
 set(PQC_UART_LOG_LEVEL "info")
 set(PQC_UART_OUTPUT_MODE "minimal")
 set(PQC_FIRMWARE_MODE "single_bank")
@@ -127,6 +128,8 @@ elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_ready_metrics")
     set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_ready_metrics.c)
 elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_ready_metrics_2")
     set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_ready_metrics_2.c)
+elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "tls_handshake_repeat")
+    set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_tls_handshake_repeat.c)
 else()
     message(FATAL_ERROR "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}")
 endif()
@@ -333,6 +336,8 @@ target_compile_definitions(pqc_wolfmqtt_stm32_build_only PUBLIC
     PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
     PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
     PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
+    PQC_TLS_HANDSHAKES_PER_RUN=${PQC_TLS_HANDSHAKES_PER_RUN}
+    PQC_TLS_HANDSHAKE_REPEAT_ENABLED=$<STREQUAL:${PQC_STM32_MQTT_APPLICATION},tls_handshake_repeat>
     PQC_TIMEBASE_HARDWARE_SELF_TEST=$<BOOL:${PQC_TIMEBASE_HARDWARE_SELF_TEST}>
 )
 

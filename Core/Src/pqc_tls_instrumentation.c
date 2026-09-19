@@ -241,6 +241,21 @@ static void PQC_TLS_RemoveActive(PQC_TLSInstrumentationEvent event)
     }
 }
 
+void PQC_TLS_InstrumentationReset(uint32_t iteration, uint32_t handshake_index)
+{
+    if (s_handshake_active != 0U) {
+        return;
+    }
+    memset(&s_snapshot, 0, sizeof(s_snapshot));
+    memset(s_event_spans, 0, sizeof(s_event_spans));
+    memset(s_active_stack, 0, sizeof(s_active_stack));
+    s_active_depth = 0U;
+    s_pending_iteration = iteration;
+    s_pending_handshake_index = handshake_index;
+    s_snapshot.iteration = iteration;
+    s_snapshot.handshake_index = handshake_index;
+}
+
 void PQC_TLS_InstrumentationSetContext(uint32_t iteration, uint32_t handshake_index)
 {
     if (s_handshake_active != 0U) {

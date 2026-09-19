@@ -159,6 +159,7 @@ typedef struct
 
 /* Set outside the measured interval. Request 12 can advance these identifiers
  * for repeated handshakes without changing the hook API. */
+void PQC_TLS_InstrumentationReset(uint32_t iteration, uint32_t handshake_index);
 void PQC_TLS_InstrumentationSetContext(uint32_t iteration, uint32_t handshake_index);
 
 void PQC_TLS_InstrumentationSetPreMemory(

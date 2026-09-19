@@ -41,6 +41,12 @@
 #ifndef PQC_MQTT_TLS_AUTHENTICATION
 #define PQC_MQTT_TLS_AUTHENTICATION "server"
 #endif
+#ifndef PQC_MQTT_TLS_CERTIFICATE_PROFILE
+#define PQC_MQTT_TLS_CERTIFICATE_PROFILE "unspecified"
+#endif
+#ifndef PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM
+#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM "unspecified"
+#endif
 #ifndef PQC_TLS_GROUP_ID
 #define PQC_TLS_GROUP_ID WOLFSSL_ECC_SECP256R1
 #endif
@@ -100,6 +106,7 @@ typedef struct {
 #endif
     bool tls_requested;
     bool tcp_connected;
+    bool tcp_connection_observed;
     bool tls_handshake_complete;
     bool tls_context_created;
     bool tls_session_created;
@@ -118,6 +125,12 @@ typedef struct {
     PQC_WolfMQTTReadyMetrics2Snapshot *ready_metrics_2;
     bool mqtt_readiness_armed;
     bool suppress_success_diagnostics;
+    bool tls_handshake_attempted;
+    bool client_certificate_loaded;
+    bool client_private_key_loaded;
+    uint32_t instrumentation_iteration;
+    uint32_t instrumentation_handshake_index;
+    char negotiated_group[64];
 } PQC_WolfMQTTSocketContext;
 
 #ifndef PQC_OTA_ENABLED
@@ -715,6 +728,7 @@ static void PQC_WolfMQTT_CloseTransport(PQC_WolfMQTTSocketContext *context)
         context->socket_fd = -1;
     }
     context->tls_handshake_complete = false;
+    context->tcp_connected = false;
 }
 
 static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port, int timeout_ms)
@@ -752,6 +766,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         return -1;
     }
     socket_context->tcp_connected = true;
+    socket_context->tcp_connection_observed = true;
     if (socket_context->ready_metrics_2 != NULL) {
         uint64_t connected_us = PQC_TimebaseNowUs();
         uint64_t reset_relative_us = 0U;
@@ -862,6 +877,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_use_certificate_buffer(socket_context->tls,
             (const unsigned char *)PQC_MQTT_TLS_CLIENT_CERT_PEM,
             (long)strlen(PQC_MQTT_TLS_CLIENT_CERT_PEM), WOLFSSL_FILETYPE_PEM);
+        socket_context->client_certificate_loaded = (result == WOLFSSL_SUCCESS);
         if (result != WOLFSSL_SUCCESS) {
             PQC_WolfMQTT_DiagnosticCode("client_certificate_load", result, 0);
             PQC_WolfMQTT_DiagnosticMemory("client_certificate_load");
@@ -871,6 +887,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_use_PrivateKey_buffer(socket_context->tls,
             (const unsigned char *)PQC_MQTT_TLS_CLIENT_KEY_PEM,
             (long)strlen(PQC_MQTT_TLS_CLIENT_KEY_PEM), WOLFSSL_FILETYPE_PEM);
+        socket_context->client_private_key_loaded = (result == WOLFSSL_SUCCESS);
         if (result != WOLFSSL_SUCCESS) {
             PQC_WolfMQTT_DiagnosticCode("client_private_key_load", result, 0);
             PQC_WolfMQTT_DiagnosticMemory("client_private_key_load");
@@ -921,9 +938,12 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
             (uint32_t)heap_before_free,
             (uint32_t)heap_before_min);
 
-        /* Context selection is outside the measured interval. Request 12 may
-         * advance these identifiers for repeated handshakes in one boot. */
-        PQC_TLS_InstrumentationSetContext(0U, 0U);
+        /* Context selection is outside the measured interval. Repeated TLS
+         * workloads advance these identifiers once per fresh connection. */
+        PQC_TLS_InstrumentationSetContext(
+            socket_context->instrumentation_iteration,
+            socket_context->instrumentation_handshake_index);
+        socket_context->tls_handshake_attempted = true;
 
         /* No UART, formatting, stack scanning, or heap queries are permitted
          * between the generic handshake begin/end markers. */
@@ -987,6 +1007,13 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         char marker[224];
         socket_context->pqc_group_negotiated =
             PQC_WolfMQTT_TLSGroupNamesMatch(PQC_TLS_GROUP_NAME, curve_name);
+        if (curve_name != NULL) {
+            (void)snprintf(socket_context->negotiated_group,
+                sizeof(socket_context->negotiated_group), "%s", curve_name);
+        } else {
+            (void)snprintf(socket_context->negotiated_group,
+                sizeof(socket_context->negotiated_group), "unavailable");
+        }
         if (!socket_context->suppress_success_diagnostics) {
             (void)snprintf(marker, sizeof(marker),
                 "wolfMQTT TLS: protocol=TLSv1.3 configured_group=%s negotiated_group=%s key_exchange_group=%s\r\n",
@@ -1847,6 +1874,214 @@ cleanup:
 }
 
 int PQC_WolfMQTT_RunPlaintextExchange(PQC_WolfMQTTBuildOnlyStatus *status) { return PQC_WolfMQTT_RunExchangeCycle(status,0U); }
+
+static uint32_t s_tls_repeat_result_iteration;
+
+static void PQC_WolfMQTT_TLSRepeatResultLine(const char *text)
+{
+    (void)PQC_ResultBufferAppendText(s_tls_repeat_result_iteration, "tls", text);
+}
+
+static void PQC_WolfMQTT_TLSRepeatAppendStatus(
+    uint32_t iteration,
+    const PQC_WolfMQTTSocketContext *socket_context,
+    int connect_result,
+    int disconnect_result,
+    bool cleanup_ok,
+    const char *failure_stage)
+{
+    char line[768];
+    const PQC_TLSInstrumentationSnapshot *snapshot = PQC_TLS_InstrumentationSnapshot();
+    const bool mutual = strcmp(PQC_MQTT_TLS_AUTHENTICATION, "mutual") == 0;
+    const bool authentication_verified =
+        (connect_result == MQTT_CODE_SUCCESS) &&
+        socket_context->ca_loaded &&
+        socket_context->tls_peer_identity_configured &&
+        (!mutual || (socket_context->client_certificate_loaded &&
+                     socket_context->client_private_key_loaded));
+
+    (void)snprintf(line, sizeof(line),
+        "PQC_TLS_REPEAT_ITERATION schema=1 iteration=%lu handshake=%lu "
+        "tcp_outcome=%s tls_outcome=%s connect_result=%d failure_stage=%s "
+        "selected_kex=%s negotiated_kex=%s kex_match=%u "
+        "auth_mode=%s auth_profile=%s configured_signature_scheme=%s "
+        "ca_loaded=%u peer_identity_configured=%u client_certificate_loaded=%u "
+        "client_private_key_loaded=%u authentication_verified=%u "
+        "fresh_tcp_connection=1 fresh_tls_context=1 session_resumption=0 "
+        "timing_source=TIM2_1MHz handshake_elapsed_us=%llu "
+        "instrumentation_available=%u instrumentation_overflow=%u "
+        "instrumentation_truncated=%u instrumentation_incomplete=%u "
+        "disconnect_result=%d cleanup_ok=%u",
+        (unsigned long)iteration,
+        (unsigned long)iteration,
+        socket_context->tcp_connection_observed ? "connected" : "failed",
+        connect_result == MQTT_CODE_SUCCESS ? "success" : "failed",
+        connect_result,
+        failure_stage != NULL ? failure_stage : "none",
+        PQC_TLS_GROUP_NAME,
+        socket_context->negotiated_group[0] != '\0' ? socket_context->negotiated_group : "unavailable",
+        socket_context->pqc_group_negotiated ? 1U : 0U,
+        PQC_MQTT_TLS_AUTHENTICATION,
+        PQC_MQTT_TLS_CERTIFICATE_PROFILE,
+        PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM,
+        socket_context->ca_loaded ? 1U : 0U,
+        socket_context->tls_peer_identity_configured ? 1U : 0U,
+        socket_context->client_certificate_loaded ? 1U : 0U,
+        socket_context->client_private_key_loaded ? 1U : 0U,
+        authentication_verified ? 1U : 0U,
+        (unsigned long long)(socket_context->tls_handshake_attempted ? snapshot->handshake_elapsed_us : 0ULL),
+        socket_context->tls_handshake_attempted ? 1U : 0U,
+        socket_context->tls_handshake_attempted ? (unsigned int)snapshot->event_overflowed : 0U,
+        socket_context->tls_handshake_attempted ? (unsigned int)snapshot->event_truncated : 0U,
+        socket_context->tls_handshake_attempted ? (unsigned int)snapshot->hierarchy_incomplete : 0U,
+        disconnect_result,
+        cleanup_ok ? 1U : 0U);
+    (void)PQC_ResultBufferAppendText(iteration, "tls_handshake_repeat", line);
+}
+
+int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
+    uint32_t handshakes_per_run,
+    PQC_WolfMQTTTLSRepeatSummary *summary)
+{
+    uint32_t iteration;
+    int overall_result = MQTT_CODE_SUCCESS;
+
+    if ((summary == NULL) || (handshakes_per_run == 0U)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    memset(summary, 0, sizeof(*summary));
+    summary->requested_handshakes = handshakes_per_run;
+
+    if (!PQC_WolfMQTT_TLSRequested()) {
+        return MQTT_CODE_ERROR_TLS_CONNECT;
+    }
+#if PQC_TLS_COMPILED
+    if (wolfSSL_Init() != WOLFSSL_SUCCESS) {
+        return MQTT_CODE_ERROR_TLS_CONNECT;
+    }
+#endif
+
+    for (iteration = 0U; iteration < handshakes_per_run; ++iteration) {
+        MqttClient client;
+        MqttNet network;
+        PQC_WolfMQTTSocketContext socket_context;
+        PQC_WolfMQTTMessageContext message_context;
+        byte tx[PQC_WOLFMQTT_BUFFER_SIZE], rx[PQC_WOLFMQTT_BUFFER_SIZE];
+        int connect_result;
+        int disconnect_result;
+        bool cleanup_ok;
+        const char *failure_stage = "none";
+        PQC_ResultBufferStatus result_status;
+        char result_sha256[65];
+        int publish_result;
+        bool client_initialized = false;
+
+        memset(&client, 0, sizeof(client));
+        memset(&network, 0, sizeof(network));
+        memset(&socket_context, 0, sizeof(socket_context));
+        memset(&message_context, 0, sizeof(message_context));
+        socket_context.socket_fd = -1;
+        socket_context.tls_requested = true;
+        socket_context.suppress_success_diagnostics = true;
+        socket_context.instrumentation_iteration = iteration;
+        socket_context.instrumentation_handshake_index = iteration;
+        network.context = &socket_context;
+        network.connect = PQC_WolfMQTT_LwIPConnect;
+        network.read = PQC_WolfMQTT_LwIPRead;
+        network.write = PQC_WolfMQTT_LwIPWrite;
+        network.disconnect = PQC_WolfMQTT_LwIPDisconnect;
+
+        PQC_ResultBufferReset();
+        PQC_TLS_InstrumentationReset(iteration, iteration);
+
+        connect_result = MqttClient_Init(&client, &network, PQC_WolfMQTT_MessageCallback,
+            tx, sizeof(tx), rx, sizeof(rx), PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
+        if (connect_result == MQTT_CODE_SUCCESS) {
+            client_initialized = true;
+            client.ctx = &message_context;
+            connect_result = MqttClient_NetConnect(&client, PQC_MQTT_BROKER_HOST,
+                (word16)PQC_MQTT_BROKER_PORT, PQC_WOLFMQTT_COMMAND_TIMEOUT_MS, 0, NULL);
+            if (connect_result != MQTT_CODE_SUCCESS) {
+                failure_stage = socket_context.tls_handshake_attempted ? "tls_handshake" : "tcp_connect";
+            }
+        } else {
+            failure_stage = "mqtt_client_init";
+        }
+
+        if (socket_context.tls_handshake_attempted) {
+            s_tls_repeat_result_iteration = iteration;
+            PQC_TLS_InstrumentationReport(PQC_WolfMQTT_TLSRepeatResultLine);
+        }
+
+        if (client_initialized) {
+            disconnect_result = MqttClient_NetDisconnect(&client);
+            MqttClient_DeInit(&client);
+        } else {
+            disconnect_result = MQTT_CODE_SUCCESS;
+            PQC_WolfMQTT_CloseTransport(&socket_context);
+        }
+        cleanup_ok = (socket_context.socket_fd < 0) &&
+            (socket_context.tls == NULL) && (socket_context.tls_ctx == NULL);
+
+#if PQC_TLS_COMPILED
+        if (socket_context.tls_handshake_attempted &&
+            (PQC_TLS_InstrumentationSnapshot()->handshake_result == WOLFSSL_SUCCESS) &&
+            !socket_context.pqc_group_negotiated) {
+            connect_result = MQTT_CODE_ERROR_TLS_CONNECT;
+            failure_stage = "negotiated_kex_validation";
+        }
+#endif
+        if ((connect_result == MQTT_CODE_SUCCESS) &&
+            (strcmp(PQC_MQTT_TLS_AUTHENTICATION, "mutual") == 0) &&
+            (!socket_context.client_certificate_loaded || !socket_context.client_private_key_loaded)) {
+            connect_result = MQTT_CODE_ERROR_TLS_CONNECT;
+            failure_stage = "authentication_validation";
+        }
+        if (!cleanup_ok) {
+            failure_stage = "cleanup";
+        }
+
+        PQC_WolfMQTT_TLSRepeatAppendStatus(
+            iteration, &socket_context, connect_result, disconnect_result,
+            cleanup_ok, failure_stage);
+        (void)PQC_ResultBufferAppendText(iteration, "application", "handshake_iteration_complete");
+        PQC_ResultBufferStatusGet(&result_status);
+        PQC_ResultBufferSha256Hex(result_sha256);
+        publish_result = PQC_WolfMQTT_PublishDeferredResults(
+            PQC_ResultBufferData(), PQC_ResultBufferSize(), result_sha256,
+            result_status.record_count, result_status.dropped_record_count,
+            result_status.overflowed != 0U);
+        if (publish_result != MQTT_CODE_SUCCESS) {
+            summary->last_result = publish_result;
+            overall_result = publish_result;
+            break;
+        }
+        summary->reporting_epochs_published++;
+        summary->completed_handshakes++;
+        if ((connect_result == MQTT_CODE_SUCCESS) && cleanup_ok) {
+            summary->successful_handshakes++;
+        } else {
+            summary->failed_handshakes++;
+        }
+        summary->last_result = connect_result;
+        if (!cleanup_ok) {
+            overall_result = MQTT_CODE_ERROR_NETWORK;
+        }
+
+        /* Result publication is complete and outside the measured TLS interval.
+         * Recycle the bounded RAM3 buffer before the next independent handshake. */
+        PQC_ResultBufferReset();
+
+        if (!cleanup_ok) {
+            break;
+        }
+    }
+
+#if PQC_TLS_COMPILED
+    (void)wolfSSL_Cleanup();
+#endif
+    return overall_result;
+}
 
 
 static int PQC_WolfMQTT_PublishText(MqttClient *client, const char *payload, word16 packet_id)

@@ -36,6 +36,10 @@
 #endif
 #include "pqc_wolfmqtt_build_only.h"
 #include "pqc_mqtt_application.h"
+
+#ifndef PQC_TLS_HANDSHAKE_REPEAT_ENABLED
+#define PQC_TLS_HANDSHAKE_REPEAT_ENABLED 0
+#endif
 #include "w6x_api.h"
 #include "spi_iface.h"
 #include "logging.h"
@@ -2197,6 +2201,12 @@ static int APP_RunReadyMetrics2Workload(void (*mark_complete)(void))
   return PQC_WolfMQTT_RunReadyMetrics2Application(mark_complete);
 }
 
+static int APP_RunTLSHandshakeRepeatWorkload(uint32_t handshakes_per_run)
+{
+  PQC_WolfMQTTTLSRepeatSummary summary;
+  return PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(handshakes_per_run, &summary);
+}
+
 static void APP_PrintMemoryHighWatermark(void)
 {
   extern uint8_t __ram_region_start__;
@@ -2594,6 +2604,7 @@ void StartNetworkTask(void *argument)
     .print_wolfmqtt_runtime = APP_PrintWolfMQTTRuntimeStatus,
     .run_ready_metrics_workload = APP_RunReadyMetricsWorkload,
     .run_ready_metrics_2_workload = APP_RunReadyMetrics2Workload,
+    .run_tls_handshake_repeat_workload = APP_RunTLSHandshakeRepeatWorkload,
     .print_clock_configuration = APP_PrintApplicationClockConfiguration,
     .print_memory_checkpoint = APP_PrintNetworkTaskMemoryCheckpoint,
     .mark_complete = APP_MarkExperimentComplete,
@@ -2605,6 +2616,7 @@ void StartNetworkTask(void *argument)
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
+#if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
@@ -2622,6 +2634,7 @@ void StartNetworkTask(void *argument)
       APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_deferred_results\r\n");
     }
   }
+#endif
   osThreadExit();
 }
 

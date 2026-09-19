@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from framework.result_collector import _parse_raw_stream, expected_result_sources, result_topics
+from framework.result_collector import _parse_raw_stream, expected_completion_counts, expected_result_sources, result_topics
 
 
 def _line(topic: str, payload: dict) -> str:
@@ -216,3 +216,38 @@ def test_collector_rejects_unfinished_trailing_boot_epoch(tmp_path):
     assert not result.passed
     assert result.completion_count == 1
     assert any("completion record missing" in reason for reason in result.failure_reasons)
+
+
+def test_repeat_workload_sets_expected_stm32_completion_count():
+    bundle = {
+        "experiment": {
+            "workload": {"iterations": {"handshakes_per_run": 7}},
+            "instruments": {},
+        }
+    }
+    assert expected_completion_counts(bundle) == {"stm32": 7}
+
+
+def test_collector_requires_exact_repeat_epoch_count(tmp_path):
+    run_id = "run-repeat"
+    logical = b'{"iteration":0}\n'
+    lines = []
+    for _ in range(2):
+        lines.extend([
+            _line(
+                f"pqc/result/stm32/{run_id}/chunk",
+                {"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":logical.hex()},
+            ),
+            _line(
+                f"pqc/result/stm32/{run_id}/complete",
+                _complete("stm32", run_id, logical, 1, 1),
+            ),
+        ])
+    path = tmp_path / "raw.ndjson"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = _parse_raw_stream(path, run_id, ("stm32",), {"stm32": 3})
+
+    assert not result.passed
+    assert result.source_results["stm32"]["completion_count"] == 2
+    assert any("completion count mismatch" in reason for reason in result.failure_reasons)

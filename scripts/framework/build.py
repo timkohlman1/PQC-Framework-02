@@ -41,7 +41,7 @@ BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat"}
 SUPPORTED_UART_LOG_LEVELS = {"off": -1, "error": 0, "info": 1, "debug": 2}
 SUPPORTED_UART_OUTPUT_MODES = {"disabled", "minimal", "full"}
 
@@ -385,8 +385,12 @@ def _write_application_selection(
         raise ValueError(f"Unsupported firmware_mode: {firmware_mode}")
     if standby_signing_keys not in {0, 1, 2}:
         raise ValueError("standby_signing_keys must be 0, 1, or 2")
+    workload = bundle.get("experiment", {}).get("workload", {})
+    iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
+    handshakes_per_run = int(iterations.get("handshakes_per_run", 1)) if isinstance(iterations, dict) else 1
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
+        f'set(PQC_TLS_HANDSHAKES_PER_RUN {handshakes_per_run})\n'
         f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
         f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n'
         f'set(PQC_FIRMWARE_MODE "{firmware_mode}")\n'
@@ -540,6 +544,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
         f'#define PQC_MQTT_TLS_CA_PEM "{esc(ca_pem)}"\n'
         f'#define PQC_MQTT_TLS_CA_PEM_SHA256 "{ca_sha256}"\n'
         f'#define PQC_MQTT_TLS_AUTHENTICATION "{esc(authentication)}"\n'
+        f'#define PQC_MQTT_TLS_CERTIFICATE_PROFILE "{esc(str(tls.get("certificate_profile", "")))}"\n'
         f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM "{esc(client_certificate_pem)}"\n'
         f'#define PQC_MQTT_TLS_CLIENT_CERT_PEM_SHA256 "{client_certificate_sha256}"\n'
         f'#define PQC_MQTT_TLS_CLIENT_KEY_PEM "{esc(client_private_key_pem)}"\n'

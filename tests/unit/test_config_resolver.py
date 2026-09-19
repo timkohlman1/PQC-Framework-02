@@ -139,3 +139,33 @@ def test_materialize_campaign_removes_stale_generated_case_files(tmp_path):
     materialized = sorted(cases_dir.glob("*.yaml"))
     assert materialized
     assert all(resolver.load_resolved_case(path)["kind"] == "resolved_case" for path in materialized)
+
+
+def test_tls_handshake_repeat_profile_has_explicit_independent_iteration_semantics():
+    resolver = ConfigResolver(ROOT)
+    workload = resolver.load_profile("workload", "tls_handshake_repeat").data
+    assert workload["firmware_application"] == "tls_handshake_repeat"
+    assert workload["iterations"] == {
+        "handshakes_per_run": 10,
+        "reset_between_handshakes": False,
+        "fresh_tcp_connection": True,
+        "fresh_tls_context": True,
+        "session_resumption": False,
+    }
+    assert workload["evidence"]["reporting_epoch"] == "per_handshake_post_measurement"
+
+
+def test_tls_handshake_repeat_bundle_preserves_iteration_count_when_campaign_exists(monkeypatch):
+    campaign_path = ROOT / "configs" / "campaigns" / "tls_handshake_repeat.yaml"
+    if not campaign_path.is_file():
+        import pytest
+        pytest.skip("tls_handshake_repeat campaign is not present in this repository state")
+    monkeypatch.setenv("PQC_WIFI_SSID", "test-ssid")
+    monkeypatch.setenv("PQC_WIFI_PSK", "test-psk")
+    resolver = ConfigResolver(ROOT)
+    case = resolver.expand_campaign("tls_handshake_repeat")[0]
+    bundle = resolver.to_legacy_bundle(case)
+    expected = int(bundle["experiment"]["workload"]["iterations"]["handshakes_per_run"])
+    assert expected >= 1
+    assert bundle["experiment"]["firmware"]["application"] == "tls_handshake_repeat"
+    assert bundle["experiment"]["mqtt"]["orchestration"]["expected_stm32_result_epochs"] == expected

@@ -6,6 +6,9 @@ uart_log_level: info
 uart_output_mode: minimal
 evidence:
   deferred_reporting: true
+  reporting_epoch: per_handshake_post_measurement
+  buffer_reset_after_reporting: true
+  reporting_inside_tls_measurement: false
 iterations:
   handshakes_per_run: 10
   reset_between_handshakes: false

@@ -177,6 +177,19 @@ def _is_device_initiated_metrics_application(bundle: dict[str, dict[str, Any]]) 
     return _is_mqtt_ready_metrics_application(bundle) or _is_mqtt_ready_metrics_2_application(bundle)
 
 
+def _is_tls_handshake_repeat_application(bundle: dict[str, dict[str, Any]]) -> bool:
+    return _mqtt_application(bundle) == "tls_handshake_repeat"
+
+
+def _expected_stm32_result_epochs(bundle: dict[str, dict[str, Any]]) -> int:
+    experiment = bundle.get("experiment", {})
+    workload = experiment.get("workload", {}) if isinstance(experiment, dict) else {}
+    iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
+    if _is_tls_handshake_repeat_application(bundle) and isinstance(iterations, dict):
+        return max(1, int(iterations.get("handshakes_per_run", 1)))
+    return 1
+
+
 def _parse_ready_metrics_subscriber_output(
     output: str, *, response_topic: str
 ) -> dict[str, Any]:
@@ -1367,7 +1380,7 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
             if "=" not in token:
                 continue
             key, value = token.split("=", 1)
-            if key in {"boot_marker_present", "reporting_complete_present", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
+            if key in {"boot_marker_present", "reporting_complete_present", "reporting_completion_count", "expected_reporting_completions", "grace_seconds", "hard_limit_seconds", "raw_capture_rc"}:
                 try:
                     values[key] = int(value)
                     continue
@@ -1380,6 +1393,12 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
 
 def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    if _is_tls_handshake_repeat_application(bundle):
+        return (
+            "ST67 DHCP: result=passed",
+            "MQTT application: profile=tls_handshake_repeat state=workload_start",
+            _mqtt_completion_marker(bundle),
+        )
     if _is_mqtt_ready_metrics_2_application(bundle):
         markers = [
             "ST67 DHCP: result=passed",
@@ -1805,10 +1824,16 @@ def _execute_mqtt_e2e_uart_capture(
     orchestration = mqtt.get("orchestration", {})
     command_payload = str(mqtt.get("command_payload", "run"))
     ready_metrics_2_application = _is_mqtt_ready_metrics_2_application(bundle)
+    tls_handshake_repeat_application = _is_tls_handshake_repeat_application(bundle)
+    expected_stm32_result_epochs = _expected_stm32_result_epochs(bundle)
     ready_metrics_application = _is_device_initiated_metrics_application(bundle)
+    device_initiated_application = ready_metrics_application or tls_handshake_repeat_application
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
-    expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
+    expected_response_count = (
+        0 if tls_handshake_repeat_application
+        else (1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1))
+    )
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
     if ota_wait_mode is not None:
@@ -1904,6 +1929,11 @@ def _execute_mqtt_e2e_uart_capture(
         f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" '
         '& subscriber_pid=$!; '
     )
+    if tls_handshake_repeat_application:
+        # The dedicated repeated-TLS workload performs no MQTT application
+        # exchange on the experiment broker. Keep only a bounded dummy process
+        # so the shared capture/cleanup script retains one lifecycle shape.
+        subscriber_command = f': >"$response_file"; sleep {hard_limit_seconds} & subscriber_pid=$!; '
 
     transfer_request_file = "/tmp/pqc-rm2-transfer-request.$$"
     transfer_responder_log = "/tmp/pqc-rm2-transfer-responder.$$"
@@ -1955,6 +1985,7 @@ def _execute_mqtt_e2e_uart_capture(
         + f"{restart_command} 1>&2; reset_rc=$?; "
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
         + f'reporting_completion_topic={shlex.quote(reporting_completion_topic)}; reporting_complete_seen=0; '
+        + f'expected_reporting_completions={expected_stm32_result_epochs}; reporting_completion_count=0; '
         + 'ota_terminal_seen=0; '
     )
     subscriber_cleanup = (
@@ -2024,23 +2055,24 @@ def _execute_mqtt_e2e_uart_capture(
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
         + 'wait "$capture_pid"; capture_rc=$?; '
-        + f'if [ "$reporting_complete_seen" -eq 0 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
+        + f'reporting_completion_count=$(grep -Fc "$reporting_completion_topic" {reporting_stream} 2>/dev/null || true); '
+        + 'if [ "$reporting_completion_count" -ge "$expected_reporting_completions" ]; then reporting_complete_seen=1; fi; '
         + completion_status
         + 'cat "$uart_file"; '
         + 'response_count=$(grep -c . "$response_file" || true); response=$(paste -sd, "$response_file"); '
         + "printf '\\nPQC_MQTT_SUBSCRIBER_OUTPUT_BEGIN\\n' 1>&2; cat \"$response_file\" 1>&2; printf 'PQC_MQTT_SUBSCRIBER_OUTPUT_END\\n' 1>&2; "
     )
-    if ready_metrics_application:
+    if device_initiated_application:
         script = (
             common_prefix
             + 'while kill -0 "$capture_pid" 2>/dev/null; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + f'reporting_completion_count=$(grep -Fc "$reporting_completion_topic" {reporting_stream} 2>/dev/null || true); if [ "$reporting_completion_count" -ge "$expected_reporting_completions" ]; then reporting_complete_seen=1;{reporting_break} fi; '
             + ota_terminal_probe
             + 'sleep 1; done; '
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
-            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen reporting_completion_count=$reporting_completion_count expected_reporting_completions=$expected_reporting_completions grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
             + f'rm -f "$response_file" "$uart_file" "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
@@ -2050,7 +2082,7 @@ def _execute_mqtt_e2e_uart_capture(
             + 'attempts=0; publish_failures=0; publish_rc=0; '
             + f'while kill -0 "$capture_pid" 2>/dev/null && [ "$attempts" -lt {max_attempts} ]; do '
             + 'if [ "$boot_seen" -eq 0 ] && grep -Fq "$boot_marker" "$uart_file"; then boot_seen=1; fi; '
-            + f'if grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1;{reporting_break} fi; '
+            + f'reporting_completion_count=$(grep -Fc "$reporting_completion_topic" {reporting_stream} 2>/dev/null || true); if [ "$reporting_completion_count" -ge "$expected_reporting_completions" ]; then reporting_complete_seen=1;{reporting_break} fi; '
             + ota_terminal_probe
             + f"sleep {publish_interval}; "
             + 'attempts=$((attempts + 1)); '
@@ -2062,7 +2094,7 @@ def _execute_mqtt_e2e_uart_capture(
             + '[ "$response_count" -eq "$expected_count" ] && [ "$matched_count" -eq "$expected_count" ] && matched=1; '
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
             + 'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
-            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
+            + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen reporting_completion_count=$reporting_completion_count expected_reporting_completions=$expected_reporting_completions grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
             + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
@@ -2073,8 +2105,8 @@ def _execute_mqtt_e2e_uart_capture(
         completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
         publisher_description = (
-            "Publisher disabled: selected ready-metrics application is device-initiated.\n"
-            if ready_metrics_application
+            "Publisher disabled: selected application is device-initiated.\n"
+            if device_initiated_application
             else (
                 f"Publisher client ID: {publisher_client_id}\n"
                 f"Command topic: {topics['command']}\n"
@@ -2112,7 +2144,13 @@ def _execute_mqtt_e2e_uart_capture(
         "required_for_pass": False,
     }
     try:
-        if ready_metrics_application:
+        if tls_handshake_repeat_application:
+            emit_progress(
+                "mqtt",
+                "Starting repeated TLS handshake workload",
+                detail=f"Expected independently completed STM32 result epochs: {expected_stm32_result_epochs}.",
+            )
+        elif ready_metrics_application:
             emit_progress(
                 "mqtt",
                 "Starting MQTT ready/timing/metrics validation",
@@ -2143,7 +2181,12 @@ def _execute_mqtt_e2e_uart_capture(
             "artifact_matches_capture": persisted_subscriber_output == authoritative_subscriber_output,
         }
         subscriber_evidence_integrity["passed"] = all(subscriber_evidence_integrity.values())
-        if ready_metrics_application:
+        if tls_handshake_repeat_application:
+            broker_response_passed = (
+                capture_marker.get("reporting_complete_present") == 1
+                and int(capture_marker.get("reporting_completion_count", 0)) >= expected_stm32_result_epochs
+            )
+        elif ready_metrics_application:
             # Request 15 leaves only the workload's ready/application response on
             # the experiment broker. Scientific result records are validated by
             # the dedicated reporting collector instead of this subscriber.
@@ -2171,7 +2214,16 @@ def _execute_mqtt_e2e_uart_capture(
                 and bool(subscriber_evidence_integrity.get("passed"))
             )
         passed = broker_response_passed
-        if ready_metrics_application:
+        if tls_handshake_repeat_application:
+            emit_progress(
+                "mqtt",
+                "Repeated TLS handshake capture complete" if passed else "Repeated TLS handshake capture incomplete",
+                detail=(
+                    f"STM32 result epochs: {capture_marker.get('reporting_completion_count', 0)}/"
+                    f"{expected_stm32_result_epochs}; missing UART markers: {len(missing_uart_markers)}."
+                ),
+            )
+        elif ready_metrics_application:
             emit_progress(
                 "mqtt",
                 "MQTT ready/timing/metrics validation complete" if passed else "MQTT ready/timing/metrics validation incomplete",
@@ -2186,7 +2238,7 @@ def _execute_mqtt_e2e_uart_capture(
         else:
             emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
         failure_stage = "none"
-        if not subscriber_evidence_integrity.get("passed", False):
+        if (not tls_handshake_repeat_application) and not subscriber_evidence_integrity.get("passed", False):
             failure_stage = "subscriber_evidence_integrity"
         elif not broker_response_passed:
             failure_stage = "broker_response"
@@ -2899,7 +2951,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
     "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"},
 }
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
 
 
@@ -3073,6 +3125,28 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
             raise ConfigError("mqtt.transfer request and response topics must be distinct")
         if response_topic == str(mqtt_config.get("topics", {}).get("response", "")):
             raise ConfigError("mqtt.transfer.response_topic must be distinct from mqtt.topics.response")
+
+    if application_name == "tls_handshake_repeat":
+        workload = config.get("workload")
+        if not isinstance(workload, dict):
+            raise ConfigError("tls_handshake_repeat requires experiment.workload to be a mapping")
+        iterations = workload.get("iterations")
+        if not isinstance(iterations, dict):
+            raise ConfigError("tls_handshake_repeat requires workload.iterations to be a mapping")
+        handshakes = iterations.get("handshakes_per_run")
+        if not isinstance(handshakes, int) or isinstance(handshakes, bool) or not (1 <= handshakes <= 1000):
+            raise ConfigError("workload.iterations.handshakes_per_run must be an integer from 1 to 1000")
+        expected = {
+            "reset_between_handshakes": False,
+            "fresh_tcp_connection": True,
+            "fresh_tls_context": True,
+            "session_resumption": False,
+        }
+        for field, required in expected.items():
+            if iterations.get(field) is not required:
+                raise ConfigError(
+                    f"workload.iterations.{field} must be {str(required).lower()} for tls_handshake_repeat"
+                )
 
     fake_transport = mqtt_config.get("fake_transport", {})
     if fake_transport and not isinstance(fake_transport, dict):

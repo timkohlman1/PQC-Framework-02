@@ -32,6 +32,7 @@ class GatewayResultCollector:
     reporting_host: str
     reporting_port: int
     expected_sources: tuple[str, ...]
+    expected_completion_counts: dict[str, int]
 
 @dataclass(frozen=True)
 class ResultCollectorValidation:
@@ -91,6 +92,16 @@ def expected_result_sources(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...
     return tuple(sources)
 
 
+def expected_completion_counts(bundle: dict[str, dict[str, Any]]) -> dict[str, int]:
+    counts={source:1 for source in expected_result_sources(bundle)}
+    experiment=bundle.get("experiment",{})
+    workload=experiment.get("workload",{}) if isinstance(experiment,dict) else {}
+    iterations=workload.get("iterations",{}) if isinstance(workload,dict) else {}
+    if isinstance(iterations,dict) and "handshakes_per_run" in iterations:
+        counts["stm32"]=int(iterations["handshakes_per_run"])
+    return counts
+
+
 def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root: Path, result_dir: Path, run_id: str, runner: Callable[...,CommandExecution]=_run) -> tuple[GatewayResultCollector|None,CommandExecution]:
     target=gateway_ssh_target(bundle["host"])
     host,port=reporting_config(bundle)
@@ -98,6 +109,7 @@ def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root
     remote=f"/tmp/pqc-{safe}-reporting.ndjson"
     topics=result_topics(bundle,run_id)
     expected_sources=expected_result_sources(bundle)
+    expected_completions=expected_completion_counts(bundle)
     topic_args=" ".join(f"-t {shlex.quote(topic)}" for topic in topics)
     # mosquitto_sub's -F format gives one JSON object per received MQTT message.
     fmt=r'{"topic":"%t","payload":%j}'
@@ -117,7 +129,7 @@ def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root
     try: pid=int(execution.stdout.strip().splitlines()[-1])
     except (ValueError,IndexError):
         return None,CommandExecution(execution.command,1,execution.stdout,execution.stderr+"\ncollector did not return pid\n",execution.duration_seconds)
-    return GatewayResultCollector(target,run_id,pid,remote,topics,host,port,expected_sources),execution
+    return GatewayResultCollector(target,run_id,pid,remote,topics,host,port,expected_sources,expected_completions),execution
 
 
 def _topic_source(topic: str, run_id: str) -> str | None:
@@ -129,7 +141,12 @@ def _topic_source(topic: str, run_id: str) -> str | None:
     return None
 
 
-def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...] = ("stm32",)) -> ResultCollectorValidation:
+def _parse_raw_stream(
+    path: Path,
+    run_id: str,
+    expected_sources: tuple[str, ...] = ("stm32",),
+    expected_completion_counts: dict[str, int] | None = None,
+) -> ResultCollectorValidation:
     """Validate one or more complete result epochs for each reporting source.
 
     A reset-spanning run can legitimately contain multiple result streams from
@@ -351,6 +368,14 @@ def _parse_raw_stream(path: Path, run_id: str, expected_sources: tuple[str, ...]
         )
 
         single_complete = state["streams"][0] if len(state["streams"]) == 1 and len(streams) == 1 else None
+        if expected_completion_counts is not None and source in expected_completion_counts:
+            expected_completions = int(expected_completion_counts[source])
+            observed_completions = len(state["streams"])
+            if observed_completions != expected_completions:
+                source_failures.append(
+                    f"completion count mismatch: expected {expected_completions}, observed {observed_completions}"
+                )
+
         source_results[source] = {
             "passed": not source_failures,
             "stream_count": len(state["streams"]),
@@ -429,7 +454,9 @@ def stop_and_collect_gateway_result_collector(*, collector: GatewayResultCollect
         validation=ResultCollectorValidation(False,0,0,tuple(),tuple(),None,0,None,None,None,{},("collector stream unavailable",))
         reason="result collector stop/copy failed"
     else:
-        validation=_parse_raw_stream(raw,collector.run_id,collector.expected_sources); reason=None if validation.passed else "; ".join(validation.failure_reasons)
+        validation=_parse_raw_stream(
+            raw, collector.run_id, collector.expected_sources, collector.expected_completion_counts
+        ); reason=None if validation.passed else "; ".join(validation.failure_reasons)
     log=result_dir/RESULT_COLLECTOR_LOG_NAME
     log.write_text(json.dumps({"run_id":collector.run_id,"topics":collector.topics,"expected_sources":collector.expected_sources,"stop_return_code":stop.return_code,"copy_return_code":copy.return_code,"validation":validation.__dict__},indent=2,sort_keys=True,default=list)+"\n",encoding="utf-8")
     return GatewayResultCollectorResult(0 if reason is None else 1,raw if raw.is_file() else None,log,validation,reason)
