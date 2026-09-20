@@ -1060,7 +1060,9 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     if broker_port:
         if profile in {"oqs", "oqs-mtls"}:
             start_args.extend(["--oqs-port", str(broker_port)])
-        elif profile in {"classical", "classical-server-auth"}:
+        elif profile in {"classical", "classical-server-auth"} and mqtt.get("evidence_class") != "stm32_st67_plaintext_e2e":
+            # --classical-port changes the TLS listener, not the plaintext listener.
+            # Passing 1883 here would collide with the existing plaintext port.
             start_args.extend(["--classical-port", str(broker_port)])
     broker_messages = {
         "stop-existing": "Stopping any existing managed broker",
