@@ -221,6 +221,16 @@ class ConfigResolver:
             raise ResolutionError(f"unsupported auth_mode: {auth_mode}")
         if auth_mode not in tls_auth.data["supported_modes"]:
             raise ResolutionError(f"tls_auth '{tls_auth.profile_id}' does not support auth_mode '{auth_mode}'")
+        mqtt_transport = str(choices.get("mqtt_transport", "tls"))
+        if mqtt_transport not in {"tls", "plaintext"}:
+            raise ResolutionError("mqtt_transport must be tls or plaintext")
+        if mqtt_transport == "plaintext":
+            if workload.profile_id != "mqtt_validation":
+                raise ResolutionError("plaintext MQTT transport requires mqtt_validation workload")
+            if auth_mode != "server":
+                raise ResolutionError("plaintext MQTT transport cannot request mutual TLS authentication")
+            if tls_kex.profile_id != "secp256r1" or tls_auth.profile_id != "rsa3072":
+                raise ResolutionError("plaintext MQTT uses inert secp256r1/rsa3072 compatibility selections")
         firmware_mode = str(choices.get("firmware_mode", "single_bank"))
         if firmware_mode not in FIRMWARE_MODES:
             raise ResolutionError(
@@ -285,6 +295,8 @@ class ConfigResolver:
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
         }
+        if mqtt_transport == "plaintext":
+            public_choices["mqtt_transport"] = "plaintext"
         if transfer:
             public_choices["payload_bytes"] = int(transfer["payload_bytes"])
             public_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
@@ -310,6 +322,8 @@ class ConfigResolver:
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
         }
+        if mqtt_transport == "plaintext":
+            firmware_choices["mqtt_transport"] = "plaintext"
         if transfer:
             firmware_choices["payload_bytes"] = int(transfer["payload_bytes"])
             firmware_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
@@ -414,6 +428,16 @@ class ConfigResolver:
                     "key_exchange_group": kex["id"]},
             "result_schema": {"unavailable_metrics": {"latency_ms": "No synchronized end-to-end latency metric is recorded."}},
         }
+        if c.get("mqtt_transport", "tls") == "plaintext":
+            mqtt.update({
+                "evidence_class": "stm32_st67_plaintext_e2e",
+                "transport_backend": "st67w61m1_lwip_sockets",
+                # The existing classical broker Compose profile exposes port 1883.
+                "broker_profile": "classical",
+                "broker": {"host": broker["host"], "port": int(broker["plaintext_port"]),
+                           "server_name": broker["server_name"], "dns_required": True},
+                "tls": {"mode": "plaintext", "authentication": "server"},
+            })
         if transfer:
             mqtt["transfer"] = {"payload_bytes": int(transfer["payload_bytes"]), "chunk_bytes": int(transfer["chunk_bytes"]),
                                 "request_topic": topics_prefix + "/response/transfer/request", "response_topic": topics_prefix + "/response/transfer/response",

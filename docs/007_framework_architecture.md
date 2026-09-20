@@ -35,6 +35,18 @@ Current boundaries not yet fully verified or completed:
 
 The repository now contains a real STM32/ST67 MQTT/TLS runtime path: ST67W61M1 association/DHCP, lwIP sockets, wolfSSL TLS 1.3 transport/session and certificate verification, and wolfMQTT connect/publish workflows are implemented. These implementation capabilities must still be distinguished from completed end-to-end hardware evidence for a particular profile; deferred verification status is recorded in the consolidated register below.
 
+### Plaintext MQTT validation campaign
+
+`configs/campaigns/mqtt_plaintext_validation.yaml` selects the `mqtt_validation` workload with
+`mqtt_transport: plaintext`. The resolver derives the ST67/lwIP socket evidence class,
+port 1883 on the experiment broker, and a disabled TLS workload while keeping the
+separate impairment-exempt reporting broker. Legacy TLS campaigns retain their
+existing default transport. The `secp256r1`/`rsa3072` fields in this plaintext
+campaign are inert compatibility selections for the current resolver schema; they
+do not indicate a TLS handshake or certificate-backed workload. The two MQTT
+hardware assertions share one experiment within their file; full STM32 MQTT
+success and evidence retention remain subject to the recorded hardware test result.
+
 ## Architectural organization
 
 The architecture is organized by stable capability and evidence ownership rather than implementation chronology. Roadmap sequencing and phase status belong to `docs/non_hardware_mqtt_tls_development_plan.md`; historical framework sequencing belongs to `docs/pqc_iot_experiment_framework_plan.md`. This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
@@ -494,13 +506,15 @@ The framework may derive `derived_verification_time_ms` as `verification_cycles 
 
 The deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke now have two explicit execution contexts. `main()` emits the existing early evidence with `context=pre_scheduler scheduler=not_started`. After `osKernelStart()` transfers control and `defaultTask` emits its task-start marker, the task runs the same local checks once and emits `context=freertos_task scheduler=running`. Hardware evidence is valid only when the task-start marker precedes both task-context smoke markers in the captured UART log.
 
-The task-context path remains local and serialized. It does not register or bring up a lwIP netif, use Wi-Fi or ST67W61M1 hardware, report link-up or IP assignment, open TCP, load certificates, create a TLS session, perform a TLS handshake, connect or publish MQTT, reconnect, or claim end-to-end network success. wolfSSL FreeRTOS mutex or multithreaded support is not enabled because no concurrent wolfSSL use is introduced. The capability-gated secure-boot benchmark hardware test verifies marker ordering using a known built and flashed image; the ad hoc baseline monitor remains intentionally unable to assert one-shot task startup markers because it does not flash a known image.
+The task-context path remains local and serialized. It does not register or bring up a lwIP netif, use Wi-Fi or ST67W61M1 hardware, report link-up or IP assignment, open TCP, load certificates, create a TLS session, perform a TLS handshake, connect or publish MQTT, reconnect, or claim end-to-end network success. wolfSSL FreeRTOS mutex or multithreaded support is not enabled because no concurrent wolfSSL use is introduced. The capability-gated secure-boot benchmark hardware test verifies marker ordering using a known built and flashed image; the standalone ad hoc monitor remains unable to establish which image is running unless explicitly paired with a known-image flash and reset. The baseline hardware test now flashes a file-owned image before running its bounded, reset-triggered UART monitor.
 
 
 ## STM32-local lwIP UDP loopback
 
-The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The ordinary monitor-only test remains non-assertive because it cannot establish which firmware image is already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
+The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The baseline hardware module now shares one independently prepared, known-image run across its five related checks; its bounded monitor test explicitly resets that same image and validates a fresh boot marker. A standalone monitor invocation without known-image preparation still cannot establish which firmware was already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
 
+
+The known-image baseline UART test explicitly resolves `workload.uart_output_mode=full` to qualify diagnostic marker ordering, SPI bring-up, association, and DHCP from one retained boot. This override is confined to UART diagnostics; normal minimal/disabled scientific runs continue to use their own selected mode. The finalized manifest records capture integrity and indexes `uart.log`; network association and DHCP are checked against same-boot UART evidence rather than transient top-level manifest fields. Each hardware test file provisions its own case and evidence independently.
 
 ## STM32 wolfMQTT build boundary
 
@@ -554,7 +568,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-012 | Ready Metrics 2 paper-aligned MQTT application TTFB/TTLB with deferred reporting | Gateway-mediated end-to-end timing/evidence validation | A 2026-09-18 gateway/STM32 run completed the ML-KEM-768/ML-DSA-65 Ready Metrics 2 workload and produced a hash-valid reporting stream plus experiment PCAP, but inspection showed that the canonical RM2 checkpoint/metric snapshot had not been appended to the common deferred result buffer. The buffer-integration fix now appends `rm2_timebase`, `rm2_checkpoints`, `rm2_metrics`, and `rm2_complete` records after the measured workload; a repeat hardware run is still required to confirm those records and reconcile them with packet timing. | Gateway, STM32/ST67 hardware, experiment and reporting brokers, gateway transfer responder, packet capture, and the Ready Metrics 2 campaign case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/ready_metrics_2/cases/<case>.yaml` then inspect `mqtt-reporting-raw.ndjson` and capture integrity | in progress: workload/collector succeeded; RM2 deferred-buffer integration fixed; repeat hardware evidence required |
 | DTR-013 | Versioned run-capture integrity across STM32 and energy result producers | Gateway/hardware cross-source capture validation | The common collector supplies run-ID, completion-bounded sequence/count/hash validation for STM32 result production. The ESP32/INA228 producer is not yet available for live cross-source evidence. | Reporting collector, ESP32/INA228 producer, gateway and representative STM32 runtime case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` after Request 6 with energy-enabled cases | deferred: STM32 collector implemented; ESP32 producer pending Request 6 |
 
-| DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Unit/integration coverage validates veth scoping, PCAP exclusion, collector integrity and cleanup ordering, but this implementation environment cannot exercise the real gateway Docker veth, IFB, `tc`, MTU restoration or STM32 radio path | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | Set `PQC_REPORTING_ISOLATION_HW=1` plus `PQC_REPORTING_ISOLATION_{RATE,RTT,LOSS,MTU}_CASE`, then run `./scripts/dev.ps1 pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | deferred: capability-gated live verification required |
+| DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Gateway/network/hardware execution previously produced all four configured veth impairments, successful cleanup transcripts and complete STM32 reporting streams, but the old hardware test failed on transient manifest fields. The revised persistent-evidence assertions and network-boundary check require a fresh hardware rerun. These checks do not measure realised packet loss, achieved throughput or observed RTT. | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | in progress: previous gateway and reporting evidence inspected; revised hardware-test assertions not yet executed on device |
 | DTR-015 | Request-13 1 MHz application timing timebase and reset-origin handoff | Representative gateway/hardware timing validation across plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | The dedicated hardware delay test is now self-contained and has produced hardware evidence confirming the selected timer derives 1 MHz (`120000000 / (119 + 1)`), a 10 ms requested delay measured 10985 us, HAL tick advanced 11 ms, wolfBoot verification succeeded, and the secure-boot application started. The remaining deferred work is the representative workload/profile matrix needed to confirm reset-origin validity, DWT preservation, and complete structured timing records across the required experiment families. | Reachable gateway, STM32/ST67 hardware, reporting/experiment brokers as required by the selected cases, and the maintained representative workload/profile matrix | `tests/hardware/test_application_timebase_hw.py` plus the maintained workload hardware tests | `./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware`, then run the maintained self-contained hardware/profile tests for plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | partially complete: 1 MHz hardware self-test passed; representative profile-matrix evidence still required |
 
 Deferred status is not evidence that the named capability works. Future test files and commands are intended contracts and must be reconciled against the implementation that eventually supplies the capability.
@@ -1084,3 +1098,28 @@ and serialized record schema, but cannot establish an STM32 runtime result.
 A successful integrity-only corrupted-image rejection and all maintained
 secure-boot profiles require retained hardware evidence before the request can
 be marked hardware-validated.
+### Hardware-test isolation retrofit (in progress)
+
+The `tests/hardware/test_mqtt_plaintext_st67_e2e_hw.py`,
+`test_reporting_plane_isolation_hw.py`, and `test_campaign_executor_hw.py`
+modules use `scripts/framework/hardware_test_support.py` to create unique
+module-owned generated campaigns and persistent evidence under the active
+`results/automated-tests/<run-id>/hardware/` directory. MQTT UART and broker
+assertions reuse one freshly executed hardware experiment within their file;
+reporting-plane conditions retain separate resolved configurations and results;
+and the campaign executor uses a test-owned two-repetition baseline campaign.
+The reporting-plane hardware test selects the canonical plaintext MQTT
+validation campaign independently for each rate, RTT, loss and MTU profile.
+It checks the finalized manifest artifact index, the retained gateway veth/IFB
+configuration and cleanup transcript against the selected profile, and
+independently reparses the complete run-specific STM32 reporting stream. UART
+diagnostic verbosity is not an isolation-success criterion. Applied qdisc
+settings and stream completeness are configuration and reporting-integrity
+evidence; they do not by themselves quantify actual packet loss, achieved
+throughput or observed RTT, or prove that no reporting packet ever experienced
+impairment.
+These modules run the existing Python experiment/campaign entry points *inside*
+the current development container; they do not start nested Docker containers.
+The remaining hardware modules have not yet been migrated to this contract.
+This change does not establish cross-module build/signing isolation and does not
+establish successful physical hardware execution without recorded test evidence.
