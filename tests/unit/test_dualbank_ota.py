@@ -188,7 +188,12 @@ def test_dualbank_hardware_test_is_self_bootstrapping_and_environment_isolated()
     assert '"ota-prepare"' in text
     assert '"ota-fault-plan"' in text
     assert 'if name.startswith("PQC_OTA_HW")' in text
-    assert 'shutil.rmtree(root, ignore_errors=True)' in text
+    # Test-owned experiment evidence must survive fixture teardown, including failures.
+    assert 'HardwareFileRun.create(' in text
+    assert 'session_result_dir(pytestconfig)' in text
+    assert 'context.evidence_root / "preparation-and-baseline"' in text
+    assert 'context.evidence_root / "cases" / request.node.name' in text
+    assert 'shutil.rmtree(root, ignore_errors=True)' not in text
     assert 'TEST_GENERATED_ROOT = ROOT / ".pqc-generated-state" / "hardware-tests" / "dualbank-ota"' in text
     assert 'shutil.rmtree(TEST_GENERATED_ROOT, ignore_errors=True)' in text
     assert "build/ota" not in text
@@ -251,7 +256,13 @@ def test_dualbank_structured_uart_state_markers_and_explicit_hw_assertions_exist
     assert 'candidate_app.get("bfb2") != original_bfb2' not in hardware
     assert 'record.get("phase") == "confirmed"' in hardware
     assert 'record.get("active_bank") == original_bank' in hardware
-    assert "wolfBoot verification result: 0" in hardware
+    # The standard wolfBoot measurement build does not emit UART diagnostics.
+    # Validate its selected-image verification evidence through completed MQTT epochs.
+    assert "PQC_SECURE_BOOT_VERIFICATION" in hardware
+    assert 'verification.get("selected_image_valid") == "1"' in hardware
+    assert 'verification.get("measurement_valid") == "1"' in hardware
+    assert 'record.get("phase") == "candidate_first_boot"' in hardware
+    assert 'record.get("phase") == "rollback_requested"' in hardware
     assert "===== Dual-bank OTA UART:" in hardware
     assert 'ota_wait_mode = "rollback" if ota_plan_payload.get("test_no_confirm") else "confirmed"' in experiment
     assert 'termination_reason=ota_terminal' in experiment

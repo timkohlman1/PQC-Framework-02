@@ -1702,7 +1702,10 @@ def _execute_mqtt_e2e_uart_capture(
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
     result_collector, collector_start = start_gateway_result_collector(
-        bundle=bundle, repo_root=repo_root, result_dir=result_dir, run_id=result_dir.name
+        bundle=bundle, repo_root=repo_root, result_dir=result_dir, run_id=result_dir.name,
+        # OTA can produce several successful application boots under one run ID.
+        # Every observed epoch must still pass independent integrity validation.
+        allow_additional_stm32_epochs=ota_plan is not None,
     )
     update_manifest(result_dir / "manifest.json", {"result_collection": {
         "required": True,

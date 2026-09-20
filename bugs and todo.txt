@@ -26,6 +26,8 @@ Treat this as a fresh project request. Do not rely on prior chats, prior uploade
 | **15** | **8 — Live gateway/network-degradation validation**          | Now validate the complete final topology: experiment broker impaired, reporting broker exempt, campaign conditions retained, STM32 results working and ESP32 energy results still working under impairment.                                              |
 | **16** | **7 — Automated PCAP analysis and correlation**              | Do this last because it is an analysis consumer of the evidence produced by the completed framework. At this point PCAP ownership, timing terminology, TLS key logs, impairment semantics and artefact hashes are all stable.                            |
 
+| **17** | **17 — Deferred wolfBoot UART diagnostic channel**           | Implement only after the other requests and their validation are complete. Add optional early-boot and verification-failure diagnostics without altering the established secure-boot measurement boundaries or requiring a booting application. |
+
 Architecture rule for Requests 15 onward:
 - experiment execution is responsible for orchestration, completion/end-point detection, raw evidence capture and provenance only;
 - `manifest.json` is the immutable run-capture/provenance index and must not become a scientific metric database;
@@ -676,5 +678,27 @@ Keep tests behavioural and stable. Cover schema compatibility, path normalisatio
 
 The implementation is complete when a run can be mechanically traced from the resolved case to exact source/build/flashed identities and immutable raw artefacts, while scientific interpretation can be rerun independently from those raw inputs without modifying the capture record.
 
+
+-----------
+
+-----------
+
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+-----------
+
+IMPLEMENTATION REQUEST 17 — Optional wolfBoot early-boot UART diagnostics
+
+Implement this as a separate follow-up after all earlier implementation requests and their acceptance work are complete. Do not introduce bootloader UART solely to complete Request 14: the current negative-image hardware test can establish that the corrupted application does not start by observing no application UART output after a successful flash/reset/capture, followed by fresh application UART startup output after restoring the known-good image. Document that this observation does not directly reveal wolfBoot's internal rejection reason.
+
+Add an explicitly configurable, default-off diagnostic UART facility to the STM32L4 wolfBoot build so a diagnostic-enabled build can report early boot progress, selected image/partition, verification start and completion, integrity/authenticity failure and error codes, recovery or bank-selection decisions, and final handoff or refusal to hand off. Use the board's actual UART pins, peripheral, clock and gateway capture route as established from the current build/board configuration; do not assume the application UART is already initialized or that enabling wolfBoot's generic DEBUG_UART option alone makes output available. Diagnostic text must never include private keys, credentials, secret material, or full sensitive buffers.
+
+Keep the experimental measurement path valid: do not emit UART characters, format diagnostic strings, or wait for UART transmission inside an integrity, authenticity, complete-image-verification or other critical DWT interval. Define and document whether diagnostic initialization/output can affect bootloader-entry-to-handoff or reset-to-application timing. Either use a distinct diagnostic build excluded from timing comparisons or provide a defensible measurement policy that excludes diagnostic overhead and clearly identifies the effective configuration in retained evidence. Preserve the existing 1 MHz reset-origin bridge, mailbox evidence, normal deferred MQTT reporting and default non-diagnostic build behaviour.
+
+Integrate configuration and capture into the maintained wolfBoot build and hardware-test workflows without replacing the ordinary application's deferred MQTT result transport. For images that fail verification and never start, the gateway must retain raw bootloader UART, flash/reset/capture command results, and relevant image/configuration identities in a file-owned test run; no MQTT message is expected from that rejected application. Distinguish bootloader diagnostic lines from application startup markers and do not silently treat an empty capture as direct proof of a specific internal verification failure.
+
+Add unit/build validation for default-off and enabled configurations, target-specific UART initialization, diagnostic message formatting, failure-path coverage and non-interference with measured intervals. Add hardware validation for normal boot, corrupted integrity-only and signed images, valid-image restoration, and representative recovery/dual-bank cases. Retain raw UART and flash/reset evidence on both success and failure, and verify that a diagnostic-enabled build reports the expected verification decision while the default measurement build continues to meet Request 14's measurement and acceptance requirements. Document enablement, limitations, result interpretation, and how to restore the standard measurement configuration.
+
+This request is complete only when the optional diagnostics work on the target hardware, evidence is retained for a rejected image without relying on the application to boot, and the standard secure-boot measurement configuration and its timing semantics remain demonstrably unaffected.
 
 -----------
