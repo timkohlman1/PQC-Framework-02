@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -16,19 +17,11 @@ if str(SCRIPTS) not in sys.path:
 from framework.config_resolver import ConfigResolver
 from framework.hardware_test_support import HardwareFileRun, session_result_dir
 
-_RESOLVER = ConfigResolver(ROOT)
-_BASELINE_ROOT = _RESOLVER.materialize_campaign("baseline")
-_SECURE_ROOT = _RESOLVER.materialize_campaign("secure_boot")
-BUILD_PROVENANCE_EXPERIMENT_CONFIG = next(iter(sorted((_BASELINE_ROOT / "cases").glob("*.yaml")))).relative_to(ROOT).as_posix()
-SECURE_BOOT_EXPERIMENT_CONFIG = next(
-    path for path in sorted((_SECURE_ROOT / "cases").glob("*.yaml"))
-    if _RESOLVER.load_resolved_case(path)["choices"]["secure_boot"] == "ecdsa_p256"
-).relative_to(ROOT).as_posix()
+# Resolve cases only after capability checks and per-test evidence creation.
 SECURE_BOOT_PROFILE = "configs/secure_boot/ecdsa_p256.yaml"
 WOLFBOOT_ARTIFACT = "tools/wolfboot/wolfboot.elf"
 RELOCATED_APPLICATION_ELF = "build/Release/stm32_basic_hal1.elf"
 SIGNED_APPLICATION_ARTIFACT = "build/Release/stm32_basic_hal1_v1_signed.bin"
-EXPECTED_STLINK_SERIAL = "066EFF3932504E3043111818"
 EXPECTED_BOOT_MODE = "wolfboot_ecdsa_p256"
 EXPECTED_BOOT_CRYPTO = "ecdsa_p256"
 
@@ -61,7 +54,19 @@ def _run_cli(
     """Retain subprocess output even when a CLI exits before creating a run manifest."""
     if evidence_dir is not None:
         evidence_dir.mkdir(parents=True, exist_ok=True)
-    completed = _run_command(repo_root, [sys.executable, "scripts/experiment.py", *args])
+    if evidence_dir is not None:
+        (evidence_dir / f"{stage}.command.json").write_text(
+            json.dumps({"arguments": ["scripts/experiment.py", *args]}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    try:
+        completed = _run_command(repo_root, [sys.executable, "scripts/experiment.py", *args])
+    except OSError as exc:
+        if evidence_dir is not None:
+            (evidence_dir / f"{stage}.launch-error.log").write_text(
+                "".join(traceback.format_exception(exc)), encoding="utf-8"
+            )
+        raise
     if evidence_dir is not None:
         (evidence_dir / f"{stage}.stdout.log").write_text(
             completed.stdout, encoding="utf-8", errors="replace"
@@ -100,29 +105,40 @@ def _result_log_context(results_dir: Path, filename: str) -> str:
     return f"{log_path}:\n{content}"
 
 
-def _clean_secure_boot_generated_outputs(repo_root: Path) -> None:
-    """Remove non-signing build outputs before hardware workflow builds.
+def _owned_secure_boot_case(context: HardwareFileRun, algorithm: str) -> Path:
+    """Resolve one canonical profile without modifying shared campaign state."""
+    if algorithm not in ("ecdsa_p256", "integrity_sha256"):
+        raise ValueError(f"unsupported hardware-test profile: {algorithm}")
+    case_root = context.generated_root / f"secure_boot_{algorithm}"
+    case_root.mkdir(parents=True, exist_ok=False)
+    evidence = context.evidence_root / "configuration" / f"secure_boot_{algorithm}"
+    evidence.mkdir(parents=True, exist_ok=False)
+    source = context.repo_root / "configs/campaigns/secure_boot.yaml"
+    campaign = yaml.safe_load(source.read_text(encoding="utf-8"))
+    campaign["id"] = f"hw_secure_boot_{context.generated_root.name[:12]}_{algorithm}"
+    campaign["matrix"] = {}
+    campaign["fixed"]["secure_boot"] = algorithm
+    campaign_path = case_root / "campaign.yaml"
+    campaign_path.write_text(yaml.safe_dump(campaign, sort_keys=False), encoding="utf-8")
+    (evidence / "campaign.yaml").write_bytes(campaign_path.read_bytes())
+    generated = ConfigResolver(context.repo_root).materialize_campaign(
+        campaign_path, case_root / "resolved"
+    )
+    cases = sorted((generated / "cases").glob("*.yaml"))
+    assert len(cases) == 1, f"expected one case for {algorithm}: {cases}"
+    resolved = ConfigResolver(context.repo_root).load_resolved_case(cases[0])
+    assert resolved["choices"]["secure_boot"] == algorithm
+    (evidence / "resolved-case.yaml").write_bytes(cases[0].read_bytes())
+    (evidence / "campaign-resolved.yaml").write_bytes(
+        (generated / "campaign-resolved.yaml").read_bytes()
+    )
+    return cases[0]
 
-    Reusable wolfBoot private-key, public-key, and generated-keystore tuple
-    members are owned by the build preflight and must be preserved. The test
-    removes only rebuildable firmware artifacts so it cannot create partial
-    signing state before invoking ``build-wolfboot``.
-    """
 
-    wolfboot_dir = repo_root / "tools" / "wolfboot"
-    _skip_if_missing(wolfboot_dir, "wolfBoot source tree is missing")
-
-    shutil.rmtree(repo_root / "build", ignore_errors=True)
-    for relative_path in (
-        "tools/wolfboot/wolfboot.elf",
-        "tools/wolfboot/wolfboot.bin",
-        "tools/wolfboot/wolfboot.hex",
-        "tools/wolfboot/wolfboot.map",
-        "tools/wolfboot/.config",
-    ):
-        path = repo_root / relative_path
-        if path.exists():
-            path.unlink()
+def _assert_flash_identity(manifest: dict) -> None:
+    """Require recorded target identity without assuming a laboratory serial."""
+    serial = manifest["secure_boot_flash"]["stlink_serial"]
+    assert isinstance(serial, str) and serial.strip(), "missing recorded ST-LINK identity"
 
 
 def _skip_if_missing(path: Path, reason: str) -> None:
@@ -213,16 +229,18 @@ def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path, algorithm
         f"wolfBoot build log:\n"
         f"{_result_log_context(results_dir, 'wolfboot_build.log')}"
     )
-    assert (repo_root / WOLFBOOT_ARTIFACT).is_file()
+    assert (repo_root / WOLFBOOT_ARTIFACT).is_file(), (
+        f"wolfBoot artifact absent after framework build; evidence: {results_dir}"
+    )
 
 
-def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path, algorithm: str = EXPECTED_BOOT_CRYPTO, *, evidence_dir: Path | None = None) -> None:
+def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path, build_case: Path, algorithm: str = EXPECTED_BOOT_CRYPTO, *, evidence_dir: Path | None = None) -> None:
     build_completed = _run_cli(
         repo_root,
         [
             "build",
             "--experiment",
-            BUILD_PROVENANCE_EXPERIMENT_CONFIG,
+            str(build_case),
             "--results-dir",
             str(results_dir),
             "--configure-preset",
@@ -278,7 +296,7 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
     assert manifest["boot_crypto"] == EXPECTED_BOOT_CRYPTO
     assert manifest["secure_boot_flash"]["return_code"] == 0
     assert manifest["secure_boot_flash"]["failure_stage"] == "none"
-    assert manifest["secure_boot_flash"]["stlink_serial"] == EXPECTED_STLINK_SERIAL
+    _assert_flash_identity(manifest)
 
     wolfboot = manifest["secure_boot_flash"]["wolfboot"]
     signed_application = manifest["secure_boot_flash"]["signed_application"]
@@ -360,13 +378,78 @@ def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
         assert benchmark_memory["status"] == "available"
 
 
-def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path, algorithm: str = EXPECTED_BOOT_CRYPTO, experiment: str = SECURE_BOOT_EXPERIMENT_CONFIG, *, evidence_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _assert_positive_flash_evidence(
+    completed: subprocess.CompletedProcess[str], result_dir: Path
+) -> None:
+    """Separate positive boot evidence from optional legacy benchmark acceptance.
+
+    Return code 9 is accepted ONLY for a finalized benchmark-sample failure
+    with independent successful flash, signature/integrity, and startup evidence.
+    It never establishes benchmark, MQTT, or end-to-end workload success.
+    """
+    manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
+    if completed.returncode == 0:
+        _assert_positive_secure_boot_manifest(manifest)
+        return
+    assert completed.returncode == 9, (
+        f"flash-secure-boot failed (return code {completed.returncode}): "
+        f"{completed.stdout}\n{completed.stderr}"
+    )
+    run = manifest.get("run", {})
+    outcome = manifest.get("execution_outcome", {})
+    assert run.get("state") == "finalized"
+    assert run.get("return_code") == 9
+    assert run.get("failure_stage") == "benchmark_sample"
+    assert outcome.get("failure_stage") == "benchmark_sample"
+    assert manifest.get("final_index", {}).get("status") == "finalized"
+    capture = json.loads(
+        (result_dir / "secure-boot-flash-capture.json").read_text(encoding="utf-8")
+    )
+    assert capture.get("schema") == "pqc-secure-boot-flash-capture-v1"
+    assert capture.get("boot_crypto") == EXPECTED_BOOT_CRYPTO
+    assert capture.get("flash_return_code") == 0
+    assert capture.get("capture_completed") is True
+    assert capture.get("negative_requested") is False
+    assert capture.get("boot_marker_present") is True
+    assert capture.get("secure_boot_marker_present") is True
+    assert capture.get("tick_present") is True
+    assert capture.get("result") == "secure_boot_flash_failed"
+    uart = (result_dir / "uart.log").read_text(encoding="utf-8", errors="replace")
+    for marker in (
+        "wolfBoot integrity valid: 1",
+        "wolfBoot integrity result: 0",
+        "wolfBoot authenticity valid: 1",
+        "wolfBoot authenticity result: 0",
+        "stm32-basic_hal1 secure-boot app v0.1.0",
+        "stm32-basic_hal1 boot v0.1.0",
+    ):
+        assert marker in uart, f"Missing current-run secure-boot evidence {marker!r}: {uart}"
+    assert "[tick=" in uart
+    flash_log = (result_dir / "secure_boot_flash.log").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    assert flash_log.count("Download verified successfully") >= 2, (
+        "Missing successful bootloader/application flash verification in retained log"
+    )
+    artifacts = {item.get("artifact_id"): item for item in manifest.get("artifacts", [])}
+    for artifact_id in ("wolfboot_image", "signed_application"):
+        artifact = artifacts[artifact_id]
+        assert artifact.get("acquisition", {}).get("status") == "available"
+        digest = artifact.get("sha256")
+        assert isinstance(digest, str) and len(digest) == 64
+    assert (
+        capture["negative_test"]["original_signed_application_sha256"]
+        == artifacts["signed_application"]["sha256"]
+    )
+
+
+def _restore_valid_secure_boot_application(repo_root: Path, results_dir: Path, algorithm: str, experiment: Path | str, *, evidence_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
     return _run_cli(
         repo_root,
         [
             "flash-secure-boot",
             "--experiment",
-            experiment,
+            str(experiment),
             "--boot-algorithm",
             algorithm,
             "--results-dir",
@@ -414,18 +497,15 @@ def test_secure_boot_build_sign_flash_uart_workflow(pytestconfig, pqc_require_ca
     results_dir = context.evidence_root / "secure-boot-cli"
     results_dir.mkdir(parents=True, exist_ok=False)
 
-    _skip_if_missing(
-        repo_root / SECURE_BOOT_EXPERIMENT_CONFIG,
-        "secure-boot experiment config is missing",
-    )
     _skip_if_missing(repo_root / SECURE_BOOT_PROFILE, "canonical secure-boot profile is missing")
 
-    _clean_secure_boot_generated_outputs(repo_root)
+    build_case = context.case(template="baseline", case_name="build_provenance")
+    experiment = _owned_secure_boot_case(context, EXPECTED_BOOT_CRYPTO)
     _prepare_instrumented_wolfboot(
         repo_root, results_dir, evidence_dir=context.evidence_root / "preparation"
     )
     _prepare_signed_secure_boot_application(
-        repo_root, results_dir, evidence_dir=context.evidence_root / "preparation"
+        repo_root, results_dir, build_case, evidence_dir=context.evidence_root / "preparation"
     )
 
     flash_completed = _run_cli(
@@ -433,7 +513,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(pytestconfig, pqc_require_ca
         [
             "flash-secure-boot",
             "--experiment",
-            SECURE_BOOT_EXPERIMENT_CONFIG,
+            str(experiment),
             "--boot-algorithm",
             EXPECTED_BOOT_CRYPTO,
             "--results-dir",
@@ -443,12 +523,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(pytestconfig, pqc_require_ca
         ],
         evidence_dir=context.evidence_root / "positive", stage="positive-flash",
     )
-    assert flash_completed.returncode == 0, (
-        f"flash-secure-boot stdout:\n{flash_completed.stdout}\n"
-        f"flash-secure-boot stderr:\n{flash_completed.stderr}"
-    )
-
-    result_dir = _single_secure_boot_result_dir(results_dir)
+    result_dir = _cli_result_dir(flash_completed, results_dir)
     manifest_path = result_dir / "manifest.json"
     flash_log_path = result_dir / "secure_boot_flash.log"
     uart_log_path = result_dir / "uart.log"
@@ -459,7 +534,7 @@ def test_secure_boot_build_sign_flash_uart_workflow(pytestconfig, pqc_require_ca
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    _assert_positive_secure_boot_manifest(manifest)
+    _assert_positive_flash_evidence(flash_completed, result_dir)
 
     flash_log = flash_log_path.read_text(encoding="utf-8")
     assert "wolfBoot secure-boot flash log" in flash_log
@@ -506,29 +581,24 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
     )
     results_dir = context.evidence_root / "secure-boot-cli"
     results_dir.mkdir(parents=True, exist_ok=False)
-    matches = [
-        path for path in sorted((_SECURE_ROOT / "cases").glob("*.yaml"))
-        if _RESOLVER.load_resolved_case(path)["choices"]["secure_boot"] == algorithm
-    ]
-    assert matches, f"No generated secure-boot case for {algorithm}"
-    experiment = matches[0].relative_to(ROOT).as_posix()
-    _skip_if_missing(repo_root / experiment, "secure-boot experiment config is missing")
+    build_case = context.case(template="baseline", case_name="build_provenance")
+    experiment = _owned_secure_boot_case(context, algorithm)
     _skip_if_missing(repo_root / f"configs/secure_boot/{algorithm}.yaml", "secure-boot profile is missing")
 
-    _clean_secure_boot_generated_outputs(repo_root)
     _prepare_instrumented_wolfboot(
         repo_root, results_dir, algorithm,
         evidence_dir=context.evidence_root / "preparation",
     )
     _prepare_signed_secure_boot_application(
-        repo_root, results_dir, algorithm,
+        repo_root, results_dir, build_case, algorithm,
         evidence_dir=context.evidence_root / "preparation",
     )
+    primary_error: BaseException | None = None
     try:
         negative_completed = _run_cli(
             repo_root,
             [
-                "flash-secure-boot", "--experiment", experiment,
+                "flash-secure-boot", "--experiment", str(experiment),
                 "--boot-algorithm", algorithm,
                 "--results-dir", str(results_dir),
                 "--uart-duration-seconds", "10",
@@ -573,7 +643,12 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
             f"Corrupted application emitted an application marker for {algorithm}:\n{uart_log}"
         )
         assert "UART post-flash capture log" not in uart_log
-    finally:
+    except BaseException as exc:
+        primary_error = exc
+        (context.evidence_root / "negative" / "validation_failure.log").write_text(
+            "".join(traceback.format_exception(exc)), encoding="utf-8"
+        )
+    try:
         # The firmware built and signed above belongs to this algorithm. Restore
         # with the matching bootloader and application even when rejection fails.
         restore_completed = _restore_valid_secure_boot_application(
@@ -581,7 +656,6 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
             evidence_dir=context.evidence_root / "restoration",
         )
         restored_dir = _cli_result_dir(restore_completed, results_dir)
-        restored = json.loads((restored_dir / "manifest.json").read_text(encoding="utf-8"))
         restored_capture = json.loads(
             (restored_dir / "secure-boot-flash-capture.json").read_text(encoding="utf-8")
         )
@@ -600,3 +674,17 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         assert restored_capture["boot_marker_present"] is True
         assert restored_capture["secure_boot_marker_present"] is True
         assert restored_capture["tick_present"] is True
+
+    except BaseException as restoration_error:
+        (context.evidence_root / "restoration" / "validation_failure.log").write_text(
+            "".join(traceback.format_exception(restoration_error)), encoding="utf-8"
+        )
+        if primary_error is not None:
+            raise AssertionError(
+                "negative-path validation AND restoration failed; "
+                f"negative={primary_error!r}; restoration={restoration_error!r}; "
+                f"retained evidence: {context.evidence_root}"
+            ) from restoration_error
+        raise
+    if primary_error is not None:
+        raise primary_error

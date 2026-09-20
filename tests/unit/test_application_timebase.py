@@ -97,11 +97,12 @@ def test_manifest_boundary_keeps_application_timings_in_raw_result_stream():
 
 def test_hardware_timebase_test_is_self_contained_and_uses_wolfboot_run_path():
     hardware_test = _text("tests/hardware/test_application_timebase_hw.py")
-    assert 'resolver.load_campaign("baseline")' in hardware_test
+    assert 'context.case(template="baseline"' in hardware_test
     assert '"-DPQC_TIMEBASE_HARDWARE_SELF_TEST=ON"' in hardware_test
-    assert '"scripts/experiment.py"' in hardware_test
-    assert '"run"' in hardware_test
-    assert '"wolfBoot verification result: 0"' in hardware_test
+    assert 'context.run_experiment(case=case, name="experiment")' in hardware_test
+    assert '_assert_integrity_profile_boot_evidence(uart)' in hardware_test
+    assert '"wolfBoot integrity valid: 1"' in hardware_test
+    assert '"wolfBoot integrity result: 0"' in hardware_test
     assert 'PQC_TIMEBASE_UART_LOG' not in hardware_test.split("def test_application_timebase_known_delay_and_hal_tick_unchanged", 1)[1]
 
 
