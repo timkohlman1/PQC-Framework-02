@@ -70,10 +70,37 @@ def test_release_requires_matching_owner_and_kills_holder(tmp_path):
 def test_wrapper_guards_gateway_entrypoints_and_exposes_administration():
     source = (ROOT / 'scripts/dev.sh').read_text(encoding='utf-8')
     for command in ('pytest-gateway', 'pytest-hardware', 'experiment-gateway',
-                    'campaign-gateway', 'python-gateway', 'run'):
+                    'campaign-gateway', 'python-gateway'):
         assert command in source.split('PQC_GATEWAY_LOCK_HELD=1')[0]
     assert 'gateway-lock)' in source
     assert 'exec python3 "$repo_root/scripts/gateway_lock.py"' in source
+
+
+def test_generic_run_does_not_attempt_gateway_lock(tmp_path):
+    """Generic container toolchain runs must work without gateway DNS/SSH."""
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    docker = fake_bin / 'docker'
+    docker.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$PQC_DOCKER_CAPTURE"\n')
+    docker.chmod(0o755)
+    captured = tmp_path / 'docker-args.txt'
+    env = dict(os.environ, PATH=f'{fake_bin}:{os.environ.get("PATH", "")}',
+               PQC_DOCKER_CAPTURE=str(captured), PQC_DOCKER_IMAGE='pqc-ci-test',
+               PQC_DOCKER_SSH_DIR=str(tmp_path / 'nonexistent-ssh'))
+    env.pop('PQC_GATEWAY_LOCK_HELD', None)
+    result = subprocess.run(['sh', str(ROOT / 'scripts/dev.sh'), 'run', 'sh', '-lc',
+                             'python --version'], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert captured.exists(), 'generic run must invoke Docker, not the SSH lease holder'
+    assert 'pqc-ci-test' in captured.read_text()
+    assert 'Gateway lock' not in result.stderr
+
+
+def test_explicit_gateway_lock_run_remains_available():
+    source = (ROOT / 'scripts/dev.sh').read_text(encoding='utf-8')
+    assert 'gateway-lock)' in source
+    assert 'exec python3 "$repo_root/scripts/gateway_lock.py" "$@"' in source
 
 
 def test_wrong_owner_does_not_release_active_lease(tmp_path):
