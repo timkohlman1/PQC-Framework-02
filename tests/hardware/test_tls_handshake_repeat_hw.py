@@ -1,12 +1,9 @@
-"""Self-contained Request-12 repeated TLS workload hardware validation."""
+"""Self-contained repeated TLS workload hardware validation."""
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
+import re
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
@@ -18,106 +15,128 @@ if str(SCRIPTS) not in sys.path:
 
 from framework.config_resolver import ConfigResolver
 from framework.result_collector import _parse_raw_stream
+from framework.hardware_test_support import HardwareFileRun, session_result_dir
 
 
 pytestmark = [pytest.mark.hardware, pytest.mark.long]
 
-TEST_GENERATED_ROOT = (
-    REPO_ROOT
-    / ".pqc-generated-state"
-    / "hardware-tests"
-    / "request12-tls-handshake-repeat"
-)
-
-
-def _clean_subprocess_env() -> dict[str, str]:
-    """Return deterministic environment for the self-contained hardware run."""
-    env = os.environ.copy()
-    # This hardware test owns resolution/build/runtime evidence. Do not allow
-    # retained-result selectors or the superseded Request-12 opt-in flag to
-    # alter the run.
-    env.pop("PQC_TEST_RESULT_DIR", None)
-    env.pop("PQC_TLS_REPEAT_HW", None)
-    env["PQC_BUILD_PURPOSE"] = "experiment"
-    return env
-
-
-def _latest_run(results_dir: Path) -> Path:
-    candidates = [
-        path
-        for path in results_dir.iterdir()
-        if path.is_dir() and (path / "manifest.json").is_file()
-    ]
-    assert candidates, f"no experiment run produced under {results_dir}"
-    return max(candidates, key=lambda path: path.stat().st_mtime_ns)
-
-
-def _materialize_case() -> Path:
-    """Resolve Request 12 into the isolated framework generated-state volume."""
+def _materialize_case(context: HardwareFileRun) -> Path:
+    """Resolve the TLS campaign in this hardware file's private generated state."""
     resolver = ConfigResolver(REPO_ROOT)
-    shutil.rmtree(TEST_GENERATED_ROOT, ignore_errors=True)
-    generated = resolver.materialize_campaign(
-        "tls_handshake_repeat",
-        TEST_GENERATED_ROOT,
+    resolved = resolver.materialize_campaign(
+        "tls_handshake_repeat", context.generated_root / "tls_handshake_repeat"
     )
-    cases = sorted((generated / "cases").glob("*.yaml"))
-    assert cases, "Request-12 campaign resolution produced no cases"
+    cases = sorted((resolved / "cases").glob("*.yaml"))
+    assert len(cases) == 1, f"expected one TLS repeat case, found {len(cases)}"
+    evidence = context.evidence_root / "configuration"
+    evidence.mkdir(parents=True, exist_ok=False)
+    source = REPO_ROOT / "configs" / "campaigns" / "tls_handshake_repeat.yaml"
+    (evidence / "campaign.yaml").write_bytes(source.read_bytes())
+    (evidence / "resolved-case.yaml").write_bytes(cases[0].read_bytes())
+    (evidence / "campaign-resolved.yaml").write_bytes(
+        (resolved / "campaign-resolved.yaml").read_bytes()
+    )
     return cases[0]
 
 
-def _run_hardware_case(
-    case_path: Path,
-    results_dir: Path,
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            sys.executable,
-            "scripts/experiment.py",
-            "run",
-            "--experiment",
-            str(case_path),
-            "--results-dir",
-            str(results_dir),
-        ],
-        cwd=REPO_ROOT,
-        env=_clean_subprocess_env(),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
+def _assert_tls_repeat_statuses(raw: Path, run_id: str, expected: int) -> None:
+    """Inspect firmware outcomes in each independently hash-validated result epoch.
 
-
-@pytest.fixture(scope="module")
-def tls_repeat_test_workspace(tmp_path_factory):
-    # scripts/dev.sh pytest-hardware overlays /workspace/build and
-    # /workspace/.pqc-generated-state with anonymous Docker volumes. This test
-    # therefore owns fresh build/generated state without modifying host state.
-    root = tmp_path_factory.mktemp("request12-tls-repeat-self-contained")
-    try:
-        yield root
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-        shutil.rmtree(TEST_GENERATED_ROOT, ignore_errors=True)
+    The caller first validates envelope/source/run-ID/sequence/count/hash through
+    the canonical result collector. This step checks the TLS semantics that
+    transport integrity alone cannot establish. It is not a timing benchmark.
+    """
+    assert expected >= 2
+    chunks: dict[int, bytes] = {}
+    epoch = 0
+    for line in raw.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        envelope = json.loads(line)
+        payload = envelope["payload"]
+        # mosquitto_sub %j adds its own transport metadata around the application
+        # JSON payload. Unwrap it exactly as the canonical collector does.
+        if isinstance(payload, dict) and "payload" in payload:
+            payload = payload["payload"]
+        record = json.loads(payload) if isinstance(payload, str) else payload
+        assert isinstance(record, dict), "non-object reporting record"
+        assert record.get("run_id") == run_id
+        assert record["source"] == "stm32"
+        kind = record["type"]
+        if kind == "chunk":
+            sequence = int(record["sequence"])
+            assert sequence not in chunks, f"duplicate TLS epoch chunk {sequence}"
+            chunks[sequence] = bytes.fromhex(record["data_hex"])
+            continue
+        assert kind == "complete", f"unexpected reporting record type: {kind}"
+        assert set(chunks) == set(range(int(record["chunk_count"]))), (
+            f"missing TLS epoch chunks for handshake {epoch}"
+        )
+        logical = b"".join(chunks[index] for index in range(len(chunks)))
+        chunks.clear()
+        text = logical.decode("utf-8")
+        status_lines = []
+        for logical_line in text.splitlines():
+            if not logical_line.strip():
+                continue
+            logical_record = json.loads(logical_line)
+            if logical_record.get("type") != "tls_handshake_repeat":
+                continue
+            status = logical_record.get("text", "")
+            if "PQC_TLS_REPEAT_ITERATION schema=1 " in status:
+                status_lines.append(status)
+        assert len(status_lines) == 1, (
+            f"expected exactly one TLS status for handshake {epoch}: {status_lines}"
+        )
+        match = re.search(r"PQC_TLS_REPEAT_ITERATION schema=1 ([^\"}\r\n]*)", status_lines[0])
+        assert match, f"malformed TLS status for handshake {epoch}"
+        fields = dict(part.split("=", 1) for part in match.group(1).split() if "=" in part)
+        required = {
+            "iteration": str(epoch),
+            "handshake": str(epoch),
+            "tcp_outcome": "connected",
+            "tls_outcome": "success",
+            "connect_result": "0",
+            "failure_stage": "none",
+            "kex_match": "1",
+            "ca_loaded": "1",
+            "peer_identity_configured": "1",
+            "authentication_verified": "1",
+            "fresh_tcp_connection": "1",
+            "fresh_tls_context": "1",
+            "session_resumption": "0",
+            "timing_source": "TIM2_1MHz",
+            "instrumentation_available": "1",
+            "cleanup_ok": "1",
+        }
+        for key, value in required.items():
+            assert fields.get(key) == value, (
+                f"TLS handshake {epoch}: expected {key}={value}, "
+                f"observed {fields.get(key)!r}"
+            )
+        assert fields.get("negotiated_kex") not in (None, "", "unavailable")
+        epoch += 1
+    assert not chunks, "TLS result stream ended without a completion record"
+    assert epoch == expected, f"expected {expected} TLS status epochs, observed {epoch}"
 
 
 @pytest.mark.hardware
 @pytest.mark.long
 def test_multiple_full_tls_handshakes_are_recorded_within_one_boot(
+    pytestconfig,
     pqc_require_capabilities,
-    tls_repeat_test_workspace: Path,
 ):
-    """Check normal experiment execution and required raw-capture completeness."""
+    """Validate retained per-handshake STM32 TLS results in an independent run."""
     pqc_require_capabilities(
-        "local_toolchain",
-        "gateway",
-        "flash_helper",
-        "uart_device",
+        "local_toolchain", "gateway", "flash_helper", "uart_device",
         strict_mode="hardware",
     )
-
-    case_path = _materialize_case()
+    context = HardwareFileRun.create(
+        repo_root=REPO_ROOT,
+        session_result_dir=session_result_dir(pytestconfig),
+        module_name="test_tls_handshake_repeat_hw",
+    )
+    case_path = _materialize_case(context)
     resolver = ConfigResolver(REPO_ROOT)
     case = resolver.load_resolved_case(case_path)
     bundle = resolver.to_legacy_bundle(case, resolve_secrets=False)
@@ -126,29 +145,8 @@ def test_multiple_full_tls_handshakes_are_recorded_within_one_boot(
     )
     assert expected >= 2
 
-    # /workspace/results is host bind-mounted by scripts/dev.sh pytest-hardware.
-    # Unlike build and .pqc-generated-state, it survives container teardown.
-    # Write the normal experiment result tree here from the beginning so that
-    # both successful runs and partially completed failed runs are retained.
-    results_dir = (
-        REPO_ROOT
-        / "results"
-        / "automated-tests"
-        / "request12-tls-handshake-repeat"
-        / uuid.uuid4().hex
-        / "experiment-results"
-    )
-    results_dir.mkdir(parents=True, exist_ok=False)
-    print(f"Request-12 retained experiment results: {results_dir}", flush=True)
-    completed = _run_hardware_case(case_path, results_dir)
-    assert completed.returncode == 0, (
-        f"Experiment results retained at: {results_dir}\n"
-        + completed.stdout
-        + "\n"
-        + completed.stderr
-    )
-
-    run_dir = _latest_run(results_dir)
+    run_dir, _ = context.run_experiment(case=case_path, name="tls_handshake_repeat")
+    print(f"TLS handshake repeat retained evidence: {context.evidence_root}", flush=True)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     # The final capture-only manifest is authoritative after run finalization.
     # The operational result_collection section is not retained in that schema.
@@ -170,9 +168,12 @@ def test_multiple_full_tls_handshakes_are_recorded_within_one_boot(
     stream = streams[0]
     assert stream["requirement"] == "required"
     assert stream["acquisition"]["status"] == "available"
-    assert stream["path"] is not None
-    raw = run_dir / stream["path"]
-    assert raw.is_file(), f"retained STM32 result stream is missing: {raw}"
+    name = stream["path"]
+    assert isinstance(name, str) and name and not Path(name).is_absolute()
+    raw = (run_dir / name).resolve()
+    assert raw.is_relative_to(run_dir.resolve()) and raw.is_file(), (
+        f"retained STM32 result stream missing or outside run: {raw}"
+    )
     validation = _parse_raw_stream(
         raw,
         manifest["run"]["id"],
@@ -181,8 +182,8 @@ def test_multiple_full_tls_handshakes_are_recorded_within_one_boot(
     )
     assert validation.passed, validation.failure_reasons
     assert validation.source_results["stm32"]["completion_count"] == expected
+    _assert_tls_repeat_statuses(raw, manifest["run"]["id"], expected)
 
-    # Check the framework capture contract, not the scientific interpretation
-    # of individual TLS timing or instrumentation records. Those observations
-    # remain in the complete retained result package for later ingestion.
+    # The firmware outcomes above establish successful TLS and per-iteration
+    # cleanup; timing and memory values are not interpreted as benchmarks here.
     # Minimal/suppressed UART is allowed; no optional UART marker is required.
