@@ -189,14 +189,30 @@ run_container() (
 )
 
 if [ "$#" -eq 0 ]; then
-  echo "Usage: scripts/dev.sh <build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
+  echo "Usage: scripts/dev.sh <gateway-lock|build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
   exit 2
 fi
 
 command=$1
 shift
 
+# Wrap gateway-capable commands before Docker starts. Keep the lease across
+# child processes launched by an entire hardware test or campaign.
+# The marker prevents recursion when the lock launcher re-enters dev.sh.
+if [ "${PQC_GATEWAY_LOCK_HELD:-}" != 1 ]; then
+  case "$command" in
+    pytest-gateway|pytest-hardware|experiment-gateway|campaign-gateway|python-gateway|run)
+      PQC_GATEWAY_LOCK_HELD=1
+      export PQC_GATEWAY_LOCK_HELD
+      exec python3 "$repo_root/scripts/gateway_lock.py" run -- "$repo_root/scripts/dev.sh" "$command" "$@"
+      ;;
+  esac
+fi
+
 case "$command" in
+  gateway-lock)
+    exec python3 "$repo_root/scripts/gateway_lock.py" "$@"
+    ;;
   build-image)
     docker build -f docker/python/Dockerfile -t "$image_name" .
     ;;

@@ -554,6 +554,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 
 | ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
 |---|---|---|---|---|---|---|---|
+| DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |
 | DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Dedicated gateway-mediated known-image UART/hardware assertion | Existing hardware evidence checks task-context ordering in the secure-boot benchmark path, but there is no focused baseline test that builds/flashes the image and asserts the complete M6.1 lifecycle and unavailable-field contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
 | DTR-002 | M6.2 lwIP network-interface boundary marker | Dedicated gateway-mediated known-image UART/hardware assertion | Static/build coverage exists, but the known-image baseline hardware test does not yet assert the complete `lwIP network interface:` marker contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
 | DTR-003 | M6.2.1 generated-state provenance refusal before gateway access | Hardware-workflow fixture coverage | Framework and integration coverage exists, but secure-boot hardware fixtures still need explicit successful build/signing records to assert provenance refusal before any gateway operation | Updated build/signing record fixtures in the secure-boot hardware workflow | `tests/hardware/test_secure_boot_flash_workflow_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware` | deferred |
@@ -1129,3 +1130,15 @@ the current development container; they do not start nested Docker containers.
 The remaining hardware modules have not yet been migrated to this contract.
 This change does not establish cross-module build/signing isolation and does not
 establish successful physical hardware execution without recorded test evidence.
+
+### Cross-host gateway lease (Linux wrapper, unverified on gateway)
+
+`scripts/gateway_lock.py` uses a persistent SSH session to hold a gateway-side
+advisory `flock`. Linux wrapper gateway-enabled commands and generic `run` keep
+one lease for the entire Docker process, including nested hardware-test and
+campaign operations. Local build-only modes remain outside the lock. The
+administrative status/release commands and recovery restrictions are documented
+in `docs/002_host_gateway_setup.md`. Direct SSH and direct Python/gateway
+administration paths are not intercepted and must not be used concurrently with
+protected experiments. Wrapper exit/SSH disconnect does not prove a detached
+remote helper has stopped; inspect/recover gateway and STM32 state after failures.

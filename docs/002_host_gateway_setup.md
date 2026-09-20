@@ -117,3 +117,36 @@ Packet-capture settings belong under `network.packet_capture` in the experiment 
 ## Gateway experiment certificate staging
 
 Broker deployment may stage ignored experiment certificate profiles under the repository-shaped gateway workspace. This state is not an alternate source of truth. Staged certificate directories must remain mode `0700`, private `*.key` files mode `0600`, and public/non-key certificate files may be `0644`. Do not use recursive `chmod a+rX` on a certificate tree containing private keys. The broker containers consume the staged tree through read-only mounts and create their own restricted runtime copies.
+
+## Linux gateway-operation lock (advisory)
+
+The Linux wrapper acquires one gateway-side POSIX `flock` lease for each
+`pytest-gateway`, `pytest-hardware`, `experiment-gateway`, `campaign-gateway`,
+`python-gateway`, or `run` invocation. The lease spans the full container run,
+including child experiment commands and sequential hardware operations. Local
+`experiment` and `python` build-only invocations do not acquire a gateway lease.
+Waiting owners retry until the gateway becomes free; press Ctrl-C to cancel.
+All development hosts must use the same gateway SSH user and these wrappers.
+The gateway must provide `python3` and a Linux filesystem with working `flock`.
+
+```bash
+./scripts/dev.sh gateway-lock status
+./scripts/dev.sh gateway-lock release --owner-id OWNER_ID_FROM_STATUS --force
+```
+
+The `release` command deliberately requires the exact current owner ID. It
+terminates that owner's gateway-side lease holder, so use it **only** when the
+owner is abandoned, after checking `status` and contacting the developer if
+possible. A still-running client detects lock loss and terminates its local
+command group. Never delete the gateway lock file: unlinking it can create
+multiple independent lock inodes. Normal completion, Ctrl-C and SSH session
+termination release the lease automatically; after a forced release, inspect
+any interrupted firmware, broker and impairment state before proceeding.
+
+This is cooperative coordination, **not** a gateway-side access-control or
+security boundary. Direct SSH, direct gateway helpers, direct Python entry
+points, and standalone broker administration are not intercepted by this
+wrapper. All developers must use the locked Linux wrapper for shared hardware
+operations; independent gateway access can still invalidate an experiment.
+A `run` or `python-gateway` call can perform long preparation under the lock;
+use separate local build commands when preserving gateway state is unnecessary.
