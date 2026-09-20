@@ -82,27 +82,27 @@ The project default is Docker-hosted Linux execution for framework commands, fir
 
 Use the repository wrappers from the repository root:
 
-```powershell
-.\scripts\dev.ps1 pytest tests/unit
-.\scripts\dev.ps1 python <repository-script.py> [args...]
-.\scripts\dev.ps1 python-gateway <script> [arguments...]
-.\scripts\dev.ps1 pytest
-.\scripts\dev.ps1 python scripts/resolve_campaign.py baseline.yaml
-$case = Get-ChildItem ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | Select-Object -First 1
-$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
-.\scripts\dev.ps1 experiment status --experiment $path
-.\scripts\dev.ps1 experiment build --experiment $path
-.\scripts\dev.ps1 experiment-gateway run --experiment $path
-.\scripts\dev.ps1 pytest-hardware
+```bash
+./scripts/dev.sh pytest tests/unit
+./scripts/dev.sh python <repository-script.py> [args...]
+./scripts/dev.sh python-gateway <script> [arguments...]
+./scripts/dev.sh pytest
+./scripts/dev.sh python scripts/resolve_campaign.py baseline.yaml
+case_file=$(compgen -G ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | sort | head -n 1)
+path="$case_file"
+./scripts/dev.sh experiment status --experiment "$path"
+./scripts/dev.sh experiment build --experiment "$path"
+./scripts/dev.sh experiment-gateway run --experiment "$path"
+./scripts/dev.sh pytest-hardware
 ```
 
-The POSIX wrapper is `./scripts/dev.sh` with corresponding subcommands.
+Linux/bash is the sole supported development-host environment. Use `./scripts/dev.sh` from the repository root; do not ask the user to select a development environment.
 
-For wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. Both `scripts/dev.ps1` and `scripts/dev.sh` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must ensure wrapper-loaded values do not persist after the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
+For wrapper runs that require local Wi-Fi credentials, `.env.sample` is the committed template and `.env` is the Git-ignored local file. `scripts/dev.sh` may load only `PQC_WIFI_SSID` and `PQC_WIFI_PSK` from `.env`, must not overwrite caller-supplied values, and must ensure wrapper-loaded values do not persist after the Docker invocation finishes. Never commit or package the real `.env`, and never resolve these secrets into generated campaign YAML.
 
-Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `.\scripts\dev.ps1 python ...` unless both wrappers implement that subcommand.
+Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not document or recommend `./scripts/dev.sh python ...` unless the Linux wrapper implements that subcommand.
 
-Host-native Windows or development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
+Host-native development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
 
 Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts.
 
@@ -141,11 +141,11 @@ Detailed result schemas, benchmark interpretation, evidence classes, and limitat
 
 Use the established test layers:
 
-```powershell
-.\scripts\dev.ps1 pytest tests/unit
-.\scripts\dev.ps1 pytest tests/integration -m integration
-.\scripts\dev.ps1 pytest-hardware
-.\scripts\dev.ps1 pytest
+```bash
+./scripts/dev.sh pytest tests/unit
+./scripts/dev.sh pytest tests/integration -m integration
+./scripts/dev.sh pytest-hardware
+./scripts/dev.sh pytest
 ```
 
 Testing rules:
@@ -163,13 +163,13 @@ Testing rules:
 
 For documentation-only changes, run the targeted documentation tests and the full unit suite. The normal minimum gate is:
 
-```powershell
-.\scripts\dev.ps1 pytest tests/unit/test_documentation_integrity.py
-.\scripts\dev.ps1 pytest tests/unit/test_docker_default_workflow_docs.py
-.\scripts\dev.ps1 pytest tests/unit
+```bash
+./scripts/dev.sh pytest tests/unit/test_documentation_integrity.py
+./scripts/dev.sh pytest tests/unit/test_docker_default_workflow_docs.py
+./scripts/dev.sh pytest tests/unit
 ```
 
-Run `./scripts/dev.ps1 pytest` when required by the phase plan or when broader verification is appropriate. Do not claim that a command passed until its output is provided.
+Run `./scripts/dev.sh pytest` when required by the phase plan or when broader verification is appropriate. Do not claim that a command passed until its output is provided.
 
 ## 9. Secrets and generated artifacts
 
@@ -189,7 +189,7 @@ For every request:
 2. Classify the request as implementation or review according to `docs/001_ai_feature_request_workflow.md`.
 3. Inspect the supplied files before proposing code, replacement content, or candidate edits.
 4. Ask only for files needed for the current change or review. Do not request the whole repository by default.
-5. When multiple files are needed, provide a PowerShell `Compress-Archive` command with an exact repository-relative `$files = @(...)` list and an output path under `C:\Users\timko\Downloads\`.
+5. When multiple files are needed, provide a Bash `files=(...)` array with exact repository-relative paths and a `zip` command writing to `/home/timk/Downloads/`. Assume `/home/timk/rmit/PQC-Framework-02` is the repository root unless the user specifies otherwise.
 6. Do not implement code until the required context is available.
 7. Preserve unrelated content and existing capability boundaries.
 8. Update relevant documentation in the same change.
@@ -226,10 +226,10 @@ For every modified or created file:
 
 - Provide complete replacement content in a downloadable artifact using the exact target filename.
 - When multiple files change, provide one ZIP containing repository-relative paths.
-- Provide the exact PowerShell extraction command, assuming the ZIP is in `C:\Users\timko\Downloads\` and extraction runs from the repository root:
+- Provide the exact Linux/bash extraction command, assuming the ZIP is in `/home/timk/Downloads/` and the repository root is `/home/timk/rmit/PQC-Framework-02`:
 
-```powershell
-Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+```bash
+cd /home/timk/rmit/PQC-Framework-02 && unzip -o "/home/timk/Downloads/<archive-name>.zip" -d .
 ```
 
 Do not require the user to relocate the downloaded archive before extraction. State the files changed, verification commands, expected pass criteria, and any unverified assumptions. End an implementation response with the next verification command.

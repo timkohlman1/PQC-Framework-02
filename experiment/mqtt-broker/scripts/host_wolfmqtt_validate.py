@@ -114,7 +114,7 @@ def split_arguments(argv: Sequence[str] | None) -> tuple[list[str], list[str]]:
 
     ``--client-args`` is the documented command boundary. The legacy ``--``
     separator remains accepted for direct compatibility but is not presented
-    as the PowerShell forwarding path.
+    as the Linux/bash forwarding path.
     """
     raw = list(argv) if argv is not None else list(sys.argv[1:])
     boundaries = [
@@ -201,7 +201,7 @@ def print_local_help() -> None:
         "  host_wolfmqtt_validate.py run --result-json results/result.json --client-args -h 10.1.1.18 -p 8883 -t\n"
         "\n"
         "Safety:\n"
-        "  Through scripts/dev.ps1, use --client-args and quote each dash-prefixed\n  wolfMQTT token (for example '-h', '-p', and '-i') so PowerShell passes\n  it as data rather than binding it as a dev.ps1 parameter.\n  The run action rejects an empty client argument list so the upstream\n"
+        "  Through scripts/dev.sh, use --client-args and pass explicit wolfMQTT\n  options such as -h, -p, and -i after this named argument boundary.\n  The run action rejects an empty client argument list so the upstream\n"
         "  example cannot silently use its public default broker or plaintext defaults.\n"
         "  Use only explicitly selected broker endpoints and temporary certificate material."
     )

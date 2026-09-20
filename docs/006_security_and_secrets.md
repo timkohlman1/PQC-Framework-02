@@ -50,8 +50,8 @@ Gateway wrappers explicitly enable gateway access, mount the configured host SSH
 
 Representative capability-gated command:
 
-```powershell
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+```bash
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
 ```
 
 The command’s success proves only the evidence asserted by that test. Gateway SSH reachability is not board runtime, UART, broker, MQTT/TLS, timing, memory, benchmark, or end-to-end evidence.

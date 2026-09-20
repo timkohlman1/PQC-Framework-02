@@ -26,7 +26,7 @@ Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, 
 3. State the requested change or review scope.
 4. The AI reads `AI_BUILD_GUIDE.md` first and treats it as the source of truth for repository structure, current behaviour, tests, documentation expectations, and safety constraints.
 5. The AI asks only for relevant repository files. It must not request the whole repository by default.
-6. If multiple files are requested, the AI provides a copy-paste PowerShell `Compress-Archive` command using repository-relative paths.
+6. If multiple files are requested, the AI provides a copy-paste Bash `zip` command using repository-relative paths.
 7. The user uploads the requested context archive.
 8. The AI inspects the files before proposing snippets, replacement content, or candidate edits.
 9. The AI provides a controlled implementation or review response using the required response sections in `AI_BUILD_GUIDE.md`.
@@ -39,13 +39,13 @@ Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, 
 
 When requesting more than one repository file, use this pattern:
 
-```powershell
-$files = @(
-  "path/to/first-file",
+```bash
+cd /home/timk/rmit/PQC-Framework-02
+files=(
+  "path/to/first-file"
   "path/to/second-file"
 )
-
-Compress-Archive -LiteralPath $files -DestinationPath "C:\Users\timko\Downloads\<descriptive-context-name>.zip" -Force
+zip "/home/timk/Downloads/<descriptive-context-name>.zip" "${files[@]}"
 ```
 
 Use exact repository-relative paths. Do not include generated build outputs, result folders, private keys, credentials, or unrelated files unless explicitly required and safe.
@@ -85,12 +85,12 @@ When files need to be modified or created:
 - provide a downloadable replacement artifact using the exact target filename for every changed or created file
 - provide complete replacement content for every changed or created file
 - if multiple files are changed or created, provide a ZIP containing all replacement files at repository-relative paths
-- provide the exact PowerShell extraction command for the ZIP, assuming the downloaded archive is in `C:\Users\timko\Downloads\` and the command is run from the repository root
+- provide the exact Linux/bash extraction command for the ZIP, assuming the downloaded archive is in `/home/timk/Downloads/` and the command is run from the repository root
 
 Extraction command pattern:
 
-```powershell
-Expand-Archive -LiteralPath "C:\Users\timko\Downloads\<archive-name>.zip" -DestinationPath . -Force
+```bash
+cd /home/timk/rmit/PQC-Framework-02 && unzip -o "/home/timk/Downloads/<archive-name>.zip" -d .
 ```
 
 ## Hardware-test design standard

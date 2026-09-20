@@ -187,7 +187,7 @@ MQTT_COMMAND_DOCUMENTS = (
 )
 
 
-def test_powershell_wolfmqtt_examples_use_named_client_argument_boundary() -> None:
+def test_linux_wolfmqtt_examples_use_named_client_argument_boundary() -> None:
     broker_readme = _read("experiment/mqtt-broker/README.md")
     architecture = _read("docs/007_framework_architecture.md")
     root_readme = _read("README.md")
@@ -195,11 +195,11 @@ def test_powershell_wolfmqtt_examples_use_named_client_argument_boundary() -> No
     assert "--client-args '-h'" in broker_readme
     assert "'-p'" in broker_readme
     assert "'-t'" in broker_readme
-    assert "PowerShell `--client-args` forwarding contract" in root_readme
+    assert "Linux/bash `--client-args` forwarding contract" in root_readme
 
     combined = "\n".join((broker_readme, architecture)).lower()
     assert "after `--client-args`" in combined
-    assert "active powershell guidance does not use a standalone `--`" in combined
+    assert "for linux/bash, pass upstream wolfmqtt options after `--client-args`" in combined
     assert "pass the selected upstream wolfmqtt client arguments after `--`" not in combined
 
 
@@ -230,7 +230,7 @@ def test_host_wolfmqtt_wrapper_help_uses_client_args_contract() -> None:
 
     assert "after --client-args" in source
     assert "error=run requires explicit wolfMQTT client arguments after --client-args" in source
-    assert "PowerShell forwarding path" in source
+    assert "Linux/bash forwarding path" in source
 
 
 def test_architecture_contains_canonical_current_capability_matrix() -> None:
@@ -426,8 +426,8 @@ def test_operational_commands_use_docker_wrappers_by_default() -> None:
 
     assert "Docker-wrapper" in workflow
     assert "diagnostic fallback only" in workflow
-    assert ".\\scripts\\dev.ps1 experiment-gateway" in gateway
-    assert ".\\scripts\\dev.ps1 experiment build-wolfboot" in workflow
+    assert "./scripts/dev.sh experiment-gateway" in gateway
+    assert "./scripts/dev.sh experiment build-wolfboot" in workflow
     assert "python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py" in broker
     assert "Diagnostic fallback: local Docker smoke test" in broker
     assert "Diagnostic fallback: raw gateway-capable container execution" in broker
@@ -574,8 +574,7 @@ def test_deferred_register_rows_have_all_required_values() -> None:
         assert all(cells), f"Deferred-test row contains an empty required field: {row}"
         assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
         assert (
-            "./scripts/dev.ps1" in cells[6]
-            or "./scripts/dev.sh" in cells[6]
+            "./scripts/dev.sh" in cells[6]
         ), f"Verification command is not explicit: {row}"
 
 DOCUMENTATION_INDEX = "docs/README.md"
@@ -774,7 +773,7 @@ def test_ai_build_guide_preserves_mandatory_workflow_and_safety_rules() -> None:
         "supplementary cross-platform hygiene",
         "consolidated deferred-test register",
         "Provide complete replacement content",
-        "Expand-Archive -LiteralPath",
+        "unzip -o",
     )
     for phrase in required_phrases:
         assert phrase in guide, f"AI build guide lost mandatory rule: {phrase}"

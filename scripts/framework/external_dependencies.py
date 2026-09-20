@@ -137,7 +137,7 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         raise ExternalDependencyError(
             "MQTT TLS certificate profile is not provisioned or is incomplete: " + profile_id
             + ". Missing: " + ", ".join(missing)
-            + ". Run: .\\scripts\\dev.ps1 python scripts/provision_certificates.py"
+            + ". Run: ./scripts/dev.sh python scripts/provision_certificates.py"
         )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

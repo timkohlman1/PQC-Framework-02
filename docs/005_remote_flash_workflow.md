@@ -12,33 +12,33 @@ Direct-flash builds use the normal application layout. wolfBoot-secured builds u
 
 Build through the Docker wrapper:
 
-```powershell
-.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
+```bash
+./scripts/dev.sh experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
 ```
 
 Flash an explicitly recorded build:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --build-run <run_id>
+```bash
+./scripts/dev.sh experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --build-run <run_id>
 ```
 
 The untracked-artifact escape hatch is limited to manual recovery or investigation:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --allow-untracked-artifact
+```bash
+./scripts/dev.sh experiment-gateway flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --allow-untracked-artifact
 ```
 
 Build and flash, with optional UART capture:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
-.\scripts\dev.ps1 experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --capture-uart
+```bash
+./scripts/dev.sh experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
+./scripts/dev.sh experiment-gateway build-flash --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --capture-uart
 ```
 
 Run the normal build/flash/UART baseline workflow:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway run --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
+```bash
+./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml
 ```
 
 The `flash` path refuses SCP/SSH unless the artifact matches recorded build provenance or the explicit recovery escape hatch is supplied.
@@ -47,11 +47,11 @@ The `flash` path refuses SCP/SSH unless the artifact matches recorded build prov
 
 Secure boot consumes the configured wolfBoot artifact and signed relocated application. The secure-boot workflow selects one canonical target and algorithm. The normal command pattern is:
 
-```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --boot-algorithm <algorithm>
-.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --boot-algorithm <algorithm>
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm <algorithm> --repeat-count 5
+```bash
+./scripts/dev.sh experiment build-wolfboot --boot-algorithm <algorithm>
+./scripts/dev.sh experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
+./scripts/dev.sh experiment sign-application --boot-algorithm <algorithm>
+./scripts/dev.sh experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm <algorithm> --repeat-count 5
 ```
 
 Supported algorithm IDs are:
@@ -76,8 +76,8 @@ Do not run wolfBoot `keysclean` or manually delete tuple members. Pytest startup
 
 Negative corrupted-application test:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm ecdsa_p256 --negative-corrupt-application
+```bash
+./scripts/dev.sh experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm ecdsa_p256 --negative-corrupt-application
 ```
 
 The workflow corrupts a result-local copy. It must not modify the canonical signed image or private key.
@@ -88,9 +88,9 @@ Direct-flash `flash` and `build-flash` capture UART only with `--capture-uart`; 
 
 Ad hoc bounded capture:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
-.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10 --restart
+```bash
+./scripts/dev.sh experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
+./scripts/dev.sh experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10 --restart
 ```
 
 Monitor output is useful for diagnosis but has no result manifest and does not establish image provenance by itself.
@@ -167,10 +167,10 @@ normal reusable firmware builds.
 For MQTT experiments, use the normal `run` command and select the secure-boot
 domain separately:
 
-```powershell
-.\scripts\dev.ps1 experiment-gateway run `
-    --experiment .pqc-generated-state/campaigns/<campaign>/cases/<case>.yaml `
-    --boot-mode wolfboot `
+```bash
+./scripts/dev.sh experiment-gateway run \
+    --experiment .pqc-generated-state/campaigns/<campaign>/cases/<case>.yaml \
+    --boot-mode wolfboot \
     --boot-algorithm ecdsa_p256
 ```
 
@@ -196,14 +196,14 @@ The retained files are:
 
 Example inspection:
 
-```powershell
-wireshark .\results\<run-id>\gateway-network-capture.pcap
+```bash
+wireshark "results/<run-id>/gateway-network-capture.pcap"
 ```
 
 or inside the development container:
 
-```powershell
-.\scripts\dev.ps1 python -c "import subprocess; subprocess.run(['tcpdump', '-nn', '-r', 'results/<run-id>/gateway-network-capture.pcap'], check=True)"
+```bash
+./scripts/dev.sh python -c "import subprocess; subprocess.run(['tcpdump', '-nn', '-r', 'results/<run-id>/gateway-network-capture.pcap'], check=True)"
 ```
 
 Configure a known STM32/ST67 MAC address to avoid unrelated gateway traffic:

@@ -37,11 +37,10 @@ ssh-keygen -t ed25519 -C "pqc-framework-dev-pc"
 Recommended local paths are:
 
 ```text
-Windows: C:\Users\<user>\.ssh\id_ed25519
-Linux/macOS: ~/.ssh/id_ed25519
+Linux: ~/.ssh/id_ed25519
 ```
 
-Install the public key from Linux, macOS, or Git Bash:
+Install the public key from Linux:
 
 ```bash
 ssh-copy-id timk@pqc-gateway1
@@ -51,12 +50,6 @@ When `ssh-copy-id` is unavailable:
 
 ```bash
 cat ~/.ssh/id_ed25519.pub | ssh timk@pqc-gateway1 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
-```
-
-Windows PowerShell equivalent:
-
-```powershell
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh timk@pqc-gateway1 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
 Configure the alias in the local SSH config, not in tracked repository files:
@@ -69,7 +62,7 @@ Host pqc-gateway1
     IdentitiesOnly yes
 ```
 
-Typical SSH config locations are `C:\Users\<user>\.ssh\config` on Windows and `~/.ssh/config` on Linux/macOS.
+Typical SSH config locations are `~/.ssh/config` on Linux.
 
 Verify reachability:
 
@@ -85,10 +78,10 @@ Repository workflows normally run in the project container. Gateway-capable wrap
 
 Representative checks from the repository root:
 
-```powershell
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration
-.\scripts\dev.ps1 pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
-.\scripts\dev.ps1 experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
+```bash
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+./scripts/dev.sh experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
 ```
 
 `PQC_DOCKER_SSH_DIR` may override the host-side SSH directory. SSH keys, VPN material, broker credentials, or TLS private keys must never be copied into the image or committed. See `docs/006_security_and_secrets.md`.

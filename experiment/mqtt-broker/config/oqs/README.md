@@ -25,17 +25,17 @@ The OQS-specific OpenSSL configuration sets `SecP256r1MLKEM768` as the default T
 
 Certificate material is provisioned once from the repository root using the shared config-driven provisioner:
 
-```powershell
-.\scripts\dev.ps1 python scripts/provision_certificates.py
+```bash
+./scripts/dev.sh python scripts/provision_certificates.py
 ```
 
 This profile uses the certificate profile selected by the experiment, for example `mldsa65`. Generated material is authoritative under `secrets/certificates/<profile-id>/` and is never generated or synchronized by broker control commands. Missing certificate material is a prerequisite failure.
 
 Validate the broker-side TLS handshake with:
 
-```powershell
-python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls `
-    --oqs-group SecP256r1MLKEM768 `
+```bash
+python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py validate-oqs-tls \
+    --oqs-group SecP256r1MLKEM768 \
     --host-config configs/hosts/gateway.yaml
 ```
 
