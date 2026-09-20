@@ -675,6 +675,11 @@ def test_execute_wolfboot_build_removes_cross_profile_wolfssl_objects_before_mak
         source_dir
         / "lib/wolfssl/wolfcrypt/src/port/arm/thumb2-sha3-asm_c.o",
         source_dir / "lib/wolfssl/wolfcrypt/src/wc_mldsa.o",
+        # Reproduces the single-bank to dual-bank link failure: a freshly
+        # compiled update_flash_hwswap.o must not link an older libwolfboot.o.
+        source_dir / "src/libwolfboot.o",
+        source_dir / "src/update_flash_hwswap.o",
+        source_dir / "hal/stm32l4.o",
     ]
     preserved_sources = [
         source_dir / "lib/wolfssl/wolfcrypt/src/sha3.c",

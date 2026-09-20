@@ -76,6 +76,13 @@ WOLFBOOT_HOST_TOOL_OUTPUT_PATTERNS = (
     "tools/keytools/sign.exe",
 )
 WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS = (
+    # Objects from a previous single-bank profile must not survive a switch
+    # to dual-bank OTA (or vice versa): wolfBoot's Makefile does not track
+    # changes to the preprocessor configuration used to build these objects.
+    "src/**/*.o",
+    "src/**/*.d",
+    "hal/**/*.o",
+    "hal/**/*.d",
     "lib/wolfssl/**/*.o",
     "lib/wolfssl/**/*.d",
 )
@@ -1021,8 +1028,8 @@ def _copy_project_local_config(
 def _remove_wolfboot_host_tool_outputs(source_dir: Path) -> list[Path]:
     """Remove generated host and profile-dependent objects before a build.
 
-    wolfBoot builds host utilities and target wolfCrypt objects inside one
-    shared checkout. The target object names do not encode the selected signing
+    wolfBoot builds host utilities, bootloader/HAL objects, and target wolfCrypt
+    objects inside one shared checkout. The object names do not encode the selected signing
     algorithm or preprocessor configuration. Reusing an object produced by a
     previous profile can therefore create incompatible symbol references, such
     as an ML-DSA SHA-3 object expecting ``BlockSha3`` while the current linked
