@@ -368,7 +368,7 @@ Phase M6.2 introduced the project-owned lwIP network-interface boundary. That hi
 
 Phase M6.0 adds a STM32-local wolfSSL source build-only boundary through `Core/Inc/pqc_wolfssl_build_only.h`, `Core/Src/pqc_wolfssl_build_only.c`, `Core/Inc/user_settings.h`, and `Core/Inc/pqc_wolfssl_user_settings.h`. The CMake target `pqc_wolfssl_stm32_build_only` builds the minimal wolfCrypt SHA-256 source file from `tools/wolfboot/lib/wolfssl/wolfcrypt/src/sha256.c` and links it into the direct and relocated firmware builds. The M6.0 smoke helper computes SHA-256 over a fixed non-secret message and can emit `wolfSSL build-only smoke:` UART evidence with `source=enabled`, `sha256=ok`, `tls_handshake=unavailable`, `transport=unavailable`, `certs=not-loaded`, and `secrets=not-compiled-in`. This proves only that the configured wolfSSL/wolfCrypt source path built, linked, and executed.
 
-The original M6.1 TLS-context smoke boundary has been superseded by the current STM32 TLS 1.3 runtime. The firmware now creates a `WOLFSSL_CTX` and `WOLFSSL` session, loads the generated trust anchor, configures peer identity and the profile-selected group, attaches lwIP socket I/O contexts, performs `wolfSSL_connect()`, and verifies the negotiated group. Historical `tls-context-lifecycle-only` wording must not be used to describe the current MQTT/TLS runtime path. The retained local context check now emits `wolfSSL TLS startup self-test:` with `scope=local_context_self_test` and `runtime_capability=not_assessed`; its `not_exercised` fields describe only that self-test and must not be interpreted as runtime unavailability.
+The original M6.1 TLS-context smoke boundary has been superseded by the current STM32 TLS 1.3 runtime. The firmware now creates a `WOLFSSL_CTX` and `WOLFSSL` session, loads the generated trust anchor, configures peer identity and the profile-selected group, attaches lwIP socket I/O contexts, performs `wolfSSL_connect()`, and verifies the negotiated group. Historical `tls-context-lifecycle-only` wording must not be used to describe the current MQTT/TLS runtime path. The former local-context startup callback has been removed from the maintained firmware; neither `wolfSSL TLS startup self-test:` nor the earlier `wolfSSL TLS context smoke:` marker is emitted. `tests/hardware/test_wolfssl_source_smoke_uart_hw.py` has therefore been retired. A successful build-boundary SHA-256 check is not evidence of context creation. The `tls_handshake_repeat` hardware test checks complete STM32 reporting epochs and per-iteration firmware status for successful fresh TLS contexts, certificate/peer checks, negotiated group and cleanup; it is not a replacement local-only UART self-test. No hardware success is claimed until that hardware test is executed.
 
 `Core/Inc/pqc_wolfssl_transport.h` and `Core/Src/pqc_wolfssl_transport.c` retain a legacy project-owned transport-boundary self-test. Its UART line is explicitly labelled `wolfSSL transport startup self-test:` with `scope=legacy_boundary_self_test` and `runtime_capability=not_assessed`. Current MQTT/TLS execution instead connects the wolfSSL session to the live lwIP/ST67-backed socket path in the MQTT runtime; the legacy self-test does not establish or negate that runtime capability.
 
@@ -504,9 +504,9 @@ The framework may derive `derived_verification_time_ms` as `verification_cycles 
 
 ### FreeRTOS task-context runtime smoke
 
-The deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke now have two explicit execution contexts. `main()` emits the existing early evidence with `context=pre_scheduler scheduler=not_started`. After `osKernelStart()` transfers control and `defaultTask` emits its task-start marker, the task runs the same local checks once and emits `context=freertos_task scheduler=running`. Hardware evidence is valid only when the task-start marker precedes both task-context smoke markers in the captured UART log.
+The deterministic lwIP helper smoke can emit pre-scheduler and FreeRTOS task-context diagnostics. The historical wolfSSL local-context lifecycle smoke was removed and no longer emits a required UART marker. The current TLS runtime is exercised by TLS workload experiments, with deferred result reporting rather than UART-only evidence.
 
-The task-context path remains local and serialized. It does not register or bring up a lwIP netif, use Wi-Fi or ST67W61M1 hardware, report link-up or IP assignment, open TCP, load certificates, create a TLS session, perform a TLS handshake, connect or publish MQTT, reconnect, or claim end-to-end network success. wolfSSL FreeRTOS mutex or multithreaded support is not enabled because no concurrent wolfSSL use is introduced. The capability-gated secure-boot benchmark hardware test verifies marker ordering using a known built and flashed image; the standalone ad hoc monitor remains unable to establish which image is running unless explicitly paired with a known-image flash and reset. The baseline hardware test now flashes a file-owned image before running its bounded, reset-triggered UART monitor.
+The local lwIP helper smoke remains distinct from the live ST67 and TLS workloads. A local helper marker does not prove an external connection or TLS handshake. The baseline hardware test flashes a file-owned known image before its bounded, reset-triggered UART monitor; runtime TLS functionality requires separate TLS experiment and reporting evidence.
 
 
 ## STM32-local lwIP UDP loopback
@@ -624,6 +624,12 @@ The gateway-mediated hardware test
 initialization, scan completion before association, link-up, DHCP, live IPv4 evidence,
 heartbeat continuity, and absence of contradictory unavailable markers after
 the live-state marker.
+The test resolves its own baseline campaign with full UART output, executes one
+file-owned build/flash/run, and checks only the latest boot in the indexed
+retained UART artifact. It checks the finalized manifest and preserves the
+original UART log; the normalized timestamp-free view is used only for
+diagnostic assertions. This UART-focused configuration is not a timing
+benchmark or a requirement for MQTT/TLS measurement workloads.
 
 Secure-boot profiles use the same relocated application image and therefore
 must preserve these runtime markers after wolfBoot verification and handoff.
