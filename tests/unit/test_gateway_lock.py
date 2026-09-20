@@ -117,3 +117,84 @@ def test_wrong_owner_does_not_release_active_lease(tmp_path):
     finally:
         holder.stdin.close()
         holder.wait(timeout=5)
+
+
+def test_interactive_wait_spinner_reuses_one_line_and_counts_elapsed_time():
+    import io
+    import json
+
+    class TTY(io.StringIO):
+        def isatty(self):
+            return True
+
+    stream = TTY()
+    current = [0.0]
+    display = gateway_lock.WaitDisplay(stream=stream, clock=lambda: current[0])
+    owner = 'BUSY ' + json.dumps({'owner_id': 'abc', 'description': 'linuxdev2 user=dev'})
+    display.busy(owner)
+    current[0] = 65.0
+    display.busy(owner)
+    display.finish()
+    output = stream.getvalue()
+    assert output.count('\n') == 1, 'unchanged owner must not add log lines'
+    assert 'Waiting: 0m 00s' in output
+    assert 'Waiting: 1m 05s' in output
+    assert output.count('\r') >= 2
+    assert 'linuxdev2 user=dev' in output
+
+
+def test_wait_owner_change_prints_one_additional_line():
+    import io
+    import json
+
+    class TTY(io.StringIO):
+        def isatty(self):
+            return True
+
+    stream = TTY()
+    display = gateway_lock.WaitDisplay(stream=stream, clock=lambda: 0.0)
+    first = 'BUSY ' + json.dumps({'owner_id': 'one', 'description': 'machine-1'})
+    second = 'BUSY ' + json.dumps({'owner_id': 'two', 'description': 'machine-2'})
+    display.busy(first)
+    display.busy(first)
+    display.busy(second)
+    display.finish()
+    assert stream.getvalue().count('\n') == 2
+    assert 'machine-1' in stream.getvalue()
+    assert 'machine-2' in stream.getvalue()
+
+
+def test_redirected_wait_output_has_no_spinner_or_repeat_messages():
+    import io
+    import json
+
+    stream = io.StringIO()
+    display = gateway_lock.WaitDisplay(stream=stream, clock=lambda: 100.0)
+    owner = 'BUSY ' + json.dumps({'owner_id': 'abc', 'description': 'machine-1'})
+    for _ in range(10):
+        display.busy(owner)
+    display.finish()
+    output = stream.getvalue()
+    assert output.count('\n') == 1
+    assert '\r' not in output
+    assert 'machine-1' in output
+
+
+def test_wait_cancel_does_not_acquire_or_release_a_lease(monkeypatch, capsys):
+    import json
+
+    calls = []
+
+    def busy_attempt(*args):
+        calls.append(args)
+        raise BlockingIOError('BUSY ' + json.dumps({'owner_id': 'another', 'description': 'other-host'}))
+
+    def cancel_sleep(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(gateway_lock, 'attempt', busy_attempt)
+    monkeypatch.setattr(gateway_lock.time, 'sleep', cancel_sleep)
+    result = gateway_lock.run_locked('gateway', ['echo', 'unused'])
+    assert result == 130
+    assert len(calls) == 1
+    assert 'Gateway wait cancelled.' in capsys.readouterr().err
