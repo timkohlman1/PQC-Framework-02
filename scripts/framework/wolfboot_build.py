@@ -374,6 +374,8 @@ def _temporarily_patch_boot_timing_instrumentation(
     """
 
     if not _optional_profile_bool(profile, "build.boot_timing_instrumentation_patch"):
+        if _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation"):
+            raise WolfBootBuildProfileError("stack profiling requires the existing boot timing/mailbox patch")
         return None, None, False, None, None
 
     image_path = source_dir / WOLFBOOT_IMAGE_SOURCE_RELATIVE_PATH
@@ -407,6 +409,7 @@ def _temporarily_patch_boot_timing_instrumentation(
         declared_signature_size = 0
     if not isinstance(declared_signature_size, int) or not 0 <= declared_signature_size <= 65535:
         raise WolfBootBuildProfileError("signature_size_bytes must be a nonnegative integer <= 65535")
+    stack_profile = _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation")
     original_image_text = image_path.read_text(encoding="utf-8")
     original_hal_text = hal_path.read_text(encoding="utf-8")
     image_marker = "PQC_BOOT_TIMING_WRAPPER_V3"
@@ -510,7 +513,7 @@ int wolfBoot_verify_authenticity(struct wolfBoot_image *img)
 #define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR 0x10000000UL
 #endif
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION 7UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION 8UL
 #define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL
 #define PQC_BOOT_RESET_ORIGIN_KIND_WOLFBOOT_ENTRY 1UL
 #define PQC_BOOT_HANDOFF_BRIDGE_HZ 1000000UL
@@ -560,6 +563,10 @@ struct pqc_boot_timing_mailbox {
     uint32_t selected_image_valid;
     uint32_t selected_image_part;
     uint32_t selected_image_fw_size;
+    /* v8: default-off stack profiling; 1=measured, 2=unavailable. */
+    uint32_t stack_profiling_enabled;
+    uint32_t stack_measurement_status;
+    uint32_t stack_watermark_capacity_bytes;
 };
 /* The OTA event mailbox starts at RAM2+0x100: never overlap it. */
 typedef char pqc_boot_timing_mailbox_fits_ota_events[
@@ -572,6 +579,15 @@ static uint32_t pqc_boot_image_start_cycles;
 static uint32_t pqc_boot_image_start_part;
 static uint32_t pqc_boot_image_start_size;
 static uint32_t pqc_boot_image_started;
+#if defined(PQC_BOOT_STACK_PROFILING)
+/* Stack starts at END_STACK, grows down into RAM below the live MSP. */
+extern uint32_t _end_bss;
+extern uint32_t END_STACK;
+static volatile uint32_t *pqc_boot_stack_low;
+static volatile uint32_t *pqc_boot_stack_high;
+#define PQC_BOOT_STACK_PATTERN 0xA55A3CC3UL
+#define PQC_BOOT_STACK_GUARD_BYTES 128UL
+#endif
 
 static uint32_t pqc_boot_decode_ahb_divider(uint32_t hpre)
 {
@@ -671,6 +687,75 @@ static uint32_t pqc_boot_bridge_elapsed_us(void)
     return (uint32_t)pqc_boot_bridge_read();
 }
 
+#if defined(PQC_BOOT_STACK_PROFILING)
+/* Runs before each integrity verification attempt. Excludes 128 bytes below
+ * sampled MSP for the initializer and its callers. This is a conservative
+ * observable boundary, not evidence of peak use within the exclusion.
+ * The lower 128 bytes above BSS remain a collision sentinel. */
+static void pqc_boot_stack_initialize(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    uintptr_t msp;
+    uintptr_t low = ((uintptr_t)&_end_bss + 131U) & ~(uintptr_t)3U;
+    uintptr_t high;
+    volatile uint32_t *p;
+    __asm__ volatile("mrs %0, msp" : "=r" (msp));
+    pqc_boot_stack_low = NULL;
+    pqc_boot_stack_high = NULL;
+    mailbox->stack_profiling_enabled = 1U;
+    mailbox->stack_measurement_status = 2U;
+    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
+    mailbox->stack_watermark_capacity_bytes = 0U;
+    if (msp <= PQC_BOOT_STACK_GUARD_BYTES) return;
+    high = (msp - PQC_BOOT_STACK_GUARD_BYTES) & ~(uintptr_t)3U;
+    if (low >= high || high > (uintptr_t)&END_STACK ||
+        high - low < 512U) return;
+    pqc_boot_stack_low = (volatile uint32_t *)low;
+    pqc_boot_stack_high = (volatile uint32_t *)high;
+    mailbox->stack_watermark_capacity_bytes = (uint32_t)(high - low);
+    for (p = pqc_boot_stack_low; p < pqc_boot_stack_high; ++p)
+        *p = PQC_BOOT_STACK_PATTERN;
+    /* Distinguish an untouched paint from an initialization failure. */
+    mailbox->stack_measurement_status = 3U;
+}
+
+/* Called only after the DWT end snapshot and mailbox timing writes. The
+ * bottom sentinel must remain untouched. If no watermark word was consumed,
+ * or the observed region is saturated, report unavailable instead of guessing. */
+static void pqc_boot_stack_finish(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    volatile uint32_t *p;
+    uintptr_t scan_msp;
+    __asm__ volatile("mrs %0, msp" : "=r" (scan_msp));
+    if (pqc_boot_stack_low == NULL || pqc_boot_stack_high == NULL) return;
+    if (*pqc_boot_stack_low != PQC_BOOT_STACK_PATTERN) {
+        mailbox->stack_measurement_status = 4U;
+        return;
+    }
+    for (p = pqc_boot_stack_low; p < pqc_boot_stack_high; ++p) {
+        if (*p != PQC_BOOT_STACK_PATTERN) {
+            uint32_t bytes = (uint32_t)((uintptr_t)&END_STACK - (uintptr_t)p);
+            /* Reject a shallow mark that could have been made by the
+             * measurement function's own stack frame. A nonzero value is
+             * retained only when the deepest write predates this scan. */
+            if (p == pqc_boot_stack_low || bytes == 0U ||
+                (uintptr_t)p + 32U >= scan_msp) {
+                mailbox->stack_measurement_status = 5U;
+                return;
+            }
+            mailbox->magic = 0U;
+            mailbox->max_stack_used_bytes = bytes;
+            mailbox->stack_measurement_status = 1U;
+            mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
+            return;
+        }
+    }
+}
+#endif
+
 static void pqc_boot_reset_origin_start(void)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
@@ -693,6 +778,10 @@ static void pqc_boot_reset_origin_start(void)
     mailbox->selected_image_valid = 0U;
     mailbox->selected_image_part = 0U;
     mailbox->selected_image_fw_size = 0U;
+    mailbox->stack_profiling_enabled = 0U;
+    mailbox->stack_measurement_status = 0U;
+    mailbox->stack_watermark_capacity_bytes = 0U;
+    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     pqc_boot_image_started = 0U;
     { unsigned int i; for (i = 0U; i < 32U; ++i) mailbox->verified_image_sha256[i] = 0U; }
     uint32_t entry_hclk_hz;
@@ -747,7 +836,12 @@ void pqc_boot_timing_integrity_begin(void)
     mailbox->image_verification_valid = 0U;
     mailbox->image_verification_cycles = 0U;
     mailbox->selected_image_valid = 0U;
+    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
+    mailbox->stack_measurement_status = mailbox->stack_profiling_enabled ? 2U : 0U;
     pqc_boot_image_started = 0U;
+#if defined(PQC_BOOT_STACK_PROFILING)
+    pqc_boot_stack_initialize();
+#endif
 }
 
 void pqc_boot_timing_image_start(uint32_t start_cycles, struct wolfBoot_image *img)
@@ -782,6 +876,10 @@ void pqc_boot_timing_image_finish(uint32_t end_cycles, int result, struct wolfBo
             mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
         }
     }
+#if defined(PQC_BOOT_STACK_PROFILING)
+    if (mailbox->image_verification_valid == 1U && result == 0)
+        pqc_boot_stack_finish();
+#endif
     pqc_boot_image_started = 0U;
 }
 
@@ -832,7 +930,6 @@ void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verificati
 #endif
     mailbox->elapsed_cycles = mailbox->authenticity_cycles;
     mailbox->verification_result = (uint32_t)verification_result;
-    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     mailbox->sysclk_hz = sysclk_hz;
     mailbox->hclk_hz = hclk_hz;
     mailbox->pclk1_hz = pclk1_hz;
@@ -874,7 +971,6 @@ void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result, struc
     mailbox->hclk_hz = hclk_hz;
     mailbox->pclk1_hz = pclk1_hz;
     mailbox->pclk2_hz = pclk2_hz;
-    mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
@@ -903,6 +999,10 @@ void pqc_boot_timing_select_image(struct wolfBoot_image *img)
             mailbox->selected_image_valid = 1U;
         }
     }
+    if (mailbox->selected_image_valid != 1U) {
+        mailbox->max_stack_used_bytes = PQC_BOOT_STACK_UNAVAILABLE;
+        mailbox->stack_measurement_status = mailbox->stack_profiling_enabled ? 2U : 0U;
+    }
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
@@ -927,6 +1027,8 @@ static void pqc_boot_timing_prepare_handoff(void)
 }
 #endif
 '''
+        if stack_profile:
+            helper = "#define PQC_BOOT_STACK_PROFILING 1\n" + helper
         helper = (
             "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID " + str(algorithm_id) + "UL\n"
             "#define PQC_BOOT_SIGNATURE_PARAMETER_BITS " + str(parameter_bits) + "UL\n"
@@ -2117,7 +2219,8 @@ def execute_wolfboot_build(
                     public_key=public_key_path,
                     keystore=generated_keystore_path,
                 ),
-                extra={"signature_algorithm": profile.get("signature_algorithm")},
+                extra={"signature_algorithm": profile.get("signature_algorithm"),
+                       "runtime_stack_high_water_instrumentation": _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation")},
             )
             generated_cleanup_paths = [
                 path
@@ -2518,6 +2621,7 @@ def execute_wolfboot_build(
             "stm32l4_hal_conf_pwr_patch_enabled": stm32l4_hal_conf_pwr_patch_enabled,
             "stm32l4_hal_conf_pwr_patch_applied": stm32l4_hal_conf_pwr_patch_applied,
             "stm32l4_hal_conf_path": None if stm32l4_hal_conf_path is None else str(stm32l4_hal_conf_path),
+            "runtime_stack_high_water_instrumentation": _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation"),
             "boot_timing_instrumentation_patch_enabled": boot_timing_instrumentation_patch_enabled,
             "boot_timing_instrumentation_patch_applied": boot_timing_instrumentation_patch_applied,
             "boot_timing_image_path": None if boot_timing_image_path is None else str(boot_timing_image_path),

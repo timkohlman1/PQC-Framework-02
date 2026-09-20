@@ -190,6 +190,11 @@ def resolve_manifest_inputs(
 def build_benchmark_summary_row(manifest: dict[str, Any], *, source_manifest: Path | str) -> dict[str, Any]:
     """Build one flat Phase 11.6 summary row from a secure-boot run manifest."""
 
+    if (manifest.get("boot_selection") or {}).get("boot_stack_profiling") is True:
+        raise BenchmarkAggregationError(
+            "stack-profiling run must not enter normal secure-boot timing aggregation; "
+            "use analyse_secure_boot_stack.py on its raw reporting stream"
+        )
     benchmark = manifest.get("secure_boot_benchmark")
     if not isinstance(benchmark, dict):
         raise BenchmarkAggregationError(f"manifest does not contain secure_boot_benchmark: {source_manifest}")

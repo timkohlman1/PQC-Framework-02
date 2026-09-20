@@ -4699,6 +4699,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "target_profile": str(args.target_profile),
                 "firmware_mode": args.firmware_mode,
                 "standby_signing_keys": args.standby_signing_keys,
+                "boot_stack_profiling": bool(getattr(args, "boot_stack_profiling", False)),
                 "source_experiment": str(args.experiment),
             }
         },
@@ -4723,6 +4724,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         firmware_mode=args.firmware_mode,
         standby_signing_keys=args.standby_signing_keys,
     )
+    if "build" in build_profile:
+        build_profile["build"]["runtime_stack_high_water_instrumentation"] = bool(
+            getattr(args, "boot_stack_profiling", False)
+        )
+    elif getattr(args, "boot_stack_profiling", False):
+        raise ConfigError("Bootloader build profile is missing its build section for stack profiling")
     validate_wolfboot_build_profile_config(build_profile)
     emit_progress("boot", "Building wolfBoot", detail=f"Algorithm: {args.boot_algorithm}.")
     wolfboot_result = execute_wolfboot_build(
@@ -5159,6 +5166,18 @@ def _resolved_case_firmware_choices(experiment_path: Path | str) -> tuple[str, i
     return str(choices.get("firmware_mode", "single_bank")), int(choices.get("standby_signing_keys", 0))
 
 
+def _resolved_case_boot_stack_profiling(experiment_path: Path | str) -> bool:
+    import yaml as _yaml
+    raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return False
+    choices = raw.get("choices", {})
+    value = choices.get("boot_stack_profiling", False) if isinstance(choices, dict) else False
+    if not isinstance(value, bool):
+        raise ConfigError("resolved boot_stack_profiling must be a boolean")
+    return value
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
@@ -5195,6 +5214,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
             or "integrity_sha256"
         )
         args.firmware_mode, args.standby_signing_keys = _resolved_case_firmware_choices(args.experiment)
+        args.boot_stack_profiling = (bool(getattr(args, "boot_stack_profiling", False))
+            or _resolved_case_boot_stack_profiling(args.experiment))
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)
@@ -5549,6 +5570,7 @@ def run_wolfboot_build_command(args: argparse.Namespace) -> int:
     profile, repo_root = load_secure_boot_profile_section(
         target_profile=args.target_profile, algorithm=args.boot_algorithm, section="build"
     )
+    profile["build"]["runtime_stack_high_water_instrumentation"] = bool(args.boot_stack_profiling)
     validate_wolfboot_build_profile_config(profile)
 
     result = execute_wolfboot_build(
@@ -6953,6 +6975,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Canonical secure-boot target profile used by the inferred or explicit wolfBoot workflow.",
     )
     run_parser.add_argument(
+        "--boot-stack-profiling", action="store_true", default=False,
+        help="Enable bootloader stack watermarking for a dedicated memory-profiling run.",
+    )
+    run_parser.add_argument(
         "--runtime-only",
         action="store_true",
         help="Run only the independent runtime measurement against firmware already built, flashed, and smoke-tested.",
@@ -7023,6 +7049,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path("results"),
         type=Path,
         help="Directory where wolfBoot build evidence folders are created.",
+    )
+    wolfboot_build_parser.add_argument(
+        "--boot-stack-profiling", action="store_true", default=False,
+        help="Build the bootloader with stack watermarking (default disabled).",
     )
     wolfboot_build_parser.set_defaults(func=run_wolfboot_build_command)
 

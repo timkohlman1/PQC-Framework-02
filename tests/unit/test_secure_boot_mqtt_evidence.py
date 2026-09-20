@@ -59,7 +59,7 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
         '#include <stdint.h>\n#include <stdio.h>\n#include "pqc_result_buffer.h"\n'
         '#define SECURE_BOOT_APPLICATION 1\n'
         '#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL\n'
-        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 7UL\n'
+        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 8UL\n'
         + structure
         + 'static PQC_BootTimingMailbox test_mailbox;\n'
         + '#define PQC_BOOT_TIMING_MAILBOX_ADDR ((uintptr_t)&test_mailbox)\n'
@@ -149,8 +149,8 @@ def test_v7_selected_image_checkpoint_and_independent_interval():
     app = Path("Core/Src/main.c").read_text(encoding="utf-8")
     standard = Path("tools/wolfboot/src/update_flash.c").read_text(encoding="utf-8")
     swap = Path("tools/wolfboot/src/update_flash_hwswap.c").read_text(encoding="utf-8")
-    assert "PQC_BOOT_TIMING_MAILBOX_VERSION 7UL" in build
-    assert "PQC_BOOT_TIMING_MAILBOX_VERSION   7UL" in app
+    assert "PQC_BOOT_TIMING_MAILBOX_VERSION 8UL" in build
+    assert "PQC_BOOT_TIMING_MAILBOX_VERSION   8UL" in app
     assert "pqc_boot_timing_image_start(start_cycles, img);" in build
     assert "pqc_boot_timing_image_finish(end_cycles, ret, img);" in build
     assert "cycles = end_cycles - pqc_boot_image_start_cycles;" in build

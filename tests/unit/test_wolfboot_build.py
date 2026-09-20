@@ -227,7 +227,7 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         assert "mailbox->selected_image_valid = 1U;" in patched_hal_source
         assert "mailbox->image_verification_valid = 1U;" in patched_hal_source
         assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
-        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 7UL" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 8UL" in patched_hal_source
         assert "void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result," in patched_hal_source
         assert "mailbox->authenticity_cycles = elapsed_cycles;" in patched_hal_source
         assert "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID 2UL" in patched_hal_source
@@ -834,6 +834,7 @@ def test_v7_generated_selected_image_helpers_compile_and_reject_mismatched_attem
         "#include <stdint.h>\n#include <stdio.h>\n"
         "#define WOLFBOOT_SHA_DIGEST_SIZE 32U\n"
         "#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL\n"
+        "#define PQC_BOOT_STACK_UNAVAILABLE 0xFFFFFFFFUL\n"
         "struct wolfBoot_image { uint32_t part; uint32_t fw_size; uint8_t *sha_hash; };\n"
         + mailbox
         + "\nstatic struct pqc_boot_timing_mailbox test_mailbox;\n"
@@ -900,3 +901,13 @@ int main(void)
     )
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
     assert "generated image interval and final-selection checks passed" in result.stdout
+
+
+def test_optional_stack_watermark_reports_specific_unavailability():
+    # This source is injected into the STM32L4 HAL at build time.
+    helper = (Path(__file__).resolve().parents[2] / "scripts/framework/wolfboot_build.py").read_text(encoding="utf-8")
+    assert "#define PQC_BOOT_STACK_GUARD_BYTES 128UL" in helper
+    assert "mailbox->stack_measurement_status = 3U;" in helper
+    assert "mailbox->stack_measurement_status = 4U;" in helper
+    assert "mailbox->stack_measurement_status = 5U;" in helper
+    assert "(uintptr_t)p + 32U >= scan_msp" in helper
