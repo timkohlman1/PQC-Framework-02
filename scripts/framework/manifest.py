@@ -1213,14 +1213,26 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
             "signed_application", signing_evidence.get("signed_application_artifact_path"),
             signing_evidence.get("signed_application_sha256"), "application_signing", "wolfBoot sign",
         )
-        # The secure-boot stage record itself remains in manifest for compatibility;
-        # its canonical digest binds the structured observation without inventing a file.
-        from framework.run_evidence import canonical_sha256
-        register_evidence_identity_in_manifest(
-            manifest, role="secure_boot_record", sha256=canonical_sha256(secure),
-            stage="secure_boot_flash", tool="framework.secure_boot_flash", acquisition_result="recorded",
-            source_class="secure_boot",
-        )
+        # secure_boot_evidence is mutable until the run is finalized. Flash, UART,
+        # negative-test verdict, and recovery stages may each update this payload.
+        # Index the terminal snapshot in finalize_run_evidence(), not here: once
+        # captured, raw-evidence identities must never be overwritten.
+
+
+
+def _register_final_secure_boot_record(manifest: dict[str, Any]) -> None:
+    """Freeze only the terminal secure-boot stage record as immutable evidence."""
+
+    secure = manifest.get("secure_boot_evidence")
+    if not isinstance(secure, dict):
+        return
+    from framework.run_evidence import canonical_sha256
+
+    register_evidence_identity_in_manifest(
+        manifest, role="secure_boot_record", sha256=canonical_sha256(secure),
+        stage="secure_boot_flash", tool="framework.secure_boot_flash",
+        acquisition_result="recorded", source_class="secure_boot",
+    )
 
 
 def register_derived_output(
@@ -1263,6 +1275,9 @@ def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None
     compatible, reason = validate_manifest_schema(manifest)
     if not compatible:
         raise ValueError(reason or "legacy manifest cannot satisfy the current evidence contract")
+    # Secure-boot evidence is updated repeatedly during flash and UART processing.
+    # Freeze it once, after the terminal verdict, before compacting the manifest.
+    _register_final_secure_boot_record(manifest)
     # Snapshot the reproducibility/deployment metadata before discarding the verbose
     # runtime manifest payloads. The snapshot is itself hashed as required evidence.
     write_run_provenance_snapshot(manifest, result_dir=manifest_path.parent)

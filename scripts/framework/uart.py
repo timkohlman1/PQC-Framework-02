@@ -501,12 +501,46 @@ def _runtime_memory_evidence(uart_output: str) -> dict[str, Any]:
     }
 
 
+def parse_typed_boot_verification(uart_output: str) -> dict[str, Any]:
+    """Read explicit mailbox-v4 records, never reinterpret legacy generic cycles.
+
+    A zero, absent, or invalid sample is unavailable, not a zero-cost success.
+    Clock conversion is possible only using bootloader-reported HCLK.
+    """
+    version = re.search(r"wolfBoot timing mailbox version:\s*(\d+)", uart_output)
+    clocks = parse_bootloader_clock_hz(uart_output)
+    hclk_hz = clocks.get("hclk_hz")
+    result: dict[str, Any] = {"mailbox_version": int(version.group(1)) if version else None,
+                              "bootloader_hclk_hz": hclk_hz, "operations": {}}
+    for kind in ("integrity", "authenticity"):
+        prefix = rf"wolfBoot {kind}"
+        valid = re.search(prefix + r" valid:\s*([01])\b", uart_output)
+        cycles = re.search(prefix + r" cycles:\s*(\d+)\s+cycles\b", uart_output)
+        rc = re.search(prefix + r" result:\s*(-?\d+)\b", uart_output)
+        available = (result["mailbox_version"] == 4 and valid is not None
+                     and valid.group(1) == "1" and cycles is not None
+                     and int(cycles.group(1)) > 0 and rc is not None)
+        value = int(cycles.group(1)) if available and cycles else None
+        result["operations"][kind] = {
+            "verification_type": "sha256_image_integrity" if kind == "integrity"
+                                 else "signature_authenticity",
+            "status": "available" if available else "unavailable",
+            "cycles": value,
+            "result_code": int(rc.group(1)) if available and rc else None,
+            "time_ms": (value * 1000.0 / hclk_hz)
+                if value is not None and hclk_hz not in (None, 0) else None,
+        }
+    return result
+
+
 def _boot_timing_evidence(uart_output: str) -> dict[str, Any]:
     verification_cycles = parse_verification_cycles(uart_output)
+    if re.search(r"wolfBoot timing mailbox version:\s*4\b", uart_output):
+        verification_cycles = None  # generic v3 field cannot identify a v4 operation
     clocks = parse_bootloader_clock_hz(uart_output)
     hclk_hz = clocks.get("hclk_hz")
     derived_time = None
-    if verification_cycles is not None and hclk_hz not in (None, 0):
+    if verification_cycles is not None and verification_cycles > 0 and hclk_hz not in (None, 0):
         derived_time = (verification_cycles * 1000.0) / hclk_hz
     verification_result_code = parse_verification_result_code(uart_output)
     return {

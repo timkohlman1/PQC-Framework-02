@@ -79,6 +79,7 @@ from framework.uart import (
     DEFAULT_CAPTURE_DURATION_SECONDS,
     DEFAULT_RESTART_COMMAND,
     CommandExecution,
+    analyze_uart_capture,
     execute_uart_capture,
     execute_uart_monitor,
 )
@@ -1060,7 +1061,9 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     if broker_port:
         if profile in {"oqs", "oqs-mtls"}:
             start_args.extend(["--oqs-port", str(broker_port)])
-        elif profile in {"classical", "classical-server-auth"}:
+        elif profile in {"classical", "classical-server-auth"} and mqtt.get("evidence_class") != "stm32_st67_plaintext_e2e":
+            # --classical-port changes the TLS listener, not the plaintext listener.
+            # Passing 1883 here would collide with the existing plaintext port.
             start_args.extend(["--classical-port", str(broker_port)])
     broker_messages = {
         "stop-existing": "Stopping any existing managed broker",
@@ -1699,7 +1702,10 @@ def _execute_mqtt_e2e_uart_capture(
         return None, MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE, broker_failure_stage
 
     result_collector, collector_start = start_gateway_result_collector(
-        bundle=bundle, repo_root=repo_root, result_dir=result_dir, run_id=result_dir.name
+        bundle=bundle, repo_root=repo_root, result_dir=result_dir, run_id=result_dir.name,
+        # OTA can produce several successful application boots under one run ID.
+        # Every observed epoch must still pass independent integrity validation.
+        allow_additional_stm32_epochs=ota_plan is not None,
     )
     update_manifest(result_dir / "manifest.json", {"result_collection": {
         "required": True,
@@ -5685,6 +5691,47 @@ def _secure_boot_sample_from_uart_result(
         runtime_memory_limitations=analysis.runtime_memory_limitations,
     )
 
+def _write_secure_boot_flash_capture(
+    result_dir: Path, *, manifest: dict[str, Any], result_status: str,
+    flash_return_code: int, negative_requested: bool,
+    negative_passed: bool, boot_marker_present: bool | None,
+    tick_present: bool | None, secure_boot_marker_present: bool | None,
+    capture_completed: bool,
+) -> Path:
+    """Retain a bounded flash/UART verdict before the manifest is compacted.
+
+    This result-local file is capture evidence, not an alternative run manifest.
+    Missing corruption hashes remain missing (never fabricated from a valid image).
+    """
+    flash = manifest.get("secure_boot_flash", {})
+    flash = flash if isinstance(flash, dict) else {}
+    negative = flash.get("negative_test", {})
+    negative = negative if isinstance(negative, dict) else {}
+    payload = {
+        "schema": "pqc-secure-boot-flash-capture-v1",
+        "result": result_status,
+        "boot_crypto": manifest.get("boot_crypto"),
+        "flash_return_code": flash_return_code,
+        "negative_requested": negative_requested,
+        "negative_passed": negative_passed,
+        "capture_completed": capture_completed,
+        "boot_marker_present": boot_marker_present,
+        "tick_present": tick_present,
+        "secure_boot_marker_present": secure_boot_marker_present,
+        "negative_test": {
+            key: negative.get(key)
+            for key in (
+                "enabled", "source_image_modified",
+                "original_signed_application_sha256",
+                "corrupted_signed_application_sha256",
+            )
+        },
+    }
+    output = result_dir / "secure-boot-flash-capture.json"
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return output
+
+
 def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     """Run the wolfBoot secure-boot flash, evidence, repeated-run, and negative-test workflow."""
 
@@ -6199,6 +6246,20 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, tick marker, and explicit verification timing evidence for benchmark-valid samples.")
     print(f"Return code: {final_return_code}")
 
+    # Retain the bounded flash verdict before finalization drops transient
+    # secure_boot_flash and secure_boot_negative_test manifest sections.
+    _write_secure_boot_flash_capture(
+        result_dir,
+        manifest=read_manifest(result_dir / "manifest.json"),
+        result_status=result_status,
+        flash_return_code=flash_result.return_code,
+        negative_requested=negative_test_requested,
+        negative_passed=negative_test_passed,
+        boot_marker_present=boot_marker_present,
+        tick_present=tick_present,
+        secure_boot_marker_present=secure_boot_marker_present,
+        capture_completed=capture_completed,
+    )
     finalize_run_evidence(result_dir / "manifest.json")
     return final_return_code
 

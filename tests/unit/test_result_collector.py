@@ -251,3 +251,66 @@ def test_collector_requires_exact_repeat_epoch_count(tmp_path):
     assert not result.passed
     assert result.source_results["stm32"]["completion_count"] == 2
     assert any("completion count mismatch" in reason for reason in result.failure_reasons)
+
+
+def _multi_epoch_stream(tmp_path, *, corrupt_second=False):
+    run_id = "run-ota-epochs"
+    path = tmp_path / "ota-epochs.ndjson"
+    lines = []
+    for number in (1, 2):
+        logical = (json.dumps({"boot": number}) + "\n").encode()
+        lines.append(_line(
+            f"pqc/result/stm32/{run_id}/chunk",
+            {"type": "chunk", "source": "stm32", "run_id": run_id,
+             "sequence": 0, "data_hex": logical.hex()},
+        ))
+        complete = _complete("stm32", run_id, logical, 1, 1)
+        if corrupt_second and number == 2:
+            complete["logical_sha256"] = "0" * 64
+        lines.append(_line(f"pqc/result/stm32/{run_id}/complete", complete))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path, run_id
+
+
+def test_ota_collector_accepts_two_independently_validated_boot_epochs(tmp_path):
+    path, run_id = _multi_epoch_stream(tmp_path)
+    result = _parse_raw_stream(
+        path, run_id, expected_completion_counts={"stm32": 1},
+        allow_additional_stm32_epochs=True,
+    )
+    assert result.passed
+    assert result.completion_count == 2
+    assert result.source_results["stm32"]["stream_count"] == 2
+    assert all(stream["passed"] for stream in result.source_results["stm32"]["streams"])
+
+
+def test_ota_collector_rejects_invalid_additional_boot_epoch(tmp_path):
+    path, run_id = _multi_epoch_stream(tmp_path, corrupt_second=True)
+    result = _parse_raw_stream(
+        path, run_id, expected_completion_counts={"stm32": 1},
+        allow_additional_stm32_epochs=True,
+    )
+    assert not result.passed
+    assert result.completion_count == 2
+    assert result.source_results["stm32"]["streams"][0]["passed"]
+    assert not result.source_results["stm32"]["streams"][1]["passed"]
+    assert any("stream 1: logical buffer hash mismatch" in reason for reason in result.failure_reasons)
+
+
+def test_non_ota_collector_rejects_additional_boot_epoch(tmp_path):
+    path, run_id = _multi_epoch_stream(tmp_path)
+    result = _parse_raw_stream(path, run_id, expected_completion_counts={"stm32": 1})
+    assert not result.passed
+    assert any("completion count mismatch: expected 1, observed 2" in reason for reason in result.failure_reasons)
+
+
+def test_ota_collector_still_requires_at_least_one_completion(tmp_path):
+    run_id = "run-ota-empty"
+    path = tmp_path / "empty.ndjson"
+    path.write_text("", encoding="utf-8")
+    result = _parse_raw_stream(
+        path, run_id, expected_completion_counts={"stm32": 1},
+        allow_additional_stm32_epochs=True,
+    )
+    assert not result.passed
+    assert "required stm32 source missing" in result.failure_reasons

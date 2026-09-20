@@ -163,3 +163,14 @@ wolfBoot signing keys are not X.509 identities and must not be issued by the X.5
 
 
 TLS key logs retained as `mqtt-broker-tls-keylog.log` are experiment-only secret material because they permit decryption of the associated packet capture. They belong only in ignored result directories, must be inventoried by SHA-256 in the result manifest, and must not be committed or copied into AI context or replacement archives.
+
+## Automated hardware-test evidence
+
+Hardware-test source campaigns and resolved cases may be retained in the test's
+ignored `results/automated-tests/` directory when they contain only non-secret
+profile references. The experiment/campaign workflows, not the test helper,
+retain explicitly selected disposable keys, certificates, images and their
+SHA-256 material inventory. Never copy host SSH/VPN credentials, real `.env`
+files, or unrelated secret directories into an automated-test result. The test
+helper's configuration and command-log retention does not replace the owning
+framework workflow's material inventory or recovery obligations.

@@ -311,7 +311,13 @@ def test_final_ram_accounting_covers_msp_sbrk_and_all_linker_ram_regions():
 
     for script in (linker, direct_linker):
         assert "__ram_region_start__ = ORIGIN(RAM);" in script
-        assert "__ram2_region_start__ = ORIGIN(RAM2);" in script
+        # RAM2_BOOT_MAILBOX reserves the first 1 KiB of physical RAM2.
+        # Account for the complete physical region, including the mailbox,
+        # while keeping normal application allocations outside that region.
+        assert "RAM2_BOOT_MAILBOX (xrw) : ORIGIN = 0x10000000, LENGTH = 0x400" in script
+        assert "RAM2 (xrw)      : ORIGIN = 0x10000400, LENGTH = 0xFC00" in script
+        assert "__ram2_region_start__ = ORIGIN(RAM2_BOOT_MAILBOX);" in script
+        assert "__ram2_region_end__ = ORIGIN(RAM2) + LENGTH(RAM2);" in script
         assert "__ram3_region_start__ = ORIGIN(RAM3);" in script
         assert "__user_heap_stack_end__ = .;" in script
         assert ".pqc_mldsa_workspace (NOLOAD)" in script

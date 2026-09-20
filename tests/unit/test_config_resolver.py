@@ -169,3 +169,45 @@ def test_tls_handshake_repeat_bundle_preserves_iteration_count_when_campaign_exi
     assert expected >= 1
     assert bundle["experiment"]["firmware"]["application"] == "tls_handshake_repeat"
     assert bundle["experiment"]["mqtt"]["orchestration"]["expected_stm32_result_epochs"] == expected
+
+
+def test_plaintext_mqtt_campaign_resolves_without_tls_or_secret_resolution(tmp_path):
+    resolver = ConfigResolver(ROOT)
+    case = resolver.expand_campaign("mqtt_plaintext_validation")[0]
+    assert case["choices"]["mqtt_transport"] == "plaintext"
+    mqtt = resolver.to_legacy_bundle(case, resolve_secrets=False)["experiment"]["mqtt"]
+    assert mqtt["evidence_class"] == "stm32_st67_plaintext_e2e"
+    assert mqtt["transport_backend"] == "st67w61m1_lwip_sockets"
+    assert mqtt["broker_profile"] == "classical"
+    assert mqtt["broker"]["port"] == 1883
+    assert mqtt["tls"]["mode"] == "plaintext"
+    assert "certificate_profile" not in mqtt["tls"]
+    assert resolver.load_resolved_case(
+        next(resolver.materialize_campaign("mqtt_plaintext_validation", tmp_path / "cases-root").joinpath("cases").glob("*.yaml"))
+    )["provenance"]["configuration_identity"] == case["provenance"]["configuration_identity"]
+
+
+def test_plaintext_mqtt_rejects_incompatible_transport_choices():
+    resolver = ConfigResolver(ROOT)
+    case = resolver.expand_campaign("mqtt_plaintext_validation")[0]
+    for update, expected in (
+        ({"auth_mode": "mutual"}, "mutual TLS"),
+        ({"mqtt_transport": "invalid"}, "mqtt_transport"),
+    ):
+        with __import__("pytest").raises(ResolutionError, match=expected):
+            resolver.resolve_case(
+                campaign_id="invalid-plaintext", case_index=1,
+                selections=case["selections"], choices={**case["choices"], **update},
+                workload_overrides={}, execution=case["execution"],
+            )
+
+
+def test_plaintext_mqtt_rejects_non_validation_workload():
+    resolver = ConfigResolver(ROOT)
+    case = resolver.expand_campaign("mqtt_plaintext_validation")[0]
+    with __import__("pytest").raises(ResolutionError, match="mqtt_validation workload"):
+        resolver.resolve_case(
+            campaign_id="invalid-workload", case_index=1,
+            selections={**case["selections"], "workload": "ready_metrics"},
+            choices=case["choices"], workload_overrides={}, execution=case["execution"],
+        )

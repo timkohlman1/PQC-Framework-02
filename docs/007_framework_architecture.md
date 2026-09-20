@@ -35,6 +35,18 @@ Current boundaries not yet fully verified or completed:
 
 The repository now contains a real STM32/ST67 MQTT/TLS runtime path: ST67W61M1 association/DHCP, lwIP sockets, wolfSSL TLS 1.3 transport/session and certificate verification, and wolfMQTT connect/publish workflows are implemented. These implementation capabilities must still be distinguished from completed end-to-end hardware evidence for a particular profile; deferred verification status is recorded in the consolidated register below.
 
+### Plaintext MQTT validation campaign
+
+`configs/campaigns/mqtt_plaintext_validation.yaml` selects the `mqtt_validation` workload with
+`mqtt_transport: plaintext`. The resolver derives the ST67/lwIP socket evidence class,
+port 1883 on the experiment broker, and a disabled TLS workload while keeping the
+separate impairment-exempt reporting broker. Legacy TLS campaigns retain their
+existing default transport. The `secp256r1`/`rsa3072` fields in this plaintext
+campaign are inert compatibility selections for the current resolver schema; they
+do not indicate a TLS handshake or certificate-backed workload. The two MQTT
+hardware assertions share one experiment within their file; full STM32 MQTT
+success and evidence retention remain subject to the recorded hardware test result.
+
 ## Architectural organization
 
 The architecture is organized by stable capability and evidence ownership rather than implementation chronology. Roadmap sequencing and phase status belong to `docs/non_hardware_mqtt_tls_development_plan.md`; historical framework sequencing belongs to `docs/pqc_iot_experiment_framework_plan.md`. This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
@@ -238,6 +250,34 @@ secure-boot experiment profile
 
 The secure-boot workflow must not infer timing, stack, heap, or hardware success from host-side behaviour. Runtime metrics must come from explicit firmware/UART markers.
 
+
+### Request 14 secure-boot timing work in progress (not validated)
+
+The bootloader-local DWT instrumentation records SHA-256 image-integrity and
+signature-authenticity function calls as separate operations in a version-4 RAM2
+mailbox. The application emits typed UART diagnostic markers, and the host can
+parse those raw markers separately from the immutable run-capture manifest.
+A missing or zero-cycle record is unavailable, not a zero-cost verification.
+The existing 1 MHz LPTIM2/TIM2 reset-origin bridge is unchanged.
+
+**This is not yet a validated secure-boot reference baseline.** The current
+function-level records are not bound to a selected image, physical bank, or
+verification attempt. They can include candidate-manifest or recovery
+verification and must not be aggregated as normal active-application
+verification. Complete-image verification excluding intermediate UART output,
+bootloader-total execution, application-image SHA-256 identity, and explicit
+bootloader source/build provenance are not yet implemented in these records.
+The maintained secure-boot hardware matrix and corrupt-image rejection test
+remain outstanding; no hardware validity claim follows from the source patch.
+
+Deferred test entry: feature=Request 14 typed secure-boot verification;
+missing layer=hardware and gateway integration; reason=requires physical STM32,
+controlled corruption and gateway evidence; capability=instrumented wolfBoot,
+flash/reset/UART and retained run evidence; intended tests=
+`tests/hardware/test_secure_boot_integrity_hw.py` and
+`tests/integration/test_secure_boot_integrity_in.py`;
+eventual verification=`./scripts/dev.sh pytest-hardware`;
+status=deferred pending attempt-bound instrumentation and hardware validation.
 
 ## STM32 MQTT/TLS target architecture
 
@@ -466,13 +506,15 @@ The framework may derive `derived_verification_time_ms` as `verification_cycles 
 
 The deterministic lwIP helper smoke and wolfSSL/wolfCrypt TLS-context lifecycle smoke now have two explicit execution contexts. `main()` emits the existing early evidence with `context=pre_scheduler scheduler=not_started`. After `osKernelStart()` transfers control and `defaultTask` emits its task-start marker, the task runs the same local checks once and emits `context=freertos_task scheduler=running`. Hardware evidence is valid only when the task-start marker precedes both task-context smoke markers in the captured UART log.
 
-The task-context path remains local and serialized. It does not register or bring up a lwIP netif, use Wi-Fi or ST67W61M1 hardware, report link-up or IP assignment, open TCP, load certificates, create a TLS session, perform a TLS handshake, connect or publish MQTT, reconnect, or claim end-to-end network success. wolfSSL FreeRTOS mutex or multithreaded support is not enabled because no concurrent wolfSSL use is introduced. The capability-gated secure-boot benchmark hardware test verifies marker ordering using a known built and flashed image; the ad hoc baseline monitor remains intentionally unable to assert one-shot task startup markers because it does not flash a known image.
+The task-context path remains local and serialized. It does not register or bring up a lwIP netif, use Wi-Fi or ST67W61M1 hardware, report link-up or IP assignment, open TCP, load certificates, create a TLS session, perform a TLS handshake, connect or publish MQTT, reconnect, or claim end-to-end network success. wolfSSL FreeRTOS mutex or multithreaded support is not enabled because no concurrent wolfSSL use is introduced. The capability-gated secure-boot benchmark hardware test verifies marker ordering using a known built and flashed image; the standalone ad hoc monitor remains unable to establish which image is running unless explicitly paired with a known-image flash and reset. The baseline hardware test now flashes a file-owned image before running its bounded, reset-triggered UART monitor.
 
 
 ## STM32-local lwIP UDP loopback
 
-The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The ordinary monitor-only test remains non-assertive because it cannot establish which firmware image is already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
+The baseline hardware test includes a capability-gated known-image build/flash/UART path for this marker. The baseline hardware module now shares one independently prepared, known-image run across its five related checks; its bounded monitor test explicitly resets that same image and validates a fresh boot marker. A standalone monitor invocation without known-image preparation still cannot establish which firmware was already running. The M6.6 implementation does not add manifest fields: the current baseline `run` manifest records UART pass/fail evidence, while the detailed local-loopback evidence remains in `uart.log`. A future structured UART-evidence ingestion phase may promote these fields into the manifest without changing their local-only meaning.
 
+
+The known-image baseline UART test explicitly resolves `workload.uart_output_mode=full` to qualify diagnostic marker ordering, SPI bring-up, association, and DHCP from one retained boot. This override is confined to UART diagnostics; normal minimal/disabled scientific runs continue to use their own selected mode. The finalized manifest records capture integrity and indexes `uart.log`; network association and DHCP are checked against same-boot UART evidence rather than transient top-level manifest fields. Each hardware test file provisions its own case and evidence independently.
 
 ## STM32 wolfMQTT build boundary
 
@@ -526,7 +568,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-012 | Ready Metrics 2 paper-aligned MQTT application TTFB/TTLB with deferred reporting | Gateway-mediated end-to-end timing/evidence validation | A 2026-09-18 gateway/STM32 run completed the ML-KEM-768/ML-DSA-65 Ready Metrics 2 workload and produced a hash-valid reporting stream plus experiment PCAP, but inspection showed that the canonical RM2 checkpoint/metric snapshot had not been appended to the common deferred result buffer. The buffer-integration fix now appends `rm2_timebase`, `rm2_checkpoints`, `rm2_metrics`, and `rm2_complete` records after the measured workload; a repeat hardware run is still required to confirm those records and reconcile them with packet timing. | Gateway, STM32/ST67 hardware, experiment and reporting brokers, gateway transfer responder, packet capture, and the Ready Metrics 2 campaign case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/ready_metrics_2/cases/<case>.yaml` then inspect `mqtt-reporting-raw.ndjson` and capture integrity | in progress: workload/collector succeeded; RM2 deferred-buffer integration fixed; repeat hardware evidence required |
 | DTR-013 | Versioned run-capture integrity across STM32 and energy result producers | Gateway/hardware cross-source capture validation | The common collector supplies run-ID, completion-bounded sequence/count/hash validation for STM32 result production. The ESP32/INA228 producer is not yet available for live cross-source evidence. | Reporting collector, ESP32/INA228 producer, gateway and representative STM32 runtime case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.ps1 pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` after Request 6 with energy-enabled cases | deferred: STM32 collector implemented; ESP32 producer pending Request 6 |
 
-| DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Unit/integration coverage validates veth scoping, PCAP exclusion, collector integrity and cleanup ordering, but this implementation environment cannot exercise the real gateway Docker veth, IFB, `tc`, MTU restoration or STM32 radio path | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | Set `PQC_REPORTING_ISOLATION_HW=1` plus `PQC_REPORTING_ISOLATION_{RATE,RTT,LOSS,MTU}_CASE`, then run `./scripts/dev.ps1 pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | deferred: capability-gated live verification required |
+| DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Gateway/network/hardware execution previously produced all four configured veth impairments, successful cleanup transcripts and complete STM32 reporting streams, but the old hardware test failed on transient manifest fields. The revised persistent-evidence assertions and network-boundary check require a fresh hardware rerun. These checks do not measure realised packet loss, achieved throughput or observed RTT. | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | in progress: previous gateway and reporting evidence inspected; revised hardware-test assertions not yet executed on device |
 | DTR-015 | Request-13 1 MHz application timing timebase and reset-origin handoff | Representative gateway/hardware timing validation across plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | The dedicated hardware delay test is now self-contained and has produced hardware evidence confirming the selected timer derives 1 MHz (`120000000 / (119 + 1)`), a 10 ms requested delay measured 10985 us, HAL tick advanced 11 ms, wolfBoot verification succeeded, and the secure-boot application started. The remaining deferred work is the representative workload/profile matrix needed to confirm reset-origin validity, DWT preservation, and complete structured timing records across the required experiment families. | Reachable gateway, STM32/ST67 hardware, reporting/experiment brokers as required by the selected cases, and the maintained representative workload/profile matrix | `tests/hardware/test_application_timebase_hw.py` plus the maintained workload hardware tests | `./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware`, then run the maintained self-contained hardware/profile tests for plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | partially complete: 1 MHz hardware self-test passed; representative profile-matrix evidence still required |
 
 Deferred status is not evidence that the named capability works. Future test files and commands are intended contracts and must be reconciled against the implementation that eventually supplies the capability.
@@ -976,3 +1018,108 @@ The STM32 result path uses a bounded 32 KiB preallocated SRAM buffer in RAM3. Ex
 The ordered event store is preallocated at compile time (`PQC_TLS_INSTRUMENTATION_EVENT_CAPACITY`) and performs no allocation, text formatting, UART output or MQTT publication inside a measured span. Exhausting the capacity does not overwrite earlier records. Aggregate accumulation continues where possible, while `event_overflowed`, `event_truncated`, `dropped_event_count` and `hierarchy_incomplete` make the ordered evidence explicitly incomplete. Duplicate begins, unmatched ends, non-LIFO end ordering and spans left active when the handshake closes increment the invalid-sequence state rather than being silently normalised. The deferred serializer emits one `PQC_TLS_EVENT_BUFFER` status record followed by sequence-addressable `PQC_TLS_EVENT` records after the workload returns.
 
 The wolfSSL hooks remain thin calls at the existing application, `tls13.c`, `tls.c`, `internal.c` and wolfCrypt sites. The ML-KEM key-generation and decapsulation hooks are shared between standalone and hybrid TLS groups; the compile-time resolved active parameter set selects the ML-KEM-512, ML-KEM-768 or ML-KEM-1024 semantic event identity at those same call sites. `scripts/framework/tls_instrumentation.py` derives the expected semantic event set from the resolved KEX group, certificate/signature profile and authentication mode, accepting both the final `effective_non_secret_parameters.mqtt.tls` resolved-case snapshot layout and the historical `experiment.mqtt.tls` layout. It qualifies ordered hierarchy records together with retained primitive aggregates without mutating the immutable run manifest. A missing required operation is represented as an explicit `unavailable` qualification result with a reason rather than being converted to a zero-valued measurement.
+
+### Request 14 — retained RAM2 secure-boot MQTT evidence (partial implementation)
+
+The application linker scripts reserve the first 1 KiB of RAM2 (`0x10000000` through `0x100003FF`) for existing wolfBoot timing (`0x10000000`) and OTA event (`0x10000100`) mailboxes. The allocatable RAM2 region begins at `0x10000400`. This prevents application linker-allocated data from overlapping either mailbox, but it does not by itself prove retention through hardware reset, against explicit application/bootloader writes, or under every OTA path. The normal application-timebase handoff continues to read mailbox version 5 from its original fixed address.
+
+Following the measured workload, `PQC_BootEvidenceAppendToResultBuffer` serializes the retained version-5 mailbox into the existing deferred STM32 result buffer using `secure_boot` context records for SHA-256 integrity verification, signature/authenticity verification, and reset-origin handoff. The individual records retain raw DWT cycles, verification result, validity, and bootloader SYSCLK/HCLK; no CPU-frequency assumption or UART timing marker is required to transfer these fields. Absent magic/version yields an explicit unavailable record. Zero cycles and absent HCLK are invalid; an absent signature sample is *not measured* (this mailbox alone cannot distinguish non-applicability from a skipped/failed signed attempt).
+
+Normal workloads add the boot records before calculating the result-buffer SHA-256 and MQTT completion metadata. Repeated TLS workloads add them once, in the first completed per-iteration reporting epoch, after its measured interval. They do not publish an extra untracked MQTT message or change expected completion counts. The original RAM2 record remains in place; formatted evidence is copied only after measurement. The v5 mailbox has no nonce/checksum, image hash, bootloader provenance, complete-image verification cycles, or total secure-boot execution interval: these cannot be inferred from its existing fields. This partial change does **not** establish the full Request 14 timing/evidence contract or repeated-run hardware validation.
+
+Deferred test entry: feature=Request 14 persistent RAM2 mailbox and secure-boot MQTT evidence; missing layer=containerized application build, gateway/hardware continuous-run retention and reporting; reason=source-level/host-only checks do not prove retained SRAM or publish behaviour; required capability=STM32/ST67, gateway, broker, maintained secure-boot cases; intended test=`tests/hardware/test_secure_boot_mqtt_evidence_hw.py`; eventual verification=`./scripts/dev.sh experiment-gateway run --experiment <resolved integrity_sha256 case>` and inspect `mqtt-reporting-raw.ndjson` then signed profiles, OTA and repeat-handshake cases; status=deferred, source-level tests only.
+
+Request 14 algorithm identity extension (schema v5): the instrumented bootloader writes a compact ID for the resolved secure-boot algorithm into the RAM2 mailbox. The application decodes it into the `PQC_SECURE_BOOT_PROFILE` result and includes the identity on both verification records, independently of TLS profile identity. A parameter-bit field reports RSA modulus or ECDSA curve size only where the profile determines it; it is unavailable (zero with documented unavailable semantics) for EdDSA, ML-DSA, and integrity-only profiles. The optional declared signature capacity is not an actual signature length; `declared_signature_capacity_available=0` means that the resolved build profile did not supply this value. Integrity-only authenticity reports `measurement_status=not_applicable`, while an absent signed-profile timing record reports `unavailable`. The real public-key encoding size is explicitly unavailable until derived from verified key material outside the timing interval. This version change requires matching bootloader and relocated application builds; version-4 mailboxes are rejected rather than reinterpreted. No hashing, key parsing, UART or network transmission is added inside verification intervals.
+
+
+Request 14 incremental image identity (schema v6): the deferred MQTT PQC_SECURE_BOOT_IMAGE record contains wolfBoot's already-validated SHA-256 image-content digest and selected partition when integrity verification succeeded. The digest is not the SHA-256 of the entire packaged image artifact; the latter is retained in build/flash provenance, not inferred from the image header. The hash is copied after the DWT end read and serialized only after the application workload. The v6 mailbox still lacks a boot nonce/checksum; complete-image-verification timing, total secure-boot timing and per-boot build attribution are deferred and must not be inferred from the existing individual measurements.
+
+
+### Request 14 incremental attempt-isolation hardening (not final acceptance)
+
+The generated STM32L4 wolfBoot instrumentation clears the earlier integrity,
+image-digest, and authenticity evidence **before** starting every new integrity
+measurement. An authenticity sample is marked valid only when its image's
+partition, firmware-content length and stored SHA-256 digest match the most
+recent successfully verified integrity image. `SIGN=NONE` does not produce a
+valid signature-verification sample. This prevents several candidate/recovery
+cross-attribution cases; it does **not** establish that the recorded image is
+the final application selected for handoff, since that requires an explicit
+selection checkpoint on both update paths. The version-6 mailbox layout and
+working deferred MQTT publication are unchanged.
+
+An independent complete-image-verification timer, separately bounded total
+boot-execution measurement, run-to-bootloader source/artifact correlation,
+negative integrity-only hardware rejection test, and complete profile-matrix
+hardware validation remain **not verified**. In particular, adding an enclosing
+DWT interval across the existing standard-update UART output would count
+reporting overhead and must not be represented as verified computational timing.
+
+
+### Request 14: selected-image timing and provenance (mailbox v7)
+
+The STM32 application serializes boot evidence **after** workload measurement to the
+impairment-exempt MQTT reporting broker. The bootloader records a DWT snapshot at the
+start of image-content verification and another at the end of signature verification,
+or at the end of content verification for the integrity-only build. The
+`PQC_SECURE_BOOT_VERIFICATION` record is an **independently sampled enclosing
+interval**, not the sum of individual cryptographic timings. It includes the
+measurement-wrapper bookkeeping between the cryptographic calls. The normal
+standard-flash path excludes its intervening benchmark output and signature-start
+UART message while the timing instrumentation is enabled. The firmware treats
+intervals longer than 30 seconds as unavailable to guard against ambiguous 32-bit
+DWT wrapping at the selected clock rate; the limit is a measurement constraint,
+not a boot security policy.
+
+Candidate manifest checks, retries and bank fallbacks invalidate the preceding
+image interval. Just before `hal_prepare_boot`, the selected image is checked
+against the mailbox's verified partition, firmware-content size and SHA-256
+content digest. If these do not match, or the required integrity/authenticity
+checks did not succeed, `selected_image_valid=0` and the application does not
+present those previous-attempt measurements or digest as selected-image evidence.
+For a migration path that explicitly bypasses authenticity, signed-image
+selected-image measurement is marked unavailable rather than silently presented
+as a complete signed verification. When a hardware bank swap returns rather than
+resetting, `fw_image` can still describe the old PART_UPDATE while `do_boot`
+targets PART_BOOT; the selected-image checkpoint is invalidated in that case.
+
+`PQC_SECURE_BOOT_TOTAL` labels the existing operational interval from the
+start of `hal_init` to the pre-handoff LPTIM2 bridge checkpoint. It is **not**
+physical reset-to-application-startup timing; that includes the handoff and
+application startup. Image-content SHA-256 is **not** the signed package's SHA-256.
+The host-generated result/flash manifests retain the package, bootloader and
+flash-artifact hashes for separate provenance correlation. The device does not
+self-measure its bootloader binary SHA-256; no on-device bootloader provenance
+claim is inferred from a build-side hash alone.
+
+Mailbox v7 changes the shared bootloader/application layout. Both images must
+be rebuilt and flashed together. Unit tests check the generated instrumentation
+and serialized record schema, but cannot establish an STM32 runtime result.
+A successful integrity-only corrupted-image rejection and all maintained
+secure-boot profiles require retained hardware evidence before the request can
+be marked hardware-validated.
+### Hardware-test isolation retrofit (in progress)
+
+The `tests/hardware/test_mqtt_plaintext_st67_e2e_hw.py`,
+`test_reporting_plane_isolation_hw.py`, and `test_campaign_executor_hw.py`
+modules use `scripts/framework/hardware_test_support.py` to create unique
+module-owned generated campaigns and persistent evidence under the active
+`results/automated-tests/<run-id>/hardware/` directory. MQTT UART and broker
+assertions reuse one freshly executed hardware experiment within their file;
+reporting-plane conditions retain separate resolved configurations and results;
+and the campaign executor uses a test-owned two-repetition baseline campaign.
+The reporting-plane hardware test selects the canonical plaintext MQTT
+validation campaign independently for each rate, RTT, loss and MTU profile.
+It checks the finalized manifest artifact index, the retained gateway veth/IFB
+configuration and cleanup transcript against the selected profile, and
+independently reparses the complete run-specific STM32 reporting stream. UART
+diagnostic verbosity is not an isolation-success criterion. Applied qdisc
+settings and stream completeness are configuration and reporting-integrity
+evidence; they do not by themselves quantify actual packet loss, achieved
+throughput or observed RTT, or prove that no reporting packet ever experienced
+impairment.
+These modules run the existing Python experiment/campaign entry points *inside*
+the current development container; they do not start nested Docker containers.
+The remaining hardware modules have not yet been migrated to this contract.
+This change does not establish cross-module build/signing isolation and does not
+establish successful physical hardware execution without recorded test evidence.

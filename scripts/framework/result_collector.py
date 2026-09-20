@@ -33,6 +33,7 @@ class GatewayResultCollector:
     reporting_port: int
     expected_sources: tuple[str, ...]
     expected_completion_counts: dict[str, int]
+    allow_additional_stm32_epochs: bool = False
 
 @dataclass(frozen=True)
 class ResultCollectorValidation:
@@ -102,7 +103,7 @@ def expected_completion_counts(bundle: dict[str, dict[str, Any]]) -> dict[str, i
     return counts
 
 
-def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root: Path, result_dir: Path, run_id: str, runner: Callable[...,CommandExecution]=_run) -> tuple[GatewayResultCollector|None,CommandExecution]:
+def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root: Path, result_dir: Path, run_id: str, allow_additional_stm32_epochs: bool = False, runner: Callable[...,CommandExecution]=_run) -> tuple[GatewayResultCollector|None,CommandExecution]:
     target=gateway_ssh_target(bundle["host"])
     host,port=reporting_config(bundle)
     safe=re.sub(r"[^A-Za-z0-9_.-]","_",run_id)
@@ -129,7 +130,7 @@ def start_gateway_result_collector(*, bundle: dict[str,dict[str,Any]], repo_root
     try: pid=int(execution.stdout.strip().splitlines()[-1])
     except (ValueError,IndexError):
         return None,CommandExecution(execution.command,1,execution.stdout,execution.stderr+"\ncollector did not return pid\n",execution.duration_seconds)
-    return GatewayResultCollector(target,run_id,pid,remote,topics,host,port,expected_sources,expected_completions),execution
+    return GatewayResultCollector(target,run_id,pid,remote,topics,host,port,expected_sources,expected_completions,allow_additional_stm32_epochs),execution
 
 
 def _topic_source(topic: str, run_id: str) -> str | None:
@@ -146,6 +147,8 @@ def _parse_raw_stream(
     run_id: str,
     expected_sources: tuple[str, ...] = ("stm32",),
     expected_completion_counts: dict[str, int] | None = None,
+    *,
+    allow_additional_stm32_epochs: bool = False,
 ) -> ResultCollectorValidation:
     """Validate one or more complete result epochs for each reporting source.
 
@@ -371,7 +374,16 @@ def _parse_raw_stream(
         if expected_completion_counts is not None and source in expected_completion_counts:
             expected_completions = int(expected_completion_counts[source])
             observed_completions = len(state["streams"])
-            if observed_completions != expected_completions:
+            # An OTA plan may reset and run the application more than once.
+            # Keep the minimum configured count, but never accept a malformed,
+            # incomplete or hash-invalid additional stream. All non-OTA runs,
+            # including repeated TLS workloads, retain exact count matching.
+            if source == "stm32" and allow_additional_stm32_epochs:
+                if observed_completions < expected_completions:
+                    source_failures.append(
+                        f"completion count below minimum: expected at least {expected_completions}, observed {observed_completions}"
+                    )
+            elif observed_completions != expected_completions:
                 source_failures.append(
                     f"completion count mismatch: expected {expected_completions}, observed {observed_completions}"
                 )
@@ -455,8 +467,9 @@ def stop_and_collect_gateway_result_collector(*, collector: GatewayResultCollect
         reason="result collector stop/copy failed"
     else:
         validation=_parse_raw_stream(
-            raw, collector.run_id, collector.expected_sources, collector.expected_completion_counts
+            raw, collector.run_id, collector.expected_sources, collector.expected_completion_counts,
+            allow_additional_stm32_epochs=collector.allow_additional_stm32_epochs,
         ); reason=None if validation.passed else "; ".join(validation.failure_reasons)
     log=result_dir/RESULT_COLLECTOR_LOG_NAME
-    log.write_text(json.dumps({"run_id":collector.run_id,"topics":collector.topics,"expected_sources":collector.expected_sources,"stop_return_code":stop.return_code,"copy_return_code":copy.return_code,"validation":validation.__dict__},indent=2,sort_keys=True,default=list)+"\n",encoding="utf-8")
+    log.write_text(json.dumps({"run_id":collector.run_id,"topics":collector.topics,"expected_sources":collector.expected_sources,"allow_additional_stm32_epochs":collector.allow_additional_stm32_epochs,"stop_return_code":stop.return_code,"copy_return_code":copy.return_code,"validation":validation.__dict__},indent=2,sort_keys=True,default=list)+"\n",encoding="utf-8")
     return GatewayResultCollectorResult(0 if reason is None else 1,raw if raw.is_file() else None,log,validation,reason)

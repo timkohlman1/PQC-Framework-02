@@ -62,7 +62,9 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 192K
-RAM2 (xrw)      : ORIGIN = 0x10000000, LENGTH = 64K
+/* Reserve 0x10000000..0x100003FF for the boot-timing and OTA mailboxes. */
+RAM2_BOOT_MAILBOX (xrw) : ORIGIN = 0x10000000, LENGTH = 0x400
+RAM2 (xrw)      : ORIGIN = 0x10000400, LENGTH = 0xFC00
 RAM3 (xrw)      : ORIGIN = 0x20040000, LENGTH = 384K
 FLASH (rx)      : ORIGIN = 0x08023000, LENGTH = 0x000DD000
 }
@@ -70,7 +72,7 @@ FLASH (rx)      : ORIGIN = 0x08023000, LENGTH = 0x000DD000
 /* Project-owned RAM accounting symbols. */
 __ram_region_start__ = ORIGIN(RAM);
 __ram_region_end__ = ORIGIN(RAM) + LENGTH(RAM);
-__ram2_region_start__ = ORIGIN(RAM2);
+__ram2_region_start__ = ORIGIN(RAM2_BOOT_MAILBOX);
 __ram2_region_end__ = ORIGIN(RAM2) + LENGTH(RAM2);
 __ram3_region_start__ = ORIGIN(RAM3);
 __ram3_region_end__ = ORIGIN(RAM3) + LENGTH(RAM3);

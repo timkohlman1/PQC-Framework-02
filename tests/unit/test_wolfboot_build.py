@@ -100,6 +100,13 @@ def write_wolfboot_image_source(source_dir: Path) -> Path:
         "#include <stdint.h>\n"
         "#include \"printf.h\"\n"
         "struct wolfBoot_image;\n"
+        "int wolfBoot_verify_integrity(struct wolfBoot_image *img)\n"
+        "{\n"
+        "    (void)img;\n"
+        "    return 0;\n"
+        "}\n"
+        "#ifdef WOLFBOOT_ELF_FLASH_SCATTER\n"
+        "#endif\n"
         "#else\n"
         "int wolfBoot_verify_authenticity(struct wolfBoot_image *img)\n"
         "{\n"
@@ -209,11 +216,22 @@ def test_execute_wolfboot_build_applies_project_local_config_and_records_artifac
         patched_image_source = image_source_path.read_text(encoding="utf-8")
         patched_hal_source = hal_source_path.read_text(encoding="utf-8")
         assert "PQC_BOOT_TIMING_WRAPPER_V3" in patched_image_source
+        assert "PQC_BOOT_INTEGRITY_WRAPPER_V4" in patched_image_source
+        assert "wolfBoot_verify_integrity_impl" in patched_image_source
         assert "pqc_boot_timing_verification_start" in patched_image_source
         assert "pqc_boot_timing_verification_finish" in patched_image_source
         assert "pqc_boot_timing_write_mailbox" not in patched_image_source
+        assert "pqc_boot_timing_image_start(start_cycles, img);" in patched_image_source
+        assert "pqc_boot_timing_image_finish(end_cycles, ret, img);" in patched_image_source
+        assert "pqc_boot_timing_select_image(struct wolfBoot_image *img)" in patched_hal_source
+        assert "mailbox->selected_image_valid = 1U;" in patched_hal_source
+        assert "mailbox->image_verification_valid = 1U;" in patched_hal_source
         assert "PQC_BOOT_RESET_ORIGIN_V3" in patched_hal_source
-        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 3UL" in patched_hal_source
+        assert "PQC_BOOT_TIMING_MAILBOX_VERSION 7UL" in patched_hal_source
+        assert "void pqc_boot_timing_verification_finish(uint32_t elapsed_cycles, int verification_result," in patched_hal_source
+        assert "mailbox->authenticity_cycles = elapsed_cycles;" in patched_hal_source
+        assert "#define PQC_BOOT_SIGNATURE_ALGORITHM_ID 2UL" in patched_hal_source
+        assert "mailbox->signature_algorithm_id = PQC_BOOT_SIGNATURE_ALGORITHM_ID;" in patched_hal_source
         assert "pqc_boot_reset_origin_start" in patched_hal_source
         assert "pqc_boot_reset_origin_clock_ready" in patched_hal_source
         assert "pqc_boot_timing_prepare_handoff" in patched_hal_source
@@ -757,3 +775,128 @@ def test_execute_integrity_only_wolfboot_build_skips_all_signing_material(monkey
     manifest = json.loads((result.result_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["wolfboot_build"]["signature_algorithm"] == "integrity_sha256"
     assert manifest["signing_key_consistency"]["status"] == "not_configured"
+
+
+def test_boot_measurements_reset_at_new_integrity_attempt_and_authenticate_same_image():
+    """No previous candidate's authenticity/digest can survive the next attempt."""
+    from pathlib import Path
+    generator = Path("scripts/framework/wolfboot_build.py").read_text(encoding="utf-8")
+    integrity_wrapper = generator[generator.index("/* PQC_BOOT_INTEGRITY_WRAPPER_V4:"):generator.index("pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret, img);") + len("pqc_boot_timing_integrity_finish(end_cycles - start_cycles, ret, img);")]
+    assert integrity_wrapper.index("pqc_boot_timing_integrity_begin();") < integrity_wrapper.index("uint32_t start_cycles =")
+    assert integrity_wrapper.index("uint32_t end_cycles =") < integrity_wrapper.index("pqc_boot_timing_integrity_finish(end_cycles")
+    begin = generator[generator.index("void pqc_boot_timing_integrity_begin(void)\n{"):generator.index("void pqc_boot_timing_verification_start(uint32_t *start_cycles)\n{")]
+    assert "mailbox->authenticity_valid = 0U;" in begin
+    assert "mailbox->verified_image_digest_valid = 0U;" in begin
+    assert "mailbox->integrity_valid = 0U;" in begin
+    assert "pqc_boot_timing_verification_finish(end_cycles - start_cycles, ret, img);" in generator
+    assert "img->part == mailbox->verified_image_part" in generator
+    assert "img->fw_size == mailbox->verified_image_fw_size" in generator
+    assert "img->sha_hash[i] != mailbox->verified_image_sha256[i]" in generator
+    assert "#if !defined(WOLFBOOT_NO_SIGN)" in generator
+
+
+def test_v7_generated_selected_image_helpers_compile_and_reject_mismatched_attempts(tmp_path):
+    """Exercise the generated C implementation, not a Python reimplementation."""
+    import shutil
+
+    import pytest
+
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        pytest.skip("host C compiler not available")
+    source = Path("scripts/framework/wolfboot_build.py").read_text(encoding="utf-8")
+
+    def c_function(name: str) -> str:
+        signature = f"void {name}("
+        start = source.index(signature, source.index("/* PQC_BOOT_RESET_ORIGIN_V3 */"))
+        brace = source.index("{", start)
+        level = 0
+        for end in range(brace, len(source)):
+            if source[end] == "{":
+                level += 1
+            elif source[end] == "}":
+                level -= 1
+                if level == 0:
+                    return source[start:end + 1]
+        raise AssertionError(f"unterminated generated C helper: {name}")
+
+    mailbox = source[
+        source.index("struct pqc_boot_timing_mailbox {"):
+        source.index("};", source.index("struct pqc_boot_timing_mailbox {")) + 2
+    ]
+    helper_names = (
+        "pqc_boot_timing_image_start",
+        "pqc_boot_timing_image_finish",
+        "pqc_boot_timing_select_image",
+    )
+    generated = "\n\n".join(c_function(name) for name in helper_names)
+    harness = (
+        "#include <stdint.h>\n#include <stdio.h>\n"
+        "#define WOLFBOOT_SHA_DIGEST_SIZE 32U\n"
+        "#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL\n"
+        "struct wolfBoot_image { uint32_t part; uint32_t fw_size; uint8_t *sha_hash; };\n"
+        + mailbox
+        + "\nstatic struct pqc_boot_timing_mailbox test_mailbox;\n"
+        + "#define WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR ((uintptr_t)&test_mailbox)\n"
+        + "static uint32_t pqc_boot_image_start_cycles, pqc_boot_image_start_part;\n"
+        + "static uint32_t pqc_boot_image_start_size, pqc_boot_image_started;\n"
+        + generated
+        + '''
+int main(void)
+{
+    uint8_t digest[32] = {0};
+    struct wolfBoot_image image = {0U, 100U, digest};
+    test_mailbox.integrity_valid = 1U;
+    test_mailbox.integrity_result = 0;
+    test_mailbox.verified_image_digest_valid = 1U;
+    test_mailbox.verified_image_part = 0U;
+    test_mailbox.verified_image_fw_size = 100U;
+    test_mailbox.signature_algorithm_id = 12U;
+    test_mailbox.authenticity_valid = 1U;
+    test_mailbox.authenticity_result = 0;
+    test_mailbox.hclk_hz = 80000000U;
+    pqc_boot_timing_image_start(1000U, &image);
+    pqc_boot_timing_image_finish(4000U, 0, &image);
+    pqc_boot_timing_select_image(&image);
+    if (test_mailbox.image_verification_valid != 1U ||
+        test_mailbox.image_verification_cycles != 3000U ||
+        test_mailbox.selected_image_valid != 1U)
+        return 1;
+    /* The final selected-image checkpoint must reject a different partition. */
+    image.part = 1U;
+    pqc_boot_timing_select_image(&image);
+    if (test_mailbox.selected_image_valid != 0U) return 2;
+    image.part = 0U;
+    /* An invalid signature must not finalize an enclosing interval. */
+    test_mailbox.image_verification_valid = 0U;
+    pqc_boot_timing_image_start(5000U, &image);
+    pqc_boot_timing_image_finish(6000U, -1, &image);
+    if (test_mailbox.image_verification_valid != 0U) return 3;
+    /* Integrity-only profiles do not require a signature measurement. */
+    test_mailbox.signature_algorithm_id = 1U;
+    test_mailbox.authenticity_valid = 0U;
+    pqc_boot_timing_image_start(7000U, &image);
+    pqc_boot_timing_image_finish(8000U, 0, &image);
+    pqc_boot_timing_select_image(&image);
+    if (test_mailbox.image_verification_valid != 1U ||
+        test_mailbox.image_verification_cycles != 1000U ||
+        test_mailbox.selected_image_valid != 1U)
+        return 4;
+    /* A digest mismatch cannot be reported as the selected image. */
+    digest[0] = 1U;
+    pqc_boot_timing_select_image(&image);
+    if (test_mailbox.selected_image_valid != 0U) return 5;
+    puts("generated image interval and final-selection checks passed");
+    return 0;
+}
+'''
+    )
+    c_path = tmp_path / "mailbox_v7.c"
+    c_path.write_text(harness, encoding="utf-8")
+    executable = tmp_path / "mailbox_v7"
+    subprocess.run(
+        [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", str(c_path), "-o", str(executable)],
+        capture_output=True, text=True, check=True,
+    )
+    result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
+    assert "generated image interval and final-selection checks passed" in result.stdout
