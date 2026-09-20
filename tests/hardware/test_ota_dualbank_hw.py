@@ -328,10 +328,10 @@ def _assert_v7_boot_evidence(manifest_path: Path) -> list[dict[str, str]]:
                 verification = _sole_boot_record(evidence, "PQC_SECURE_BOOT_VERIFICATION")
                 profile = _sole_boot_record(evidence, "PQC_SECURE_BOOT_PROFILE")
                 total = _sole_boot_record(evidence, "PQC_SECURE_BOOT_TOTAL")
-                assert profile.get("mailbox_version") == "7"
-                assert image.get("mailbox_version") == "7"
-                assert verification.get("mailbox_version") == "7"
-                assert total.get("mailbox_version") == "7"
+                assert profile.get("mailbox_version") == "8"
+                assert image.get("mailbox_version") == "8"
+                assert verification.get("mailbox_version") == "8"
+                assert total.get("mailbox_version") == "8"
                 assert verification.get("selected_image_valid") == "1"
                 assert verification.get("measurement_valid") == "1"
                 assert int(verification.get("cycles", "0")) > 0

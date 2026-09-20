@@ -8,6 +8,7 @@ identity and gateway account, and must enter through this launcher.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import select
@@ -140,25 +141,92 @@ def attempt(target: str, owner: str, description: str) -> tuple[subprocess.Popen
     raise RuntimeError(f'gateway lock acquisition failed: {line} {error}')
 
 
+
+class WaitDisplay:
+    """One updating TTY line; event-only output for redirected/CI logs."""
+
+    SPINNER = ('|', '/', '-', '\\')
+
+    def __init__(self, stream=None, clock=None):
+        self.stream = stream if stream is not None else sys.stderr
+        self.clock = clock if clock is not None else time.monotonic
+        self.started = self.clock()
+        self.interactive = bool(getattr(self.stream, 'isatty', lambda: False)())
+        self.owner_key = None
+        self.width = 0
+        self.frame = 0
+        self.visible = False
+
+    def _clear_line(self):
+        if self.visible:
+            self.stream.write('\r' + ' ' * self.width + '\r')
+            self.visible = False
+            self.width = 0
+
+    def busy(self, message: str):
+        # BUSY carries gateway-side JSON. Compare the complete canonical record
+        # so changes to the owner, description or lease metadata are reported.
+        raw = message.removeprefix('BUSY ').strip()
+        try:
+            owner = json.loads(raw)
+            if not isinstance(owner, dict):
+                raise ValueError('owner is not an object')
+            key = json.dumps(owner, sort_keys=True)
+            label = owner.get('description') or owner.get('owner_id') or 'unknown'
+        except (ValueError, TypeError):
+            key, label = raw, raw or 'unknown'
+        changed = key != self.owner_key
+        if changed:
+            if self.interactive:
+                self._clear_line()
+            self.stream.write(f'Gateway busy | Owner: {label} | Ctrl-C to cancel\n')
+            self.owner_key = key
+        if self.interactive:
+            elapsed = max(0, int(self.clock() - self.started))
+            hours, remainder = divmod(elapsed, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            duration = f'{hours}h {minutes:02d}m {seconds:02d}s' if hours else f'{minutes}m {seconds:02d}s'
+            frame = self.SPINNER[self.frame % len(self.SPINNER)]
+            self.frame += 1
+            line = f'{frame} Gateway busy | Owner: {label} | Waiting: {duration} | Ctrl-C to cancel'
+            self.stream.write('\r' + line + ' ' * max(0, self.width - len(line)))
+            self.width = len(line)
+            self.visible = True
+        self.stream.flush()
+
+    def finish(self):
+        if self.interactive:
+            self._clear_line()
+            self.stream.flush()
+
+
 def run_locked(target: str, command: list[str], *, interval: float = 2.0) -> int:
     if not command:
         raise ValueError('missing command')
     owner = uuid.uuid4().hex
     description = f'{os.uname().nodename} user={os.environ.get("USER", "unknown")} command={" ".join(command)[:140]}'
+    display = WaitDisplay()
     while True:
         try:
             lease, info = attempt(target, owner, description)
             break
         except BlockingIOError as exc:
-            print(f'{exc}. Waiting; press Ctrl-C to cancel.', file=sys.stderr, flush=True)
+            display.busy(str(exc))
             try:
                 time.sleep(interval)
             except KeyboardInterrupt:
+                display.finish()
                 print('Gateway wait cancelled.', file=sys.stderr)
                 return 130
+        except KeyboardInterrupt:
+            display.finish()
+            print('Gateway wait cancelled.', file=sys.stderr)
+            return 130
         except (OSError, RuntimeError) as exc:
+            display.finish()
             print(f'Gateway lock error: {exc}', file=sys.stderr)
             return 2
+    display.finish()
     print(f'Gateway lock acquired: {info}', file=sys.stderr, flush=True)
     child = None
     lost = threading.Event()

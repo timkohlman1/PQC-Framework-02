@@ -261,3 +261,42 @@ Release is the default build mode and `--debug` selects Debug compiler configura
 ### MQTT TLS packet decryption
 
 TLS-enabled MQTT runs collect `mqtt-broker-tls-keylog.log` before the managed broker is stopped. It is stored beside `gateway-network-capture.pcap` and described under `mqtt_broker.tls_keylog` in `manifest.json`. A TLS run does not pass broker evidence collection when the key log is missing or empty. Plaintext runs do not require this artifact.
+
+### Optional bootloader verification stack profiling (Request 4)
+
+Normal secure-boot campaigns leave `boot_stack_profiling: false` and retain
+existing DWT, reset-origin and MQTT evidence without watermarking. The dedicated
+`configs/campaigns/secure_boot_stack.yaml` enables profiling. To resolve it:
+
+```bash
+cd /home/timk/rmit/PQC-Framework-02
+./scripts/dev.sh python scripts/resolve_campaign.py secure_boot_stack.yaml
+```
+
+Use the resulting case files with the normal `experiment build` /
+`experiment-gateway run` workflow, or execute the campaign with the maintained
+campaign command documented in `README.md`. The profile-appropriate bootloader
+is built with stack instrumentation and paired with the matching relocated
+application (mailbox v8). Read the `PQC_SECURE_BOOT_STACK` structured evidence
+from the retained raw MQTT stream; `measurement_status=measured` plus a positive
+high-water value and successful selected-image verification is required. If
+unavailable, inspect `unavailable_reason` (`watermark_untouched`,
+`region_exhausted`, `scan_interference`, or `initialization_unavailable`)
+and retain that status rather than substituting the reserved RAM size.
+Do not compare timings from these runs with normal boot or application timing
+campaigns. The watermark can change reset-to-application delay; ordinary
+secure-boot image validation, bank switching and OTA logic remain unchanged.
+To analyse finalized profiling runs without changing their manifests, pass the
+actual retained run-manifest paths to the offline parser:
+
+```bash
+./scripts/dev.sh python scripts/analyse_secure_boot_stack.py \
+  results/<run-one>/manifest.json results/<run-two>/manifest.json \
+  --output-dir results/analysis/secure_boot_stack
+```
+
+Replace the example run-directory names with the real paths. The parser rejects
+incomplete streams, mismatched run IDs, unavailable evidence presented as a
+numeric result, and profiling records without a matching mailbox version.
+Its output records input SHA-256 hashes and remains separate from run capture.
+Run the targeted boot/handoff and OTA smoke regressions before hardware claims.

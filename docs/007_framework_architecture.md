@@ -554,6 +554,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 
 | ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
 |---|---|---|---|---|---|---|---|
+| DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
 | DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |
 | DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Dedicated gateway-mediated known-image UART/hardware assertion | Existing hardware evidence checks task-context ordering in the secure-boot benchmark path, but there is no focused baseline test that builds/flashes the image and asserts the complete M6.1 lifecycle and unavailable-field contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
 | DTR-002 | M6.2 lwIP network-interface boundary marker | Dedicated gateway-mediated known-image UART/hardware assertion | Static/build coverage exists, but the known-image baseline hardware test does not yet assert the complete `lwIP network interface:` marker contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
@@ -1105,6 +1106,63 @@ and serialized record schema, but cannot establish an STM32 runtime result.
 A successful integrity-only corrupted-image rejection and all maintained
 secure-boot profiles require retained hardware evidence before the request can
 be marked hardware-validated.
+### Request 4 — optional wolfBoot verification stack profiling (mailbox v8)
+
+The `runtime_stack_high_water_instrumentation` wolfBoot build option defaults to
+`false`. The canonical `secure_boot_stack` campaign enables it, independently
+of the secure-boot algorithm selection. The resolved `boot_stack_profiling`
+choice participates in the firmware identity and the bootloader build-state
+identity; a profiling build cannot be substituted for a normal timing build.
+All normal DWT verification measurements and the reset-origin 1 MHz handoff
+remain enabled in either mode.
+
+The instrumented STM32L4 bootloader fills available primary RAM between the
+aligned end of BSS plus 128 bytes and the *currently unused* stack area below
+the live MSP, excluding an additional 128 bytes below MSP. It does so before
+each integrity-verification attempt, outside the DWT interval. The
+watermark is examined only after the final DWT verification end snapshot and
+outside the timed interval. It is invalidated for a new integrity attempt and
+accepted only if the selected-image checkpoint agrees with the verified image.
+The reported high-water value is the distance in bytes from `END_STACK` to the
+lowest overwritten watermark word, **not** the linker stack reservation or
+`.data`/`.bss` size. It covers the instrumented interval from watermark
+initialization immediately before integrity checking through completion of
+image verification, including incidental interrupt stack use in that interval. It excludes
+stack use before initialization, after verification, and separate FreeRTOS
+application task/MSP use. If the paint is untouched, the bottom sentinel is
+consumed, memory is insufficient, or the deepest observation is potentially
+from the scan function itself, the metric is explicitly unavailable. This
+technique detects overwritten bytes, not reserved-but-unwritten stack frames.
+
+The appended v8 mailbox fields are `stack_profiling_enabled`,
+`stack_measurement_status` (0=disabled, 1=measured, 2=initialization unavailable,
+3=watermark untouched, 4=region exhausted, 5=scan interference), and
+`stack_watermark_capacity_bytes`. The existing `max_stack_used_bytes` is
+retained; `0xFFFFFFFF` remains the unavailable sentinel. The RAM2 OTA event
+mailbox remains at offset `0x100`. `PQC_SECURE_BOOT_STACK` is appended only
+when profiling is enabled, after the workload has finished and before the
+result-buffer hash/completion is calculated. It states the measurement status,
+boundary, timing-comparison exclusion, and `unavailable_reason` explicitly.
+The reduced 128-byte exclusion makes shallow verification usage observable but
+still excludes stack usage within that region. A run reporting
+`watermark_untouched` or another unavailable reason must not be treated as a
+measured stack value; an instrumented hardware run is required to establish
+that the chosen exclusion also protects live frames. Normal runs report the
+existing secure-boot records without a stack record. Both application and
+bootloader must be rebuilt together for mailbox v8; the version mismatch
+invalidates reset-origin bridging and secure-boot evidence rather than silently
+interpreting the old record.
+
+Stack-profiling runs are **not timing benchmark runs**: the watermark fill
+changes boot duration and can change memory/cache or runtime conditions. The
+verification DWT readings are retained as diagnostics, but application-boot,
+TLS and secure-boot timings from profiling runs must not enter normal timing
+aggregates. Cross-profile stack comparison is permitted only for successfully
+selected images with explicit measured status and retained raw evidence.
+Firmware/build and gateway/hardware behavior, including OTA compatibility,
+remain unverified until the specified gates are executed on the development
+host and STM32 laboratory target.
+
 ### Hardware-test isolation retrofit (in progress)
 
 The `tests/hardware/test_mqtt_plaintext_st67_e2e_hw.py`,
