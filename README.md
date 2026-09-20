@@ -19,44 +19,44 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 - `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
 - `docs/006_security_and_secrets.md` — secret handling and signing-state safety
 - `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, and deferred tests
-- `experiment/mqtt-broker/README.md` — broker provisioning, operation, and PowerShell `--client-args` forwarding contract
+- `experiment/mqtt-broker/README.md` — broker provisioning, operation, and Linux/bash `--client-args` forwarding contract
 
 ## Default workflow
 
-The default development path is Docker-hosted Linux execution through the project wrapper scripts `scripts\dev.ps1` and `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
+The default development path is Docker-hosted Linux execution through the project wrapper scripts `scripts/dev.sh` and `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
 
-```powershell
-.\scripts\dev.ps1 build-image
-.\scripts\dev.ps1 pytest tests/unit
-.\scripts\dev.ps1 pytest
-.\scripts\dev.ps1 python scripts/experiment.py --help
-.\scripts\dev.ps1 python-gateway scripts/experiment.py --help
+```bash
+./scripts/dev.sh build-image
+./scripts/dev.sh pytest tests/unit
+./scripts/dev.sh pytest
+./scripts/dev.sh python scripts/experiment.py --help
+./scripts/dev.sh python-gateway scripts/experiment.py --help
 ```
 
 For local Wi-Fi credentials, copy the committed sample file once and edit the local copy:
 
-```powershell
-Copy-Item .env.sample .env
+```bash
+cp .env.sample .env
 ```
 
-Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. Both `scripts/dev.ps1` and `scripts/dev.sh` load only those two values for the duration of each Docker invocation; caller-supplied environment variables take precedence and are left unchanged. The wrapper-scoped values do not persist after the invocation, and secret values are never written into generated campaign YAML.
+Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in `.env`. The real `.env` is Git-ignored. Both `scripts/dev.sh` and `scripts/dev.sh` load only those two values for the duration of each Docker invocation; caller-supplied environment variables take precedence and are left unchanged. The wrapper-scoped values do not persist after the invocation, and secret values are never written into generated campaign YAML.
 
 All application builds use the fixed wolfBoot-relocated layout. Release is the default compiler configuration. Add `--debug` when Debug compiler settings are required; the flash addresses remain unchanged.
 
 Resolve a campaign before using the experiment runner. Generated cases are the only operational experiment inputs:
 
-```powershell
-.\scripts\dev.ps1 python scripts/resolve_campaign.py baseline.yaml
-$case = Get-ChildItem ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | Select-Object -First 1
-$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
-.\scripts\dev.ps1 experiment status --experiment $path
-.\scripts\dev.ps1 experiment build --experiment $path
-.\scripts\dev.ps1 experiment-gateway run --experiment $path
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py baseline.yaml
+case_file=$(compgen -G ".pqc-generated-state/campaigns/baseline/cases/0001_*.yaml" | sort | head -n 1)
+path="$case_file"
+./scripts/dev.sh experiment status --experiment "$path"
+./scripts/dev.sh experiment build --experiment "$path"
+./scripts/dev.sh experiment-gateway run --experiment "$path"
 ```
 
 Host-native diagnostic fallback:
 
-```powershell
+```bash
 cmake --preset Release
 cmake --build --preset Release
 cmake --preset Debug
@@ -80,11 +80,11 @@ A named algorithm implies wolfBoot; `--boot-mode wolfboot` is not required.
 
 For secure-boot runs, resolve the `secure_boot` campaign and execute the selected generated case. The case already carries its secure-boot selection, so `--boot-algorithm` is normally unnecessary:
 
-```powershell
-.\scripts\dev.ps1 python scripts/resolve_campaign.py secure_boot.yaml
-$case = Get-ChildItem ".pqc-generated-state/campaigns/secure_boot/cases/0012_*.yaml" | Select-Object -First 1
-$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
-.\scripts\dev.ps1 experiment-gateway run --experiment $path
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py secure_boot.yaml
+case_file=$(compgen -G ".pqc-generated-state/campaigns/secure_boot/cases/0012_*.yaml" | sort | head -n 1)
+path="$case_file"
+./scripts/dev.sh experiment-gateway run --experiment "$path"
 ```
 
 ML-DSA-44, ML-DSA-65, and ML-DSA-87 are explicit non-default signing evaluation profiles. Release and Debug share the same relocated layout:
@@ -97,9 +97,9 @@ application vector table: 0x08023000
 
 For manual packaging, create the framework-recorded Release build before signing:
 
-```powershell
-.\scripts\dev.ps1 experiment build --experiment $path
-.\scripts\dev.ps1 experiment sign-application
+```bash
+./scripts/dev.sh experiment build --experiment "$path"
+./scripts/dev.sh experiment sign-application
 ```
 
 Detailed commands and signing-tuple rules are owned by `docs/005_remote_flash_workflow.md`.
@@ -110,8 +110,8 @@ The repository includes plaintext, classical TLS, and hybrid PQC MQTT experiment
 
 Provision all configured X.509 research profiles once before running TLS experiments:
 
-```powershell
-.\scripts\dev.ps1 python scripts/provision_certificates.py
+```bash
+./scripts/dev.sh python scripts/provision_certificates.py
 ```
 
 Profiles are declared under `configs/tls_auth/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
@@ -128,11 +128,11 @@ Do not claim build, signing, flashing, hardware, UART, network, MQTT/TLS, timing
 
 Opt-in physical MQTT experiment matrix:
 
-```powershell
-.\scripts\dev.ps1 pytest-hardware `
-    tests/hardware/test_mqtt_experiment_matrix_hw.py `
-    -m hardware `
-    --pqc-require-hardware `
+```bash
+./scripts/dev.sh pytest-hardware \
+    tests/hardware/test_mqtt_experiment_matrix_hw.py \
+    -m hardware \
+    --pqc-require-hardware \
     --pqc-hardware-experiment-matrix
 ```
 
@@ -142,11 +142,11 @@ This long matrix covers direct-flash and wolfBoot execution for plaintext and cl
 
 TLS key exchange, authentication, secure boot, PQ-only TLS, Ready Metrics 2, and network-condition selection are expressed as canonical campaigns rather than concrete experiment-file Cartesian products. Resolve a campaign and run the generated case you need:
 
-```powershell
-.\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange.yaml
-$case = Get-ChildItem ".pqc-generated-state/campaigns/tls_key_exchange/cases/0006_*.yaml" | Select-Object -First 1
-$path = (Resolve-Path -Relative $case.FullName) -replace '\\','/'
-.\scripts\dev.ps1 experiment-gateway run --experiment $path
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py tls_key_exchange.yaml
+case_file=$(compgen -G ".pqc-generated-state/campaigns/tls_key_exchange/cases/0006_*.yaml" | sort | head -n 1)
+path="$case_file"
+./scripts/dev.sh experiment-gateway run --experiment "$path"
 ```
 
 The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. `tls_authentication` varies the canonical certificate/authentication profile and server/mutual mode. `tls_pq_only` contains the two principal `ML_KEM_768` + `mldsa65` conditions. `secure_boot` contains the twelve wolfBoot selections.
@@ -157,14 +157,14 @@ Network conditions are selected through `configs/network_conditions/` and the `n
 
 Execute a complete campaign through the gateway wrapper:
 
-```powershell
-.\scripts\dev.ps1 campaign-gateway baseline
+```bash
+./scripts/dev.sh campaign-gateway baseline
 ```
 
 The executor validates the campaign `execution` policy before hardware work, expands deterministic cases, groups them by build-affecting firmware identity, performs one validated preparation per group, then binds reuse to the final validated firmware/ELF SHA-256. Each repetition invokes the normal experiment runner in runtime-only mode and retains its own finalized run manifest, UART/result stream, broker evidence and PCAP. Compatible brokers and a condition may remain active across repetitions, but each reuse is health/readiness checked. Resume is explicit using the generated campaign manifest:
 
-```powershell
-.\scripts\dev.ps1 campaign-gateway --resume "results/campaigns/<campaign-run>/campaign-manifest.json"
+```bash
+./scripts/dev.sh campaign-gateway --resume "results/campaigns/<campaign-run>/campaign-manifest.json"
 ```
 
 Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RAM_LINKER_ACCOUNTING` reports static/linker-region capacity and reservation, while `PQC_MEMORY_HIGH_WATERMARK` reports FreeRTOS heap, ML-DSA RAM3 workspace, newlib `_sbrk`, and application MSP high-water values. The linker now reserves 1280 bytes (`0x500`) for the MSP; runtime evidence still reports the actual measured peak and remaining headroom. Pre-`main()` startup stack depth remains outside this measurement.
@@ -177,8 +177,8 @@ When `experiment.py run` consumes a canonical generated case, the case's `choice
 
 Preview/materialise a campaign without hardware access:
 
-```powershell
-.\scripts\dev.ps1 python scripts/resolve_campaign.py tls_key_exchange
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py tls_key_exchange
 ```
 
 Generated cases are written below `.pqc-generated-state/campaigns/` and contain profile identities, non-secret resolved choices, content hashes, configuration identity, and firmware identity. Wi-Fi secret values are resolved only when a generated case is consumed for execution. Set `PQC_WIFI_SSID` and `PQC_WIFI_PSK` in the local execution environment or in the Git-ignored repository-root `.env` copied from `.env.sample`. They are not written into generated case YAML.

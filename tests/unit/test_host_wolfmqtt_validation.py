@@ -147,10 +147,13 @@ def test_split_preserves_all_client_tokens_verbatim():
         assert client == ["-h", "10.1.1.18", "-m", "--literal"]
 
 
-def test_documented_powershell_boundary_is_present():
-    text = UTILITY.read_text(encoding="utf-8")
-    assert "--client-args" in text
-    assert "quote each dash-prefixed" in text
+def test_documented_linux_client_argument_boundary_is_present(capsys):
+    module = load_utility_module()
+    assert module.main(["help"]) == 0
+    output = capsys.readouterr().out
+    assert "Through scripts/dev.sh, use --client-args" in output
+    assert "options such as -h, -p, and -i after this named argument boundary" in output
+    assert "quote each dash-prefixed" not in output
 
 
 

@@ -38,12 +38,8 @@ def test_runtime_only_parser_accepts_campaign_owned_reuse_controls():
 
 
 @pytest.mark.integration
-def test_campaign_wrapper_commands_exist_on_both_development_hosts():
-    ps = (REPO_ROOT / "scripts/dev.ps1").read_text(encoding="utf-8")
+def test_campaign_wrapper_commands_exist_on_linux():
     sh = (REPO_ROOT / "scripts/dev.sh").read_text(encoding="utf-8")
-    assert '"campaign-gateway"' in ps
-    assert '"campaign"' in ps
     assert "campaign-gateway)" in sh
     assert "campaign)" in sh
-    assert "scripts/run_campaign.py" in ps
     assert "scripts/run_campaign.py" in sh

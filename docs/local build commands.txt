@@ -4,16 +4,16 @@ Local Build Diagnostic Fallback
 Purpose
 -------
 
-The normal project workflow is Docker-hosted and must be launched from the repository root through `scripts/dev.ps1` or `scripts/dev.sh`. This file is retained only as a diagnostic fallback reference for development-machine, CubeMX, IDE, or local toolchain investigation.
+The normal project workflow is Docker-hosted and must be launched from the repository root through `scripts/dev.sh`. This file is retained only as a diagnostic fallback reference for development-machine, CubeMX, IDE, or local toolchain investigation.
 
 Normal secure-boot workflow
 ---------------------------
 
-```powershell
-.\scripts\dev.ps1 experiment build-wolfboot --algorithm <algorithm>
-.\scripts\dev.ps1 experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
-.\scripts\dev.ps1 experiment sign-application --algorithm <algorithm>
-.\scripts\dev.ps1 experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --algorithm <algorithm> --repeat-count 2
+```bash
+./scripts/dev.sh experiment build-wolfboot --algorithm <algorithm>
+./scripts/dev.sh experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset RelocatedDebug --build-preset RelocatedDebug --artifact build/RelocatedDebug/stm32_basic_hal1.elf
+./scripts/dev.sh experiment sign-application --algorithm <algorithm>
+./scripts/dev.sh experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --algorithm <algorithm> --repeat-count 2
 ```
 
 Signing-state safety
@@ -32,72 +32,78 @@ A host-native CMake, Make, Python, or IDE command may be used to isolate a local
 Building Relocated application
 ------------------------------
 
-.\scripts\dev.ps1 experiment build `
-    --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml `
-    --results-dir results/secure-boot-matrix `
-    --configure-preset RelocatedDebug `
-    --build-preset RelocatedDebug `
-    --artifact build/RelocatedDebug/stm32_basic_hal1.elf `
+```bash
+./scripts/dev.sh experiment build \
+    --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml \
+    --results-dir results/secure-boot-matrix \
+    --configure-preset RelocatedDebug \
+    --build-preset RelocatedDebug \
+    --artifact build/RelocatedDebug/stm32_basic_hal1.elf \
     --force
 
-if ($LASTEXITCODE -ne 0) {
-    throw "Relocated application build failed"
-}
+if [[ $? -ne 0 ]]; then
+    echo "Relocated application build failed" >&2
+    exit 1
+fi
+```
 
 Run full matrix of secureboot profiles
 --------------------------------------
 
-$algorithms = @(
-    "ecdsa_p256",
-    "ecc384",
-    "ecc521",
-    "ed25519",
-    "ed448",
-    "rsa2048",
-    "rsa3072",
-    "rsa4096",
-    "mldsa44",
+```bash
+algorithms=(
+    "ecdsa_p256"
+    "ecc384"
+    "ecc521"
+    "ed25519"
+    "ed448"
+    "rsa2048"
+    "rsa3072"
+    "rsa4096"
+    "mldsa44"
     "mldsa65"
 )
 
-$resultsRoot = "results/secure-boot-matrix"
+resultsRoot="results/secure-boot-matrix"
 
-foreach ($algorithm in $algorithms) {
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "Secure-boot end-to-end test: $algorithm"
-    Write-Host "============================================================"
+for algorithm in "${algorithms[@]}"; do
+    echo ""
+    echo "============================================================"
+    echo "Secure-boot end-to-end test: ${algorithm}"
+    echo "============================================================"
 
-    Write-Host "[1/3] Building wolfBoot"
-    .\scripts\dev.ps1 experiment build-wolfboot `
-        --algorithm $algorithm `
-        --results-dir $resultsRoot
+    echo "[1/3] Building wolfBoot"
+    ./scripts/dev.sh experiment build-wolfboot \
+        --algorithm ${algorithm} \
+        --results-dir "$resultsRoot"
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "wolfBoot build failed for $algorithm"
-    }
+    if [[ $? -ne 0 ]]; then
+        echo "wolfBoot build failed for ${algorithm}" >&2
+        exit 1
+    fi
 
-    Write-Host "[2/3] Signing relocated application"
-    .\scripts\dev.ps1 experiment sign-application `
-        --algorithm $algorithm `
-        --results-dir $resultsRoot
+    echo "[2/3] Signing relocated application"
+    ./scripts/dev.sh experiment sign-application \
+        --algorithm ${algorithm} \
+        --results-dir "$resultsRoot"
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "Application signing failed for $algorithm"
-    }
+    if [[ $? -ne 0 ]]; then
+        echo "Application signing failed for ${algorithm}" >&2
+        exit 1
+    fi
 
-    Write-Host "[3/3] Flashing and checking UART"
-    .\scripts\dev.ps1 experiment-gateway flash-secure-boot `
-        --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml `
-        --algorithm $algorithm `
-        --results-dir $resultsRoot `
+    echo "[3/3] Flashing and checking UART"
+    ./scripts/dev.sh experiment-gateway flash-secure-boot \
+        --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml \
+        --algorithm ${algorithm} \
+        --results-dir "$resultsRoot" \
         --uart-duration-seconds 15
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "Secure-boot flash/UART test failed for $algorithm"
-    }
+    if [[ $? -ne 0 ]]; then
+        echo "Secure-boot flash/UART test failed for ${algorithm}" >&2
+        exit 1
+    fi
 
-    Write-Host "PASS: $algorithm"
-}
-
-
+    echo "PASS: ${algorithm}"
+done
+```
