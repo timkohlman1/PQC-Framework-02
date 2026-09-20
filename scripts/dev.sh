@@ -201,7 +201,7 @@ shift
 # The marker prevents recursion when the lock launcher re-enters dev.sh.
 if [ "${PQC_GATEWAY_LOCK_HELD:-}" != 1 ]; then
   case "$command" in
-    pytest-gateway|pytest-hardware|experiment-gateway|campaign-gateway|python-gateway|run)
+    pytest-gateway|pytest-hardware|experiment-gateway|campaign-gateway|python-gateway)
       PQC_GATEWAY_LOCK_HELD=1
       export PQC_GATEWAY_LOCK_HELD
       exec python3 "$repo_root/scripts/gateway_lock.py" run -- "$repo_root/scripts/dev.sh" "$command" "$@"

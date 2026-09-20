@@ -1134,9 +1134,10 @@ establish successful physical hardware execution without recorded test evidence.
 ### Cross-host gateway lease (Linux wrapper, unverified on gateway)
 
 `scripts/gateway_lock.py` uses a persistent SSH session to hold a gateway-side
-advisory `flock`. Linux wrapper gateway-enabled commands and generic `run` keep
-one lease for the entire Docker process, including nested hardware-test and
-campaign operations. Local build-only modes remain outside the lock. The
+advisory `flock`. Linux wrapper gateway-enabled commands keep one lease for
+the entire Docker process, including nested hardware-test and campaign
+operations. Generic `./scripts/dev.sh run` and local build-only modes do not
+acquire the lock; explicit `gateway-lock run -- <command>` remains available. The
 administrative status/release commands and recovery restrictions are documented
 in `docs/002_host_gateway_setup.md`. Direct SSH and direct Python/gateway
 administration paths are not intercepted and must not be used concurrently with
