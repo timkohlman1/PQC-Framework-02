@@ -148,5 +148,9 @@ security boundary. Direct SSH, direct gateway helpers, direct Python entry
 points, and standalone broker administration are not intercepted by this
 wrapper. All developers must use the locked Linux wrapper for shared hardware
 operations; independent gateway access can still invalidate an experiment.
-A `run` or `python-gateway` call can perform long preparation under the lock;
-use separate local build commands when preserving gateway state is unnecessary.
+Generic `./scripts/dev.sh run` does not acquire the gateway lock and is intended
+for non-hardware container operations, including CI toolchain checks. For an
+explicitly protected generic command use `./scripts/dev.sh gateway-lock run --
+<command>`. A `python-gateway` invocation can perform long preparation under
+the lock; use separate local build commands when preserving gateway state is
+unnecessary.
