@@ -42,12 +42,18 @@ def _status(index: int, **override):
     )
 
 
-def _stream(tmp_path, *, statuses=None, run_id="unit-run", truncated=False):
+def _stream(tmp_path, *, statuses=None, run_id="unit-run", truncated=False, logical_override=None):
     if statuses is None:
         statuses = (_status(0), _status(1))
     records = []
-    for status in statuses:
-        data = (json.dumps({"type": "tls_handshake_repeat", "text": status}) + "\n").encode()
+    for index, status in enumerate(statuses):
+        logical_record = {
+            "schema_version": 1, "source": "stm32", "context": "tls_handshake_repeat",
+            "iteration": index, "text": status,
+        }
+        if logical_override and index in logical_override:
+            logical_record.update(logical_override[index])
+        data = (json.dumps(logical_record) + "\n").encode()
         base = {"run_id": run_id, "source": "stm32"}
         records.append({"topic": f"pqc/result/stm32/{run_id}/chunk", "payload": {
             "payload": json.dumps({**base, "type": "chunk", "sequence": 0, "data_hex": data.hex()}),
@@ -75,6 +81,22 @@ def test_accepts_fresh_completed_authenticated_tls_epochs(tmp_path):
 def test_rejects_invalid_tls_outcome(tmp_path, change):
     path = _stream(tmp_path, statuses=(_status(0), _status(1, **change)))
     with pytest.raises(AssertionError):
+        _module()._assert_tls_repeat_statuses(path, "unit-run", 2)
+
+
+@pytest.mark.parametrize("invalid", [
+    {"context": "unrelated"}, {"source": "gateway"},
+    {"iteration": 0}, {"schema_version": 99}, {"text": None},
+])
+def test_rejects_invalid_logical_status_metadata(tmp_path, invalid):
+    path = _stream(tmp_path, logical_override={1: invalid})
+    with pytest.raises(AssertionError):
+        _module()._assert_tls_repeat_statuses(path, "unit-run", 2)
+
+
+def test_rejects_missing_status_in_valid_logical_record(tmp_path):
+    path = _stream(tmp_path, logical_override={1: {"text": "unrelated status"}})
+    with pytest.raises(AssertionError, match="exactly one TLS status"):
         _module()._assert_tls_repeat_statuses(path, "unit-run", 2)
 
 

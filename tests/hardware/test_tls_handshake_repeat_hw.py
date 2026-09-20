@@ -80,9 +80,22 @@ def _assert_tls_repeat_statuses(raw: Path, run_id: str, expected: int) -> None:
             if not logical_line.strip():
                 continue
             logical_record = json.loads(logical_line)
-            if logical_record.get("type") != "tls_handshake_repeat":
+            assert isinstance(logical_record, dict), "non-object logical result record"
+            # The firmware result-buffer schema uses `context`, not `type`.
+            # Require the expected STM32 source and handshake iteration as well.
+            if logical_record.get("context") != "tls_handshake_repeat":
                 continue
-            status = logical_record.get("text", "")
+            assert logical_record.get("source") == "stm32", (
+                f"TLS handshake {epoch}: invalid logical result source"
+            )
+            assert logical_record.get("iteration") == epoch, (
+                f"TLS handshake {epoch}: mismatched logical result iteration"
+            )
+            assert logical_record.get("schema_version") == 1, (
+                f"TLS handshake {epoch}: unsupported logical result schema"
+            )
+            status = logical_record.get("text")
+            assert isinstance(status, str), f"TLS handshake {epoch}: missing status text"
             if "PQC_TLS_REPEAT_ITERATION schema=1 " in status:
                 status_lines.append(status)
         assert len(status_lines) == 1, (
