@@ -59,7 +59,7 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
         '#include <stdint.h>\n#include <stdio.h>\n#include "pqc_result_buffer.h"\n'
         '#define SECURE_BOOT_APPLICATION 1\n'
         '#define PQC_BOOT_TIMING_MAILBOX_MAGIC 0x50514354UL\n'
-        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 6UL\n'
+        '#define PQC_BOOT_TIMING_MAILBOX_VERSION 7UL\n'
         + structure
         + 'static PQC_BootTimingMailbox test_mailbox;\n'
         + '#define PQC_BOOT_TIMING_MAILBOX_ADDR ((uintptr_t)&test_mailbox)\n'
@@ -75,11 +75,20 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
             test_mailbox.verified_image_digest_valid = 1U;
             test_mailbox.verified_image_part = 0U;
             test_mailbox.verified_image_fw_size = 204800U;
+            test_mailbox.selected_image_valid = 1U;
+            test_mailbox.selected_image_part = 0U;
+            test_mailbox.selected_image_fw_size = 204800U;
+            test_mailbox.image_verification_valid = 1U;
+            test_mailbox.image_verification_cycles = 35000000U;
             for (unsigned int i = 0U; i < 32U; ++i)
                 test_mailbox.verified_image_sha256[i] = (uint8_t)i;
             test_mailbox.sysclk_hz = 80000000U;
             test_mailbox.hclk_hz = 80000000U;
             PQC_ResultBufferReset();
+            PQC_BootEvidenceAppendToResultBuffer(0U);
+            fwrite(PQC_ResultBufferData(), 1, PQC_ResultBufferSize(), stdout);
+            PQC_ResultBufferReset();
+            test_mailbox.selected_image_valid = 0U;
             PQC_BootEvidenceAppendToResultBuffer(0U);
             fwrite(PQC_ResultBufferData(), 1, PQC_ResultBufferSize(), stdout);
             PQC_ResultBufferReset();
@@ -101,21 +110,27 @@ def test_production_boot_record_serializer_preserves_cycles_without_uart(tmp_pat
     )
     result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
     records = [json.loads(line) for line in result.stdout.splitlines()]
-    assert len(records) == 6
+    assert len(records) == 15
     assert all(record["context"] == "secure_boot" for record in records)
     assert "PQC_SECURE_BOOT_PROFILE" in records[0]["text"]
     assert "signature_algorithm=mldsa87" in records[0]["text"]
     assert "public_key_size_bytes=unavailable" in records[0]["text"]
-    assert "verification_type=integrity_sha256 measurement_valid=1 cycles=23752531 result=0" in records[2]["text"]
-    assert "hclk_hz=80000000" in records[2]["text"]
-    assert "signature_algorithm=mldsa87" in records[2]["text"]
-    assert "verification_type=signature_authenticity measurement_valid=0" in records[3]["text"]
+    assert "verification_type=integrity_sha256 measurement_valid=1 cycles=23752531 result=0" in records[3]["text"]
+    assert "hclk_hz=80000000" in records[3]["text"]
+    assert "signature_algorithm=mldsa87" in records[3]["text"]
+    assert "verification_type=signature_authenticity measurement_valid=0" in records[4]["text"]
     assert "signature_algorithm=mldsa87" in records[3]["text"]
     assert "PQC_SECURE_BOOT_IMAGE" in records[1]["text"]
     assert "image_sha256=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" in records[1]["text"]
     assert "packaged_image_sha256=unavailable" in records[1]["text"]
-    assert "PQC_SECURE_BOOT_HANDOFF" in records[4]["text"]
-    assert "mailbox_status=unavailable" in records[5]["text"]
+    assert "PQC_SECURE_BOOT_VERIFICATION" in records[2]["text"]
+    assert "measurement_valid=1 cycles=35000000" in records[2]["text"]
+    assert "PQC_SECURE_BOOT_HANDOFF" in records[5]["text"]
+    assert "PQC_SECURE_BOOT_TOTAL" in records[6]["text"]
+    assert "image_sha256=unavailable reason=selected_image_not_verified" in records[8]["text"]
+    assert "measurement_valid=0" in records[9]["text"]
+    assert "verification_type=integrity_sha256 measurement_valid=0" in records[10]["text"]
+    assert "mailbox_status=unavailable" in records[14]["text"]
 
 
 def test_verified_image_identity_captured_after_dwt_end():
@@ -127,3 +142,26 @@ def test_verified_image_identity_captured_after_dwt_end():
     assert 'mailbox->verified_image_sha256[i] = img->sha_hash[i];' in build
     assert 'if ((result == 0) && (img != NULL) && (img->sha_hash != NULL)' in build
     assert 'WOLFBOOT_SHA_DIGEST_SIZE == 32U' in build
+
+
+def test_v7_selected_image_checkpoint_and_independent_interval():
+    build = Path("scripts/framework/wolfboot_build.py").read_text(encoding="utf-8")
+    app = Path("Core/Src/main.c").read_text(encoding="utf-8")
+    standard = Path("tools/wolfboot/src/update_flash.c").read_text(encoding="utf-8")
+    swap = Path("tools/wolfboot/src/update_flash_hwswap.c").read_text(encoding="utf-8")
+    assert "PQC_BOOT_TIMING_MAILBOX_VERSION 7UL" in build
+    assert "PQC_BOOT_TIMING_MAILBOX_VERSION   7UL" in app
+    assert "pqc_boot_timing_image_start(start_cycles, img);" in build
+    assert "pqc_boot_timing_image_finish(end_cycles, ret, img);" in build
+    assert "cycles = end_cycles - pqc_boot_image_start_cycles;" in build
+    assert "mailbox->image_verification_valid = 1U;" in build
+    assert "mailbox->selected_image_valid = 1U;" in build
+    assert "pqc_boot_timing_select_image(&boot);" in standard
+    assert "pqc_boot_timing_select_image(&fw_image);" in swap
+    assert "if (active == PART_BOOT && fw_image.part == PART_BOOT)" in swap
+    assert "pqc_boot_timing_select_image(NULL);" in swap
+    assert standard.index("pqc_boot_timing_select_image(&boot);") < standard.index("    hal_prepare_boot();")
+    assert swap.index("pqc_boot_timing_select_image(&fw_image);") < swap.index("    hal_prepare_boot();")
+    assert "PQC_SECURE_BOOT_VERIFICATION" in app
+    assert "PQC_SECURE_BOOT_TOTAL" in app
+    assert "(mailbox->selected_image_valid == 1U)" in app

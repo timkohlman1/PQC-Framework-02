@@ -1019,3 +1019,68 @@ Request 14 algorithm identity extension (schema v5): the instrumented bootloader
 
 
 Request 14 incremental image identity (schema v6): the deferred MQTT PQC_SECURE_BOOT_IMAGE record contains wolfBoot's already-validated SHA-256 image-content digest and selected partition when integrity verification succeeded. The digest is not the SHA-256 of the entire packaged image artifact; the latter is retained in build/flash provenance, not inferred from the image header. The hash is copied after the DWT end read and serialized only after the application workload. The v6 mailbox still lacks a boot nonce/checksum; complete-image-verification timing, total secure-boot timing and per-boot build attribution are deferred and must not be inferred from the existing individual measurements.
+
+
+### Request 14 incremental attempt-isolation hardening (not final acceptance)
+
+The generated STM32L4 wolfBoot instrumentation clears the earlier integrity,
+image-digest, and authenticity evidence **before** starting every new integrity
+measurement. An authenticity sample is marked valid only when its image's
+partition, firmware-content length and stored SHA-256 digest match the most
+recent successfully verified integrity image. `SIGN=NONE` does not produce a
+valid signature-verification sample. This prevents several candidate/recovery
+cross-attribution cases; it does **not** establish that the recorded image is
+the final application selected for handoff, since that requires an explicit
+selection checkpoint on both update paths. The version-6 mailbox layout and
+working deferred MQTT publication are unchanged.
+
+An independent complete-image-verification timer, separately bounded total
+boot-execution measurement, run-to-bootloader source/artifact correlation,
+negative integrity-only hardware rejection test, and complete profile-matrix
+hardware validation remain **not verified**. In particular, adding an enclosing
+DWT interval across the existing standard-update UART output would count
+reporting overhead and must not be represented as verified computational timing.
+
+
+### Request 14: selected-image timing and provenance (mailbox v7)
+
+The STM32 application serializes boot evidence **after** workload measurement to the
+impairment-exempt MQTT reporting broker. The bootloader records a DWT snapshot at the
+start of image-content verification and another at the end of signature verification,
+or at the end of content verification for the integrity-only build. The
+`PQC_SECURE_BOOT_VERIFICATION` record is an **independently sampled enclosing
+interval**, not the sum of individual cryptographic timings. It includes the
+measurement-wrapper bookkeeping between the cryptographic calls. The normal
+standard-flash path excludes its intervening benchmark output and signature-start
+UART message while the timing instrumentation is enabled. The firmware treats
+intervals longer than 30 seconds as unavailable to guard against ambiguous 32-bit
+DWT wrapping at the selected clock rate; the limit is a measurement constraint,
+not a boot security policy.
+
+Candidate manifest checks, retries and bank fallbacks invalidate the preceding
+image interval. Just before `hal_prepare_boot`, the selected image is checked
+against the mailbox's verified partition, firmware-content size and SHA-256
+content digest. If these do not match, or the required integrity/authenticity
+checks did not succeed, `selected_image_valid=0` and the application does not
+present those previous-attempt measurements or digest as selected-image evidence.
+For a migration path that explicitly bypasses authenticity, signed-image
+selected-image measurement is marked unavailable rather than silently presented
+as a complete signed verification. When a hardware bank swap returns rather than
+resetting, `fw_image` can still describe the old PART_UPDATE while `do_boot`
+targets PART_BOOT; the selected-image checkpoint is invalidated in that case.
+
+`PQC_SECURE_BOOT_TOTAL` labels the existing operational interval from the
+start of `hal_init` to the pre-handoff LPTIM2 bridge checkpoint. It is **not**
+physical reset-to-application-startup timing; that includes the handoff and
+application startup. Image-content SHA-256 is **not** the signed package's SHA-256.
+The host-generated result/flash manifests retain the package, bootloader and
+flash-artifact hashes for separate provenance correlation. The device does not
+self-measure its bootloader binary SHA-256; no on-device bootloader provenance
+claim is inferred from a build-side hash alone.
+
+Mailbox v7 changes the shared bootloader/application layout. Both images must
+be rebuilt and flashed together. Unit tests check the generated instrumentation
+and serialized record schema, but cannot establish an STM32 runtime result.
+A successful integrity-only corrupted-image rejection and all maintained
+secure-boot profiles require retained hardware evidence before the request can
+be marked hardware-validated.

@@ -840,3 +840,41 @@ def test_network_condition_record_is_frozen_after_cleanup(tmp_path):
     assert item["acquisition"]["status"] == "available"
     assert item["path"] == log_path.name
     assert item["sha256"]
+
+
+def test_secure_boot_record_is_frozen_only_at_run_finalization(tmp_path):
+    """Repeated flash and UART stage updates must not freeze a mutable record."""
+    import pytest
+
+    manifest_module = load_manifest_module()
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {"artifacts": []}
+    prelim = {"secure_boot_evidence": {"result": "flash_completed"}}
+    manifest_module._sync_legacy_evidence(manifest_path, manifest, prelim)
+    assert all(item["role"] != "secure_boot_record" for item in manifest["artifacts"])
+
+    for status in ("negative_uart_pending", "secure_boot_negative_test_passed"):
+        final = {"secure_boot_evidence": {
+            "result": status,
+            "uart_evidence": {"log": "uart.log", "return_code": 0},
+            "negative_test": {"enabled": True, "verdict": "passed"},
+        }}
+        manifest_module._sync_legacy_evidence(manifest_path, manifest, final)
+        assert all(item["role"] != "secure_boot_record" for item in manifest["artifacts"])
+        manifest["secure_boot_evidence"] = final["secure_boot_evidence"]
+
+    manifest_module._register_final_secure_boot_record(manifest)
+    record = next(item for item in manifest["artifacts"] if item["role"] == "secure_boot_record")
+    assert record["acquisition"]["status"] == "available"
+    original_digest = record["sha256"]
+    manifest_module._register_final_secure_boot_record(manifest)
+    assert record["sha256"] == original_digest
+
+    manifest["secure_boot_evidence"] = {**manifest["secure_boot_evidence"], "result": "failed"}
+    with pytest.raises(ValueError, match="immutable"):
+        manifest_module._register_final_secure_boot_record(manifest)
+
+
+def test_secure_boot_uart_analyzer_is_imported():
+    experiment = load_experiment_module()
+    assert callable(experiment.analyze_uart_capture)

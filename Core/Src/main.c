@@ -1409,7 +1409,7 @@ static void APP_PrintApplicationClockConfiguration(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   6UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   7UL
 
 typedef struct
 {
@@ -1441,7 +1441,15 @@ typedef struct
   uint32_t verified_image_part;
   uint32_t verified_image_fw_size;
   uint8_t verified_image_sha256[32];
+  uint32_t image_verification_cycles;
+  uint32_t image_verification_valid;
+  uint32_t selected_image_valid;
+  uint32_t selected_image_part;
+  uint32_t selected_image_fw_size;
 } PQC_BootTimingMailbox;
+/* The hardware dual-bank event mailbox begins at 0x10000100. */
+typedef char PQC_BootTimingMailboxFitsOtaEvents[
+    (sizeof(PQC_BootTimingMailbox) <= 0x100U) ? 1 : -1];
 
 static void APP_ConfigureResetOriginHandoff(void)
 {
@@ -1484,7 +1492,7 @@ static void APP_PrintWolfBootVerificationTiming(void)
   if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
       (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
   {
-    APP_UART_WriteString("wolfBoot timing mailbox version: 6\r\n");
+    APP_UART_WriteString("wolfBoot timing mailbox version: 7\r\n");
     APP_UART_WriteString("wolfBoot integrity valid: ");
     APP_UART_WriteUint32(mailbox->integrity_valid);
     APP_UART_WriteString("\r\n");
@@ -1584,7 +1592,10 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
   /* Only the already-validated image-content SHA-256 is copied. This is
    * deliberately NOT the SHA-256 of the entire signed/packaged .bin file. */
   if ((mailbox->verified_image_digest_valid == 1U) &&
-      (mailbox->integrity_valid != 0U) && (mailbox->integrity_result == 0))
+      (mailbox->integrity_valid != 0U) && (mailbox->integrity_result == 0) &&
+      (mailbox->selected_image_valid == 1U) &&
+      (mailbox->verified_image_part == mailbox->selected_image_part) &&
+      (mailbox->verified_image_fw_size == mailbox->selected_image_fw_size))
   {
     static const char hex_digits[] = "0123456789abcdef";
     char digest_hex[65];
@@ -1610,19 +1621,35 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
     (void)snprintf(line, sizeof(line),
         "PQC_SECURE_BOOT_IMAGE schema=1 mailbox_version=%lu "
         "identity_kind=wolfboot_verified_image_content_sha256 "
-        "image_sha256=unavailable reason=integrity_not_verified "
+        "image_sha256=unavailable reason=selected_image_not_verified "
         "packaged_image_sha256=unavailable", (unsigned long)version);
   }
   (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
-  /* The v6 schema has no checksum or boot nonce: magic/version are structural
-   * checks, not proof against stale or corrupted retained SRAM contents. */
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT_VERIFICATION schema=1 mailbox_version=%lu "
+      "boundary=selected_image_integrity_start_to_authenticity_end "
+      "measurement_valid=%lu cycles=%lu hclk_hz=%lu "
+      "selected_image_valid=%lu selected_image_part=%lu "
+      "selected_image_fw_size_bytes=%lu",
+      (unsigned long)version,
+      (unsigned long)((mailbox->image_verification_valid == 1U) &&
+          (mailbox->selected_image_valid == 1U) && mailbox->hclk_hz != 0U),
+      (unsigned long)mailbox->image_verification_cycles,
+      (unsigned long)mailbox->hclk_hz,
+      (unsigned long)mailbox->selected_image_valid,
+      (unsigned long)mailbox->selected_image_part,
+      (unsigned long)mailbox->selected_image_fw_size);
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  /* Mailbox magic/version are structural checks, not proof against stale
+   * or corrupted retained SRAM contents. */
   (void)snprintf(line, sizeof(line),
       "PQC_SECURE_BOOT schema=1 mailbox_version=%lu mailbox_status=present "
       "verification_type=integrity_sha256 measurement_valid=%lu cycles=%lu "
       "result=%ld sysclk_hz=%lu hclk_hz=%lu signature_algorithm=%s",
       (unsigned long)version,
       (unsigned long)((mailbox->integrity_valid != 0U) &&
-                      (mailbox->integrity_cycles != 0U) && (mailbox->hclk_hz != 0U)),
+                      (mailbox->integrity_cycles != 0U) && (mailbox->hclk_hz != 0U) &&
+                      (mailbox->selected_image_valid == 1U)),
       (unsigned long)mailbox->integrity_cycles,
       (long)mailbox->integrity_result,
       (unsigned long)mailbox->sysclk_hz, (unsigned long)mailbox->hclk_hz,
@@ -1636,14 +1663,16 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
       "measurement_status=%s",
       (unsigned long)version,
       (unsigned long)((mailbox->authenticity_valid != 0U) &&
-                      (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U)),
+                      (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U) &&
+                      (mailbox->selected_image_valid == 1U)),
       (unsigned long)mailbox->authenticity_cycles,
       (long)mailbox->authenticity_result,
       (unsigned long)mailbox->sysclk_hz, (unsigned long)mailbox->hclk_hz,
       PQC_BootSignatureAlgorithmName(mailbox->signature_algorithm_id),
       mailbox->signature_algorithm_id == 1U ? "not_applicable" :
       ((mailbox->authenticity_valid != 0U) &&
-       (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U))
+       (mailbox->authenticity_cycles != 0U) && (mailbox->hclk_hz != 0U) &&
+       (mailbox->selected_image_valid == 1U))
       ? "measured" : "unavailable");
   (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
 
@@ -1659,6 +1688,17 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
       (unsigned long)mailbox->handoff_bridge_counter_hz,
       (unsigned long)mailbox->handoff_bridge_counter_bits,
       (unsigned long)mailbox->handoff_bridge_status);
+  (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  (void)snprintf(line, sizeof(line),
+      "PQC_SECURE_BOOT_TOTAL schema=1 mailbox_version=%lu "
+      "boundary=hal_init_entry_to_hal_prepare_boot "
+      "measurement_valid=%lu elapsed_us_high=%lu elapsed_us_low=%lu "
+      "clock_domain=reset_origin_lptim2_dwt_bridge "
+      "reset_to_application_startup=not_measured",
+      (unsigned long)version,
+      (unsigned long)(mailbox->handoff_bridge_status == 1U),
+      (unsigned long)mailbox->reset_origin_to_handoff_us_high,
+      (unsigned long)mailbox->reset_origin_to_handoff_us_low);
   (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
 #else
   (void)iteration;
