@@ -22,17 +22,34 @@ def test_profile_dependent_cleanup_covers_recursive_wolfssl_objects(tmp_path):
         source_dir
         / "lib/wolfssl/wolfcrypt/src/port/arm/thumb2-sha3-asm.o",
         source_dir / "lib/wolfssl/wolfcrypt/src/wc_mldsa.o",
+        source_dir / "src/libwolfboot.o",
+        source_dir / "src/libwolfboot.d",
+        source_dir / "src/update_flash_hwswap.o",
+        source_dir / "hal/stm32l4.o",
+        source_dir / "hal/spi/spi.o",
     ]
-    source = source_dir / "lib/wolfssl/wolfcrypt/src/sha3.c"
+    sources = [
+        source_dir / "lib/wolfssl/wolfcrypt/src/sha3.c",
+        source_dir / "src/libwolfboot.c",
+        source_dir / "src/keystore.c",
+        source_dir / "hal/stm32l4.c",
+    ]
+    signing_key = source_dir / "wolfboot_signing_private_key.der"
     for path in outputs:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"generated")
-    source.write_text("/* source */\n", encoding="utf-8")
+    for source in sources:
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("/* source */\n", encoding="utf-8")
+    signing_key.write_bytes(b"untouched test fixture")
 
     removed = _remove_wolfboot_host_tool_outputs(source_dir)
 
     assert set(removed) == set(outputs)
     assert all(not path.exists() for path in outputs)
-    assert source.is_file()
+    assert all(source.is_file() for source in sources)
+    assert signing_key.read_bytes() == b"untouched test fixture"
+    assert "src/**/*.o" in WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS
+    assert "hal/**/*.o" in WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS
     assert "lib/wolfssl/**/*.o" in WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS
     assert "lib/wolfssl/**/*.d" in WOLFBOOT_PROFILE_DEPENDENT_OUTPUT_PATTERNS

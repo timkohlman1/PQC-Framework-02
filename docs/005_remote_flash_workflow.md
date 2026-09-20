@@ -99,15 +99,43 @@ Monitor output is useful for diagnosis but has no result manifest and does not e
 
 Hardware tests under `tests/hardware/` are expected to be self-contained framework workflows. The normal user contract is a single `pytest-hardware` invocation; the test should resolve/materialise its own case, create its own ephemeral build/generated state, run the framework-owned build/sign/flash/runtime path, capture its own evidence, and assert the result. Do not document pre-generated campaigns, manual CMake/build/sign/flash steps, prior result directories, or test-specific evidence-path environment variables as prerequisites for a default hardware test.
 
-For Request 13, the complete 1 MHz timebase validation is:
+For standalone application-timebase hardware validation, run:
 
 ```bash
 ./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware
 ```
 
-The test materialises a wolfBoot-enabled baseline case, enables `PQC_TIMEBASE_HARDWARE_SELF_TEST=ON` inside the isolated hardware-test build volume, executes the normal experiment runner so wolfBoot and the relocated application are built/signed/flashed together, reads the UART evidence created by that run, and verifies the requested delay, derived 1 MHz counter rate, unchanged HAL-tick behaviour, wolfBoot verification, and application startup. The flag is validation-only; because `pytest-hardware` overlays `/workspace/build` and `/workspace/.pqc-generated-state` with disposable Docker volumes, this self-test configuration does not become the normal host build configuration.
+The test retains its own resolved wolfBoot-enabled baseline case and setup/experiment logs under `results/automated-tests/`, enables `PQC_TIMEBASE_HARDWARE_SELF_TEST=ON` inside the isolated hardware-test build volume, executes the normal experiment runner so wolfBoot and the relocated application are built/signed/flashed together, reads the UART evidence created by that run, and verifies the requested delay, derived 1 MHz counter rate, unchanged HAL-tick behaviour, wolfBoot verification, and application startup. The flag is validation-only; because `pytest-hardware` overlays `/workspace/build` and `/workspace/.pqc-generated-state` with disposable Docker volumes, this self-test configuration does not become the normal host build configuration.
 
 Capability prerequisites such as gateway SSH access, flash-helper access, the UART device, physical hardware, credentials, brokers, and instruments remain external laboratory capabilities and are enforced through pytest capability gates. They are not manual test preparation steps.
+
+
+The secure-boot flash workflow hardware file independently resolves one canonical
+baseline build case and one canonical secure-boot case for each selected algorithm.
+Run it by itself with:
+
+```bash
+./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware
+```
+
+The file's positive ECDSA P-256 case and its ECDSA P-256/SHA-256 integrity
+negative-and-restoration cases run sequentially. Each retains command logs,
+resolved non-secret configuration, run manifests, UART and flash evidence in its
+own directory below `results/automated-tests/`. The test does not delete
+reusable signing-tuple members or manually remove build outputs; the framework's
+generated-state preflight controls compatibility. Negative-path validation and
+restoration failures are retained separately, and a failed restoration must be
+investigated before attempting another hardware experiment.
+
+The positive flash test distinguishes a verified secure-boot startup from the
+legacy UART benchmark outcome. A `flash-secure-boot` return code of 9 is accepted
+only when the current run is finalized with a `benchmark_sample` failure and
+its retained flash/capture evidence and UART markers independently demonstrate
+successful bootloader and application flashing, integrity/authenticity results
+of zero, and application startup. This acceptance does not imply successful
+benchmark sampling, MQTT reporting, or an end-to-end workload. Other failure
+codes and incomplete positive-boot evidence fail the hardware test.
+
 
 ## Broker boundary
 
