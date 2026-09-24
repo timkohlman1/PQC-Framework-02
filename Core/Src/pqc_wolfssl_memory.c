@@ -59,6 +59,132 @@ static volatile size_t s_mldsa_workspace_request_bytes;
 static size_t s_mldsa_workspace_peak_request_bytes;
 #endif
 
+/* Benchmark-only arena. Reuse and coalesce released blocks so transient
+ * ML-DSA allocations cannot exhaust a bump pointer while key-owned blocks
+ * remain live. Never reach FreeRTOS or change the ordinary TLS allocator. */
+#ifndef PQC_BAREMETAL_BENCHMARK_ENABLED
+#define PQC_BAREMETAL_BENCHMARK_ENABLED 0
+#endif
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+#define PQC_BENCHMARK_ARENA_BYTES (160U * 1024U)
+typedef union PQC_BenchmarkBlock {
+    max_align_t alignment;
+    struct {
+        size_t span;           /* Entire aligned block, including header. */
+        size_t requested;      /* Allocated payload length. */
+        bool free;
+    } metadata;
+} PQC_BenchmarkBlock;
+typedef union {
+    max_align_t alignment;
+    uint8_t bytes[PQC_BENCHMARK_ARENA_BYTES];
+} PQC_BenchmarkArena;
+static PQC_BenchmarkArena s_benchmark_arena
+    __attribute__((section(".pqc_benchmark_arena"), aligned(8)));
+static size_t s_benchmark_arena_used;
+static bool s_benchmark_arena_enabled;
+
+static PQC_BenchmarkBlock *PQC_WolfSSL_BenchmarkBlockAt(size_t offset)
+{
+    return (PQC_BenchmarkBlock *)(void *)(s_benchmark_arena.bytes + offset);
+}
+
+/* This scan also prevents an accidental epoch reset from invalidating live
+ * ML-DSA key buffers. The caller must free the previous key first. */
+void PQC_WolfSSL_BenchmarkMemoryEnable(bool enabled)
+{
+    size_t offset = 0U;
+    if (!enabled) {
+        s_benchmark_arena_enabled = false;
+        return;
+    }
+    while (offset < s_benchmark_arena_used) {
+        PQC_BenchmarkBlock *block = PQC_WolfSSL_BenchmarkBlockAt(offset);
+        if (!block->metadata.free)
+            return;  /* Do not overwrite live key material. */
+        offset += block->metadata.span;
+    }
+    memset(s_benchmark_arena.bytes, 0, s_benchmark_arena_used);
+    s_benchmark_arena_used = 0U;
+    s_benchmark_arena_enabled = true;
+}
+
+static bool PQC_WolfSSL_IsBenchmarkArenaPointer(const void *ptr)
+{
+    uintptr_t address = (uintptr_t)ptr;
+    uintptr_t begin = (uintptr_t)s_benchmark_arena.bytes;
+    return address >= begin && address < begin + sizeof(s_benchmark_arena.bytes);
+}
+
+static void *PQC_WolfSSL_BenchmarkMalloc(size_t size)
+{
+    const size_t alignment = _Alignof(max_align_t);
+    size_t payload = size == 0U ? 1U : size;
+    size_t needed;
+    size_t offset = 0U;
+    PQC_BenchmarkBlock *block = NULL;
+
+    if (payload > SIZE_MAX - sizeof(PQC_BenchmarkBlock) - alignment)
+        return NULL;
+    needed = sizeof(PQC_BenchmarkBlock) + payload;
+    needed += (alignment - needed % alignment) % alignment;
+
+    /* First fit; freed adjacent blocks are merged by BenchmarkFree. */
+    while (offset < s_benchmark_arena_used) {
+        PQC_BenchmarkBlock *candidate = PQC_WolfSSL_BenchmarkBlockAt(offset);
+        if (candidate->metadata.free && candidate->metadata.span >= needed) {
+            block = candidate;
+            break;
+        }
+        offset += candidate->metadata.span;
+    }
+    if (block == NULL) {
+        if (needed > sizeof(s_benchmark_arena.bytes) - s_benchmark_arena_used)
+            return NULL;
+        block = PQC_WolfSSL_BenchmarkBlockAt(s_benchmark_arena_used);
+        block->metadata.span = needed;
+        s_benchmark_arena_used += needed;
+    }
+    else if (block->metadata.span - needed >= sizeof(PQC_BenchmarkBlock) + alignment) {
+        PQC_BenchmarkBlock *remainder = PQC_WolfSSL_BenchmarkBlockAt(offset + needed);
+        remainder->metadata.span = block->metadata.span - needed;
+        remainder->metadata.requested = 0U;
+        remainder->metadata.free = true;
+        block->metadata.span = needed;
+    }
+    block->metadata.requested = size;
+    block->metadata.free = false;
+    return (void *)(block + 1);
+}
+
+static void PQC_WolfSSL_BenchmarkFree(void *pointer)
+{
+    PQC_BenchmarkBlock *block = ((PQC_BenchmarkBlock *)pointer) - 1;
+    size_t offset = 0U;
+    if (block->metadata.free)
+        return;  /* Do not alter the arena on a duplicate free. */
+    memset(pointer, 0, block->metadata.requested);
+    block->metadata.requested = 0U;
+    block->metadata.free = true;
+    /* Coalesce adjacent free blocks, including blocks freed out of order. */
+    while (offset < s_benchmark_arena_used) {
+        PQC_BenchmarkBlock *current = PQC_WolfSSL_BenchmarkBlockAt(offset);
+        size_t next_offset = offset + current->metadata.span;
+        if (current->metadata.free && next_offset < s_benchmark_arena_used) {
+            PQC_BenchmarkBlock *next = PQC_WolfSSL_BenchmarkBlockAt(next_offset);
+            if (next->metadata.free) {
+                current->metadata.span += next->metadata.span;
+                continue;
+            }
+        }
+        offset = next_offset;
+    }
+}
+
+#else
+void PQC_WolfSSL_BenchmarkMemoryEnable(bool enabled) { (void)enabled; }
+#endif
+
 static bool s_configured;
 static int s_configure_result;
 
@@ -334,6 +460,16 @@ void *PQC_WolfSSL_TrackedMalloc(
     (void)line;
 #endif
 
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+    if (s_benchmark_arena_enabled) {
+        /* Arena allocations are retained until the current primitive batch
+         * has finished. No scheduler or heap_4 call can occur here. */
+        void *ptr = PQC_WolfSSL_BenchmarkMalloc(size);
+        if (ptr == NULL) PQC_WolfSSL_RecordAllocationFailure(size);
+        return ptr;
+    }
+#endif
+
     if (PQC_WolfSSL_IsLargeMlDsaRequest(size, type)) {
 #if PQC_WOLFSSL_ALLOCATION_PROVENANCE
         uint32_t sequence = ++s_allocation_sequence;
@@ -420,6 +556,13 @@ void PQC_WolfSSL_TrackedFree(
         return;
     }
 
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+    if (PQC_WolfSSL_IsBenchmarkArenaPointer(pointer)) {
+        PQC_WolfSSL_BenchmarkFree(pointer);
+        return;
+    }
+#endif
+
     if (PQC_WolfSSL_IsRAM3WorkspacePointer(pointer)) {
         PQC_WolfSSL_ReleaseMlDsaWorkspace();
         return;
@@ -484,6 +627,27 @@ void *PQC_WolfSSL_TrackedRealloc(
         copy_size = old_size < size ? old_size : size;
         memcpy(replacement, pointer, copy_size);
         PQC_WolfSSL_ReleaseMlDsaWorkspace();
+        return replacement;
+    }
+#endif
+
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+    if (PQC_WolfSSL_IsBenchmarkArenaPointer(pointer)) {
+        PQC_BenchmarkBlock *block = ((PQC_BenchmarkBlock *)pointer) - 1;
+        old_size = block->metadata.requested;
+        if (size <= block->metadata.span - sizeof(*block)) {
+            if (size < old_size)
+                memset((uint8_t *)pointer + size, 0, old_size - size);
+            block->metadata.requested = size;
+            return pointer;
+        }
+        if (!s_benchmark_arena_enabled)
+            return NULL;
+        replacement = PQC_WolfSSL_BenchmarkMalloc(size);
+        if (replacement == NULL)
+            return NULL;
+        memcpy(replacement, pointer, old_size);
+        PQC_WolfSSL_BenchmarkFree(pointer);
         return replacement;
     }
 #endif

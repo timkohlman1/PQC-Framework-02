@@ -50,6 +50,12 @@
 #include "pqc_boot_evidence.h"
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
+#ifndef PQC_BAREMETAL_BENCHMARK_ENABLED
+#define PQC_BAREMETAL_BENCHMARK_ENABLED 0
+#endif
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+#include "pqc_benchmark_stm32.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -1830,6 +1836,12 @@ int main(void)
     Error_Handler();
   }
 #endif
+#if PQC_BAREMETAL_BENCHMARK_ENABLED
+  /* All cryptographic measurement completes before the RTOS and ST67 run. */
+  PQC_BenchmarkSTM32_Run();
+  PQC_ResultBufferReset();
+  PQC_BenchmarkSTM32_AppendResults();
+#endif
 
   /* USER CODE END 2 */
 
@@ -2869,7 +2881,9 @@ void StartNetworkTask(void *argument)
   };
 
   (void)argument;
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_ResultBufferReset();
+#endif
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);

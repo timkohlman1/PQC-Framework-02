@@ -262,6 +262,13 @@ SECTIONS
     __pqc_mldsa_workspace_end__ = .;
   } >RAM3
 
+  .pqc_benchmark_arena (NOLOAD) :
+  {
+    . = ALIGN(8);
+    KEEP(*(.pqc_benchmark_arena))
+    . = ALIGN(8);
+  } >RAM3
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {
