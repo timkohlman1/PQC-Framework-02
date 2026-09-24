@@ -41,7 +41,7 @@ BUILD_NUMBER_ERROR_RETURN_CODE = 9
 
 
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat", "baremetal_benchmark"}
 SUPPORTED_UART_LOG_LEVELS = {"off": -1, "error": 0, "info": 1, "debug": 2}
 SUPPORTED_UART_OUTPUT_MODES = {"disabled", "minimal", "full"}
 
@@ -388,6 +388,11 @@ def _write_application_selection(
     workload = bundle.get("experiment", {}).get("workload", {})
     iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
     handshakes_per_run = int(iterations.get("handshakes_per_run", 1)) if isinstance(iterations, dict) else 1
+    benchmark_iterations = int(iterations.get("operations_per_run", 3)) if isinstance(iterations, dict) else 3
+    benchmark_selection = (
+        f'set(PQC_BENCHMARK_ITERATIONS {benchmark_iterations})\n'
+        if application == "baremetal_benchmark" else ""
+    )
     repeat_selection = (
         f'set(PQC_TLS_HANDSHAKES_PER_RUN {handshakes_per_run})\n'
         if application == "tls_handshake_repeat"
@@ -396,6 +401,7 @@ def _write_application_selection(
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
         + repeat_selection
+        + benchmark_selection
         + f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'
         f'set(PQC_UART_OUTPUT_MODE "{uart_output_mode}")\n'
         f'set(PQC_FIRMWARE_MODE "{firmware_mode}")\n'
@@ -412,6 +418,11 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     selected = dict(resolve_tls_algorithm_set(bundle))
     selected["certificate_ecc"] = _certificate_requires_ecc(bundle)
     selected["sha384"] = _certificate_requires_sha384(bundle)
+    # Only the benchmark image enables full ML-DSA signing; normal TLS
+    # algorithm selection is left completely unchanged.
+    if _resolved_firmware_application(bundle) == "baremetal_benchmark":
+        selected["mldsa_65"] = True
+        selected["mldsa_65_sign"] = True
     enabled_ecc_sizes = []
     if selected["ecc"]:
         enabled_ecc_sizes.append(int(selected["ecc_bits"]))

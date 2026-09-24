@@ -182,6 +182,10 @@ def _is_tls_handshake_repeat_application(bundle: dict[str, dict[str, Any]]) -> b
     return _mqtt_application(bundle) == "tls_handshake_repeat"
 
 
+def _is_baremetal_benchmark_application(bundle: dict[str, dict[str, Any]]) -> bool:
+    return _mqtt_application(bundle) == "baremetal_benchmark"
+
+
 def _expected_stm32_result_epochs(bundle: dict[str, dict[str, Any]]) -> int:
     experiment = bundle.get("experiment", {})
     workload = experiment.get("workload", {}) if isinstance(experiment, dict) else {}
@@ -1411,6 +1415,11 @@ def _parse_mqtt_uart_capture_marker(stderr: str) -> dict[str, Any]:
 
 def _mqtt_e2e_required_uart_markers(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...]:
     mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    if _is_baremetal_benchmark_application(bundle):
+        return (
+            "ST67 DHCP: result=passed",
+            "PQC_BENCHMARK phase=reporting_start",
+        )
     if _is_tls_handshake_repeat_application(bundle):
         return (
             "ST67 DHCP: result=passed",
@@ -1846,13 +1855,14 @@ def _execute_mqtt_e2e_uart_capture(
     command_payload = str(mqtt.get("command_payload", "run"))
     ready_metrics_2_application = _is_mqtt_ready_metrics_2_application(bundle)
     tls_handshake_repeat_application = _is_tls_handshake_repeat_application(bundle)
+    baremetal_benchmark_application = _is_baremetal_benchmark_application(bundle)
     expected_stm32_result_epochs = _expected_stm32_result_epochs(bundle)
     ready_metrics_application = _is_device_initiated_metrics_application(bundle)
-    device_initiated_application = ready_metrics_application or tls_handshake_repeat_application
+    device_initiated_application = ready_metrics_application or tls_handshake_repeat_application or baremetal_benchmark_application
     expected_response = str(mqtt["correlation_payload"])
     reconnect_attempts = int(mqtt.get("reconnect_attempts", 0))
     expected_response_count = 1 if ready_metrics_application else (2 if reconnect_attempts > 0 else 1)
-    if tls_handshake_repeat_application:
+    if tls_handshake_repeat_application or baremetal_benchmark_application:
         expected_response_count = 0
     publish_interval = int(orchestration.get("publish_interval_seconds", 1))
     hard_limit_seconds = int(orchestration.get("hard_limit_seconds", duration_seconds))
@@ -1949,8 +1959,8 @@ def _execute_mqtt_e2e_uart_capture(
         f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" '
         '& subscriber_pid=$!; '
     )
-    if tls_handshake_repeat_application:
-        # The dedicated repeated-TLS workload performs no MQTT application
+    if tls_handshake_repeat_application or baremetal_benchmark_application:
+        # Neither isolated benchmark nor repeated-TLS produces experiment MQTT application
         # exchange on the experiment broker. Keep only a bounded dummy process
         # so the shared capture/cleanup script retains one lifecycle shape.
         subscriber_command = f': >"$response_file"; sleep {hard_limit_seconds} & subscriber_pid=$!; '
@@ -2165,7 +2175,10 @@ def _execute_mqtt_e2e_uart_capture(
         "required_for_pass": False,
     }
     try:
-        if tls_handshake_repeat_application:
+        if baremetal_benchmark_application:
+            emit_progress("mqtt", "Starting post-measurement benchmark evidence capture",
+                          detail="No experiment-broker MQTT application exchange is expected.")
+        elif tls_handshake_repeat_application:
             emit_progress(
                 "mqtt",
                 "Starting repeated TLS handshake workload",
@@ -2202,7 +2215,7 @@ def _execute_mqtt_e2e_uart_capture(
             "artifact_matches_capture": persisted_subscriber_output == authoritative_subscriber_output,
         }
         subscriber_evidence_integrity["passed"] = all(subscriber_evidence_integrity.values())
-        if tls_handshake_repeat_application:
+        if tls_handshake_repeat_application or baremetal_benchmark_application:
             broker_response_passed = (
                 capture_marker.get("reporting_complete_present") == 1
                 and int(capture_marker.get("reporting_completion_count", 0)) >= expected_stm32_result_epochs
@@ -2259,7 +2272,7 @@ def _execute_mqtt_e2e_uart_capture(
         else:
             emit_progress("mqtt", "MQTT command/response validation complete" if passed else "MQTT command/response validation incomplete", detail=f"Publish attempts: {marker.get('publish_attempts')}; responses: {marker.get('response_count')}/{expected_response_count}; missing UART markers: {len(missing_uart_markers)}.")
         failure_stage = "none"
-        if (not tls_handshake_repeat_application) and not subscriber_evidence_integrity.get("passed", False):
+        if (not (tls_handshake_repeat_application or baremetal_benchmark_application)) and not subscriber_evidence_integrity.get("passed", False):
             failure_stage = "subscriber_evidence_integrity"
         elif not broker_response_passed:
             failure_stage = "broker_response"
@@ -2385,6 +2398,8 @@ def _execute_mqtt_e2e_uart_capture(
             # The log must still be collected and pass fatal-error scanning;
             # only MQTT packet-routing evidence is inapplicable to TLS-only.
             "required_for_pass": not tls_handshake_repeat_application,
+            # Bare-metal benchmarks use the separate reporting broker, not MQTT routing.
+            **({"required_for_pass": False} if baremetal_benchmark_application else {}),
         }
     if passed and degradation_cleanup_result is not None and degradation_cleanup_result.return_code != 0:
         passed = False
@@ -2403,7 +2418,8 @@ def _execute_mqtt_e2e_uart_capture(
     elif passed and not broker_log_integrity.get("passed", False):
         passed = False
         failure_stage = str(broker_log_integrity.get("failure_reason") or "broker_log_integrity")
-    elif passed and not broker_message_evidence.get("passed", False):
+    elif (passed and not baremetal_benchmark_application
+          and not broker_message_evidence.get("passed", False)):
         passed = False
         failure_stage = "broker_message_evidence"
     (result_dir / "mqtt-broker-message-evidence.json").write_text(
@@ -2975,7 +2991,7 @@ MQTT_TLS_TRANSPORT_EVIDENCE_MAP = {
     "st67w61m1_lwip_sockets": {"stm32_st67_plaintext_e2e"},
     "st67w61m1_lwip_wolfssl": {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"},
 }
-SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat"}
+SUPPORTED_STM32_MQTT_APPLICATIONS = {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat", "baremetal_benchmark"}
 DEFAULT_STM32_MQTT_APPLICATION = "mqtt_validation"
 
 
@@ -3171,6 +3187,11 @@ def validate_mqtt_tls_config(config: dict[str, Any]) -> None:
                 raise ConfigError(
                     f"workload.iterations.{field} must be {str(required).lower()} for tls_handshake_repeat"
                 )
+
+    if application_name == "baremetal_benchmark":
+        iterations = config.get("workload", {}).get("iterations", {})
+        if not isinstance(iterations, dict) or type(iterations.get("operations_per_run")) is not int or not (1 <= iterations["operations_per_run"] <= 10):
+            raise ConfigError("baremetal_benchmark requires 1-10 workload.iterations.operations_per_run")
 
     fake_transport = mqtt_config.get("fake_transport", {})
     if fake_transport and not isinstance(fake_transport, dict):

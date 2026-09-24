@@ -259,7 +259,15 @@ class ConfigResolver:
             if payload <= 0 or chunk <= 0 or chunk > payload:
                 raise ResolutionError("workload transfer payload/chunk must be positive and chunk <= payload")
         iterations = effective_workload.get("iterations", {})
-        if iterations:
+        if effective_workload.get("firmware_application") == "baremetal_benchmark":
+            if not isinstance(iterations, dict):
+                raise ResolutionError("benchmark iterations must be a mapping")
+            count = iterations.get("operations_per_run")
+            if type(count) is not int or not (1 <= count <= 10):
+                raise ResolutionError("benchmark iterations.operations_per_run must be an integer from 1 to 10")
+            if set(iterations) != {"operations_per_run"}:
+                raise ResolutionError("benchmark iterations accepts only operations_per_run")
+        elif iterations:
             if not isinstance(iterations, dict):
                 raise ResolutionError(f"workload {workload.profile_id}.iterations must be a mapping")
             handshakes = iterations.get("handshakes_per_run")
@@ -301,7 +309,10 @@ class ConfigResolver:
             public_choices["payload_bytes"] = int(transfer["payload_bytes"])
             public_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
         if iterations:
-            public_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
+            if "operations_per_run" in iterations:
+                public_choices["operations_per_run"] = int(iterations["operations_per_run"])
+            else:
+                public_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
         selection_record = {
             "target": target.profile_id, "gateway": gateway.profile_id,
             "services": {"experiment_broker": exp.profile_id, "reporting_broker": rep.profile_id},
@@ -328,7 +339,10 @@ class ConfigResolver:
             firmware_choices["payload_bytes"] = int(transfer["payload_bytes"])
             firmware_choices["chunk_bytes"] = int(transfer["chunk_bytes"])
         if iterations:
-            firmware_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
+            if "operations_per_run" in iterations:
+                firmware_choices["operations_per_run"] = int(iterations["operations_per_run"])
+            else:
+                firmware_choices["handshakes_per_run"] = int(iterations["handshakes_per_run"])
         firmware_id = _identity({
             "schema_version": SCHEMA_VERSION,
             "resolver_version": RESOLVER_VERSION,

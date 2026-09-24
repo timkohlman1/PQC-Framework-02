@@ -112,6 +112,7 @@ message("TLS ML-DSA-65 verification/signing: " ${PQC_TLS_ENABLE_MLDSA_65} "/" ${
 
 set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")
 set(PQC_TLS_HANDSHAKES_PER_RUN 1)
+set(PQC_BENCHMARK_ITERATIONS 3)
 set(PQC_UART_LOG_LEVEL "info")
 set(PQC_UART_OUTPUT_MODE "minimal")
 set(PQC_FIRMWARE_MODE "single_bank")
@@ -130,6 +131,14 @@ elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "mqtt_ready_metrics_2")
     set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_ready_metrics_2.c)
 elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "tls_handshake_repeat")
     set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_tls_handshake_repeat.c)
+elseif(PQC_STM32_MQTT_APPLICATION STREQUAL "baremetal_benchmark")
+    if(NOT PQC_TLS_COMPILED)
+        message(FATAL_ERROR "baremetal_benchmark requires wolfCrypt compilation")
+    endif()
+    if(PQC_WOLFSSL_MEMORY_DIAGNOSTICS OR PQC_WOLFSSL_ALLOCATION_PROVENANCE)
+        message(FATAL_ERROR "baremetal_benchmark excludes allocator diagnostics during measurement")
+    endif()
+    set(PQC_STM32_MQTT_APPLICATION_SOURCE Core/Src/pqc_mqtt_application_baremetal_benchmark.c)
 else()
     message(FATAL_ERROR "Unsupported STM32 MQTT application: ${PQC_STM32_MQTT_APPLICATION}")
 endif()
@@ -357,6 +366,17 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
 )
+
+if(PQC_STM32_MQTT_APPLICATION STREQUAL "baremetal_benchmark")
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        Core/Src/pqc_baremetal_benchmark.c
+        Core/Src/pqc_benchmark_stm32.c
+    )
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        PQC_BAREMETAL_BENCHMARK_ENABLED=1
+        PQC_BENCHMARK_ITERATIONS=${PQC_BENCHMARK_ITERATIONS}
+    )
+endif()
 
 if(PQC_TLS_COMPILED)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE

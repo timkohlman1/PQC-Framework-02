@@ -34,6 +34,8 @@ typedef struct {
     size_t mldsa_workspace_peak_request_bytes;
 } PQC_WolfSSLMemorySnapshot;
 
+/* Enables an allocator independent of FreeRTOS for the pre-scheduler phase. */
+void PQC_WolfSSL_BenchmarkMemoryEnable(bool enabled);
 int PQC_WolfSSL_MemoryConfigure(void);
 void PQC_WolfSSL_MemorySetDiagnosticWriter(
     PQC_WolfSSLMemoryDiagnosticWriter writer);

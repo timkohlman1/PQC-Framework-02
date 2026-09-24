@@ -186,7 +186,6 @@ Generated cases are written below `.pqc-generated-state/campaigns/` and contain 
 Ready Metrics 2 defaults are owned by `configs/workloads/ready_metrics_2.yaml`: `payload_bytes=204800` and `chunk_bytes=400`. Campaigns may vary them using matrix keys `workload.transfer.payload_bytes` and `workload.transfer.chunk_bytes` without duplicating the workload profile.
 
 The TLS KEX catalogue contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. Standalone `ML_KEM_512`, `ML_KEM_768`, and `ML_KEM_1024` use wolfSSL standalone ML-KEM TLS support and are not treated as hybrid groups. The principal PQ-only TLS condition is `ML_KEM_768` with `mldsa65`; `auth_mode` remains independently selectable as `server` or `mutual`.
-
 ## Gateway-wide hardware lock
 
 Gateway-enabled wrapper commands hold an advisory gateway lock across nested operations; local build-only commands do not require it.
@@ -198,3 +197,4 @@ Gateway-enabled wrapper commands hold an advisory gateway lock across nested ope
 
 The release operation is for confirmed abandoned holders only. See
 `docs/002_host_gateway_setup.md` for its safety limitations and recovery procedure.
+Benchmark workload `baremetal_benchmark`: see [`docs/baremetal_benchmark_measurement_core.md`](docs/baremetal_benchmark_measurement_core.md).

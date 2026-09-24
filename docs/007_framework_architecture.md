@@ -4,6 +4,26 @@
 
 This document maps the current repository architecture to implemented framework behaviour.
 
+## Request 1 — pre-scheduler wolfCrypt benchmark boundary
+
+The `baremetal_benchmark` workload builds a dedicated pre-scheduler measurement
+phase using the application wolfCrypt submodule/configuration and a separate
+SRAM3 allocator. It records DWT cycles before any RTOS/network activity and
+flushes records after the last cryptographic interval through the normal STM32
+plaintext reporting collector. The benchmark suite is independent of the
+existing **secure-boot** `configs/benchmarks/classical_signing_profiles.yaml`
+aggregation. Raw primitive records belong to the `stm32_result_stream` artifact;
+there are no metric-specific top-level run-manifest values. The benchmark
+build selects ML-DSA-65 deterministic keygen/sign/verify independently of
+regular TLS workload algorithm selection, with ten repetitions and a strict
+post-run raw-cycle summary tool. ML-DSA hardware acceptance remains pending
+until a strict hardware test records successful ML-DSA operations and retained
+collector evidence. Regular TLS hardware regression must be run separately;
+the source-level isolation check alone is insufficient. See
+`docs/baremetal_benchmark_measurement_core.md` for operation boundaries and
+example commands. No hardware or PQM4 equivalence is claimed from build-only
+or host-unit evidence.
+
 ## System capability overview
 
 Implemented:

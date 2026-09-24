@@ -1,0 +1,14 @@
+schema_version: 1
+profile_type: workload
+id: baremetal_benchmark
+firmware_application: baremetal_benchmark
+uart_log_level: info
+uart_output_mode: minimal
+iterations:
+  operations_per_run: 10
+evidence:
+  deferred_reporting: true
+  reporting_epoch: after_all_baremetal_operations
+  reporting_inside_measurement: false
+  cpu_cycles_primary: true
+  include_memory_benchmarks: false
