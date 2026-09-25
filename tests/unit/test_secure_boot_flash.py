@@ -51,6 +51,24 @@ def write_minimal_elf32(path: Path) -> None:
     )
 
 
+
+
+def write_test_signed_wolfboot_image(path: Path, *, with_signature: bool) -> bytes:
+    payload = bytes((i % 251) + 1 for i in range(160))
+    header = bytearray(b"\xFF" * 256)
+    header[0:4] = b"WOLF"
+    header[4:8] = len(payload).to_bytes(4, "little")
+    offset = 8
+    if with_signature:
+        signature = bytes(range(64))
+        header[offset:offset + 2] = (0x20).to_bytes(2, "little")
+        header[offset + 2:offset + 4] = len(signature).to_bytes(2, "little")
+        header[offset + 4:offset + 4 + len(signature)] = signature
+    data = bytes(header) + payload
+    path.write_bytes(data)
+    return data
+
+
 def load_secure_boot_flash_module():
     repo_root = Path(__file__).resolve().parents[2]
     scripts_path = repo_root / "scripts"
@@ -701,3 +719,43 @@ def test_classical_profile_metadata_marks_mldsa65_and_mldsa87_runnable():
     assert metadata["capability_status"]["mldsa87"]["runnable"] is True
     assert metadata["capability_status"]["mldsa87"]["unavailable"] is None
     assert metadata["mldsa_scope"]["active_algorithm"] == "ML-DSA-65"
+
+
+def test_payload_corruption_preserves_header_and_targets_firmware_payload(tmp_path):
+    secure_flash = load_secure_boot_flash_module()
+    source = tmp_path / "signed.bin"
+    original = write_test_signed_wolfboot_image(source, with_signature=False)
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+
+    corrupted_path, evidence = secure_flash._corrupt_signed_application_copy(
+        source_path=source, result_dir=result_dir, output_name="payload.bin",
+        method="payload_byte_flip",
+    )
+    corrupted = corrupted_path.read_bytes()
+    assert corrupted[:256] == original[:256]
+    assert corrupted[256:] != original[256:]
+    assert evidence["corruption_class"] == "integrity_verification"
+    assert evidence["signed_image_header_size"] == 256
+    assert evidence["firmware_payload_size"] == 160
+    assert 256 <= evidence["corruption_offset"] < len(original)
+    assert evidence["corruption_modified_byte"] == (evidence["corruption_original_byte"] ^ 0x01)
+
+
+def test_signature_corruption_preserves_payload_and_targets_signature_tlv(tmp_path):
+    secure_flash = load_secure_boot_flash_module()
+    source = tmp_path / "signed.bin"
+    original = write_test_signed_wolfboot_image(source, with_signature=True)
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+
+    corrupted_path, evidence = secure_flash._corrupt_signed_application_copy(
+        source_path=source, result_dir=result_dir, output_name="signature.bin",
+        method="signature_byte_flip",
+    )
+    corrupted = corrupted_path.read_bytes()
+    assert corrupted[256:] == original[256:]
+    assert corrupted[:256] != original[:256]
+    assert evidence["corruption_class"] == "authenticity_verification"
+    assert 12 <= evidence["corruption_offset"] < 76
+    assert evidence["corruption_modified_byte"] == (evidence["corruption_original_byte"] ^ 0x01)

@@ -98,7 +98,7 @@ def _run_setup_command(command: list[str], *, evidence_dir: Path) -> subprocess.
     return completed
 
 
-def _materialize_dualbank_ota_case() -> Path:
+def _materialize_dualbank_ota_case(*, boot_uart_diagnostics: bool = False) -> Path:
     """Resolve a fresh OTA hardware case into the framework-required generated-state boundary."""
     resolver = ConfigResolver(ROOT)
     _, campaign = resolver.load_campaign("secure_boot")
@@ -108,6 +108,7 @@ def _materialize_dualbank_ota_case() -> Path:
             "secure_boot": "ecdsa_p256",
             "firmware_mode": "dual_bank_ota",
             "standby_signing_keys": 0,
+            "boot_uart_diagnostics": boot_uart_diagnostics,
         }
     )
     selections = {
@@ -192,8 +193,8 @@ def _prepare_fault_plan(*, source_plan: Path, fault: str, output_dir: Path, evid
     return expected
 
 
-def _bootstrap_ota_hardware_context(workspace: Path) -> OtaHardwareContext:
-    case = _materialize_dualbank_ota_case()
+def _bootstrap_ota_hardware_context(workspace: Path, *, boot_uart_diagnostics: bool = False) -> OtaHardwareContext:
+    case = _materialize_dualbank_ota_case(boot_uart_diagnostics=boot_uart_diagnostics)
     (workspace / "resolved-case.yaml").write_bytes(case.read_bytes())
 
     baseline_results = workspace / "baseline-results"
@@ -636,3 +637,31 @@ def test_unconfirmed_update_explicitly_returns_to_original_physical_bank_hw(
         and _record_line(withheld) < _record_line(record) < _record_line(restored)
         for record in boot
     ), "rollback to the original bank was not observed"
+
+
+@pytest.mark.hardware
+@pytest.mark.long
+def test_request17_diagnostic_uart_dualbank_swap_decision_hw(
+    pytestconfig, pqc_require_capabilities
+):
+    """Request 17: diagnostic build reports representative dual-bank decisions."""
+    pqc_require_capabilities(
+        "local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware"
+    )
+    context = HardwareFileRun.create(
+        repo_root=ROOT, session_result_dir=session_result_dir(pytestconfig),
+        module_name="test_ota_dualbank_hw_request17",
+    )
+    workspace = context.evidence_root / "request17-diagnostic-dualbank"
+    workspace.mkdir(parents=True, exist_ok=False)
+    diagnostic = _bootstrap_ota_hardware_context(
+        workspace, boot_uart_diagnostics=True
+    )
+    completed, manifest_path = _run(
+        diagnostic.case, diagnostic.app_plan, workspace / "application-update"
+    )
+    assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
+    uart = _emit_ota_uart(manifest_path)
+    assert "PQC_WOLFBOOT_DIAG event=bootloader_uart_ready" in uart
+    assert "PQC_WOLFBOOT_DIAG event=verification_complete" in uart
+    assert "PQC_WOLFBOOT_DIAG event=bank_decision action=swap_requested" in uart

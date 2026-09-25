@@ -2661,7 +2661,8 @@ def _resolve_composed_profile(config_path: Path, config: dict[str, Any]) -> dict
 
 
 def _dualbank_ota_wolfboot_config(
-    config_text: str, *, firmware_mode: str, standby_signing_keys: int
+    config_text: str, *, firmware_mode: str, standby_signing_keys: int,
+    boot_uart_diagnostics: bool = False,
 ) -> str:
     """Apply experiment-selected firmware layout and key-count settings."""
     modes = {"single_bank", "dual_bank_no_ota", "dual_bank_ota"}
@@ -2671,6 +2672,8 @@ def _dualbank_ota_wolfboot_config(
         )
     if standby_signing_keys not in {0, 1, 2}:
         raise ConfigError("standby_signing_keys must be 0, 1, or 2")
+    if not isinstance(boot_uart_diagnostics, bool):
+        raise ConfigError("boot_uart_diagnostics must be a boolean")
 
     if firmware_mode == "single_bank":
         overrides = {
@@ -2690,6 +2693,9 @@ def _dualbank_ota_wolfboot_config(
             "WOLFBOOT_PARTITION_SWAP_ADDRESS": "0x0",
         }
         remove = set()
+
+    if boot_uart_diagnostics:
+        overrides["DEBUG?"] = "1"
 
     lines: list[str] = []
     seen: set[str] = set()
@@ -2712,12 +2718,18 @@ def _dualbank_ota_wolfboot_config(
             lines.append(f"{key}={value}")
     if not standby_define_seen:
         lines.append(f"CFLAGS_EXTRA+=-DPQC_WOLFBOOT_STANDBY_KEYS={standby_signing_keys}")
+    if boot_uart_diagnostics:
+        # DEBUG=1 ensures wolfBoot's debug/printf support is linked.  The
+        # project-specific define gates stable Request-17 diagnostic markers.
+        lines.append("CFLAGS_EXTRA+=-DDEBUG_UART=1")
+        lines.append("CFLAGS_EXTRA+=-DWOLFBOOT_PQC_UART_DIAGNOSTICS=1")
     return "\n".join(lines) + "\n"
 
 
 def load_secure_boot_profile_section(
     *, target_profile: Path | str, algorithm: str, section: str,
-    firmware_mode: str = "single_bank", standby_signing_keys: int = 0
+    firmware_mode: str = "single_bank", standby_signing_keys: int = 0,
+    boot_uart_diagnostics: bool = False,
 ) -> tuple[dict[str, Any], Path]:
     """Resolve a secure-boot compatibility section from canonical profiles.
 
@@ -2823,7 +2835,9 @@ def load_secure_boot_profile_section(
             render_wolfboot_config(canonical_target, secure_boot),
             firmware_mode=firmware_mode,
             standby_signing_keys=standby_signing_keys,
+            boot_uart_diagnostics=boot_uart_diagnostics,
         )
+        build["boot_uart_diagnostics"] = boot_uart_diagnostics
         build["config_source"] = f"configs/secure_boot/{canonical_id}.yaml"
         build["firmware_mode"] = firmware_mode
         build["standby_signing_keys"] = standby_signing_keys
@@ -4746,6 +4760,8 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
                 "firmware_mode": args.firmware_mode,
                 "standby_signing_keys": args.standby_signing_keys,
                 "boot_stack_profiling": bool(getattr(args, "boot_stack_profiling", False)),
+                "boot_uart_diagnostics": bool(getattr(args, "boot_uart_diagnostics", False)),
+                "timing_comparison_eligible": not bool(getattr(args, "boot_uart_diagnostics", False)),
                 "source_experiment": str(args.experiment),
             }
         },
@@ -4769,6 +4785,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         section="build",
         firmware_mode=args.firmware_mode,
         standby_signing_keys=args.standby_signing_keys,
+        boot_uart_diagnostics=bool(getattr(args, "boot_uart_diagnostics", False)),
     )
     if "build" in build_profile:
         build_profile["build"]["runtime_stack_high_water_instrumentation"] = bool(
@@ -5225,6 +5242,18 @@ def _resolved_case_boot_stack_profiling(experiment_path: Path | str) -> bool:
     return value
 
 
+def _resolved_case_boot_uart_diagnostics(experiment_path: Path | str) -> bool:
+    import yaml as _yaml
+    raw = _yaml.safe_load(Path(experiment_path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("kind") != "resolved_case":
+        return False
+    choices = raw.get("choices", {})
+    value = choices.get("boot_uart_diagnostics", False) if isinstance(choices, dict) else False
+    if not isinstance(value, bool):
+        raise ConfigError("resolved boot_uart_diagnostics must be a boolean")
+    return value
+
+
 def run_full_baseline_command(args: argparse.Namespace) -> int:
     """Run the selected experiment end to end through direct flash or wolfBoot.
 
@@ -5263,6 +5292,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
         args.firmware_mode, args.standby_signing_keys = _resolved_case_firmware_choices(args.experiment)
         args.boot_stack_profiling = (bool(getattr(args, "boot_stack_profiling", False))
             or _resolved_case_boot_stack_profiling(args.experiment))
+        args.boot_uart_diagnostics = (bool(getattr(args, "boot_uart_diagnostics", False))
+            or _resolved_case_boot_uart_diagnostics(args.experiment))
         return _run_full_wolfboot_command(args)
 
     bundle = load_experiment_bundle(args.experiment)
@@ -5615,7 +5646,8 @@ def run_wolfboot_build_command(args: argparse.Namespace) -> int:
     """Run a configured wolfBoot build profile without flashing or UART access."""
 
     profile, repo_root = load_secure_boot_profile_section(
-        target_profile=args.target_profile, algorithm=args.boot_algorithm, section="build"
+        target_profile=args.target_profile, algorithm=args.boot_algorithm, section="build",
+        boot_uart_diagnostics=bool(getattr(args, "boot_uart_diagnostics", False)),
     )
     profile["build"]["runtime_stack_high_water_instrumentation"] = bool(args.boot_stack_profiling)
     validate_wolfboot_build_profile_config(profile)
@@ -5790,7 +5822,10 @@ def _write_secure_boot_flash_capture(
         "negative_test": {
             key: negative.get(key)
             for key in (
-                "enabled", "source_image_modified",
+                "enabled", "method", "corruption_class",
+                "corruption_offset", "corruption_original_byte",
+                "corruption_modified_byte", "signed_image_header_size",
+                "firmware_payload_size", "source_image_modified",
                 "original_signed_application_sha256",
                 "corrupted_signed_application_sha256",
             )
@@ -5807,6 +5842,12 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     repeat_count = int(getattr(args, "repeat_count", 1))
     if repeat_count < 1:
         print("Error: --repeat-count must be at least 1.", file=sys.stderr)
+        return 45
+    if args.negative_corruption_method and not args.negative_corrupt_application:
+        print(
+            "Error: --negative-corruption-method requires --negative-corrupt-application.",
+            file=sys.stderr,
+        )
         return 45
     if args.negative_corrupt_application and args.skip_uart:
         print(
@@ -5829,9 +5870,10 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
 
     bundle = load_secure_boot_experiment_bundle(args.experiment, algorithm=args.boot_algorithm, target_profile=args.target_profile)
     if args.negative_corrupt_application:
-        bundle["experiment"].setdefault("secure_boot_flash", {})[
-            "negative_test_corrupt_application"
-        ] = True
+        secure_boot_flash = bundle["experiment"].setdefault("secure_boot_flash", {})
+        secure_boot_flash["negative_test_corrupt_application"] = True
+        if args.negative_corruption_method:
+            secure_boot_flash["corruption_method"] = args.negative_corruption_method
 
     result_dir, manifest = create_result_folder(bundle, args.results_dir)
     repo_root = repo_root_from_experiment_path(args.experiment)
@@ -7026,6 +7068,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Enable bootloader stack watermarking for a dedicated memory-profiling run.",
     )
     run_parser.add_argument(
+        "--boot-uart-diagnostics", action="store_true", default=False,
+        help="Enable Request-17 wolfBoot early-boot UART diagnostics. Diagnostic builds are excluded from timing comparisons.",
+    )
+    run_parser.add_argument(
         "--runtime-only",
         action="store_true",
         help="Run only the independent runtime measurement against firmware already built, flashed, and smoke-tested.",
@@ -7107,6 +7153,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--boot-stack-profiling", action="store_true", default=False,
         help="Build the bootloader with stack watermarking (default disabled).",
     )
+    wolfboot_build_parser.add_argument(
+        "--boot-uart-diagnostics", action="store_true", default=False,
+        help="Build wolfBoot with target-specific early-boot UART diagnostics (default disabled; not timing-comparison eligible).",
+    )
     wolfboot_build_parser.set_defaults(func=run_wolfboot_build_command)
 
     sign_application_parser = subparsers.add_parser(
@@ -7162,6 +7212,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--negative-corrupt-application",
         action="store_true",
         help="Create and flash a result-local corrupted copy of the signed application image, then require UART evidence that normal application markers are absent.",
+    )
+    secure_boot_flash_parser.add_argument(
+        "--negative-corruption-method",
+        choices=("flip_first_byte", "header_byte_flip", "payload_byte_flip", "signature_byte_flip"),
+        default=None,
+        help=(
+            "Select the deterministic negative-test mutation. payload_byte_flip preserves the wolfBoot header "
+            "and provokes integrity verification; signature_byte_flip preserves payload integrity and targets "
+            "signature authenticity."
+        ),
     )
     secure_boot_flash_parser.add_argument(
         "--repeat-count",

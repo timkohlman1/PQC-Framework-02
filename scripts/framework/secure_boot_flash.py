@@ -81,6 +81,12 @@ class SecureBootFlashResult:
     failure_reason: str | None
     negative_test_enabled: bool
     corruption_method: str | None
+    corruption_class: str | None
+    corruption_offset: int | None
+    corruption_original_byte: int | None
+    corruption_modified_byte: int | None
+    signed_image_header_size: int | None
+    firmware_payload_size: int | None
     original_signed_application_path: Path | None
     original_signed_application_sha256: str | None
     corrupted_signed_application_path: Path | None
@@ -298,16 +304,76 @@ def _remote_artifact_path(result_dir: Path, label: str, artifact_path: Path) -> 
     return str(PurePosixPath("/tmp") / safe_name)
 
 
+def _signed_wolfboot_image_layout(image: bytearray, source_path: Path) -> tuple[int, int]:
+    """Return ``(header_size, firmware_size)`` for a signed wolfBoot image.
+
+    wolfBoot keytools writes an 8-byte fixed prefix (magic + image size), a
+    fixed-size TLV header, then the original firmware bytes. Deriving the header
+    size from the signed artifact itself avoids hard-coding the configured
+    IMAGE_HEADER_SIZE and therefore remains valid for larger signature schemes.
+    """
+
+    if len(image) < 9 or bytes(image[:4]) != b"WOLF":
+        raise SecureBootFlashProfileError(
+            f"cannot apply verification-stage corruption to non-wolfBoot signed image: {source_path}"
+        )
+    firmware_size = int.from_bytes(image[4:8], byteorder="little", signed=False)
+    header_size = len(image) - firmware_size
+    if firmware_size < 1 or header_size < 8 or header_size >= len(image):
+        raise SecureBootFlashProfileError(
+            f"invalid wolfBoot signed-image layout for corruption: {source_path}"
+        )
+    return header_size, firmware_size
+
+
+def _find_wolfboot_header_tlv(
+    image: bytearray, *, header_size: int, tag: int, source_path: Path
+) -> tuple[int, int]:
+    """Mirror wolfBoot's TLV scan and return ``(data_offset, data_length)``."""
+
+    offset = 8
+    while offset + 4 <= header_size:
+        if image[offset] == 0xFF or (offset & 1):
+            offset += 1
+            continue
+        header_type = int.from_bytes(image[offset:offset + 2], "little")
+        if header_type == 0:
+            break
+        length = int.from_bytes(image[offset + 2:offset + 4], "little")
+        data_offset = offset + 4
+        data_end = data_offset + length
+        if data_end > header_size:
+            raise SecureBootFlashProfileError(
+                f"invalid wolfBoot TLV while locating tag 0x{tag:04X}: {source_path}"
+            )
+        if header_type == tag:
+            if length < 1:
+                raise SecureBootFlashProfileError(
+                    f"empty wolfBoot TLV tag 0x{tag:04X}: {source_path}"
+                )
+            return data_offset, length
+        offset = data_end
+    raise SecureBootFlashProfileError(
+        f"wolfBoot TLV tag 0x{tag:04X} not present in signed image: {source_path}"
+    )
+
+
 def _corrupt_signed_application_copy(
     *,
     source_path: Path,
     result_dir: Path,
     output_name: str,
     method: str,
-) -> Path:
-    """Create a result-local corrupted application image without modifying source."""
+) -> tuple[Path, dict[str, int | str | None]]:
+    """Create a result-local deterministic negative-test image and mutation evidence."""
 
-    if method != "flip_first_byte":
+    supported = {
+        "flip_first_byte",
+        "header_byte_flip",
+        "payload_byte_flip",
+        "signature_byte_flip",
+    }
+    if method not in supported:
         raise SecureBootFlashProfileError(
             f"unsupported secure-boot negative-test corruption method: {method}"
         )
@@ -322,9 +388,38 @@ def _corrupt_signed_application_copy(
             f"cannot corrupt empty signed application image: {source_path}"
         )
 
-    image[0] ^= 0x01
+    header_size: int | None = None
+    firmware_size: int | None = None
+    if method in {"payload_byte_flip", "signature_byte_flip"}:
+        header_size, firmware_size = _signed_wolfboot_image_layout(image, source_path)
+
+    if method in {"flip_first_byte", "header_byte_flip"}:
+        corruption_class = "header_validation"
+        mutation_offset = 0
+    elif method == "payload_byte_flip":
+        assert header_size is not None and firmware_size is not None
+        corruption_class = "integrity_verification"
+        mutation_offset = header_size + (firmware_size // 2)
+    else:
+        assert header_size is not None
+        corruption_class = "authenticity_verification"
+        signature_offset, signature_length = _find_wolfboot_header_tlv(
+            image, header_size=header_size, tag=0x20, source_path=source_path
+        )
+        mutation_offset = signature_offset + (signature_length // 2)
+
+    original_byte = image[mutation_offset]
+    image[mutation_offset] ^= 0x01
+    modified_byte = image[mutation_offset]
     corrupted_path.write_bytes(bytes(image))
-    return corrupted_path
+    return corrupted_path, {
+        "corruption_class": corruption_class,
+        "corruption_offset": mutation_offset,
+        "corruption_original_byte": original_byte,
+        "corruption_modified_byte": modified_byte,
+        "signed_image_header_size": header_size,
+        "firmware_payload_size": firmware_size,
+    }
 
 
 
@@ -610,6 +705,12 @@ def _write_secure_boot_flash_log(
         f"Failure reason: {result.failure_reason if result.failure_reason is not None else 'none'}",
         f"Negative corrupted-application test: {str(result.negative_test_enabled).lower()}",
         f"Corruption method: {result.corruption_method if result.corruption_method is not None else 'not requested'}",
+        f"Corruption class: {result.corruption_class if result.corruption_class is not None else 'not requested'}",
+        f"Corruption byte offset: {result.corruption_offset if result.corruption_offset is not None else 'not requested'}",
+        f"Corruption original byte: {result.corruption_original_byte if result.corruption_original_byte is not None else 'not requested'}",
+        f"Corruption modified byte: {result.corruption_modified_byte if result.corruption_modified_byte is not None else 'not requested'}",
+        f"Signed image header size: {result.signed_image_header_size if result.signed_image_header_size is not None else 'unavailable'}",
+        f"Firmware payload size: {result.firmware_payload_size if result.firmware_payload_size is not None else 'unavailable'}",
         f"Original signed application SHA-256: {result.original_signed_application_sha256 if result.original_signed_application_sha256 is not None else 'unavailable'}",
         f"Corrupted signed application path: {result.corrupted_signed_application_path if result.corrupted_signed_application_path is not None else 'not created'}",
         f"Corrupted signed application SHA-256: {result.corrupted_signed_application_sha256 if result.corrupted_signed_application_sha256 is not None else 'unavailable'}",
@@ -761,9 +862,17 @@ def execute_secure_boot_flash(
     )
     corrupted_signed_application_path: Path | None = None
     corrupted_signed_application_sha256: str | None = None
+    corruption_evidence: dict[str, int | str | None] = {
+        "corruption_class": None,
+        "corruption_offset": None,
+        "corruption_original_byte": None,
+        "corruption_modified_byte": None,
+        "signed_image_header_size": None,
+        "firmware_payload_size": None,
+    }
 
     if negative_test_enabled and original_signed_application_path.is_file():
-        corrupted_signed_application_path = _corrupt_signed_application_copy(
+        corrupted_signed_application_path, corruption_evidence = _corrupt_signed_application_copy(
             source_path=original_signed_application_path,
             result_dir=result_dir_path,
             output_name=str(
@@ -924,6 +1033,12 @@ def execute_secure_boot_flash(
         failure_reason=failure_reason,
         negative_test_enabled=negative_test_enabled,
         corruption_method=corruption_method,
+        corruption_class=str(corruption_evidence["corruption_class"]) if corruption_evidence["corruption_class"] is not None else None,
+        corruption_offset=int(corruption_evidence["corruption_offset"]) if corruption_evidence["corruption_offset"] is not None else None,
+        corruption_original_byte=int(corruption_evidence["corruption_original_byte"]) if corruption_evidence["corruption_original_byte"] is not None else None,
+        corruption_modified_byte=int(corruption_evidence["corruption_modified_byte"]) if corruption_evidence["corruption_modified_byte"] is not None else None,
+        signed_image_header_size=int(corruption_evidence["signed_image_header_size"]) if corruption_evidence["signed_image_header_size"] is not None else None,
+        firmware_payload_size=int(corruption_evidence["firmware_payload_size"]) if corruption_evidence["firmware_payload_size"] is not None else None,
         original_signed_application_path=original_signed_application_path,
         original_signed_application_sha256=original_signed_application_sha256,
         corrupted_signed_application_path=corrupted_signed_application_path,
@@ -1053,6 +1168,7 @@ def execute_secure_boot_flash(
                 "negative_test": {
                     "enabled": negative_test_enabled,
                     "method": corruption_method,
+                    **corruption_evidence,
                     "source_image_modified": False,
                 },
             },
@@ -1075,6 +1191,7 @@ def execute_secure_boot_flash(
                 "negative_test": {
                     "enabled": negative_test_enabled,
                     "method": corruption_method,
+                    **corruption_evidence,
                     "original_signed_application_path": str(original_signed_application_path),
                     "original_signed_application_sha256": original_signed_application_sha256,
                     "corrupted_signed_application_path": None
