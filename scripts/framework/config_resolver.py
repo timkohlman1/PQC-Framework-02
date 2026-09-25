@@ -234,6 +234,9 @@ class ConfigResolver:
         stack_profiling = choices.get("boot_stack_profiling", False)
         if not isinstance(stack_profiling, bool):
             raise ResolutionError("boot_stack_profiling must be a boolean")
+        boot_uart_diagnostics = choices.get("boot_uart_diagnostics", False)
+        if not isinstance(boot_uart_diagnostics, bool):
+            raise ResolutionError("boot_uart_diagnostics must be a boolean")
         firmware_mode = str(choices.get("firmware_mode", "single_bank"))
         if firmware_mode not in FIRMWARE_MODES:
             raise ResolutionError(
@@ -306,6 +309,7 @@ class ConfigResolver:
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
             "boot_stack_profiling": stack_profiling,
+            "boot_uart_diagnostics": boot_uart_diagnostics,
         }
         if mqtt_transport == "plaintext":
             public_choices["mqtt_transport"] = "plaintext"
@@ -337,6 +341,7 @@ class ConfigResolver:
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
             "boot_stack_profiling": stack_profiling,
+            "boot_uart_diagnostics": boot_uart_diagnostics,
         }
         if mqtt_transport == "plaintext":
             firmware_choices["mqtt_transport"] = "plaintext"

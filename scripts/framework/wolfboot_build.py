@@ -445,6 +445,10 @@ void pqc_boot_timing_integrity_begin(void);
 void pqc_boot_timing_image_start(uint32_t start_cycles, struct wolfBoot_image *img);
 void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result, struct wolfBoot_image *img);
 void pqc_boot_timing_image_finish(uint32_t end_cycles, int result, struct wolfBoot_image *img);
+uint32_t pqc_boot_timing_diag_integrity_cycles(void);
+uint32_t pqc_boot_timing_diag_integrity_valid(void);
+uint32_t pqc_boot_timing_diag_authenticity_cycles(void);
+uint32_t pqc_boot_timing_diag_authenticity_valid(void);
 int wolfBoot_verify_integrity(struct wolfBoot_image *img)
 {
     /* Invalidate any earlier candidate/recovery attempt before taking the DWT start read. */
@@ -981,6 +985,34 @@ void pqc_boot_timing_integrity_finish(uint32_t elapsed_cycles, int result, struc
     mailbox->magic = PQC_BOOT_TIMING_MAILBOX_MAGIC;
 }
 
+uint32_t pqc_boot_timing_diag_integrity_cycles(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    return mailbox->integrity_cycles;
+}
+
+uint32_t pqc_boot_timing_diag_integrity_valid(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    return mailbox->integrity_valid;
+}
+
+uint32_t pqc_boot_timing_diag_authenticity_cycles(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    return mailbox->authenticity_cycles;
+}
+
+uint32_t pqc_boot_timing_diag_authenticity_valid(void)
+{
+    volatile struct pqc_boot_timing_mailbox *mailbox =
+        (volatile struct pqc_boot_timing_mailbox *)WOLFBOOT_PQC_BOOT_TIMING_MAILBOX_ADDR;
+    return mailbox->authenticity_valid;
+}
+
 void pqc_boot_timing_select_image(struct wolfBoot_image *img)
 {
     volatile struct pqc_boot_timing_mailbox *mailbox =
@@ -1050,13 +1082,28 @@ static void pqc_boot_timing_prepare_handoff(void)
             helper_anchor, helper_anchor + helper, 1
         )
 
-        hal_init_old = "void hal_init(void)\n{\n    clockconfig(0);\n}"
-        hal_init_new = "void hal_init(void)\n{\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n    pqc_boot_reset_origin_start();\n#endif\n    clockconfig(0);\n#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n    pqc_boot_reset_origin_clock_ready();\n#endif\n}"
-        if hal_init_old not in patched_hal_text:
+        # Anchor only on the stable start of hal_init() and its clock setup.  The
+        # body may legitimately contain optional target diagnostics after
+        # clockconfig(0), so matching the complete function would make the
+        # reset-origin patch unnecessarily dependent on unrelated features.
+        hal_init_anchor = "void hal_init(void)\n{\n    clockconfig(0);"
+        hal_init_instrumented = (
+            "void hal_init(void)\n{\n"
+            "#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n"
+            "    pqc_boot_reset_origin_start();\n"
+            "#endif\n"
+            "    clockconfig(0);\n"
+            "#if defined(WOLFBOOT_PQC_BOOT_TIMING)\n"
+            "    pqc_boot_reset_origin_clock_ready();\n"
+            "#endif"
+        )
+        if patched_hal_text.count(hal_init_anchor) != 1:
             raise WolfBootBuildProfileError(
-                "Could not locate wolfBoot STM32L4 hal_init() for reset-origin patch"
+                "Could not locate unique wolfBoot STM32L4 hal_init() clock anchor for reset-origin patch"
             )
-        patched_hal_text = patched_hal_text.replace(hal_init_old, hal_init_new, 1)
+        patched_hal_text = patched_hal_text.replace(
+            hal_init_anchor, hal_init_instrumented, 1
+        )
 
         prepare_old = "void hal_prepare_boot(void)\n{"
         prepare_new = (
@@ -2227,7 +2274,8 @@ def execute_wolfboot_build(
                     keystore=generated_keystore_path,
                 ),
                 extra={"signature_algorithm": profile.get("signature_algorithm"),
-                       "runtime_stack_high_water_instrumentation": _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation")},
+                       "runtime_stack_high_water_instrumentation": _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation"),
+                       "boot_uart_diagnostics": _optional_profile_bool(profile, "build.boot_uart_diagnostics")},
             )
             generated_cleanup_paths = [
                 path
@@ -2629,6 +2677,8 @@ def execute_wolfboot_build(
             "stm32l4_hal_conf_pwr_patch_applied": stm32l4_hal_conf_pwr_patch_applied,
             "stm32l4_hal_conf_path": None if stm32l4_hal_conf_path is None else str(stm32l4_hal_conf_path),
             "runtime_stack_high_water_instrumentation": _optional_profile_bool(profile, "build.runtime_stack_high_water_instrumentation"),
+            "boot_uart_diagnostics": _optional_profile_bool(profile, "build.boot_uart_diagnostics"),
+            "timing_comparison_eligible": not _optional_profile_bool(profile, "build.boot_uart_diagnostics"),
             "boot_timing_instrumentation_patch_enabled": boot_timing_instrumentation_patch_enabled,
             "boot_timing_instrumentation_patch_applied": boot_timing_instrumentation_patch_applied,
             "boot_timing_image_path": None if boot_timing_image_path is None else str(boot_timing_image_path),

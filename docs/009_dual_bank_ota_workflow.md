@@ -170,3 +170,18 @@ prevents campaign build/flash reuse across incompatible layouts or key sets.
 ### Reset-spanning result collection
 
 A dual-bank OTA run can reboot the STM32 more than once while retaining the same framework `run_id`. Each application boot may publish a complete deferred STM32 result stream before OTA processing or confirmation. The gateway collector therefore treats every completion-bounded sequence as an independent **boot epoch** for that source: sequence numbers may restart at zero only after the preceding epoch has supplied its completion record. Every epoch is independently checked for duplicate or missing chunks, declared chunk/record/byte counts, and SHA-256 integrity. An unfinished trailing epoch remains a collection failure. This preserves transport-integrity checking while allowing activation, candidate confirmation, and rollback resets to remain inside one experiment run ID.
+
+## Optional wolfBoot UART diagnostics during dual-bank validation
+
+Request 17 diagnostics are optional and default off. When a diagnostic wolfBoot build is
+used for dual-bank validation, `PQC_WOLFBOOT_DIAG` records supplement the existing
+`PQC_OTA_BOOT` evidence with selected partition, image-verification results, bank/swap
+selection, refusal and handoff decisions. These records use the target's LPUART1 gateway
+console and are diagnostic evidence only; they do not replace the OTA mailbox/events,
+application confirmation, reporting-plane evidence, or retained flash/reset records.
+
+Because UART initialization and blocking transmission add bootloader execution time,
+diagnostic-enabled dual-bank runs are excluded from secure-boot timing comparisons. The
+normal OTA/measurement configuration keeps `boot_uart_diagnostics: false`. Rebuild the
+bootloader after returning that choice to false before collecting comparable Request-14
+or OTA timing evidence.

@@ -1230,3 +1230,27 @@ in `docs/002_host_gateway_setup.md`. Direct SSH and direct Python/gateway
 administration paths are not intercepted and must not be used concurrently with
 protected experiments. Wrapper exit/SSH disconnect does not prove a detached
 remote helper has stopped; inspect/recover gateway and STM32 state after failures.
+
+
+### Request 17 optional wolfBoot UART diagnostics
+
+The STM32L4R5 wolfBoot target has a separate, default-off early-boot UART diagnostic
+configuration. `boot_uart_diagnostics` is part of the resolved choices and firmware
+identity, so diagnostic and measurement builds cannot be silently grouped together.
+When enabled, wolfBoot initializes the same LPUART1/PG7/PG8/115200 gateway console used
+by the application and emits `PQC_WOLFBOOT_DIAG` decision records. The normal structured
+application result path remains deferred MQTT reporting; boot UART is fallback/control
+evidence for pre-application failures only.
+
+The measurement policy is categorical: diagnostic-enabled bootloader runs are excluded
+from reset-to-application and bootloader-entry-to-handoff timing comparisons because
+UART initialization, formatting, polling and transmission add execution time. Existing
+DWT integrity/authenticity/complete-image intervals are not widened and contain no UART
+operations. The default `boot_uart_diagnostics: false` build preserves Request 14 timing,
+mailbox, 1 MHz reset-origin bridge and deferred-reporting semantics.
+
+Hardware completion remains evidence-gated. The maintained Request-17 test exercises
+diagnostic-enabled valid/rejected images and restoration while the existing diagnostics-off
+negative test remains the Request-14 control. Representative dual-bank decisions are
+emitted by the hardware-swap path; success is claimed only after the corresponding
+capability-gated hardware/OTA evidence is supplied.

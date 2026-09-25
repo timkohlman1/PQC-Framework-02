@@ -308,3 +308,53 @@ incomplete streams, mismatched run IDs, unavailable evidence presented as a
 numeric result, and profiling records without a matching mailbox version.
 Its output records input SHA-256 hashes and remains separate from run capture.
 Run the targeted boot/handoff and OTA smoke regressions before hardware claims.
+
+
+## Optional wolfBoot early-boot UART diagnostics
+
+Request 17 adds a diagnostic-only wolfBoot UART mode. It is **off by default**.
+The standard secure-boot measurement configuration therefore continues to boot
+without bootloader UART formatting or transmission. A diagnostic build is selected
+with `boot_uart_diagnostics: true` in a resolved case, or for an isolated build with:
+
+```bash
+./scripts/dev.sh experiment build-wolfboot --boot-algorithm integrity_sha256 --boot-uart-diagnostics
+```
+
+The diagnostic target uses the board's existing gateway console route: LPUART1 at
+115200 baud on PG7 (TX) and PG8 (RX), AF8, sourced from the wolfBoot 80 MHz PCLK1.
+Bootloader lines use the stable `PQC_WOLFBOOT_DIAG` prefix so they are distinct from
+application startup markers. Diagnostic records cover image selection, verification
+start/completion and result codes, refusal/recovery decisions, representative dual-bank
+selection/swap decisions, and final handoff. They contain no private key, credential,
+secret material, or complete sensitive buffer contents.
+
+Diagnostic UART is blocking and intentionally perturbs bootloader-entry-to-handoff and
+reset-to-application elapsed time. **Diagnostic-enabled runs are not eligible for timing
+comparisons.** The DWT integrity/authenticity wrappers remain unchanged: diagnostic
+formatting/transmission occurs only before a verify call begins or after it returns.
+Restore the standard measurement configuration by resolving/running with
+`boot_uart_diagnostics: false` (the default) and rebuilding wolfBoot.
+
+Verification-stage negative tests use deterministic result-local mutations. The legacy
+`flip_first_byte`/`header_byte_flip` case remains available as a malformed-header control.
+For Request 17 diagnostic evidence, prefer `payload_byte_flip` to preserve the wolfBoot
+header and force a failed integrity check, and `signature_byte_flip` on signed profiles to
+preserve payload integrity and force a failed authenticity check. Select the method with
+`--negative-corruption-method` together with `--negative-corrupt-application`. The result
+evidence records the mutation class, exact byte offset, original/modified byte values,
+derived signed-image header size, payload size, and original/corrupted SHA-256 identities.
+
+When boot timing instrumentation is present, diagnostic `verification_complete` records also
+report the integrity/authenticity cycle count already captured by the Request 14 DWT wrapper.
+The UART read occurs only after that wrapper has taken its end snapshot, so these diagnostic
+prints do not alter the established measured interval. Failed-verification timings are
+reported as failure-path diagnostic evidence and remain excluded from normal timing
+comparisons because diagnostic builds are `timing_comparison_eligible=0`.
+
+For a rejected application, `uart.log` may contain only `PQC_WOLFBOOT_DIAG` records; no
+application MQTT result is expected because control is never handed to the application.
+The file-owned hardware workflow retains the raw UART plus flash/reset evidence. In the
+default diagnostics-off build, an empty UART capture remains negative-path evidence only
+when paired with successful flash/reset evidence and a subsequent known-good restoration;
+it does not identify wolfBoot's internal rejection reason.

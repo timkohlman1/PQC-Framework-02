@@ -14,6 +14,7 @@ fixed:
   firmware_mode: single_bank
   standby_signing_keys: 0
   boot_stack_profiling: false
+  boot_uart_diagnostics: false
 execution:
   repetitions: 1
   reset_between_runs: hardware_reset

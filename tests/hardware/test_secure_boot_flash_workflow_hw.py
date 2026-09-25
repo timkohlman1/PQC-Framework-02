@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import traceback
@@ -211,7 +212,7 @@ def _single_secure_boot_result_dir(results_dir: Path) -> Path:
     return result_dirs[0]
 
 
-def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path, algorithm: str = EXPECTED_BOOT_CRYPTO, *, evidence_dir: Path | None = None) -> None:
+def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path, algorithm: str = EXPECTED_BOOT_CRYPTO, *, evidence_dir: Path | None = None, boot_uart_diagnostics: bool = False) -> None:
     build_completed = _run_cli(
         repo_root,
         [
@@ -220,7 +221,7 @@ def _prepare_instrumented_wolfboot(repo_root: Path, results_dir: Path, algorithm
             algorithm,
             "--results-dir",
             str(results_dir),
-        ],
+        ] + (["--boot-uart-diagnostics"] if boot_uart_diagnostics else []),
         evidence_dir=evidence_dir, stage="wolfboot-build",
     )
     assert build_completed.returncode == 0, (
@@ -688,3 +689,91 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
         raise
     if primary_error is not None:
         raise primary_error
+
+
+@pytest.mark.hardware
+@pytest.mark.parametrize("algorithm", ["integrity_sha256", "ecdsa_p256"])
+def test_secure_boot_diagnostic_uart_rejected_image_then_restore(
+    pytestconfig, pqc_require_capabilities, algorithm: str
+):
+    """Request 17: retain bootloader rejection diagnostics without an app boot."""
+    pqc_require_capabilities(
+        "local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware"
+    )
+    repo_root = _repo_root()
+    context = HardwareFileRun.create(
+        repo_root=repo_root, session_result_dir=session_result_dir(pytestconfig),
+        module_name="test_secure_boot_flash_workflow_hw",
+    )
+    results_dir = context.evidence_root / f"request17-diag-{algorithm}"
+    results_dir.mkdir(parents=True, exist_ok=False)
+    build_case = context.case(template="baseline", case_name=f"request17_{algorithm}_build")
+    experiment = _owned_secure_boot_case(context, algorithm)
+
+    _prepare_instrumented_wolfboot(
+        repo_root, results_dir, algorithm,
+        evidence_dir=context.evidence_root / "preparation", boot_uart_diagnostics=True,
+    )
+    _prepare_signed_secure_boot_application(
+        repo_root, results_dir, build_case, algorithm,
+        evidence_dir=context.evidence_root / "preparation",
+    )
+    try:
+        completed = _run_cli(
+            repo_root, [
+                "flash-secure-boot", "--experiment", str(experiment),
+                "--boot-algorithm", algorithm, "--results-dir", str(results_dir),
+                "--uart-duration-seconds", "10", "--negative-corrupt-application",
+                "--negative-corruption-method",
+                "payload_byte_flip" if algorithm == "integrity_sha256" else "signature_byte_flip",
+            ], evidence_dir=context.evidence_root / "negative", stage="diagnostic-negative",
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        result_dir = _cli_result_dir(completed, results_dir)
+        uart = (result_dir / "uart.log").read_text(encoding="utf-8", errors="replace")
+        assert "PQC_WOLFBOOT_DIAG event=bootloader_uart_ready" in uart
+        assert "PQC_WOLFBOOT_DIAG event=image_selected partition=boot open_result=0" in uart
+        assert "PQC_WOLFBOOT_DIAG event=handoff_refused" in uart
+        assert "stm32-basic_hal1 secure-boot app" not in uart
+        capture = json.loads(
+            (result_dir / "secure-boot-flash-capture.json").read_text(encoding="utf-8")
+        )
+        negative = capture["negative_test"]
+        assert isinstance(negative["corruption_offset"], int)
+        assert negative["corruption_original_byte"] ^ 0x01 == negative["corruption_modified_byte"]
+
+        if algorithm == "integrity_sha256":
+            assert negative["method"] == "payload_byte_flip"
+            assert negative["corruption_class"] == "integrity_verification"
+            match = re.search(
+                r"PQC_WOLFBOOT_DIAG event=verification_complete partition=boot type=integrity "
+                r"result=(-?\d+) valid=0 cycles=(\d+) timing_valid=1", uart,
+            )
+            assert match is not None, uart
+            assert int(match.group(1)) < 0
+            assert int(match.group(2)) > 0
+            assert "type=authenticity" not in uart
+        else:
+            assert negative["method"] == "signature_byte_flip"
+            assert negative["corruption_class"] == "authenticity_verification"
+            integrity = re.search(
+                r"PQC_WOLFBOOT_DIAG event=verification_complete partition=boot type=integrity "
+                r"result=0 valid=1 cycles=(\d+) timing_valid=1", uart,
+            )
+            authenticity = re.search(
+                r"PQC_WOLFBOOT_DIAG event=verification_complete partition=boot type=authenticity "
+                r"result=(-?\d+) valid=0 cycles=(\d+) timing_valid=1", uart,
+            )
+            assert integrity is not None, uart
+            assert authenticity is not None, uart
+            assert int(integrity.group(1)) > 0
+            assert int(authenticity.group(1)) < 0
+            assert int(authenticity.group(2)) > 0
+    finally:
+        restored = _restore_valid_secure_boot_application(
+            repo_root, results_dir, algorithm=algorithm, experiment=experiment,
+            evidence_dir=context.evidence_root / "restoration",
+        )
+        restored_dir = _cli_result_dir(restored, results_dir)
+        restored_uart = (restored_dir / "uart.log").read_text(encoding="utf-8", errors="replace")
+        assert "stm32-basic_hal1 secure-boot app" in restored_uart

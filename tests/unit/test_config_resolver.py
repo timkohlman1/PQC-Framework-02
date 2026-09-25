@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import sys
 import yaml
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / 'scripts'
@@ -211,3 +212,42 @@ def test_plaintext_mqtt_rejects_non_validation_workload():
             selections={**case["selections"], "workload": "ready_metrics"},
             choices=case["choices"], workload_overrides={}, execution=case["execution"],
         )
+
+
+def test_secure_boot_uart_diagnostics_default_off_and_affects_firmware_identity(tmp_path):
+    resolver = ConfigResolver(ROOT)
+    _, campaign = resolver.load_campaign("secure_boot")
+    base = dict(campaign["fixed"])
+    assert base.get("boot_uart_diagnostics") is False
+
+    selected = {
+        "target": campaign["target"],
+        "gateway": campaign["gateway"],
+        "services": campaign["services"],
+        "workload": campaign["workload"],
+    }
+    normal = resolver.resolve_case(
+        campaign_id="diag_test", case_index=1, selections=selected, choices={**base, "secure_boot": "integrity_sha256"},
+        workload_overrides={}, execution=campaign["execution"],
+    )
+    diagnostic = resolver.resolve_case(
+        campaign_id="diag_test", case_index=2, selections=selected,
+        choices={**base, "secure_boot": "integrity_sha256", "boot_uart_diagnostics": True},
+        workload_overrides={}, execution=campaign["execution"],
+    )
+    assert normal["choices"]["boot_uart_diagnostics"] is False
+    assert diagnostic["choices"]["boot_uart_diagnostics"] is True
+    assert normal["provenance"]["firmware_identity"] != diagnostic["provenance"]["firmware_identity"]
+
+
+def test_secure_boot_uart_diagnostics_must_be_boolean():
+    resolver = ConfigResolver(ROOT)
+    _, campaign = resolver.load_campaign("secure_boot")
+    choices = dict(campaign["fixed"])
+    choices.update({"secure_boot": "integrity_sha256", "boot_uart_diagnostics": "yes"})
+    selected = {
+        "target": campaign["target"], "gateway": campaign["gateway"],
+        "services": campaign["services"], "workload": campaign["workload"],
+    }
+    with pytest.raises(ResolutionError, match="boot_uart_diagnostics must be a boolean"):
+        resolver.resolve_case(campaign_id="diag_bad", case_index=1, selections=selected, choices=choices, workload_overrides={}, execution=campaign["execution"])

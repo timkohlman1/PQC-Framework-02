@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def load_wolfboot_build_module():
     repo_root = Path(__file__).resolve().parents[2]
@@ -15,6 +17,16 @@ def load_wolfboot_build_module():
     if str(scripts_path) not in sys.path:
         sys.path.insert(0, str(scripts_path))
     return importlib.import_module("framework.wolfboot_build")
+
+
+
+
+def load_experiment_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    scripts_path = repo_root / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    return importlib.import_module("experiment")
 
 
 def sample_profile() -> dict[str, object]:
@@ -134,6 +146,10 @@ def write_stm32l4_source(source_dir: Path) -> Path:
         "void hal_init(void)\n"
         "{\n"
         "    clockconfig(0);\n"
+        "#if defined(DEBUG_UART) && defined(WOLFBOOT_PQC_UART_DIAGNOSTICS)\n"
+        "    uart_init();\n"
+        "    wolfBoot_printf(\"PQC_WOLFBOOT_DIAG event=bootloader_uart_ready\\n\");\n"
+        "#endif\n"
         "}\n"
         "void hal_prepare_boot(void)\n"
         "{\n"
@@ -916,3 +932,43 @@ def test_optional_stack_watermark_reports_specific_unavailability():
     assert "mailbox->stack_measurement_status = 4U;" in helper
     assert "mailbox->stack_measurement_status = 5U;" in helper
     assert "(uintptr_t)p + 32U >= scan_msp" in helper
+
+
+def test_request17_diagnostic_config_is_default_off_and_explicitly_enabled():
+    experiment = load_experiment_module()
+    normal, _ = experiment.load_secure_boot_profile_section(
+        target_profile=REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml",
+        algorithm="integrity_sha256", section="build",
+    )
+    diagnostic, _ = experiment.load_secure_boot_profile_section(
+        target_profile=REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml",
+        algorithm="integrity_sha256", section="build", boot_uart_diagnostics=True,
+    )
+    normal_config = normal["build"]["config_content"]
+    diagnostic_config = diagnostic["build"]["config_content"]
+    assert "WOLFBOOT_PQC_UART_DIAGNOSTICS" not in normal_config
+    assert "CFLAGS_EXTRA+=-DDEBUG_UART=1" in diagnostic_config
+    assert "CFLAGS_EXTRA+=-DWOLFBOOT_PQC_UART_DIAGNOSTICS=1" in diagnostic_config
+    assert "DEBUG?=1" in diagnostic_config
+    assert diagnostic["build"]["boot_uart_diagnostics"] is True
+
+
+def test_request17_stm32l4_uart_is_target_specific_and_markers_are_outside_timing_wrappers():
+    hal = (REPO_ROOT / "tools/wolfboot/hal/stm32l4.c").read_text(encoding="utf-8")
+    boot = (REPO_ROOT / "tools/wolfboot/src/update_flash.c").read_text(encoding="utf-8")
+    hwswap = (REPO_ROOT / "tools/wolfboot/src/update_flash_hwswap.c").read_text(encoding="utf-8")
+    assert "LPUART1" in hal and "PG7" in hal and "PG8" in hal
+    assert "PQC_WB_UART_BAUD 115200UL" in hal
+    assert "PQC_WOLFBOOT_DIAG event=bootloader_uart_ready" in hal
+    assert "PQC_WOLFBOOT_DIAG event=verification_start" in boot
+    assert "PQC_WOLFBOOT_DIAG event=verification_complete" in boot
+    assert "cycles=%u timing_valid=%u" in boot
+    assert "PQC_WOLFBOOT_DIAG event=bank_decision" in hwswap
+    helper = (REPO_ROOT / "scripts/framework/wolfboot_build.py").read_text(encoding="utf-8")
+    assert "pqc_boot_timing_diag_integrity_cycles" in helper
+    assert "pqc_boot_timing_diag_authenticity_cycles" in helper
+    assert "The DWT end snapshot was taken in image.c before this copy." in helper
+    # The measured operation is the verify call itself. Diagnostics immediately
+    # before/after it must not be inserted into image.c's DWT wrapper.
+    image = (REPO_ROOT / "tools/wolfboot/src/image.c").read_text(encoding="utf-8")
+    assert "PQC_WOLFBOOT_DIAG" not in image
