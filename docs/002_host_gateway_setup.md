@@ -114,6 +114,60 @@ The expected `getcap` result includes `cap_net_admin,cap_net_raw=eip`. Site poli
 
 Packet-capture settings belong under `network.packet_capture` in the experiment profile. `interface` defaults to `any`. `stm32_mac_address` is optional but preferred when the ST67W61M1 MAC address is known because it limits the capture to Ethernet frames involving that device while retaining DHCP, DNS, TCP, TLS, MQTT, ARP, and related traffic. The address must use six colon-separated hexadecimal octets.
 
+## Request 8: live impairment validation (capability-gated)
+
+Run the gateway/hardware validation only through the Linux wrapper and with the
+laboratory gateway lease. The experiment and plaintext reporting Mosquitto
+containers must both be running on the gateway. The impairment resolver checks
+that their container-side `eth0` links have **different host veth peers**; a
+missing reporting broker or an indistinguishable peer prevents application.
+The configured physical/control interface is inspected but is never modified.
+Only the experiment container's host veth and its `eth0` are given the selected
+MTU. The host veth receives an egress `netem` qdisc; its ingress filter redirects
+to a separately created IFB with its own `netem` qdisc. Each qdisc receives
+`rtt_ms / 2`, the configured loss percentage and the configured rate.
+
+The apply operation refuses to replace an existing non-default qdisc or reuse an
+existing IFB interface. An error after resources have been created triggers a
+best-effort gateway-side rollback, with explicit rollback status in the raw
+network-control log. After application, the framework separately reads both
+qdiscs, the ingress filter and both experiment-link MTUs, and rejects a
+configuration/state mismatch. The campaign rechecks the retained condition
+before and after every repetition; both directional netem packet counters must
+increase during the repetition. Cleanup checks both original MTUs, removes the
+IFB, and requires both experiment-interface qdiscs to be absent. A nonzero apply,
+verification or cleanup status fails the run or campaign even when STM32
+application work completed. An SSH disconnect, gateway reboot or SIGKILL cannot
+be assumed to guarantee restoration; inspect gateway state before a subsequent
+experiment. The gateway lease prevents cooperative overlap but is not a
+privileged access-control boundary.
+
+```bash
+cd /home/timk/rmit/PQC-Framework-02
+./scripts/dev.sh pytest tests/unit/test_network_degradation.py
+./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware
+```
+
+The hardware file runs a separate bounded STM32 plaintext MQTT experiment for
+each rate, RTT, loss and MTU profile and a two-repetition retained-rate campaign.
+Each individual run must retain a finalized run manifest, packet capture,
+network-control log, and an independently reparsed complete STM32 reporting
+stream. The campaign retains its condition-control log and cleanup status.
+The test checks configured effective qdisc state and traffic traversing both
+shaping directions; it does **not** independently quantify the achieved rate,
+packet-loss distribution or over-the-wire RTT. ESP32 reporting under impairment is an independent opt-in gate requiring a
+provisioned/calibrated persistent instrument and enabled acquisition. Invoke:
+
+```bash
+./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware --pqc-request8-esp32-hardware
+```
+
+This command also runs the STM32 matrix. The opt-in energy cases require a
+complete run-specific ESP32 stream, independent source hash/completion checks,
+and an indexed energy-result artifact. STM32-only results must not be presented
+as ESP32 validation. No hardware or gateway pass may be
+claimed before retaining the corresponding test output and evidence.
+
 ## Gateway experiment certificate staging
 
 Broker deployment may stage ignored experiment certificate profiles under the repository-shaped gateway workspace. This state is not an alternate source of truth. Staged certificate directories must remain mode `0700`, private `*.key` files mode `0600`, and public/non-key certificate files may be `0644`. Do not use recursive `chmod a+rX` on a certificate tree containing private keys. The broker containers consume the staged tree through read-only mounts and create their own restricted runtime copies.

@@ -375,9 +375,23 @@ def _broker_ctl_command(
     return command
 
 
-def _broker_profile_and_port(bundle: dict[str, dict[str, Any]]) -> tuple[str, int]:
+def _broker_profile_and_port(bundle: dict[str, dict[str, Any]]) -> tuple[str, int | None]:
+    """Return the Compose profile and optional TLS host-port override.
+
+    The resolved MQTT broker port is the workload listener.  For plaintext
+    workloads that is port 1883, but mqtt_broker_ctl.py's --classical-port
+    option controls the TLS listener rather than the plaintext listener.
+    Passing 1883 through that option makes the classical service attempt to
+    bind both listeners to the same host port.  Plaintext campaigns therefore
+    use the Compose profile's canonical listener mapping without a TLS-port
+    override.  TLS campaigns retain the resolved host-port override.
+    """
     mqtt = bundle["experiment"]["mqtt"]
-    return str(mqtt.get("broker_profile", "classical")), int(mqtt["broker"]["port"])
+    profile = str(mqtt.get("broker_profile", "classical"))
+    tls = mqtt.get("tls", {}) if isinstance(mqtt, dict) else {}
+    if isinstance(tls, dict) and str(tls.get("mode", "")).lower() == "plaintext":
+        return profile, None
+    return profile, int(mqtt["broker"]["port"])
 
 
 class CampaignExecutor:
@@ -402,6 +416,8 @@ class CampaignExecutor:
             GatewayNetworkDegradation,
             apply_gateway_network_degradation,
             remove_gateway_network_degradation,
+            verify_gateway_network_degradation,
+            gateway_impairment_packet_counts,
         )
 
         source_path, campaign_data = self.resolver.load_campaign(campaign)
@@ -481,6 +497,7 @@ class CampaignExecutor:
                             degradation=active_condition, repo_root=self.repo_root
                         )
                         if cleanup.return_code != 0:
+                            cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
                             raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
                         active_condition = None
                     condition_cases = condition_groups[cid]
@@ -522,6 +539,17 @@ class CampaignExecutor:
                                 identity=broker_identity(self.resolver.to_legacy_bundle(case), case),
                                 campaign_root=campaign_root,
                             )
+                            before_packets = None
+                            if active_condition is not None:
+                                observed_before = verify_gateway_network_degradation(
+                                    degradation=active_condition, repo_root=self.repo_root
+                                )
+                                before_packets = gateway_impairment_packet_counts(observed_before.stdout)
+                                if observed_before.return_code != 0 or before_packets is None:
+                                    raise CampaignError(
+                                        "retained network condition failed effective-state/counter verification before repetition "
+                                        f"{repetition}; inspect {active_condition.log_path}"
+                                    )
                             run_manifest = self._run_repetition(
                                 campaign_root=campaign_root,
                                 campaign_id=str(campaign_data["id"]),
@@ -532,7 +560,31 @@ class CampaignExecutor:
                                 cid=cid,
                                 repetition=repetition,
                                 policy=policy,
+                                condition_log=(
+                                    None if active_condition is None
+                                    else active_condition.log_path
+                                ),
                             )
+                            if active_condition is not None:
+                                observed_after = verify_gateway_network_degradation(
+                                    degradation=active_condition, repo_root=self.repo_root
+                                )
+                                after_packets = gateway_impairment_packet_counts(observed_after.stdout)
+                                with active_condition.log_path.open("a", encoding="utf-8") as evidence:
+                                    evidence.write(
+                                        f"\nRepetition {repetition} packet counters: "
+                                        f"before={before_packets}, after={after_packets}\n"
+                                    )
+                                if observed_after.return_code != 0 or after_packets is None:
+                                    raise CampaignError(
+                                        "retained network condition failed effective-state/counter verification after repetition "
+                                        f"{repetition}; inspect {active_condition.log_path}"
+                                    )
+                                if any(after <= before for after, before in zip(after_packets, before_packets)):
+                                    raise CampaignError(
+                                        "experiment-broker egress and IFB ingress counters must both advance "
+                                        f"during repetition {repetition}; inspect {active_condition.log_path}"
+                                    )
                             self._record_run(
                                 state=state,
                                 case=case,
@@ -553,9 +605,10 @@ class CampaignExecutor:
                         "at": _now(),
                         "return_code": cleanup.return_code,
                     })
-                    active_condition = None
                     if cleanup.return_code != 0:
+                        cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
                         raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
+                    active_condition = None
                 group_state["state"] = "completed"
                 _write_json_atomic(manifest_path, state)
 
@@ -799,6 +852,7 @@ class CampaignExecutor:
         cid: str,
         repetition: int,
         policy: ExecutionPolicy,
+        condition_log: Path | None = None,
     ) -> Path:
         results_dir = campaign_root / "runs"
         command = [
@@ -816,6 +870,8 @@ class CampaignExecutor:
             "--campaign-condition-identity", cid,
             "--campaign-repetition-index", str(repetition),
         ]
+        if condition_log is not None:
+            command.extend(["--campaign-condition-log", str(condition_log)])
         ota_plan = case.get("execution", {}).get("ota_plan") if isinstance(case.get("execution"), dict) else None
         if ota_plan:
             command.extend(["--ota-plan", str(ota_plan)])

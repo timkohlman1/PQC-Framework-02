@@ -60,12 +60,14 @@ def test_independent_resolved_conditions_are_retained(tmp_path, monkeypatch):
     rate = context.case(template="secure_boot", workload="mqtt_validation",
                         network_condition="validation_rate", case_name="rate")
     loss = context.case(template="secure_boot", workload="mqtt_validation",
-                        network_condition="validation_loss", case_name="loss")
+                        network_condition="validation_loss", case_name="loss",
+                        instruments={"energy": "esp32_ina228"})
     assert rate != loss
     rate_config = yaml.safe_load(rate.read_text(encoding="utf-8"))
     loss_config = yaml.safe_load(loss.read_text(encoding="utf-8"))
     assert rate_config["fixed"]["network_condition"] == "validation_rate"
     assert loss_config["fixed"]["network_condition"] == "validation_loss"
+    assert loss_config["instruments"] == {"energy": "esp32_ina228"}
     assert rate_config["fixed"]["secure_boot"] == "integrity_sha256"
     assert rate_config["matrix"] == {}
     assert (context.evidence_root / "configuration" / "rate" / "resolved-case.yaml").is_file()

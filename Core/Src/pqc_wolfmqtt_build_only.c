@@ -92,7 +92,7 @@
 #define PQC_REPORTING_RUN_ID_TOPIC "pqc/control/run-id/current"
 #endif
 #define PQC_REPORTING_CHUNK_BYTES 96U
-#define PQC_REPORTING_RUN_ID_MAX 96U
+#define PQC_REPORTING_RUN_ID_MAX 160U
 
 __attribute__((weak)) void PQC_WolfMQTT_DiagnosticMarker(const char *marker) { (void)marker; }
 

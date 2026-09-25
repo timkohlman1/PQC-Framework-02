@@ -706,13 +706,45 @@ This request is complete only when the optional diagnostics work on the target h
 
 -----------
 
+Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
+
+-----------
+
+IMPLEMENTATION REQUEST 18 — Complete ESP32 reporting-plane validation under network degradation
+
+Complete the deferred ESP32/INA228 reporting-plane hardware validation that could not be executed during Request 8 because the persistent ESP32/INA228 instrument was not yet available.
+
+This request is acceptance-focused. Do not redesign the network-degradation subsystem, reporting plane, campaign executor, or energy-instrument architecture unless live evidence identifies a specific defect. Reuse the capability-gated Request 8 hardware workflow and the persistent ESP32/INA228 implementation established by Request 6.
+
+Validate on the real gateway and instrument that ESP32 energy-result publication remains reachable, correctly associated with the active run ID, complete and unmodified while each supported experiment-data-plane impairment is active:
+
+- symmetric rate limiting;
+- split-RTT delay;
+- independent directional packet loss; and
+- MTU restriction.
+
+The experiment impairment must remain confined to the dedicated experiment-broker interface path. Confirm from effective gateway state that the reporting broker and ESP32 reporting traffic remain outside the impaired path. A requested impairment must not be accepted as applied evidence unless the live qdisc/interface state confirms it.
+
+For every impairment case, verify the ESP32 result stream using the existing reporting-broker/result-collector contract, including source identity, run ID, sequence/chunk completeness, completion record and logical-content/hash validation where applicable. Do not treat broker reachability alone as proof of valid ESP32 reporting.
+
+Exercise retained-condition behaviour where supported so that an impairment can remain installed across repeated runs while ESP32 reporting continues successfully between repetitions without requiring condition teardown.
+
+Retain the same evidence classes required by Request 8, including the impairment log, relevant gateway state, experiment-data-plane PCAP, run manifest, ESP32 raw reporting evidence, collector/completion integrity and cleanup/restoration outcome. Reporting-broker traffic must remain excluded from experiment packet metrics except where separately captured for diagnostic/isolation proof.
+
+Failed impairment application, ESP32 reporting validation, run-ID/sequence/hash validation, or cleanup/restoration must fail the hardware validation even if the STM32 workload itself completes successfully.
+
+Keep these tests capability-gated and separate from ordinary unit/CI execution. The normal Request 8 STM32/gateway validation must remain runnable and passing when the ESP32 capability is unavailable. Once the persistent instrument is available, the maintained acceptance command should exercise the ESP32-gated cases explicitly, including the existing `--pqc-request8-esp32-hardware` gate unless the repository has since adopted a replacement capability name.
+
+Update the architecture/deferred-test documentation so the ESP32 portion of Request 8 is marked complete only after all four live impairment cases pass with retained evidence. Preserve the earlier Request 8 STM32/gateway acceptance record; do not imply that it was incomplete merely because this instrument-dependent follow-up was deferred.
+
+This request is complete only when the ESP32-gated Request 8 hardware cases pass on the real persistent ESP32/INA228 instrument for rate, RTT, loss and MTU, with reporting-plane isolation, result integrity and cleanup/restoration demonstrated by retained evidence.
 -----------
 
 Treat this as a fresh project request. Do not rely on prior chats, prior uploaded files, memory, or inferred repository state.
 
 -----------
 
-IMPLEMENTATION REQUEST 18 — Comprehensive wolfBoot RAM footprint and OTA memory profiling
+IMPLEMENTATION REQUEST 19 — Comprehensive wolfBoot RAM footprint and OTA memory profiling
 
 Extend Request 4's optional bootloader stack profiling into a reproducible account of wolfBoot RAM requirements for normal secure boot and relevant dual-bank firmware-update operations. Align the measurement definitions with Chapters 3 and 4 of the thesis. Preserve the existing integrity/authenticity timing boundaries, 1 MHz reset-origin handoff, mailbox and deferred MQTT reporting; profiling remains disabled by default. Do not change flash layout, bank selection, update state transitions, image authentication or recovery solely to collect memory evidence.
 

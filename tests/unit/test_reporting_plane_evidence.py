@@ -29,6 +29,7 @@ def evidence(tmp_path):
     run.mkdir()
     roles = {
         "network_condition_record": "gateway-network-degradation.log",
+        "packet_capture": "experiment-data-plane.pcap",
         "stm32_result_stream": "mqtt-reporting-raw.ndjson",
         "reporting_broker_log": "mqtt-broker-reporting-log.log",
         "run_provenance": "run-provenance.json",
@@ -73,28 +74,44 @@ def evidence(tmp_path):
         },
     })
     profile = {"impairment": {
-        "enabled": True, "management_safe": True, "mtu": 1200,
+        "enabled": True, "management_safe": True, "interface": "eth0", "mtu": 1200,
         "rate_kbit": 100000, "loss_percent": 0, "rtt_ms": 0,
     }}
     apply = (
         "Apply command: ssh gateway 'service=mqtt-classical; ifb=ifb-pqc0; "
         "sudo tc filter add action mirred egress redirect dev $ifb; "
         "link set dev eth0 mtu 1200; PQC_APPLIED_STATE_BEGIN'\n"
-        "Return code: 0\n"
-        "PQC_EXPERIMENT_VETH=veth12345\nPQC_EXPERIMENT_CONTAINER_PID=1234\n"
+        "Return code: 0\n\n"
+        "PQC_EXPERIMENT_VETH=veth12345\n"
+        "PQC_EXPERIMENT_PEER_INDEX=123\nPQC_REPORTING_PEER_INDEX=456\n"
+        "PQC_EXPERIMENT_CONTAINER_PID=1234\n"
         "PQC_ORIGINAL_MTU=1500\nPQC_CONTAINER_ORIGINAL_MTU=1500\n"
         "PQC_APPLIED_STATE_BEGIN\n"
         "123: veth12345@if2: <UP> mtu 1200 qdisc netem state UP\n"
-        "qdisc netem a: root rate 100Mbit\n"
-        "qdisc netem b: root rate 100Mbit\n"
+        "2: eth0@if123: <UP> mtu 1200 qdisc noqueue state UP\n"
         "PQC_APPLIED_STATE_END\n"
+        "PQC_VETH_QDISC_BEGIN\n"
+        "qdisc netem a: root rate 100Mbit\n"
+        "qdisc ingress ffff: parent ffff:fff1\n"
+        "PQC_VETH_QDISC_END\n"
+        "PQC_IFB_QDISC_BEGIN\n"
+        "qdisc netem b: root rate 100Mbit\n"
+        "PQC_IFB_QDISC_END\n"
+        "PQC_INGRESS_FILTER_BEGIN\n"
+        "filter parent ffff: protocol all action mirred egress redirect dev ifb-pqc0\n"
+        "PQC_INGRESS_FILTER_END\n"
     )
     cleanup = (
         "Cleanup command: ssh gateway 'qdisc del dev $iface root; "
         "qdisc del dev $iface ingress; qdisc del dev $ifb root; "
         "link set dev $iface mtu 1500; link set dev eth0 mtu 1500; "
         "link del dev $ifb type ifb; [ \"$actual_mtu\" = \"1500\" ]'\n"
-        "Cleanup return code: 0\n"
+        "Cleanup return code: 0\n\n"
+        "PQC_RESTORED_STATE_BEGIN\n"
+        "123: veth12345@if2: <UP> mtu 1500 qdisc noqueue state UP\n"
+        "2: eth0@if123: <UP> mtu 1500 qdisc noqueue state UP\n"
+        "qdisc noqueue 0: root\n"
+        "PQC_RESTORED_STATE_END\n"
     )
     (run / "gateway-network-degradation.log").write_text(apply + cleanup, encoding="utf-8")
     return run, profile
@@ -161,7 +178,7 @@ def test_rejects_missing_bidirectional_impairment(evidence):
     path = run / "gateway-network-degradation.log"
     data = path.read_text()
     path.write_text(data.replace("qdisc netem b: root rate 100Mbit", "qdisc fq_codel b: root"))
-    with pytest.raises(AssertionError, match="rate configuration differs|bidirectional netem"):
+    with pytest.raises(AssertionError, match="rate configuration differs|bidirectional netem|expected exactly one netem"):
         _validator()._assert_impairment(run, "mtu", profile)
 
 

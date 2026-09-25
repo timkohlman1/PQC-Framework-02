@@ -38,7 +38,8 @@ class HardwareFileRun:
 
     def case(self, *, template: str, workload: str | None = None,
              network_condition: str | None = None,
-             repetitions: int | None = None, case_name: str = "default") -> Path:
+             repetitions: int | None = None, case_name: str = "default",
+             instruments: dict[str, str] | None = None) -> Path:
         if not case_name or not all(character.isalnum() or character in "_-" for character in case_name):
             raise ValueError("case_name must be a nonempty simple path component")
         case_root = self.generated_root / case_name
@@ -53,6 +54,8 @@ class HardwareFileRun:
             # The canonical secure-boot campaign is a full algorithm matrix.
             # These specific MQTT tests require its integrity baseline only.
             campaign["fixed"]["secure_boot"] = "integrity_sha256"
+        if instruments is not None:
+            campaign["instruments"] = dict(instruments)
         if workload is not None:
             campaign["workload"] = workload
         if network_condition is not None:

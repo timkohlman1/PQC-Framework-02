@@ -21,6 +21,7 @@ if str(SCRIPTS) not in sys.path:
 from framework.hardware_test_support import HardwareFileRun, session_result_dir
 from framework.config_resolver import ConfigResolver
 from framework.result_collector import _parse_raw_stream
+from framework.network_degradation import NetworkDegradationConfig, _verified_state
 
 pytestmark = [pytest.mark.hardware, pytest.mark.long]
 CONDITIONS = ("rate", "rtt", "loss", "mtu")
@@ -59,52 +60,39 @@ def _finalized_manifest(run_dir: Path) -> dict:
 
 
 def _assert_impairment(run_dir: Path, condition: str, profile: dict) -> None:
-    """Verify applied gateway configuration and cleanup, not measured wire performance."""
+    """Check independent observed gateway state and verified restoration."""
     assert condition in CONDITIONS
     manifest = _finalized_manifest(run_dir)
+    _indexed_file(run_dir, manifest, "packet_capture")
     path = _indexed_file(run_dir, manifest, "network_condition_record")
     text = path.read_text(encoding="utf-8", errors="replace")
     assert "Apply command:" in text and "Cleanup command:" in text, path
     apply, cleanup = text.split("Cleanup command:", 1)
+    assert re.search(r"\bservice=mqtt-classical(?=;)", apply), "unexpected experiment broker boundary"
     assert re.search(r"(?m)^Return code: 0\s*$", apply), f"impairment application failed: {path}"
     assert re.search(r"(?m)^Cleanup return code: 0\s*$", cleanup), f"impairment cleanup failed: {path}"
-    assert re.search(r"\bservice=mqtt-classical(?=;)", apply), "unexpected experiment broker boundary"
     assert re.search(r"(?m)^PQC_EXPERIMENT_VETH=veth[\w-]+\s*$", apply), "missing experiment veth"
-    assert re.search(r"(?m)^PQC_EXPERIMENT_CONTAINER_PID=[1-9]\d*\s*$", apply)
-    assert "PQC_APPLIED_STATE_BEGIN" in apply and "PQC_APPLIED_STATE_END" in apply
-    state = apply.rsplit("PQC_APPLIED_STATE_BEGIN", 1)[1].split("PQC_APPLIED_STATE_END", 1)[0]
-    assert len(re.findall(r"(?m)^qdisc netem\b", state)) >= 2, "missing bidirectional netem state"
-    assert "ifb-pqc0" in apply, "missing ingress redirect interface"
-    assert "mirred egress redirect dev $ifb" in apply, "missing ingress-to-IFB redirection"
-    assert "service=mqtt-reporting" not in apply, "reporting service selected for impairment"
+    assert re.search(r"(?m)^PQC_REPORTING_PEER_INDEX=\d+\s*$", apply), "missing reporting interface identity"
     impairment = profile["impairment"]
-    assert impairment["enabled"] is True and impairment["management_safe"] is True
-    mtu = impairment["mtu"]
-    assert re.search(rf"(?m)^\d+: veth[^\n]*\bmtu {mtu}\b", state), "experiment veth MTU differs"
-    assert f"link set dev eth0 mtu {mtu}" in apply, "container-side MTU not configured"
-    rate = impairment["rate_kbit"]
-    rate_label = f"{rate // 1000}Mbit" if rate % 1000 == 0 else f"{rate}Kbit"
-    assert len(re.findall(rf"(?m)^qdisc netem[^\n]*\brate {re.escape(rate_label)}\b", state)) >= 2, (
-        "experiment broker rate configuration differs"
+    config = NetworkDegradationConfig(
+        interface=impairment["interface"],
+        ifb_interface=impairment.get("ifb_interface", "ifb-pqc0"),
+        rate_kbit=impairment["rate_kbit"], rtt_ms=impairment["rtt_ms"],
+        loss_percent=float(impairment["loss_percent"]), mtu=impairment["mtu"],
+        management_safe=True, broker_service="mqtt-classical",
     )
-    if condition == "loss":
-        loss_label = str(impairment["loss_percent"])
-        assert len(re.findall(rf"(?m)^qdisc netem[^\n]*\bloss {re.escape(loss_label)}%", state)) >= 2, (
-            "loss qdisc missing"
-        )
-    if condition == "rtt":
-        assert len(re.findall(rf"(?m)^qdisc netem[^\n]*\bdelay {impairment['rtt_ms'] // 2}ms\b", state)) >= 2, "delay qdisc missing"
-    # Cleanup must restore the original MTU and remove both qdiscs and IFB.
-    assert "qdisc del dev $iface root" in cleanup
-    assert "qdisc del dev $iface ingress" in cleanup
-    assert "qdisc del dev $ifb root" in cleanup
+    apply_stdout = apply.split("\n\n", 1)[1]
+    valid, reason = _verified_state(apply_stdout, config)
+    assert valid, f"requested impairment is not verified by live gateway state: {reason}; {path}"
     original = re.search(r"(?m)^PQC_ORIGINAL_MTU=(\d+)\s*$", apply)
     container_original = re.search(r"(?m)^PQC_CONTAINER_ORIGINAL_MTU=(\d+)\s*$", apply)
-    assert original and container_original, "original MTU values not retained"
-    assert f"link set dev $iface mtu {original.group(1)}" in cleanup
-    assert f"link set dev eth0 mtu {container_original.group(1)}" in cleanup
-    assert "link del dev $ifb type ifb" in cleanup
-    assert f'[ "$actual_mtu" = "{original.group(1)}" ]' in cleanup, "missing MTU restoration check"
+    assert original and container_original, "missing original interface MTUs"
+    assert "PQC_RESTORED_STATE_BEGIN" in cleanup and "PQC_RESTORED_STATE_END" in cleanup
+    cleanup_stdout = cleanup.split("\n\n", 1)[1]
+    restored = cleanup_stdout.split("PQC_RESTORED_STATE_BEGIN", 1)[1].split("PQC_RESTORED_STATE_END", 1)[0]
+    assert re.search(rf"(?m)^\d+: veth[^\n]*\bmtu {original.group(1)}\b", restored), "host MTU not restored"
+    assert re.search(rf"(?m)^\d+: eth0[^\n]*\bmtu {container_original.group(1)}\b", restored), "container MTU not restored"
+    assert "qdisc netem " not in restored and "qdisc ingress " not in restored
 
 
 def _assert_reporting(run_dir: Path) -> None:
@@ -167,3 +155,86 @@ def test_reporting_collection_remains_complete_under_experiment_impairment(
     run_dir, _ = reporting_file_context.run_experiment(case=case, name=condition)
     _assert_impairment(run_dir, condition, profile)
     _assert_reporting(run_dir)
+
+
+def test_retained_rate_condition_verifies_both_directions_across_repetitions(
+    reporting_file_context: HardwareFileRun, pqc_require_capabilities,
+):
+    """A two-repetition live campaign must preserve and reverify one impairment."""
+    import subprocess
+
+    pqc_require_capabilities(
+        "local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware"
+    )
+    reporting_file_context.case(
+        template="mqtt_plaintext_validation", network_condition="validation_rate",
+        repetitions=2, case_name="retained_rate",
+    )
+    source = reporting_file_context.generated_root / "retained_rate" / "campaign.yaml"
+    results = reporting_file_context.evidence_root / "retained-rate-campaign"
+    results.mkdir()
+    completed = subprocess.run(
+        [sys.executable, "scripts/run_campaign.py", str(source), "--results-root", str(results)],
+        cwd=ROOT, text=True, capture_output=True, encoding="utf-8", errors="replace", check=False,
+    )
+    (results / "campaign.stdout.log").write_text(completed.stdout, encoding="utf-8")
+    (results / "campaign.stderr.log").write_text(completed.stderr, encoding="utf-8")
+    assert completed.returncode == 0, f"campaign failed; raw logs: {results}"
+    manifests = sorted(results.glob("*/campaign-manifest.json"))
+    assert len(manifests) == 1, f"missing campaign manifest: {results}"
+    campaign = _json_file(manifests[0])
+    assert campaign["state"] == "completed" and campaign["cleanup"]["status"] == "passed"
+    runs = campaign["runs"]
+    assert len(runs) == 2 and {item["repetition_index"] for item in runs} == {1, 2}
+    assert len({item["manifest"] for item in runs}) == 2
+    for item in runs:
+        run_dir = Path(item["manifest"]).parent
+        manifest = _finalized_manifest(run_dir)
+        _indexed_file(run_dir, manifest, "packet_capture")
+        _assert_reporting(run_dir)
+    applied = [item for item in campaign["condition_events"] if item["status"] == "applied"]
+    assert len(applied) == 1 and applied[0]["network_condition"] == "validation_rate"
+    control_log = manifests[0].parent / applied[0]["control_log"]
+    text = control_log.read_text(encoding="utf-8")
+    assert text.count("Retained-state verification return code: 0") >= 4
+    assert "Repetition 1 packet counters:" in text and "Repetition 2 packet counters:" in text
+    assert re.search(r"(?m)^Cleanup return code: 0\s*$", text)
+    assert "PQC_RESTORED_STATE_BEGIN" in text and "PQC_RESTORED_STATE_END" in text
+
+
+@pytest.mark.parametrize("condition", CONDITIONS)
+def test_persistent_esp32_reporting_integrity_under_experiment_impairment(
+    condition: str, reporting_file_context: HardwareFileRun, pqc_require_capabilities,
+    pytestconfig,
+):
+    """Optional strict instrument lab gate; never infer ESP32 success from STM32-only evidence."""
+    if not pytestconfig.getoption("--pqc-request8-esp32-hardware"):
+        pytest.skip("persistent, calibrated and provisioned ESP32/INA228 energy source not enabled for Request 8")
+    pqc_require_capabilities(
+        "local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware"
+    )
+    case = reporting_file_context.case(
+        template="mqtt_plaintext_validation", network_condition=f"validation_{condition}",
+        instruments={"energy": "esp32_ina228"}, case_name=f"esp32_{condition}",
+    )
+    run_dir, _ = reporting_file_context.run_experiment(case=case, name=f"esp32_{condition}")
+    profile = yaml.safe_load(
+        (ROOT / "configs" / "network_conditions" / f"validation_{condition}.yaml").read_text(encoding="utf-8")
+    )
+    _assert_impairment(run_dir, condition, profile)
+    manifest = _finalized_manifest(run_dir)
+    raw = _indexed_file(run_dir, manifest, "stm32_result_stream")
+    _indexed_file(run_dir, manifest, "energy_result_stream")
+    collector = _json_file(run_dir / "mqtt-reporting-collector.log")
+    assert collector.get("expected_sources") == ["stm32", "energy"]
+    validation = collector.get("validation", {})
+    assert validation.get("passed") is True and validation.get("failure_reasons") == []
+    for source in ("stm32", "energy"):
+        source_result = validation.get("source_results", {}).get(source, {})
+        assert source_result.get("passed") is True
+        assert source_result.get("completion_count") == 1
+        assert source_result.get("missing_sequences") == []
+        assert source_result.get("duplicate_sequences") == []
+        assert source_result.get("observed_sha256") == source_result.get("expected_sha256")
+    observed = _parse_raw_stream(raw, run_dir.name, ("stm32", "energy"), {"stm32": 1, "energy": 1})
+    assert observed.passed, observed.failure_reasons
