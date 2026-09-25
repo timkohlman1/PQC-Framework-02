@@ -1415,7 +1415,7 @@ static void APP_PrintApplicationClockConfiguration(void)
 #ifdef SECURE_BOOT_APPLICATION
 #define PQC_BOOT_TIMING_MAILBOX_ADDR      0x10000000UL
 #define PQC_BOOT_TIMING_MAILBOX_MAGIC     0x50514354UL
-#define PQC_BOOT_TIMING_MAILBOX_VERSION   7UL
+#define PQC_BOOT_TIMING_MAILBOX_VERSION   8UL
 
 typedef struct
 {
@@ -1452,6 +1452,9 @@ typedef struct
   uint32_t selected_image_valid;
   uint32_t selected_image_part;
   uint32_t selected_image_fw_size;
+  uint32_t stack_profiling_enabled;
+  uint32_t stack_measurement_status;
+  uint32_t stack_watermark_capacity_bytes;
 } PQC_BootTimingMailbox;
 /* The hardware dual-bank event mailbox begins at 0x10000100. */
 typedef char PQC_BootTimingMailboxFitsOtaEvents[
@@ -1498,7 +1501,7 @@ static void APP_PrintWolfBootVerificationTiming(void)
   if ((mailbox->magic == PQC_BOOT_TIMING_MAILBOX_MAGIC) &&
       (mailbox->version == PQC_BOOT_TIMING_MAILBOX_VERSION))
   {
-    APP_UART_WriteString("wolfBoot timing mailbox version: 7\r\n");
+    APP_UART_WriteString("wolfBoot timing mailbox version: 8\r\n");
     APP_UART_WriteString("wolfBoot integrity valid: ");
     APP_UART_WriteUint32(mailbox->integrity_valid);
     APP_UART_WriteString("\r\n");
@@ -1527,7 +1530,18 @@ static void APP_PrintWolfBootVerificationTiming(void)
     APP_PrintWolfBootClock("sysclk_hz", mailbox->sysclk_hz);
     APP_PrintWolfBootClock("hclk_hz", mailbox->hclk_hz);
 
-    if (mailbox->max_stack_used_bytes != 0xFFFFFFFFUL)
+    if (mailbox->stack_profiling_enabled == 1U)
+    {
+      APP_UART_WriteString("wolfBoot stack profiling: enabled\r\n");
+      APP_UART_WriteString("wolfBoot verification stack status: ");
+      APP_UART_WriteString(mailbox->stack_measurement_status == 1U &&
+          mailbox->selected_image_valid == 1U ? "measured" : "unavailable");
+      APP_UART_WriteString("\r\n");
+    }
+    if (mailbox->stack_profiling_enabled == 1U &&
+        mailbox->stack_measurement_status == 1U &&
+        mailbox->selected_image_valid == 1U &&
+        mailbox->max_stack_used_bytes != 0xFFFFFFFFUL)
     {
       APP_UART_WriteString("wolfBoot verification max stack used: ");
       APP_UART_WriteUint32(mailbox->max_stack_used_bytes);
@@ -1595,6 +1609,38 @@ void PQC_BootEvidenceAppendToResultBuffer(uint32_t iteration)
       (unsigned long)(mailbox->signature_parameter_bits != 0U),
       (unsigned long)(mailbox->declared_signature_capacity_bytes != 0U));
   (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  /* Stack evidence is independent of FreeRTOS task/MSP statistics. The
+   * disabled mode emits no stack record; failed observations remain explicit. */
+  if (mailbox->stack_profiling_enabled == 1U)
+  {
+    uint32_t valid = (mailbox->stack_measurement_status == 1U) &&
+        (mailbox->selected_image_valid == 1U) &&
+        (mailbox->max_stack_used_bytes != 0xFFFFFFFFUL) &&
+        (mailbox->max_stack_used_bytes != 0U) &&
+        (mailbox->stack_watermark_capacity_bytes != 0U);
+    char high_water_text[16];
+    if (valid)
+      (void)snprintf(high_water_text, sizeof(high_water_text), "%lu",
+          (unsigned long)mailbox->max_stack_used_bytes);
+    else
+      (void)snprintf(high_water_text, sizeof(high_water_text), "unavailable");
+    (void)snprintf(line, sizeof(line),
+        "PQC_SECURE_BOOT_STACK schema=1 boundary=selected_image_integrity_begin_to_verification_end "
+        "profiling_enabled=1 measurement_status=%s high_water_bytes=%s "
+        "watermark_capacity_bytes=%lu selected_image_valid=%lu "
+        "timing_comparable=0 unavailable_reason=%s",
+        valid ? "measured" : "unavailable",
+        high_water_text,
+        (unsigned long)mailbox->stack_watermark_capacity_bytes,
+        (unsigned long)mailbox->selected_image_valid,
+        valid ? "none" :
+        mailbox->stack_measurement_status == 3U ? "watermark_untouched" :
+        mailbox->stack_measurement_status == 4U ? "region_exhausted" :
+        mailbox->stack_measurement_status == 5U ? "scan_interference" :
+        mailbox->stack_measurement_status == 2U ? "initialization_unavailable" :
+        "invalid_selected_image_or_status");
+    (void)PQC_ResultBufferAppendText(iteration, "secure_boot", line);
+  }
   /* Only the already-validated image-content SHA-256 is copied. This is
    * deliberately NOT the SHA-256 of the entire signed/packaged .bin file. */
   if ((mailbox->verified_image_digest_valid == 1U) &&

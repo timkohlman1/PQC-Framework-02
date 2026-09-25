@@ -10,7 +10,7 @@ profiles:
       generated_config: tools/wolfboot/.config
       generated_keystore: tools/wolfboot/src/keystore.c
       mingw_keytools_ansi_stdio_patch: true
-      runtime_stack_high_water_instrumentation: true
+      runtime_stack_high_water_instrumentation: false
       signing_tuple:
         keystore: keystore.c
         manifest: tuple.json

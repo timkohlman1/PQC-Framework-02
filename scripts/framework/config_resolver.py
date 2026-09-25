@@ -231,6 +231,9 @@ class ConfigResolver:
                 raise ResolutionError("plaintext MQTT transport cannot request mutual TLS authentication")
             if tls_kex.profile_id != "secp256r1" or tls_auth.profile_id != "rsa3072":
                 raise ResolutionError("plaintext MQTT uses inert secp256r1/rsa3072 compatibility selections")
+        stack_profiling = choices.get("boot_stack_profiling", False)
+        if not isinstance(stack_profiling, bool):
+            raise ResolutionError("boot_stack_profiling must be a boolean")
         firmware_mode = str(choices.get("firmware_mode", "single_bank"))
         if firmware_mode not in FIRMWARE_MODES:
             raise ResolutionError(
@@ -302,6 +305,7 @@ class ConfigResolver:
             "secure_boot": secure_boot.profile_id, "network_condition": network.profile_id,
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
+            "boot_stack_profiling": stack_profiling,
         }
         if mqtt_transport == "plaintext":
             public_choices["mqtt_transport"] = "plaintext"
@@ -332,6 +336,7 @@ class ConfigResolver:
             "workload": workload.profile_id,
             "firmware_mode": firmware_mode,
             "standby_signing_keys": standby_signing_keys,
+            "boot_stack_profiling": stack_profiling,
         }
         if mqtt_transport == "plaintext":
             firmware_choices["mqtt_transport"] = "plaintext"

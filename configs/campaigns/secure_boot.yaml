@@ -13,6 +13,7 @@ fixed:
   network_condition: baseline
   firmware_mode: single_bank
   standby_signing_keys: 0
+  boot_stack_profiling: false
 execution:
   repetitions: 1
   reset_between_runs: hardware_reset

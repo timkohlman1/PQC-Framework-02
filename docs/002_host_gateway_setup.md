@@ -176,10 +176,13 @@ Broker deployment may stage ignored experiment certificate profiles under the re
 
 The Linux wrapper acquires one gateway-side POSIX `flock` lease for each
 `pytest-gateway`, `pytest-hardware`, `experiment-gateway`, `campaign-gateway`,
-`python-gateway`, or `run` invocation. The lease spans the full container run,
+`python-gateway` invocation. The lease spans the full container run,
 including child experiment commands and sequential hardware operations. Local
 `experiment` and `python` build-only invocations do not acquire a gateway lease.
-Waiting owners retry until the gateway becomes free; press Ctrl-C to cancel.
+Waiting owners retry until the gateway becomes free. Interactive terminals show
+a single updating spinner line with elapsed waiting time; an owner/detail change
+prints a new line. Non-interactive logs print only changes, without a spinner.
+Press Ctrl-C to cancel without releasing the current owner's lock.
 All development hosts must use the same gateway SSH user and these wrappers.
 The gateway must provide `python3` and a Linux filesystem with working `flock`.
 
