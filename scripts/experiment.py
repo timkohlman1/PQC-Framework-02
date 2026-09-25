@@ -138,6 +138,22 @@ MQTT_UART_CAPTURE_MARKER_PREFIX = "PQC_UART_CAPTURE"
 MQTT_COMPLETION_MARKER_PREFIX = "PQC_EXPERIMENT_COMPLETE experiment="
 MQTT_E2E_FAILURE_RETURN_CODE = 12
 MQTT_BROKER_LIFECYCLE_FAILURE_RETURN_CODE = 13
+
+
+def _copy_campaign_condition_snapshot(
+    *,
+    source_log: Path | None,
+    result_dir: Path,
+) -> str | None:
+    """Copy the campaign-owned condition log into immutable per-run evidence."""
+    if source_log is None:
+        return None
+    source = Path(source_log)
+    if not source.is_file():
+        return None
+    destination = result_dir / "gateway-network-degradation.log"
+    destination.write_bytes(source.read_bytes())
+    return destination.name
 MQTT_STEP_PROGRESS_MESSAGES = {'provision_classical_certs': 'Provisioning classical broker certificates', 'provision_oqs_certs': 'Provisioning OQS broker certificates', 'deploy_broker': 'Deploying broker framework', 'start_broker': 'Starting broker', 'status_after_start': 'Checking broker readiness and status', 'validate_classical_mqtt': 'Publishing and subscribing with classical MQTT/TLS validation', 'validate_oqs_tls': 'Validating OQS TLS connectivity', 'validate_oqs_mqtt': 'Publishing and subscribing with OQS MQTT/TLS validation', 'collect_broker_logs': 'Collecting broker logs', 'stop_broker': 'Stopping broker'}
 
 
@@ -1677,6 +1693,7 @@ def _execute_mqtt_e2e_uart_capture(
     ota_plan: Path | None = None,
     manage_broker_lifecycle: bool = True,
     manage_network_condition: bool = True,
+    campaign_condition_log: Path | None = None,
 ):
     ota_wait_mode: str | None = None
     if ota_plan is not None:
@@ -1804,13 +1821,21 @@ def _execute_mqtt_e2e_uart_capture(
     if not manage_network_condition:
         retained_config = network_degradation_config(bundle)
         if retained_config is not None:
+            retained_log = _copy_campaign_condition_snapshot(
+                source_log=campaign_condition_log,
+                result_dir=result_dir,
+            )
             retained_evidence = degradation_manifest(retained_config)
             retained_evidence.update({
-                "status": "campaign_retained",
+                "status": (
+                    "campaign_retained_snapshot"
+                    if retained_log is not None
+                    else "campaign_retained"
+                ),
                 "ownership": "campaign",
                 "apply_return_code": None,
                 "cleanup_return_code": None,
-                "log": None,
+                "log": retained_log,
             })
             update_manifest(result_dir / "manifest.json", {"network_degradation": retained_evidence})
     try:
@@ -5108,6 +5133,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
         ota_plan=getattr(args, "ota_plan", None),
         manage_broker_lifecycle=not getattr(args, "campaign_managed_broker", False),
         manage_network_condition=not getattr(args, "campaign_managed_condition", False),
+        campaign_condition_log=getattr(args, "campaign_condition_log", None),
     )
     _record_run_summary(
         result_dir=result_dir,
@@ -6992,6 +7018,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--campaign-managed-broker", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-managed-condition", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument(
+        "--campaign-condition-log",
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     run_parser.add_argument("--skip-hardware-reset", action="store_true", help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-id", default=None, help=argparse.SUPPRESS)
     run_parser.add_argument("--campaign-case-id", default=None, help=argparse.SUPPRESS)

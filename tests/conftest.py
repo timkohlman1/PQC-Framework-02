@@ -447,6 +447,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Fail instead of skip when gateway or gateway flash-helper capability is unavailable. Inside a container, gateway checks also require PQC_CONTAINER_ENABLE_GATEWAY=1 and runtime-provided SSH access.",
     )
     group.addoption(
+        "--pqc-request8-esp32-hardware",
+        action="store_true",
+        default=False,
+        help="Run optional Request 8 ESP32/INA228 reporting isolation cases; requires a provisioned, calibrated persistent instrument and enabled acquisition.",
+    )
+    group.addoption(
         "--pqc-require-hardware",
         action="store_true",
         default=False,

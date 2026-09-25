@@ -9,6 +9,8 @@ import pytest
 from framework.campaign_executor import (
     CampaignError,
     ExecutionPolicy,
+    _broker_ctl_command,
+    _broker_profile_and_port,
     broker_identity,
     condition_identity,
     group_cases_by_firmware_identity,
@@ -163,3 +165,171 @@ def test_resolver_campaign_case_ids_are_deterministic_for_same_source():
     assert [case["provenance"]["configuration_identity"] for case in first] == [
         case["provenance"]["configuration_identity"] for case in second
     ]
+
+
+def test_plaintext_campaign_does_not_reinterpret_workload_port_as_tls_override():
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "broker_profile": "classical",
+                "broker": {"host": "broker", "port": 1883, "server_name": "broker"},
+                "tls": {"mode": "plaintext", "authentication": "server"},
+            }
+        }
+    }
+
+    profile, port_override = _broker_profile_and_port(bundle)
+
+    assert profile == "classical"
+    assert port_override is None
+    command = _broker_ctl_command(Path("/repo"), "start", profile=profile, broker_port=port_override)
+    assert "--classical-port" not in command
+
+
+def test_tls_campaign_preserves_resolved_tls_port_override():
+    bundle = {
+        "experiment": {
+            "mqtt": {
+                "broker_profile": "classical",
+                "broker": {"host": "broker", "port": 8883, "server_name": "broker"},
+                "tls": {
+                    "mode": "classical_tls_mutual",
+                    "authentication": "mutual",
+                },
+            }
+        }
+    }
+
+    profile, port_override = _broker_profile_and_port(bundle)
+
+    assert profile == "classical"
+    assert port_override == 8883
+    command = _broker_ctl_command(Path("/repo"), "start", profile=profile, broker_port=port_override)
+    assert command[-2:] == ["--classical-port", "8883"]
+
+
+def test_runtime_repetition_passes_campaign_condition_log(tmp_path: Path, monkeypatch):
+    from framework.campaign_executor import CampaignExecutor
+
+    repo_root = Path(__file__).resolve().parents[2]
+    executor = CampaignExecutor(repo_root, results_root=tmp_path / "results")
+
+    produced = tmp_path / "run" / "manifest.json"
+    produced.parent.mkdir(parents=True)
+    produced.write_text(
+        json.dumps({
+            "run": {"return_code": 0},
+            "final_index": {"status": "finalized"},
+            "capture_acceptance": {"accepted": True},
+            "configuration": {"campaign_execution": {
+                "campaign_id": "demo",
+                "case_id": "case-1",
+                "condition_identity": "condition-1",
+                "repetition_index": 1,
+                "firmware_sha256": "abc",
+            }},
+        }),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path):
+        captured["command"] = command
+        return 0, produced, ""
+
+    monkeypatch.setattr("framework.campaign_executor._run_experiment", fake_run_experiment)
+
+    condition_log = tmp_path / "control" / "gateway-network-degradation.log"
+    condition_log.parent.mkdir(parents=True)
+    condition_log.write_text("applied-state", encoding="utf-8")
+
+    case = {
+        "id": "case-1",
+        "execution": {},
+    }
+    case_path = tmp_path / "case.yaml"
+    preparation = tmp_path / "preparation.json"
+
+    result = executor._run_repetition(
+        campaign_root=tmp_path,
+        campaign_id="demo",
+        case=case,
+        case_path=case_path,
+        preparation_manifest=preparation,
+        firmware_sha256="abc",
+        cid="condition-1",
+        repetition=1,
+        policy=ExecutionPolicy.from_mapping({
+            "repetitions": 1,
+            "reset_between_runs": "hardware_reset",
+            "build": "once_per_firmware_identity",
+            "flash": "once_per_firmware_identity",
+            "experiment_broker": "reuse_if_compatible",
+            "reporting_broker": "always_available",
+            "condition": "retain_within_condition",
+            "evidence": "per_run",
+        }),
+        condition_log=condition_log,
+    )
+
+    assert result == produced
+    idx = captured["command"].index("--campaign-condition-log")
+    assert captured["command"][idx + 1] == str(condition_log)
+
+
+def test_runtime_repetition_omits_campaign_condition_log_for_baseline(tmp_path: Path, monkeypatch):
+    from framework.campaign_executor import CampaignExecutor
+
+    repo_root = Path(__file__).resolve().parents[2]
+    executor = CampaignExecutor(repo_root, results_root=tmp_path / "results")
+
+    produced = tmp_path / "run" / "manifest.json"
+    produced.parent.mkdir(parents=True)
+    produced.write_text(
+        json.dumps({
+            "run": {"return_code": 0},
+            "final_index": {"status": "finalized"},
+            "capture_acceptance": {"accepted": True},
+            "configuration": {"campaign_execution": {
+                "campaign_id": "demo",
+                "case_id": "case-1",
+                "condition_identity": "condition-1",
+                "repetition_index": 1,
+                "firmware_sha256": "abc",
+            }},
+        }),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path):
+        captured["command"] = command
+        return 0, produced, ""
+
+    monkeypatch.setattr("framework.campaign_executor._run_experiment", fake_run_experiment)
+
+    executor._run_repetition(
+        campaign_root=tmp_path,
+        campaign_id="demo",
+        case={"id": "case-1", "execution": {}},
+        case_path=tmp_path / "case.yaml",
+        preparation_manifest=tmp_path / "preparation.json",
+        firmware_sha256="abc",
+        cid="condition-1",
+        repetition=1,
+        policy=ExecutionPolicy.from_mapping({
+            "repetitions": 1,
+            "reset_between_runs": "hardware_reset",
+            "build": "once_per_firmware_identity",
+            "flash": "once_per_firmware_identity",
+            "experiment_broker": "reuse_if_compatible",
+            "reporting_broker": "always_available",
+            "condition": "retain_within_condition",
+            "evidence": "per_run",
+        }),
+        condition_log=None,
+    )
+
+    assert "--campaign-condition-log" not in captured["command"]
