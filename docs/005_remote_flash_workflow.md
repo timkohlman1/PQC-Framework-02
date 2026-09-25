@@ -228,6 +228,14 @@ Example inspection:
 wireshark "results/<run-id>/gateway-network-capture.pcap"
 ```
 
+For repeatable offline analysis after the run is finalized, use:
+
+```bash
+./scripts/dev.sh python scripts/analyse_packet_capture.py results/<run-id>/manifest.json
+```
+
+This writes derived observations to `results/<run-id>/analysis/packet_capture/packet_analysis.json` and a separate hashed lineage record to `packet_analysis_lineage.json`. It does not modify the finalized manifest or raw capture. The maintained Docker image includes pinned `tshark`; when a TLS key log is retained, the normal analyser invocation uses it for TLS/MQTT decryption enrichment. Pass `--no-tshark` only when encrypted-protocol enrichment is intentionally disabled. If the key log is unavailable or decryption fails, the output records that state explicitly and preserves the encrypted packet observations. Structured STM32 MQTT reporting evidence is preferred for device-side correlation; UART remains diagnostic/secondary evidence. No cross-clock alignment is inferred unless an explicit mapping exists in retained evidence.
+
 or inside the development container:
 
 ```bash

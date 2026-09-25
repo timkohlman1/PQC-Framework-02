@@ -116,7 +116,7 @@ Provision all configured X.509 research profiles once before running TLS experim
 
 Profiles are declared under `configs/tls_auth/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
 
-Networked profiles can retain `gateway-network-capture.pcap` and `gateway-network-capture.log`. Packet capture is supporting evidence only; correlate it with UART, broker, subscriber, and manifest evidence. Setup and inspection details are in `docs/002_host_gateway_setup.md` and `docs/005_remote_flash_workflow.md`.
+Networked profiles can retain `gateway-network-capture.pcap` and `gateway-network-capture.log`. Packet capture remains authoritative raw network evidence and is interpreted only after run finalisation. Run `./scripts/dev.sh python scripts/analyse_packet_capture.py results/<run-id>/manifest.json` to write derived packet observations and lineage under `results/<run-id>/analysis/packet_capture/` without modifying `manifest.json`. The maintained Docker development image includes pinned `tshark` support so a retained broker TLS key log can be used for TLS/MQTT decryption enrichment; `--no-tshark` explicitly disables that enrichment. When the structured STM32 MQTT result stream is available it is the primary device-side correlation source; UART is secondary diagnostic evidence. Cross-clock offsets are never invented. Setup and inspection details are in `docs/002_host_gateway_setup.md` and `docs/005_remote_flash_workflow.md`.
 
 ## Safety and evidence
 

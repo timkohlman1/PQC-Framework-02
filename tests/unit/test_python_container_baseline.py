@@ -35,6 +35,7 @@ def test_python_container_definition_supports_stm32_builds_and_runtime_gateway_a
     runtime_gateway_packages = [
         "openssh-client",
         "openssl",
+        "tshark",
     ]
     for package in runtime_gateway_packages:
         assert package in normalised
@@ -72,6 +73,7 @@ def test_python_container_pins_debian_snapshot_and_toolchain_packages() -> None:
         "git=1:2.47.3-0+deb13u1",
         "openssh-client=1:10.0p1-7+deb13u4",
         "openssl=3.5.7-1~deb13u2",
+        "tshark=4.4.18-0+deb13u1",
         "build-essential=12.12",
         "cmake=3.31.6-2",
         "ninja-build=1.12.1-1",
