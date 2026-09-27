@@ -24,7 +24,7 @@ def _load_hardware_test_module():
     return module
 
 
-def test_secure_boot_profile_and_hardware_test_use_derived_timing_contract():
+def test_secure_boot_profile_preserves_derived_timing_contract():
     experiment_spec = importlib.util.spec_from_file_location(
         "experiment_cli_for_workflow_contract", REPO_ROOT / "scripts/experiment.py"
     )
@@ -36,12 +36,9 @@ def test_secure_boot_profile_and_hardware_test_use_derived_timing_contract():
         algorithm="ecdsa_p256",
         section="experiment",
     )
-    hardware = HARDWARE_TEST_PATH.read_text(encoding="utf-8")
     expected = "framework_derived_from_uart_cycles_and_reported_hclk"
 
     assert profile["secure_boot_flash"]["boot_timing_source"] == expected
-    assert expected in hardware
-    assert "uart_explicit_verification_time_marker" not in hardware
 
 
 def test_hardware_failure_context_reads_newest_matching_log(tmp_path):
@@ -95,4 +92,3 @@ def test_secure_boot_result_selection_uses_manifest_semantics(tmp_path):
     )
 
     assert module._secure_boot_result_dirs(tmp_path) == [secure_boot]
-

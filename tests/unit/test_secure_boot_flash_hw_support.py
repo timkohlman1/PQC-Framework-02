@@ -160,8 +160,8 @@ def _positive_fixture(tmp_path):
     root.mkdir()
     digest = "a" * 64
     (root / "manifest.json").write_text(json.dumps({
-        "run": {"state": "finalized", "return_code": 9, "failure_stage": "benchmark_sample"},
-        "execution_outcome": {"failure_stage": "benchmark_sample"},
+        "run": {"state": "finalized", "return_code": 0, "failure_stage": "none"},
+        "execution_outcome": {"failure_stage": "none", "result": "secure_boot_positive_boot_evidence_passed"},
         "final_index": {"status": "finalized"},
         "artifacts": [
             {"artifact_id": kind, "acquisition": {"status": "available"}, "sha256": digest}
@@ -173,7 +173,7 @@ def _positive_fixture(tmp_path):
         "flash_return_code": 0, "capture_completed": True,
         "negative_requested": False, "boot_marker_present": True,
         "secure_boot_marker_present": True, "tick_present": True,
-        "result": "secure_boot_flash_failed",
+        "result": "secure_boot_positive_boot_evidence_passed",
         "negative_test": {"original_signed_application_sha256": digest},
     }
     (root / "secure-boot-flash-capture.json").write_text(json.dumps(capture))
@@ -187,28 +187,30 @@ def _positive_fixture(tmp_path):
     return root
 
 
-def test_benchmark_sample_return_code_requires_independent_boot_evidence(tmp_path):
+def test_positive_flash_requires_cli_success_and_independent_boot_evidence(tmp_path):
     module = _module()
     root = _positive_fixture(tmp_path)
-    outcome = subprocess.CompletedProcess([], 9, "", "")
+    outcome = subprocess.CompletedProcess([], 0, "", "")
     module._assert_positive_flash_evidence(outcome, root)
     with pytest.raises(AssertionError):
         module._assert_positive_flash_evidence(subprocess.CompletedProcess([], 8, "", ""), root)
+    with pytest.raises(AssertionError):
+        module._assert_positive_flash_evidence(subprocess.CompletedProcess([], 9, "", ""), root)
     (root / "uart.log").write_text("stm32-basic_hal1 boot v0.1.0")
     with pytest.raises(AssertionError, match="Missing current-run secure-boot evidence"):
         module._assert_positive_flash_evidence(outcome, root)
 
 
-def test_benchmark_sample_must_not_be_other_stage_or_unverified_flash(tmp_path):
+def test_positive_flash_rejects_failed_manifest_or_unverified_flash(tmp_path):
     module = _module()
     root = _positive_fixture(tmp_path)
-    outcome = subprocess.CompletedProcess([], 9, "", "")
+    outcome = subprocess.CompletedProcess([], 0, "", "")
     manifest = json.loads((root / "manifest.json").read_text())
     manifest["run"]["failure_stage"] = "flash"
     (root / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(AssertionError):
         module._assert_positive_flash_evidence(outcome, root)
-    manifest["run"]["failure_stage"] = "benchmark_sample"
+    manifest["run"]["failure_stage"] = "none"
     (root / "manifest.json").write_text(json.dumps(manifest))
     capture = json.loads((root / "secure-boot-flash-capture.json").read_text())
     capture["flash_return_code"] = 1
