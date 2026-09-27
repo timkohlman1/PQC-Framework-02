@@ -301,6 +301,22 @@ class ConfigResolver:
         for kind, ident in (selections.get("instruments") or {}).items():
             if ident is not None:
                 instruments[kind] = self.load_instrument(kind, str(ident))
+        if "energy" in instruments:
+            application = effective_workload.get("firmware_application")
+            supported = (application in {"mqtt_validation", "mqtt_ready_metrics", "mqtt_ready_metrics_2", "tls_handshake_repeat", "baremetal_benchmark"}
+                         and effective_workload.get("evidence", {}).get("deferred_reporting", False)
+                         and instruments["energy"].data.get("endpoint", {}).get("broker_service") == rep.profile_id)
+            if not supported:
+                import warnings
+                warnings.warn("Energy measurement disabled: workload does not support the network/reporting capture interval", UserWarning)
+                del instruments["energy"]
+            else:
+                if instruments["energy"].profile_id != "esp32_ina228":
+                    raise ResolutionError("unsupported energy appliance profile")
+                if not 1 <= int(iterations.get("handshakes_per_run", 1)) <= 32:
+                    raise ResolutionError("energy capture supports 1 to 32 intervals")
+                if execution.get("reset_between_runs", "hardware_reset") != "hardware_reset":
+                    raise ResolutionError("energy capture requires a fresh hardware reset/start gate per run")
         profile_objects = [target, gateway, workload, tls_kex, tls_auth, secure_boot, network, exp, rep, *instruments.values()]
         hashes = {p.domain + ":" + p.profile_id: p.content_sha256 for p in profile_objects}
         public_choices = {
@@ -345,6 +361,8 @@ class ConfigResolver:
         }
         if mqtt_transport == "plaintext":
             firmware_choices["mqtt_transport"] = "plaintext"
+        if "energy" in instruments:
+            firmware_choices["energy_capture"] = instruments["energy"].content_sha256
         if transfer:
             firmware_choices["payload_bytes"] = int(transfer["payload_bytes"])
             firmware_choices["chunk_bytes"] = int(transfer["chunk_bytes"])

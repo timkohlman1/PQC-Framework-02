@@ -1,13 +1,13 @@
 # ESP32 / INA228 Energy Instrument
 
-## Extraction scope
+## Ownership and implementation scope
 
 This guide and the instrument source were imported from commit
 `7a25e8fc507f23a5346dfa6014087be05fab81bd` as the baseline for rebuilding
-the surrounding integration. The original guide below is retained as a
-historical reference. Its STM32, collector, campaign, configuration-profile,
-and end-to-end hardware-test descriptions do not establish functionality in
-this branch; those components have not been imported with the device.
+the surrounding integration. The appliance and its pinned dependencies remain
+unchanged. STM32 boundary capture, framework association/collection, and raw
+acceptance are implemented freshly; earlier host changes were not restored.
+Hardware acceptance requires the live test below, not source or native tests.
 
 The extracted device-only tests are:
 
@@ -103,9 +103,8 @@ E(S) = E0 + (E1-E0)/(S1-S0) * (S-S0)
 
 Two points determine offset and linear rate error. They cannot quantify
 nonlinear drift or GPIO/ISR latency; validate those separately. Capture checks
-ordered boundaries, matching interval counts and a broad duration-consistency
-limit (1% of the STM32 interval or 2 ms, whichever is larger). That check is
-not a clock calibration or a timing-accuracy claim. No affine coefficients,
+ordered boundaries and matching interval indices/counts. Capture applies no
+assumed clock-rate tolerance or calibration. No affine coefficients,
 per-operation energy, integrated energy totals, or scientific metrics are
 calculated or inserted into the run manifest during capture.
 
@@ -124,8 +123,20 @@ After the workload, the collector requests the exact token and expected interval
 count (one normally, the selected handshake count for a repeated TLS workload).
 Only matching completed intervals may be claimed. **Unlabeled fallback is
 disabled**: a single leftover preparation interval is not proof of run identity.
-Preparation cases suppress instrument capture and do not publish a measurement
-token or claim candidate intervals; they retain the build's energy capability.
+Energy campaign preparation uses `run --prepare-only`: build/sign/flash with no
+validation workload, association, or collection. Energy-enabled firmware waits
+at a bounded UART control gate (60 seconds) on every boot; the host waits up to
+30 seconds for `PQC_ENERGY_WAITING` and sends `PQC_ENERGY_GO` only after fresh
+association. Preparation never sends that command. A later measurement resets
+the STM32 and requires a new periodic announcement after reset before releasing
+its gate. Thus flashing cannot start an unrecorded
+workload. Diagnostic UART settings remain unchanged, but the two control-plane
+messages require LPUART1 even with diagnostic output disabled. Energy-disabled
+firmware has no gate, pin initialization, GPIO window, or boundary records.
+The start wait is outside the energy interval. Existing reset-relative timing
+still includes this control delay; capture does not subtract or reinterpret it.
+Use the retained absolute TIM2 timestamps and interval boundaries for offline
+analysis rather than treating gated reset-to-readiness as an ungated baseline.
 Supported runs contain 1–32 intervals. Ring retention is finite: collect before
 samples wrap. Long multi-interval runs can exceed it and must fail explicitly.
 
@@ -152,8 +163,8 @@ in the initial session record. Every previous raw sample field is retained;
 voltage/current/power retain the same nine-significant-digit serialization.
 Chunks carry `data_b64` instead of hexadecimal text. Hashes and byte/record
 counts cover the exact decoded newline-delimited bytes, before normalization.
-The collector still accepts historical schema 2 / hexadecimal evidence. It
-validates schema 3 arrays using the declared fixed column order. No fitted
+The common transport reader accepts hexadecimal STM32 chunks; current energy
+acceptance requires schema 3 arrays and the declared fixed column order. No fitted
 clock, integrated energy or per-operation attribution is generated.
 
 Each 4096-byte logical chunk fits, including base64 expansion and its envelope,
@@ -173,6 +184,9 @@ chunks and during acknowledgement waits. These limits do not guarantee that a
 near-full ring transfers in 180 seconds on every network. Increase the profile's
 completion deadline up to the host's 300-second cap when measuring long runs,
 and establish a practical transfer limit from actual completion counters.
+An explicit `PQC_REPORTING_FAILURE` ends the host's reporting wait so collection
+can retain failed-run energy promptly. With no terminal indication, the normal
+bounded reporting timeout still applies and may exceed available retention.
 
 An incomplete or invalid required result collection rejects capture acceptance,
 even when the raw file itself was retained successfully. STM32 execution outcome
@@ -273,12 +287,28 @@ instruments:
 
 makes energy evidence independently required for that resolved experiment. Timing, memory and TLS instrumentation remain separately controlled and are not implied or disabled by the energy selection.
 
+Unsupported workloads or reporting-broker selections produce a warning and
+resolve with energy disabled. Supported workloads are MQTT validation,
+ready-metrics, ready-metrics-2, repeated TLS, and the baremetal benchmark with
+deferred MQTT reporting. Baremetal measurement ends before RTOS/network startup;
+ordinary MQTT measurement includes application network startup. Repeated TLS
+uses one interval per connection/handshake, ending before result formatting.
+Energy requires hardware reset between runs. OTA multi-boot capture is not
+supported. The appliance profile describes observed configuration; campaigns
+do not send it to the ESP32 or change the empirical calibration.
+
+`energy-association.json`, `energy-*.log`, and `energy-capture.json` retain the
+token, bounded control outcomes, workload result and raw acceptance separately.
+The common raw MQTT file remains independently hash-validated per producer.
+Cleanup cancels retained collect, probes resumed acquisition with a fresh
+temporary token, then clears retained associate. Failure stops the campaign.
+
 The ESP32 local `sdkconfig` owns laboratory Wi-Fi credentials and must remain uncommitted. Non-secret defaults such as reporting-broker host/port, client ID, sensor initialization retry period and continuous PSRAM ring size are exposed through `main/Kconfig.projbuild`.
 
 Hardware campaigns that need gateway access must be launched through the gateway-capable wrapper, for example:
 
 ```bash
-./scripts/dev.sh python-gateway scripts/run_campaign.py baseline_energy.yaml
+./scripts/dev.sh campaign-gateway path/to/energy-campaign.yaml
 ```
 
 ## Verification and pass criteria
@@ -289,15 +319,16 @@ Run from the repository root:
 ./scripts/dev.sh pytest tests/unit
 ./scripts/dev.sh pytest tests/integration -m integration
 ./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware
-./scripts/dev.sh python-gateway scripts/run_campaign.py baseline_energy.yaml
+./scripts/dev.sh pytest tests/integration/test_energy_stm32_in.py -m integration
 ```
 
 The energy hardware test owns broker setup, canonical case resolution, STM32
 build/preparation/flash, two repetitions each of single- and two-interval
 workloads, capture validation and temporary-configuration cleanup. Gateway,
 UART, flash and the manually provisioned persistent instrument are laboratory
-capabilities. It neither builds nor resets the ESP32. A missing capability
-skips in an ordinary run and fails under `--pqc-require-hardware`.
+capabilities. It neither builds nor resets the ESP32. Missing gateway/toolchain
+capabilities skip in an ordinary run and fail under `--pqc-require-hardware`;
+an appliance readiness failure rejects the attempted capture.
 
 Unit/native integration gates must pass. A skip is not hardware evidence.
 Campaign acceptance requires finalized manifests, accepted capture, both raw
@@ -327,11 +358,15 @@ defaults; check their non-secret values before building. Do not share the full
 `sdkconfig`, which can contain Wi-Fi credentials. Firmware and host collector
 must both be updated for schema 3 and the fresh readiness acknowledgement.
 
-The previously retained repeated-TLS hardware preparation stalled before any
-STM32 result epoch. Its cause is not established by the energy transfer fix.
-This patch does not change ST67/lwIP behaviour. If preparation still fails,
-retain its UART, subscriber, manifest and collector evidence as a separate
-network/startup issue; do not claim Request 6 hardware completion.
+On 2026-09-27, the fresh implementation passed the ordinary ready-metrics
+hardware campaign with two independently accepted runs and one preparation.
+Both retained matching raw boundaries, valid hashes/counts, and resumed
+acquisition. An earlier attempt reported STM32 DNS error 202, missed reporting,
+and exceeded retention; that failed evidence was retained. The repeated-TLS
+hardware campaign produced no STM32 result epochs or GPIO intervals after its
+start gate, returned `intervals_unavailable`, and stopped before repetition 2.
+Its cause is unestablished. Multi-interval live acceptance remains deferred
+(DTR-013); unit/native checks do not replace it. No ST67/lwIP behaviour was changed.
 
 Before thesis use, retain calibration validation separately from finalized run
 capture: actual breakout/shunt identity, a no-load zero-offset check, DMM bus

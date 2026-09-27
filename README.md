@@ -170,6 +170,8 @@ Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RA
 
 The source-controlled experiment configuration is now organised by independently selectable profile domain under `configs/targets`, `configs/gateways`, `configs/instruments`, `configs/services`, `configs/workloads`, `configs/tls_kex`, `configs/tls_auth`, `configs/secure_boot`, `configs/network_conditions`, and `configs/campaigns`. Legacy concrete experiment, board/host/boot, algorithm, wolfBoot-template, certificate-profile, and experiment-grid trees have been retired. Generated campaign cases are the only operational experiment inputs.
 
+Optional `instruments: {energy: esp32_ina228}` capture uses the persistent appliance and normal campaign wrapper. See the [energy instrument guide](docs/010_esp32_ina228_energy_instrument.md) for wiring, preparation, bounded collection and evidence limits. Normal campaigns never flash or reset the ESP32.
+
 When `experiment.py run` consumes a canonical generated case, the case's `choices.secure_boot` selection is carried automatically into the wolfBoot build/sign/flash path. An explicit conflicting secure-boot selection is rejected before hardware side effects.
 
 Preview/materialise a campaign without hardware access:

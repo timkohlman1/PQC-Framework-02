@@ -908,3 +908,13 @@ def test_hardware_test_standard_is_self_contained() -> None:
     assert "Automated hardware tests" in flash
     assert "test_application_timebase_hw.py" in flash
     assert "PQC_TIMEBASE_UART_LOG" not in architecture.split("| DTR-015 |", 1)[1].splitlines()[0]
+
+
+# Energy operations belong in the instrument guide rather than the AI guide.
+def test_energy_guide_documents_fresh_optional_framework_contract():
+    root = Path(__file__).resolve().parents[2]
+    guide = (root / "docs/010_esp32_ina228_energy_instrument.md").read_text()
+    for text in ("run --prepare-only", "PQC_ENERGY_GO", "energy-capture.json",
+                 "warning", "energy disabled", "offline", "schema 3"):
+        assert text in guide
+    assert (root / "tests/hardware/test_energy_capture_hw.py").is_file()

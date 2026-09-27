@@ -269,8 +269,8 @@ def _parse_raw_stream(
         if kind == "chunk":
             try:
                 seq = int(obj["sequence"])
-                encoded = str(obj["data_hex"])
-                data = bytes.fromhex(encoded)
+                from framework.energy_evidence import chunk_bytes
+                data = chunk_bytes(obj)
             except Exception as exc:
                 failures.append(f"line {lineno}: invalid chunk: {exc}")
                 continue

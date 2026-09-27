@@ -199,14 +199,16 @@ add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
 
-# Request 15 UART transport modes. disabled is a true compile-time exclusion:
-# do not link the HAL UART implementation when the experiment profile disables UART.
+# Diagnostic output remains excluded in disabled mode. Energy-enabled firmware
+# still needs HAL UART for its pre-workload control gate.
 if(PQC_UART_OUTPUT_MODE STREQUAL "disabled")
     set(PQC_UART_OUTPUT_MODE_VALUE 0)
-    list(REMOVE_ITEM STM32_Drivers_Src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
-    )
+    if(NOT PQC_ENERGY_SYNC_ENABLED)
+        list(REMOVE_ITEM STM32_Drivers_Src
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
+        )
+    endif()
 elseif(PQC_UART_OUTPUT_MODE STREQUAL "minimal")
     set(PQC_UART_OUTPUT_MODE_VALUE 1)
 elseif(PQC_UART_OUTPUT_MODE STREQUAL "full")

@@ -15,6 +15,7 @@
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
 #include "pqc_result_buffer.h"
+#include "pqc_energy_boundary.h"
 #include "pqc_boot_evidence.h"
 #include "pqc_wolfssl_memory.h"
 
@@ -2003,6 +2004,8 @@ int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
         PQC_ResultBufferReset();
         PQC_TLS_InstrumentationReset(iteration, iteration);
 
+        PQC_EnergyBoundaryBegin();
+
         connect_result = MqttClient_Init(&client, &network, PQC_WolfMQTT_MessageCallback,
             tx, sizeof(tx), rx, sizeof(rx), PQC_WOLFMQTT_COMMAND_TIMEOUT_MS);
         if (connect_result == MQTT_CODE_SUCCESS) {
@@ -2016,6 +2019,9 @@ int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
         } else {
             failure_stage = "mqtt_client_init";
         }
+
+        PQC_EnergyBoundaryEnd();
+        PQC_EnergyBoundaryAppend(iteration);
 
         if (socket_context.tls_handshake_attempted) {
             s_tls_repeat_result_iteration = iteration;

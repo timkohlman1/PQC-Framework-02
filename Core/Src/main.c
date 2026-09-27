@@ -26,6 +26,7 @@
 #include "lwip.h"
 #include "pqc_wifi_config.h"
 #include "pqc_network_interface.h"
+#include "pqc_energy_boundary.h"
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
 #endif
@@ -82,7 +83,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-#if PQC_UART_OUTPUT_MODE != 0
+#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
 UART_HandleTypeDef hlpuart1;
 #endif
 
@@ -111,7 +112,7 @@ const osThreadAttr_t networkTask_attributes = {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-#if PQC_UART_OUTPUT_MODE != 0
+#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
 static void MX_LPUART1_UART_Init(void);
 #endif
 static void MX_SPI1_Init(void);
@@ -1806,7 +1807,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-#if PQC_UART_OUTPUT_MODE != 0
+#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
   MX_LPUART1_UART_Init();
 #endif
 #if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST && (PQC_UART_OUTPUT_MODE != 0)
@@ -1838,8 +1839,13 @@ int main(void)
 #endif
 #if PQC_BAREMETAL_BENCHMARK_ENABLED
   /* All cryptographic measurement completes before the RTOS and ST67 run. */
+  PQC_EnergyBoundaryInitialize();
+  if (!PQC_EnergyAwaitStart()) { Error_Handler(); }
+  PQC_EnergyBoundaryBegin();
   PQC_BenchmarkSTM32_Run();
+  PQC_EnergyBoundaryEnd();
   PQC_ResultBufferReset();
+  PQC_EnergyBoundaryAppend(0U);
   PQC_BenchmarkSTM32_AppendResults();
 #endif
 
@@ -1965,7 +1971,7 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
-#if PQC_UART_OUTPUT_MODE != 0
+#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
 static void MX_LPUART1_UART_Init(void)
 {
 
@@ -2885,9 +2891,23 @@ void StartNetworkTask(void *argument)
   PQC_ResultBufferReset();
 #endif
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryInitialize();
+  if (!PQC_EnergyAwaitStart()) {
+    osThreadExit();
+    return;
+  }
+#endif
+#if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryBegin();
+#endif
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
+#if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryEnd();
+  PQC_EnergyBoundaryAppend(0U);
+#endif
 #if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();

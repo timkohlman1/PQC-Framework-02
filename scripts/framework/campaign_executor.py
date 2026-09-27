@@ -754,6 +754,8 @@ class CampaignExecutor:
             "--results-dir", str(preparation_results),
         ]
         log_path = campaign_root / "logs" / f"preparation-{group_index:04d}.log"
+        if representative.get("selections", {}).get("instruments", {}).get("energy"):
+            command.append("--prepare-only")
         rc, produced_manifest, output = _run_experiment(
             repo_root=self.repo_root,
             command=command,

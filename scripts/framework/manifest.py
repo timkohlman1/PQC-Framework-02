@@ -23,6 +23,7 @@ from framework.run_evidence import (
     discover_retained_artifacts,
     finalize_manifest as finalize_evidence_manifest,
     initialize_manifest_evidence,
+    mark_evidence,
     register_artifact as register_evidence_artifact_in_manifest,
     register_identity as register_evidence_identity_in_manifest,
     update_sut_outcome,
@@ -1077,13 +1078,26 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
     if isinstance(uart, dict) and not uart.get("skipped"):
         artifact("diagnostic_uart", uart.get("log"), "uart_capture", "gateway_uart")
 
+    collection = updates.get("result_collection")
+    if isinstance(collection, dict) and collection.get("status") in {"complete", "invalid"}:
+        artifact("stm32_result_stream", collection.get("raw_stream"), "result_collection", "mqtt")
+        if not collection.get("source_integrity", {}).get("stm32", {}).get("passed", False):
+            mark_evidence(manifest, role="stm32_result_stream", status="invalid",
+                          reason="STM32 reporting integrity failed", stage="result_collection", tool="mqtt")
+    energy = updates.get("energy_capture")
+    if isinstance(energy, dict):
+        artifact("energy_result_stream", "mqtt-reporting-raw.ndjson", "energy_collection", "mqtt")
+        if not energy.get("passed"):
+            mark_evidence(manifest, role="energy_result_stream", status="invalid",
+                          reason="Energy acceptance failed; see energy-capture.json",
+                          stage="energy_collection", tool="framework.energy_evidence")
+
     capture = updates.get("gateway_packet_capture")
     if isinstance(capture, dict):
         artifact("packet_capture_log", capture.get("log"), "packet_capture", "tcpdump")
         if capture.get("status") == "collected":
             artifact("packet_capture", capture.get("artifact"), "packet_capture", "tcpdump")
         elif capture.get("status") in {"failed", "start_failed"}:
-            from framework.run_evidence import mark_evidence
             mark_evidence(manifest, role="packet_capture", status="unavailable", reason=str(capture.get("failure_reason") or capture.get("status")), stage="packet_capture", tool="tcpdump")
 
     broker = updates.get("mqtt_broker")
@@ -1318,7 +1332,11 @@ def create_result_folder(
 
     current_timestamp = _coerce_timestamp(timestamp)
     root = Path(results_root)
-    run_id = next_run_id(bundle["experiment"]["id"], root, current_timestamp)
+    experiment_id = bundle["experiment"]["id"]
+    if bundle["experiment"].get("instruments", {}).get("energy") and len(experiment_id) > 60:
+        import hashlib
+        experiment_id = experiment_id[:47] + "-" + hashlib.sha256(experiment_id.encode()).hexdigest()[:12]
+    run_id = next_run_id(experiment_id, root, current_timestamp)
     result_dir = root / run_id
 
     result_dir.mkdir(parents=True, exist_ok=False)
