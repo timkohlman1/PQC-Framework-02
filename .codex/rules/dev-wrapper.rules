@@ -1,0 +1,40 @@
+# Permit documented wrapper routes, including gateway and hardware operations.
+# General-purpose run, shell, and python routes receive no approval here.
+# Repository authorization requirements (including Git and lock recovery) still apply.
+prefix_rule(
+    pattern = ["./scripts/dev.sh", [
+        "build-image",
+        "pytest",
+        "pytest-gateway",
+        "pytest-hardware",
+        "experiment",
+        "experiment-gateway",
+        "campaign",
+        "campaign-gateway",
+        "python-gateway",
+        "cmake",
+        "gateway-lock",
+    ]],
+    decision = "allow",
+    justification = "User-approved project wrapper routes, including gateway access.",
+    match = [
+        "./scripts/dev.sh build-image",
+        "./scripts/dev.sh pytest tests/unit",
+        "./scripts/dev.sh pytest-gateway",
+        "./scripts/dev.sh pytest-hardware",
+        "./scripts/dev.sh experiment --help",
+        "./scripts/dev.sh experiment-gateway --help",
+        "./scripts/dev.sh campaign --help",
+        "./scripts/dev.sh campaign-gateway --help",
+        "./scripts/dev.sh python-gateway --version",
+        "./scripts/dev.sh cmake --version",
+        "./scripts/dev.sh gateway-lock status",
+    ],
+    not_match = [
+        "./scripts/dev.sh run echo hello",
+        "./scripts/dev.sh shell",
+        "./scripts/dev.sh python --version",
+        "./scripts/dev.sh",
+        "./scripts/dev.sh unknown-route",
+    ],
+)
