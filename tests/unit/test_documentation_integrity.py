@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_AI_DOCUMENTS = (
+    "AGENTS.md",
     "AI_BUILD_GUIDE.md",
     "README.md",
     "docs/001_ai_feature_request_workflow.md",
@@ -18,6 +19,7 @@ OBSOLETE_REFERENCES = (
     "docs/plase11_checklist.md",
 )
 CANONICAL_DOCUMENTS = (
+    "AGENTS.md",
     "README.md",
     "AI_BUILD_GUIDE.md",
     "docs/README.md",
@@ -38,7 +40,7 @@ PROHIBITED_UNSAFE_COMMANDS = (
 )
 PROJECT_DOCUMENT_REFERENCE = re.compile(
     r"(?<![A-Za-z0-9_./-])"
-    r"(AI_BUILD_GUIDE\.md|README\.md|docs/[A-Za-z0-9_./-]+\.(?:md|txt))"
+    r"(AGENTS\.md|AI_BUILD_GUIDE\.md|README\.md|docs/[A-Za-z0-9_./-]+\.(?:md|txt))"
 )
 
 
@@ -46,13 +48,17 @@ def _read(relative_path: str) -> str:
     return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def _tracked_files() -> set[str]:
+def _repository_files() -> set[str]:
+    """Validate unstaged documentation additions without modifying the index."""
     completed = subprocess.run(
         [
             "git",
             "-c",
             f"safe.directory={REPO_ROOT}",
             "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
             "-z",
         ],
         cwd=REPO_ROOT,
@@ -66,18 +72,18 @@ def _tracked_files() -> set[str]:
     }
 
 
-def test_required_canonical_documents_exist_and_are_tracked() -> None:
-    tracked = _tracked_files()
+def test_required_canonical_documents_exist_and_are_versionable() -> None:
+    available = _repository_files()
     for path in CANONICAL_DOCUMENTS:
-        assert path in tracked, f"Required canonical document is not tracked: {path}"
+        assert path in available, f"Required canonical document is absent or ignored: {path}"
         assert (REPO_ROOT / path).is_file(), f"Required canonical document is missing: {path}"
 
 
-def test_explicit_ai_documentation_references_exist_and_are_tracked() -> None:
-    tracked = _tracked_files()
+def test_explicit_ai_documentation_references_exist_and_are_versionable() -> None:
+    available = _repository_files()
 
     for source in ACTIVE_AI_DOCUMENTS:
-        assert source in tracked, f"Active AI document is not tracked: {source}"
+        assert source in available, f"Active AI document is absent or ignored: {source}"
         content = _read(source)
         references = set(PROJECT_DOCUMENT_REFERENCE.findall(content))
 
@@ -85,8 +91,8 @@ def test_explicit_ai_documentation_references_exist_and_are_tracked() -> None:
             assert (REPO_ROOT / reference).is_file(), (
                 f"{source} references missing project documentation: {reference}"
             )
-            assert reference in tracked, (
-                f"{source} references untracked project documentation: {reference}"
+            assert reference in available, (
+                f"{source} references absent or ignored project documentation: {reference}"
             )
 
 
@@ -113,6 +119,7 @@ def test_supported_ai_entry_points_are_consistent() -> None:
     }
 
     for content in documents.values():
+        assert "AGENTS.md" in content
         assert "AI_BUILD_GUIDE.md" in content
         assert "docs/001_ai_feature_request_workflow.md" in content
         assert "there is no separate release-readiness prompt document" in content.lower()
@@ -120,6 +127,80 @@ def test_supported_ai_entry_points_are_consistent() -> None:
     for path, content in documents.items():
         if path != "docs/008_chatgpt_project_prompt.md":
             assert "docs/008_chatgpt_project_prompt.md" in content
+
+
+def test_direct_repository_guidance_separates_context_and_delivery_from_uploads() -> None:
+    for path in (
+        "AGENTS.md", "AI_BUILD_GUIDE.md",
+        "docs/001_ai_feature_request_workflow.md", "docs/008_chatgpt_project_prompt.md",
+    ):
+        content = " ".join(_read(path).lower().split())
+        for rule in (
+            "normative ai engineering guide",
+            "inspect and modify the working tree directly",
+            "do not ask the user to zip or upload repository context that is already available",
+            "not return replacement zips for files already modified in the working tree",
+            "read-only requests",
+            "commands actually executed",
+            "pass/fail/skip",
+            "git diff --check",
+            "git status --short",
+        ):
+            assert rule in content, f"{path} lost direct-repository rule: {rule}"
+
+
+def test_upload_startup_and_replacement_rules_remain_scoped_to_fallback() -> None:
+    workflow = _read("docs/001_ai_feature_request_workflow.md")
+    prompt = _read("docs/008_chatgpt_project_prompt.md")
+    for content, heading in (
+        (workflow, "### Upload-based startup only"),
+        (prompt, "## Upload-based ChatGPT fallback"),
+    ):
+        direct, upload = content.split(heading, 1)
+        assert "AGENTS.md" in direct
+        assert "Please upload or paste" not in direct
+        assert "Please upload or paste the latest `AI_BUILD_GUIDE.md` first" in upload
+        assert "files=(...)" in upload or "files=(" in upload
+        assert "/home/timk/Downloads/" in upload
+        assert "unzip -o" in upload
+
+    for path, heading in (
+        ("AI_BUILD_GUIDE.md", "The following replacement-artifact requirements apply only to upload-based sessions."),
+        ("docs/001_ai_feature_request_workflow.md", "## Upload-based replacement-artifact requirements"),
+        ("docs/008_chatgpt_project_prompt.md", "## Upload-based ChatGPT fallback"),
+    ):
+        delivery = _read(path).split(heading, 1)[1].lower()
+        assert "complete replacement content" in delivery
+        assert "repository-relative paths" in delivery
+        assert "unzip -o" in delivery
+
+
+def test_ai_workflows_preserve_explicit_git_authorization_and_gateway_waiting() -> None:
+    for path in (
+        "AGENTS.md", "AI_BUILD_GUIDE.md",
+        "docs/001_ai_feature_request_workflow.md", "docs/008_chatgpt_project_prompt.md",
+    ):
+        content = " ".join(_read(path).lower().split())
+        for action in ("commit", "push", "merge", "rebase"):
+            assert action in content, f"{path} lost Git authorization coverage: {action}"
+        assert "pull request" in content or "pr creation" in content
+        assert "explicit user authorization" in content or "explicitly authorizes the relevant git action" in content
+        assert "ctrl-c" in content
+        assert "short timeout unless requested" in content
+        assert "force-release" in content
+
+
+def test_documented_pytest_wrapper_file_targets_exist() -> None:
+    for path in _active_project_owned_documents():
+        content = _read(path)
+        assert "tests/integration/test_gateway_flash_helper.py" not in content, path
+        commands = re.findall(
+            r"(?m)^\./scripts/dev\.sh pytest(?:-gateway|-hardware)?\s+[^\n]+",
+            content.replace("\\\n", " "),
+        )
+        for command in commands:
+            for target in re.findall(r"tests/[A-Za-z0-9_./-]+\.py", command):
+                assert (REPO_ROOT / target).is_file(), f"{path} documents missing test: {target}"
 
 
 SIGNING_STATE_DOCUMENTS = (
@@ -579,7 +660,7 @@ def test_deferred_register_rows_have_all_required_values() -> None:
 
 DOCUMENTATION_INDEX = "docs/README.md"
 PROJECT_DOCUMENT_PATTERNS = (
-    re.compile(r"^(?:README|AI_BUILD_GUIDE)\.md$"),
+    re.compile(r"^(?:AGENTS|README|AI_BUILD_GUIDE)\.md$"),
     re.compile(r"^docs/.*\.(?:md|txt)$"),
     re.compile(r"^experiment/mqtt-broker/(?:README\.md|config/oqs/README\.md)$"),
 )
@@ -630,9 +711,9 @@ def _active_project_owned_documents() -> list[str]:
     return active
 
 
-def test_documentation_index_covers_every_tracked_project_owned_document() -> None:
-    tracked = _tracked_files()
-    expected = sorted(path for path in tracked if _is_project_owned_document(path))
+def test_documentation_index_covers_every_project_owned_document() -> None:
+    available = _repository_files()
+    expected = sorted(path for path in available if _is_project_owned_document(path))
     indexed = _indexed_document_paths()
 
     assert indexed == sorted(indexed), "Documentation index paths must be sorted"
@@ -644,11 +725,11 @@ def test_documentation_index_covers_every_tracked_project_owned_document() -> No
     )
 
 
-def test_every_indexed_document_exists_and_is_tracked() -> None:
-    tracked = _tracked_files()
+def test_every_indexed_document_exists_and_is_versionable() -> None:
+    available = _repository_files()
     for path in _indexed_document_paths():
         assert (REPO_ROOT / path).is_file(), f"Indexed documentation file is missing: {path}"
-        assert path in tracked, f"Indexed documentation file is not tracked: {path}"
+        assert path in available, f"Indexed documentation file is absent or ignored: {path}"
 
 
 def test_documentation_index_records_complete_ownership_metadata() -> None:
@@ -675,8 +756,7 @@ def test_active_project_docs_reject_unsafe_wolfboot_cleanup_commands() -> None:
 
 
 def test_canonical_mqtt_plan_path_is_used_consistently() -> None:
-    tracked = _tracked_files()
-    assert CANONICAL_MQTT_PLAN in tracked
+    assert CANONICAL_MQTT_PLAN in _repository_files()
     assert CANONICAL_MQTT_PLAN in _indexed_document_paths()
 
     for source in (DOCUMENTATION_INDEX, ARCHITECTURE):
@@ -710,7 +790,7 @@ def test_vendor_and_submodule_documentation_is_excluded_from_project_ownership()
 
 
 def test_root_entry_documents_link_to_documentation_index() -> None:
-    for path in ("README.md", "AI_BUILD_GUIDE.md"):
+    for path in ("AGENTS.md", "README.md", "AI_BUILD_GUIDE.md"):
         content = _read(path)
         assert DOCUMENTATION_INDEX in content, f"{path} must link to {DOCUMENTATION_INDEX}"
 

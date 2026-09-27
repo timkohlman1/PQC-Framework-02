@@ -48,10 +48,10 @@ Docker-hosted execution is the normal path. Container images and build contexts 
 
 Gateway wrappers explicitly enable gateway access, mount the configured host SSH directory read-only, and use it only for the temporary container run. Keep known-hosts data, SSH configuration, and private keys local. Do not bake them into the image.
 
-Representative capability-gated command:
+Representative capability-gated hardware validation command (builds and flashes the board; not a read-only SSH probe):
 
 ```bash
-./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway
 ```
 
 The command’s success proves only the evidence asserted by that test. Gateway SSH reachability is not board runtime, UART, broker, MQTT/TLS, timing, memory, benchmark, or end-to-end evidence.

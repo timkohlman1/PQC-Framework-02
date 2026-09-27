@@ -133,7 +133,7 @@ def test_readme_documents_container_default_boundaries_and_fallbacks() -> None:
     default_policy_terms = [
         "docker-hosted linux",
         "default development path",
-        "project wrapper scripts",
+        "project wrapper script `scripts/dev.sh`",
         "scripts/dev.sh",
         "host-native commands remain available as an explicit fallback",
     ]
