@@ -6,11 +6,12 @@ This guide is the compact source of truth for AI-assisted implementation and rev
 
 It defines the mandatory development workflow, repository boundaries, evidence rules, testing expectations, safety constraints, and artifact-delivery requirements. Detailed architecture, commands, setup instructions, capability status, and roadmap history belong to the canonical documents linked below.
 
-Do not rely on prior chats, prior uploads, memory, or inferred repository state. Use only this guide and repository files supplied for the current request.
+Do not rely on prior chats, prior uploads, memory, or inferred repository state. Establish current state from this guide and the accessible working tree in direct-repository sessions, or the files supplied for the current request in upload-based sessions.
 
 Supported AI entry points are:
 
-- `AI_BUILD_GUIDE.md`
+- `AGENTS.md` — entry point for direct-repository agents such as Codex
+- `AI_BUILD_GUIDE.md` — normative AI engineering guide for both workflows
 - `docs/001_ai_feature_request_workflow.md`
 - `docs/008_chatgpt_project_prompt.md`
 
@@ -74,7 +75,7 @@ Use `docs/007_framework_architecture.md` for the maintained detailed source/conf
 
 Application TLS/wolfCrypt changes must target `Middlewares/Third_Party/wolfSSL`, the project-controlled wolfSSL submodule. Do not modify `tools/wolfboot/lib/wolfssl` for application TLS functionality; that path is wolfBoot's upstream-owned nested dependency.
 
-When a change modifies files under `Middlewares/Third_Party/wolfSSL`, commit and push the wolfSSL change in that submodule repository first, then commit the resulting submodule SHA update in this parent repository. A parent-repository commit alone does not preserve dirty wolfSSL working-tree changes. The canonical dependency model and source-of-truth paths are documented in `docs/007_framework_architecture.md`.
+When a change modifies files under `Middlewares/Third_Party/wolfSSL`, and the user explicitly authorizes the relevant Git actions, commit and push the wolfSSL change in that submodule repository first, then commit the resulting submodule SHA update in this parent repository. A parent-repository commit alone does not preserve dirty wolfSSL working-tree changes. This ordering is not authorization to commit or push. The canonical dependency model and source-of-truth paths are documented in `docs/007_framework_architecture.md`.
 
 ## 5. Default workflow model
 
@@ -105,6 +106,8 @@ Use the wrapper `python` subcommand for ad hoc repository Python scripts. Do not
 Host-native development-machine builds remain available only as an explicit manual fallback for diagnosis or CubeMX/IDE-oriented work. They are not the reproducible validation gate. Detailed build, flash, signing, broker, gateway, and UART command sequences belong to `README.md`, `docs/005_remote_flash_workflow.md`, and `experiment/mqtt-broker/README.md`.
 
 Gateway and hardware access remains gateway-mediated. Do not bake SSH material, VPN material, signing material, certificates, credentials, or generated runtime state into container images or repository artifacts.
+
+Let gateway wrappers wait for an occupied lock with Ctrl-C cancellation; contention alone is not a command failure. Do not impose a short timeout unless requested. Never force-release a lock unless an abandoned owner is verified and recovery is explicitly authorized. A recorded owner description does not prove its workload is still running. See `docs/002_host_gateway_setup.md` for lock operation.
 
 ## 6. Generated state, signing state, and provenance
 
@@ -185,18 +188,22 @@ Replacement ZIPs and context ZIPs must exclude secrets and generated evidence un
 
 For every request:
 
-1. Read this guide first.
+1. Direct-repository agents enter through `AGENTS.md` and read this guide from the working tree. Upload-based sessions obtain and read the current guide before requesting further context.
 2. Classify the request as implementation or review according to `docs/001_ai_feature_request_workflow.md`.
-3. Inspect the supplied files before proposing code, replacement content, or candidate edits.
-4. Ask only for files needed for the current change or review. Do not request the whole repository by default.
-5. When multiple files are needed, provide a Bash `files=(...)` array with exact repository-relative paths and a `zip` command writing to `/home/timk/Downloads/`. Assume `/home/timk/rmit/PQC-Framework-02` is the repository root unless the user specifies otherwise.
+3. Inspect relevant implementation, configuration, tests, documentation, and Git state before proposing code or editing. Use direct reads when available; otherwise inspect supplied files.
+4. In direct-repository sessions, inspect and modify the working tree directly within the user's scope. Do not ask the user to ZIP or upload repository context that is already available. Reviews and read-only requests do not authorize edits.
+5. In upload-based sessions only, ask for selected files needed for the change or review, not the whole repository by default. For multiple files, provide a Bash `files=(...)` array with exact repository-relative paths and a `zip` command writing to `/home/timk/Downloads/`. Assume `/home/timk/rmit/PQC-Framework-02` is the repository root unless specified otherwise.
 6. Do not implement code until the required context is available.
 7. Preserve unrelated content and existing capability boundaries.
 8. Update relevant documentation in the same change.
 9. Do not implement future phases early.
 10. Do not ask for or suggest committing secrets.
 
-Implementation responses must contain:
+Direct-repository implementation completion reports must state the interpretation, files inspected and changed, implementation/test/documentation changes, exact commands actually executed, observed pass/fail/skip results, applicable hardware/runtime evidence, unverified work, remaining risks, and Git worktree status. Run the applicable validation from section 8 and inspect `git diff --check`, `git diff`, and `git status --short` before completion. Do not claim unexecuted checks passed.
+
+Preserve unrelated user changes. Do not reset, discard, overwrite unrelated work, commit, amend, rebase, merge, push, force-push, or create a pull request unless the user's current request explicitly authorizes the relevant Git action. If committing is authorized, complete required validation first; before an authorized push or PR, verify the intended branch and remote. Submodule ordering does not override this rule.
+
+Upload-based implementation proposals must contain:
 
 1. Brief interpretation.
 2. Files inspected.
@@ -208,7 +215,7 @@ Implementation responses must contain:
 8. Expected output or pass/fail criteria.
 9. Assumptions, risks, or unresolved questions.
 
-Review responses must contain:
+Review responses in either workflow must contain:
 
 1. Brief interpretation.
 2. Files inspected.
@@ -222,7 +229,9 @@ Review responses must contain:
 
 ## 11. Replacement artifact delivery
 
-For every modified or created file:
+Direct-repository sessions must not return replacement ZIPs for files already modified in the working tree. Deliver the working-tree changes and the completion report from section 10; do not ask the user to reapply those edits.
+
+The following replacement-artifact requirements apply only to upload-based sessions. For every modified or created file:
 
 - Provide complete replacement content in a downloadable artifact using the exact target filename.
 - When multiple files change, provide one ZIP containing repository-relative paths.

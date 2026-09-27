@@ -2,9 +2,17 @@
 
 ## Purpose
 
-This document defines the AI-assisted development workflow for this repository.
+This document defines direct-repository Codex work and the upload-based ChatGPT fallback. `AI_BUILD_GUIDE.md` remains the normative AI engineering guide for both.
 
-## Startup rule
+## Workflow selection and startup
+
+Choose by actual repository access, not the product name alone. With working-tree access, use the direct-repository workflow below. Without it, use the upload-based workflow. A read-only checkout permits direct inspection but not edits; report write restrictions rather than requesting copies of files already available.
+
+Direct-repository agents start at `AGENTS.md` and read `AI_BUILD_GUIDE.md` from the working tree. Do not ask the user to ZIP or upload repository context that is already available. Do not return replacement ZIPs for files already modified in the working tree.
+
+For authorized implementation work, inspect and modify the working tree directly.
+
+### Upload-based startup only
 
 At the start of every fresh feature-request chat, if the latest `AI_BUILD_GUIDE.md` has not already been provided, the AI assistant must respond only with:
 
@@ -15,11 +23,27 @@ Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, 
 ## Supported entry points
 
 - `AI_BUILD_GUIDE.md` is the required current repository context.
+- `AGENTS.md` is the entry point for direct-repository agents such as Codex.
 - `docs/001_ai_feature_request_workflow.md` defines the maintained implementation and review process.
 - `docs/008_chatgpt_project_prompt.md` contains the project prompt used for feature-development chats.
 - Release-readiness assessments use this workflow as review requests; there is no separate release-readiness prompt document.
 
-## Workflow
+## Direct-repository workflow
+
+1. Read `AGENTS.md`, then `AI_BUILD_GUIDE.md`, and only the relevant canonical documents.
+2. Classify the user's request: adding, updating, modifying, creating, removing, or fixing files is implementation; reviewing, checking, confirming, evaluating, auditing, or assessing existing content is review. A no-change outcome does not reclassify an implementation request.
+3. Inspect Git state and relevant implementation, configuration, tests, and documentation directly. Preserve unrelated user changes and do not inspect secret values.
+4. For implementation requests, make the smallest coherent change in the working tree, with appropriate tests and canonical documentation. For reviews or read-only requests, report findings without edits.
+5. Run targeted and broader validation through the documented repository wrappers, following `AI_BUILD_GUIDE.md` and the user's scope. Report unavailable capabilities and follow deferred-test rules where applicable.
+6. Inspect `git diff --check`, `git diff`, and `git status --short`. Report actual changes, executed commands, outcomes, evidence, and remaining limitations. Do not ask the user to reapply edits already made.
+
+Commits, pushes, merges, rebases, amendments, resets, force-pushes, and PR creation require explicit user authorization for the relevant Git action. Do not discard or overwrite unrelated work. If committing is authorized, complete required validation first; before an authorized push or PR, verify the intended branch and remote.
+
+Gateway wrappers wait for an occupied lock with Ctrl-C cancellation. Report contention as waiting, not failure; do not impose a short timeout unless requested. Never force-release another owner's lock unless abandonment is verified and recovery explicitly authorized. The displayed owner description does not establish that its workload is still running.
+
+## Upload-based workflow
+
+Use the same implementation/review classification as above. The following steps apply when repository access is unavailable:
 
 1. Start a fresh feature-request chat.
 2. Provide the latest `AI_BUILD_GUIDE.md`.
@@ -35,7 +59,7 @@ Please upload or paste the latest `AI_BUILD_GUIDE.md` first. After I review it, 
 12. The user returns logs, test output, manifests, UART logs, or error output.
 13. The AI reviews evidence and gives the next step.
 
-## Context archive format
+## Upload-based context archive format
 
 When requesting more than one repository file, use this pattern:
 
@@ -52,7 +76,9 @@ Use exact repository-relative paths. Do not include generated build outputs, res
 
 ## Implementation response requirements
 
-For implementation requests, include:
+For direct-repository completion, report the interpretation, files inspected and changed, implementation/test/documentation changes, commands actually executed, observed pass/fail/skip results, applicable hardware/runtime evidence, anything unverified, remaining risks, and current Git worktree status. Never describe planned validation as completed.
+
+For upload-based implementation proposals, include:
 
 1. Brief interpretation.
 2. Files inspected.
@@ -78,9 +104,9 @@ For review requests, include:
 8. Expected output or pass/fail criteria.
 9. Assumptions, risks, or unresolved questions.
 
-## Replacement-artifact requirements
+## Upload-based replacement-artifact requirements
 
-When files need to be modified or created:
+These requirements apply only to the upload-based workflow. When files need to be modified or created:
 
 - provide a downloadable replacement artifact using the exact target filename for every changed or created file
 - provide complete replacement content for every changed or created file

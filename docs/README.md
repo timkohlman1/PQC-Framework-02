@@ -10,6 +10,8 @@ A document being indexed does not make every statement in it current. Lifecycle 
 
 Project-owned documentation consists of the tracked root entry documents, tracked documents under `docs/`, and the tracked MQTT broker documentation listed below. Every project-owned document must appear in this index.
 
+During local development, integrity checks also include non-ignored documentation additions in these locations before they are staged. They still require an existing file and complete index metadata; they do not stage or commit files.
+
 Documentation inside vendor or submodule trees is upstream-owned and is excluded from project-maintained documentation consistency checks. The current submodule roots are:
 
 - `tools/wolfboot/`
@@ -32,17 +34,18 @@ Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generat
 
 | Path | Classification | Lifecycle | Canonical subject ownership | Intended audience |
 |---|---|---|---|---|
-| `AI_BUILD_GUIDE.md` | AI context guide | Current reference | AI-assisted development rules, safety constraints, evidence rules, test expectations, and repository navigation | AI assistants and developers preparing AI requests |
+| `AGENTS.md` | Direct-repository agent entry point | AI workflow | Codex working-tree instructions and routing to the normative AI engineering guide | Codex and other direct-repository agents |
+| `AI_BUILD_GUIDE.md` | AI engineering guide | Current reference | Normative rules for both direct-repository and upload-based AI work: safety, evidence, testing, and repository navigation | AI assistants and developers preparing AI requests |
 | `README.md` | Project entry point | Current reference | Human-facing purpose, current summary, common commands, and routing to detailed documentation | Developers, reviewers, operators |
 | `docs/000_project_overview.md` | Project overview | Current reference | Detailed project purpose, scope, implemented boundaries, and evidence model overview | New developers, reviewers, researchers |
-| `docs/001_ai_feature_request_workflow.md` | AI workflow guide | AI workflow | Canonical feature-request and review workflow for AI-assisted changes | Developers and AI assistants |
+| `docs/001_ai_feature_request_workflow.md` | AI workflow guide | AI workflow | Canonical direct-repository implementation/review workflow and selected-file upload fallback | Developers and AI assistants |
 | `docs/002_host_gateway_setup.md` | Setup guide | Operational guide | Development-host access, SSH configuration, and gateway identity | Operators and developers using the gateway |
 | `docs/003_stm32_board_setup.md` | Hardware setup guide | Operational guide | Board, ST-LINK, UART, memory, and physical hardware setup | Firmware developers and hardware operators |
 | `docs/004_baseline_hal_app.md` | Firmware behavior reference | Current reference | Baseline HAL/FreeRTOS application behavior, UART markers, and local-smoke limitations | Firmware developers and test authors |
 | `docs/005_remote_flash_workflow.md` | Workflow guide | Operational guide | Docker-wrapper build, signing, flash, secure-boot, and UART workflows | Operators, firmware developers, test authors |
 | `docs/006_security_and_secrets.md` | Security policy | Current reference | Secret handling, private generated state, signing-tuple safety, and packaging exclusions | All contributors and operators |
 | `docs/007_framework_architecture.md` | Architecture reference | Current reference | Detailed current architecture, capability matrix, evidence boundaries, file map, and deferred-test register | Developers, reviewers, test authors, researchers |
-| `docs/008_chatgpt_project_prompt.md` | AI prompt | AI workflow | Maintained reusable project prompt that routes work through the canonical AI workflow | Developers starting AI-assisted work |
+| `docs/008_chatgpt_project_prompt.md` | AI prompt | AI workflow | Reusable prompt routing direct-repository sessions to AGENTS.md and retaining the upload-based ChatGPT fallback | Developers starting AI-assisted work |
 | `docs/009_dual_bank_ota_workflow.md` | Dual-bank OTA workflow | Current reference | STM32L4R5 dual-bank firmware modes, authenticated OTA staging/activation, rollback/confirmation behavior, and OTA evidence/test workflow | Firmware, secure-boot, OTA, and test maintainers |
 | `docs/README.md` | Documentation index | Current reference | Project documentation inventory, ownership, lifecycle, audience, and exclusion rules | All documentation users and maintainers |
 | `docs/baremetal_benchmark_measurement_core.md` | Benchmark operational guide | Operational guide | STM32 pre-scheduler cycle measurement boundaries, selected primitive coverage, raw evidence and verification commands; architecture matrix stays in `docs/007_framework_architecture.md` | Firmware, benchmark and test maintainers |
@@ -57,16 +60,16 @@ Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generat
 
 ## Subject routing
 
-Use `README.md` for initial orientation and common commands. Use `AI_BUILD_GUIDE.md` and `docs/001_ai_feature_request_workflow.md` for AI-assisted changes. Use `docs/007_framework_architecture.md` for detailed current capability and evidence questions. Use the topic-specific operational guide for setup or execution details. Use the active MQTT/TLS plan for current roadmap status. Treat the historical framework plan and decision records as preserved context rather than current operational authority.
+Use `README.md` for initial orientation and common commands. Direct-repository agents enter through `AGENTS.md`; `AI_BUILD_GUIDE.md` remains normative. `docs/001_ai_feature_request_workflow.md` defines direct working-tree edits and the upload-based fallback. `docs/008_chatgpt_project_prompt.md` retains the selected-file/ZIP/replacement-artifact workflow for sessions without repository access. Use `docs/007_framework_architecture.md` for detailed current capability and evidence questions. Use the topic-specific operational guide for setup or execution details. Use the active MQTT/TLS plan for current roadmap status. Treat the historical framework plan and decision records as preserved context rather than current operational authority.
 
 ## Maintenance contract
 
 When adding, relocating, reclassifying, or removing a project-owned document:
 
 1. Update this index in the same change.
-2. Keep the path tracked and valid.
+2. Keep the path valid and intended for version control; validate new non-ignored documents before staging. Git actions still require the applicable user authorization.
 3. Assign one classification, lifecycle, canonical subject owner, and intended audience.
 4. Avoid creating a second canonical owner for an existing subject.
 5. Do not add vendor or submodule documentation to project-maintained consistency checks.
 
-`tests/unit/test_documentation_integrity.py` enforces index coverage and tracked-path validity without snapshotting complete document contents.
+`tests/unit/test_documentation_integrity.py` enforces index coverage and path validity for tracked files and non-ignored working-tree additions without snapshotting complete document contents.

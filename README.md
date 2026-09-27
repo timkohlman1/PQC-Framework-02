@@ -13,9 +13,10 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 ## Documentation
 
 - `docs/README.md` — documentation index and ownership map
+- `AGENTS.md` — direct-repository Codex entry point; inspect and edit the working tree directly
 - `AI_BUILD_GUIDE.md` — mandatory AI-assisted development rules
 - `docs/001_ai_feature_request_workflow.md` — maintained AI workflow; there is no separate release-readiness prompt document
-- `docs/008_chatgpt_project_prompt.md` — maintained reusable project prompt
+- `docs/008_chatgpt_project_prompt.md` — reusable prompt with direct-repository routing and the upload-based ChatGPT fallback
 - `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
 - `docs/006_security_and_secrets.md` — secret handling and signing-state safety
 - `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, and deferred tests
@@ -23,7 +24,7 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 
 ## Default workflow
 
-The default development path is Docker-hosted Linux execution through the project wrapper scripts `scripts/dev.sh` and `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
+The default development path is Docker-hosted Linux execution through the project wrapper script `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
 
 ```bash
 ./scripts/dev.sh build-image
@@ -126,17 +127,13 @@ Generated-state preflight is the primary compatibility and provenance mechanism.
 
 Do not claim build, signing, flashing, hardware, UART, network, MQTT/TLS, timing, memory, or end-to-end success without explicit logs, manifests, or equivalent evidence. A skipped capability-gated test is not evidence of success.
 
-Opt-in physical MQTT experiment matrix:
+Focused physical plaintext MQTT validation:
 
 ```bash
-./scripts/dev.sh pytest-hardware \
-    tests/hardware/test_mqtt_experiment_matrix_hw.py \
-    -m hardware \
-    --pqc-require-hardware \
-    --pqc-hardware-experiment-matrix
+./scripts/dev.sh pytest-hardware tests/hardware/test_mqtt_plaintext_st67_e2e_hw.py -m hardware --pqc-require-hardware
 ```
 
-This long matrix covers direct-flash and wolfBoot execution for plaintext and classical mutual TLS, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot.
+This test owns its build/flash/run and retained broker/reporting evidence. It does not establish the retired full MQTT/TLS/secure-boot matrix; see `docs/007_framework_architecture.md` for current test boundaries.
 
 ## Canonical TLS and workload campaigns
 

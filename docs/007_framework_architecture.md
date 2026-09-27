@@ -417,7 +417,7 @@ Hardware tests are self-contained by default. The test owns the framework prepar
 
 FreeRTOS-specific regression tests are split by evidence source. Unit tests inspect generated CMake, `FreeRTOSConfig.h`, the CubeMX `.ioc`, and application marker ordering. Integration tests build both `Debug` and `Release` presets with the generated FreeRTOS middleware. Hardware tests should continue to assert UART evidence from the direct-flash and secure-boot workflows; FreeRTOS runtime success must come from explicit UART markers such as scheduler-start, task-start, and recurring `tick` output.
 
-The secure-boot algorithm benchmark hardware test is intentionally profile-selective to keep routine runs short. ML-DSA-65 is the default always-on profile. Other algorithm profiles are collected but skipped unless named with `PQC_HARDWARE_SECURE_BOOT_PROFILES`, or unless the full matrix is enabled with `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1`. Capability gates decide whether selected gateway and hardware tests run or skip; command-line `--pqc-require-*` switches are strictness controls, not the normal way to make tests runnable.
+The former standalone secure-boot algorithm benchmark hardware module is no longer present. The maintained `tests/hardware/test_secure_boot_flash_workflow_hw.py` supplies a positive ECDSA P-256 build/sign/flash/UART case and separate negative/restoration cases. This is not full algorithm-matrix coverage. Capability gates decide whether selected gateway and hardware tests run or skip; command-line `--pqc-require-*` switches are strictness controls, not the normal way to make tests runnable.
 
 Run all tests that can run without gateway access through the default Docker path:
 
@@ -425,10 +425,10 @@ Run all tests that can run without gateway access through the default Docker pat
 ./scripts/dev.sh pytest
 ```
 
-Run strict hardware benchmark workflow through Docker and the SSH gateway only when hardware is intentionally available:
+Run the single positive secure-boot workflow through Docker and the SSH gateway only when hardware is intentionally available:
 
 ```bash
-./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_algorithm_benchmarks_hw.py -m hardware --pqc-require-hardware
+./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py::test_secure_boot_build_sign_flash_uart_workflow -m hardware --pqc-require-hardware
 ```
 
 GitHub Actions CI is defined in `.github/workflows/ci.yml`. It runs on every pushed commit, pull request, and manual dispatch. The workflow preserves the existing runner-compatible jobs and MQTT broker Docker runtime validation, and adds a separate `container-non-hardware` job for the project-owned container workflow.
@@ -487,9 +487,9 @@ Successful commands write artifact hashes and references to their build or signi
 
 ### Secure-boot profile selection and signing-tuple preservation
 
-The secure-boot algorithm benchmark hardware test now implements the documented profile-selection environment variables. ML-DSA-65 is selected by default. `PQC_HARDWARE_SECURE_BOOT_PROFILES` adds named profiles to that default, and `PQC_HARDWARE_ALL_SECURE_BOOT_PROFILES=1` selects the complete matrix. Unselected parameter cases are collected but skipped with an explicit reason.
+The former standalone benchmark module and its profile-selection environment-variable contract are no longer a runnable hardware validation path. Use the maintained secure-boot flash workflow described above; its positive flash/startup assertions and documented legacy benchmark-sample exception are defined in `docs/005_remote_flash_workflow.md`. Do not infer benchmark or full algorithm-matrix success from that focused test.
 
-Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup cleanup must not remove `wolfboot_signing_private_key.der`, `wolfboot_signing_public_key.der`, or `src/keystore.c`. Those files form reusable local signing state with the canonical key and are validated by the framework preflight. The hardware test removes only its directly managed relocated CMake output; wolfBoot stale-output handling remains owned by `build-wolfboot` generated-state preflight.
+Hardware-test preparation must not call wolfBoot `keysclean` and pytest startup cleanup must not remove `wolfboot_signing_private_key.der`, `wolfboot_signing_public_key.der`, or `src/keystore.c`. Those files form reusable local signing state with the canonical key and are validated by the framework preflight. The maintained secure-boot hardware test does not manually remove build outputs; framework generated-state preflight owns compatibility and stale-output handling.
 
 
 
@@ -548,7 +548,7 @@ The fake/no-network runtime path reuses the build integration boundary rather th
 
 The UART marker begins with `wolfMQTT runtime smoke:` and is labelled `evidence=stm32-fake-no-network-initialization-only`. It records the FreeRTOS task context, backend, initializer result, client-initialized state, and callback presence. Transport, Wi-Fi, link, IP, TCP, TLS handshake, MQTT connect, MQTT publish, reconnect, ST67W61M1, and end-to-end status remain explicitly unavailable. This is initialization evidence from the STM32 board only; it is not broker or network evidence.
 
-Static unit coverage validates invocation, marker wording, backend selection, unavailable claims, and the continued absence of protocol/network calls. Existing local-build integration coverage compiles both `Debug` and `Release`. The capability-gated known-image hardware test builds, flashes, captures UART, and verifies that the Phase M8 marker occurs after `defaultTask` starts. Detailed evidence remains in `uart.log`; no new manifest field is introduced. Verify with `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware`.
+Static unit coverage validates invocation, marker wording, backend selection, unavailable claims, and the continued absence of protocol/network calls. Existing local-build integration coverage compiles both `Debug` and `Release`. The maintained `tests/hardware/test_baseline_uart_hw.py` now checks baseline UART and ST67 startup/network evidence; it no longer supplies the former dedicated Phase M8 fake/no-network marker assertion. Do not treat that test as verification of this historical runtime-smoke contract or infer current hardware success from the earlier description.
 
 ## Host wolfMQTT/wolfSSL compatibility boundary
 
@@ -876,17 +876,13 @@ Release is the default build mode and `--debug` changes compiler configuration w
 
 Completion-marker composition is covered without hardware by `tests/integration/test_mqtt_experiment_completion_markers_in.py`. The integration cases load the maintained MQTT experiment profiles, verify the exact mode-specific marker, and validate direct-flash, integrity-wolfBoot, and ML-DSA-65 wolfBoot command selection.
 
-The physical-board matrix is implemented by `tests/hardware/test_mqtt_experiment_matrix_hw.py` and is deliberately opt-in because it performs repeated builds, signing, destructive board flashes, broker deployment, UART capture, and network validation. It covers plaintext and classical mutual TLS with and without wolfBoot, plus PQC-hybrid mutual TLS with ML-DSA-65 secure boot. Run it through the gateway-enabled wrapper:
+The former physical-board MQTT experiment matrix module is no longer present. The remaining `--pqc-hardware-experiment-matrix` option does not provide matrix coverage by itself. For focused plaintext MQTT validation, use the self-contained test through the gateway-enabled wrapper:
 
 ```bash
-./scripts/dev.sh pytest-hardware \
-    tests/hardware/test_mqtt_experiment_matrix_hw.py \
-    -m hardware \
-    --pqc-require-hardware \
-    --pqc-hardware-experiment-matrix
+./scripts/dev.sh pytest-hardware tests/hardware/test_mqtt_plaintext_st67_e2e_hw.py -m hardware --pqc-require-hardware
 ```
 
-Each hardware case requires a zero CLI return code, a passed MQTT result manifest, no missing UART markers, the exact profile-specific completion marker, and secure-boot flash evidence when wolfBoot is selected.
+The focused test checks its own retained broker and STM32 reporting evidence. It does not establish the former plaintext/classical/hybrid, direct-flash/wolfBoot matrix. No full-matrix hardware success is claimed without the corresponding implemented tests and recorded evidence.
 
 
 Managed MQTT brokers are rationalised on the pinned `eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797` image. Its OpenSSL 3.5 runtime provides native classical and ML-KEM/hybrid groups; the hybrid profiles select `SecP256r1MLKEM768` without an external OQS provider. TLS-enabled runs collect Mosquitto's NSS-format key log into `mqtt-broker-tls-keylog.log`, colocated with the gateway packet capture, and record its size, SHA-256 digest, and collection status in the manifest.

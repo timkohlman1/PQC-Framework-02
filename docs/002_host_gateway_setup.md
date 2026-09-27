@@ -76,11 +76,11 @@ This is a host-native connectivity diagnostic, not a repository validation gate 
 
 Repository workflows normally run in the project container. Gateway-capable wrappers set `PQC_CONTAINER_ENABLE_GATEWAY=1`, mount the configured host SSH directory read-only, and copy the required SSH material into the temporary container for that run.
 
-Representative checks from the repository root:
+Hardware validation examples from the repository root (the integration test builds and flashes the board; it is not a read-only reachability check):
 
 ```bash
-./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration
-./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper.py -m integration --pqc-require-gateway
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway
 ./scripts/dev.sh experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
 ```
 
@@ -183,6 +183,9 @@ Waiting owners retry until the gateway becomes free. Interactive terminals show
 a single updating spinner line with elapsed waiting time; an owner/detail change
 prints a new line. Non-interactive logs print only changes, without a spinner.
 Press Ctrl-C to cancel without releasing the current owner's lock.
+Treat contention as waiting, not command failure; do not impose a short timeout
+unless requested. The displayed owner description is recorded lease metadata,
+not a live check that the named workload is still running on its originating host.
 All development hosts must use the same gateway SSH user and these wrappers.
 The gateway must provide `python3` and a Linux filesystem with working `flock`.
 
