@@ -1,0 +1,101 @@
+menu "PQC energy instrument local networking"
+    config PQC_WIFI_SSID
+        string "Laboratory Wi-Fi SSID (local configuration only)"
+        default ""
+        help
+            Stored in local sdkconfig. Never commit sdkconfig with network secrets.
+
+    config PQC_WIFI_PASSWORD
+        string "Laboratory Wi-Fi password (local configuration only)"
+        default ""
+        help
+            Stored in local sdkconfig. Do not include sdkconfig in context archives.
+
+    config PQC_NTP_SERVER
+        string "NTP server hostname"
+        default "pool.ntp.org"
+
+    config PQC_TIMEZONE
+        string "POSIX time zone string"
+        default "UTC0"
+        help
+            For example AEST-10AEDT,M10.1.0,M4.1.0/3 for eastern Australia
+            with daylight saving, or AEST-10 for fixed UTC+10.
+
+    config PQC_ENERGY_REPORTING_HOST
+        string "Reporting MQTT broker hostname"
+        default "pqc-gateway1.pqcnet"
+        help
+            Plaintext impairment-exempt reporting broker used by the framework.
+
+    config PQC_ENERGY_REPORTING_PORT
+        int "Reporting MQTT broker port"
+        range 1 65535
+        default 1886
+
+    config PQC_ENERGY_MQTT_CLIENT_ID
+        string "Persistent energy-instrument MQTT client ID"
+        default "pqc-energy-esp32-ina228"
+
+    config PQC_ENERGY_MQTT_STACK_BYTES
+        int "ESP-MQTT task stack size (bytes)"
+        range 6144 16384
+        default 8192
+        help
+            Stack reserved for the ESP-MQTT transport/event task. The event
+            callback performs only bounded state updates and command queuing;
+            JSON parsing and result publication run on the dedicated worker.
+
+    config PQC_ENERGY_WORKER_STACK_BYTES
+        int "Energy MQTT worker stack size (bytes)"
+        range 8192 24576
+        default 12288
+        help
+            Stack for post-run JSON parsing, trace serialization, hashing and
+            MQTT publication. Keeping this work off mqtt_task prevents result
+            collection from consuming the transport task's stack.
+
+    config PQC_ENERGY_SYNC_GPIO
+        int "STM32 energy-sync input GPIO"
+        range 0 48
+        default 11
+        help
+            ESP32-S3 GPIO receiving the STM32 D8/PF12 interval marker. Both
+            edges are timestamped using the ESP32 monotonic microsecond clock.
+
+    config PQC_INA228_ALERT_GPIO
+        int "INA228 conversion-ready ALERT GPIO"
+        range 0 48
+        default 12
+        help
+            ESP32-S3 GPIO connected to the SparkFun INA228 ALERT pin. The
+            instrument configures ALERT as active-low conversion-ready and
+            timestamps falling edges before reading the completed conversion.
+
+    config PQC_ENERGY_SAMPLE_PERIOD_MS
+        int "Sensor initialization retry period (ms)"
+        range 10 1000
+        default 50
+        help
+            Sensor initialization retry period only. Normal acquisition is driven by
+            the INA228 conversion-ready ALERT input; it no longer defines the
+            scientific sample cadence.
+
+    config PQC_ENERGY_RING_MAX_BYTES
+        int "Maximum sample-ring allocation (bytes)"
+        range 1048576 7340032
+        default 7340032
+        help
+            Target upper bound, not a claim of available memory. At startup the
+            ring uses the smaller of this, the largest contiguous PSRAM block,
+            and free PSRAM minus reserved headroom, after allocating descriptors.
+            Replaces the legacy fixed PQC_ENERGY_RING_BYTES setting.
+
+    config PQC_ENERGY_PSRAM_RESERVE_BYTES
+        int "PSRAM headroom reserved outside the sample ring (bytes)"
+        range 524288 2097152
+        default 524288
+        help
+            Preserve headroom for the display and post-run transfer. Actual
+            capacity and allocation limits are reported over MQTT and in traces.
+endmenu

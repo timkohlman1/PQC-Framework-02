@@ -663,6 +663,7 @@ PROJECT_DOCUMENT_PATTERNS = (
     re.compile(r"^(?:AGENTS|README|AI_BUILD_GUIDE)\.md$"),
     re.compile(r"^docs/.*\.(?:md|txt)$"),
     re.compile(r"^experiment/mqtt-broker/(?:README\.md|config/oqs/README\.md)$"),
+    re.compile(r"^instruments/esp32_ina228/README\.md$"),
 )
 INDEXED_DOCUMENT_PATH = re.compile(r"(?m)^\| `([^`]+\.(?:md|txt))` \|")
 

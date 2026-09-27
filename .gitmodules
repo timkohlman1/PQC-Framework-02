@@ -8,3 +8,9 @@
 	path = Middlewares/Third_Party/wolfSSL
 	url = https://github.com/timkohlman1/wolfssl-embedded.git
 	branch = pqc-signing-tls-wolfssl
+[submodule "instruments/esp32_ina228/lib/SparkFun_INA2XX_Arduino_Library"]
+	path = instruments/esp32_ina228/lib/SparkFun_INA2XX_Arduino_Library
+	url = https://github.com/sparkfun/SparkFun_INA2XX_Arduino_Library.git
+[submodule "instruments/esp32_ina228/lib/SparkFun_Toolkit"]
+	path = instruments/esp32_ina228/lib/SparkFun_Toolkit
+	url = https://github.com/sparkfun/SparkFun_Toolkit.git
