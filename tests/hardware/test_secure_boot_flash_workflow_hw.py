@@ -185,8 +185,7 @@ def _cli_result_dir(completed: subprocess.CompletedProcess[str], results_dir: Pa
     """Use the result directory emitted by this exact CLI invocation.
 
     An integrity-only run uses wolfboot_integrity (not wolfboot_integrity_sha256).
-    A restoration run can finish with benchmark_sample return code 9 while still
-    retaining valid flash/UART evidence in its own manifest. Neither should be
+    Finalized manifests use a compact evidence index. Neither should be
     discarded by a historical boot_mode/boot_crypto directory filter.
     """
     prefix = "Result directory: "
@@ -292,117 +291,25 @@ def _prepare_signed_secure_boot_application(repo_root: Path, results_dir: Path, 
 
 
 def _assert_positive_secure_boot_manifest(manifest: dict) -> None:
-    assert manifest["result"] == "secure_boot_positive_boot_evidence_passed"
-    assert manifest["boot_mode"] == EXPECTED_BOOT_MODE
-    assert manifest["boot_crypto"] == EXPECTED_BOOT_CRYPTO
-    assert manifest["secure_boot_flash"]["return_code"] == 0
-    assert manifest["secure_boot_flash"]["failure_stage"] == "none"
-    _assert_flash_identity(manifest)
-
-    wolfboot = manifest["secure_boot_flash"]["wolfboot"]
-    signed_application = manifest["secure_boot_flash"]["signed_application"]
-    assert wolfboot["artifact_exists"] is True
-    assert len(wolfboot["sha256"]) == 64
-    assert wolfboot["offset"] == "0x08000000"
-    assert wolfboot["scp_return_code"] == 0
-    assert wolfboot["helper_return_code"] == 0
-    assert signed_application["artifact_exists"] is True
-    assert len(signed_application["sha256"]) == 64
-    assert signed_application["offset"] == "0x08020000"
-    assert signed_application["pass_offset_to_helper"] is True
-    assert signed_application["scp_return_code"] == 0
-    assert signed_application["helper_return_code"] == 0
-
-    artifact_freshness = manifest["secure_boot_flash"].get("artifact_freshness", {})
-    assert artifact_freshness.get("artifact_freshness_status") == "recorded_not_enforced"
-    if artifact_freshness.get("status") == "available":
-        assert len(artifact_freshness["fingerprint"]) == 64
-        assert artifact_freshness["fingerprint_inputs"]
-
-    assert manifest["uart"]["return_code"] == 0
-    assert manifest["uart"]["acquisition_status"] == "available"
-    assert manifest["uart"]["data_captured"] is True
-    assert manifest["uart"]["capture_format"] == "raw_uart_text"
-    assert manifest["uart"]["framework_preamble"] is False
-    assert manifest["uart"]["scientific_parsing_performed"] is False
-    assert "boot_marker_present" not in manifest["uart"]
-    assert "tick_present" not in manifest["uart"]
-    assert "secure_boot_marker_present" not in manifest["uart"]
-
-    assert manifest["secure_boot_run"]["return_code"] == 0
-    assert manifest["secure_boot_run"]["flash_return_code"] == 0
-    assert manifest["secure_boot_run"]["uart_return_code"] == 0
-    assert manifest["secure_boot_run"]["failure_stage"] == "none"
-    assert manifest["secure_boot_run"]["boot_confirmed_from_uart_log"] is True
-    assert manifest["secure_boot_run"]["boot_path_distinguished"] is True
-    assert manifest["secure_boot_run"]["secure_boot_marker_present"] is True
-    assert manifest["secure_boot_run"]["positive_boot_evidence_passed"] is True
-
-    assert "boot_timing" in manifest
-    assert isinstance(manifest["boot_timing"]["derived_verification_time_ms"], (int, float))
-    assert manifest["boot_timing"]["derived_verification_time_ms"] > 0
-    assert isinstance(manifest["boot_timing"]["verification_cycles"], int)
-    assert manifest["boot_timing"]["verification_cycles"] > 0
-    assert manifest["boot_timing"]["bootloader_hclk_hz"] > 0
-    assert manifest["boot_timing"]["verification_result_code"] == 0
-    assert (
-        manifest["boot_timing"]["verification_time_source"]
-        == "framework_derived_from_uart_cycles_and_reported_hclk"
-    )
-    assert "derived_verification_time_ms" not in manifest["uart"]
-    assert "verification_cycles" not in manifest["uart"]
-    assert "bootloader_hclk_hz" not in manifest["uart"]
-    assert "verification_result_code" not in manifest["uart"]
-    assert isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], (int, float))
-    assert manifest["secure_boot_run"]["derived_verification_time_ms"] > 0
-    assert isinstance(manifest["secure_boot_run"]["verification_cycles"], int)
-    assert manifest["secure_boot_run"]["verification_cycles"] > 0
-    assert manifest["secure_boot_run"]["bootloader_hclk_hz"] > 0
-    assert manifest["secure_boot_run"]["verification_result_code"] == 0
-
-    assert "runtime_memory" in manifest
-    runtime_memory = manifest["runtime_memory"]
-    benchmark_memory = manifest["secure_boot_benchmark"]["runtime_memory_metrics"]
-    assert manifest["secure_boot_benchmark"]["model_phase"] == "phase_11_4_runtime_memory_metrics"
-    assert benchmark_memory["max_stack_used_bytes"] == runtime_memory["max_stack_used_bytes"]
-    assert benchmark_memory["stack_metric_source"] == runtime_memory["stack_metric_source"]
-
-    if runtime_memory["max_stack_used_bytes"] is None:
-        assert runtime_memory["stack_metric_source"] == "unavailable"
-        assert benchmark_memory["status"] == "unavailable"
-        assert runtime_memory["limitations"]
-        assert benchmark_memory["runtime_memory_limitations"]
-    else:
-        assert isinstance(runtime_memory["max_stack_used_bytes"], int)
-        assert runtime_memory["max_stack_used_bytes"] > 0
-        assert runtime_memory["stack_metric_source"] == "uart_explicit_stack_high_water_marker"
-        assert benchmark_memory["status"] == "available"
+    """Check the finalized capture index, not discarded legacy metric sections."""
+    assert manifest["run"]["state"] == "finalized"
+    assert manifest["run"]["return_code"] == 0
+    assert manifest["run"]["failure_stage"] == "none"
+    assert manifest["execution_outcome"]["failure_stage"] == "none"
+    assert manifest["execution_outcome"]["result"] == "secure_boot_positive_boot_evidence_passed"
+    assert manifest["final_index"]["status"] == "finalized"
 
 
 def _assert_positive_flash_evidence(
     completed: subprocess.CompletedProcess[str], result_dir: Path
 ) -> None:
-    """Separate positive boot evidence from optional legacy benchmark acceptance.
-
-    Return code 9 is accepted ONLY for a finalized benchmark-sample failure
-    with independent successful flash, signature/integrity, and startup evidence.
-    It never establishes benchmark, MQTT, or end-to-end workload success.
-    """
+    """Require CLI success and independent flash, signature and startup evidence."""
     manifest = json.loads((result_dir / "manifest.json").read_text(encoding="utf-8"))
-    if completed.returncode == 0:
-        _assert_positive_secure_boot_manifest(manifest)
-        return
-    assert completed.returncode == 9, (
+    assert completed.returncode == 0, (
         f"flash-secure-boot failed (return code {completed.returncode}): "
         f"{completed.stdout}\n{completed.stderr}"
     )
-    run = manifest.get("run", {})
-    outcome = manifest.get("execution_outcome", {})
-    assert run.get("state") == "finalized"
-    assert run.get("return_code") == 9
-    assert run.get("failure_stage") == "benchmark_sample"
-    assert outcome.get("failure_stage") == "benchmark_sample"
-    assert manifest.get("final_index", {}).get("status") == "finalized"
+    _assert_positive_secure_boot_manifest(manifest)
     capture = json.loads(
         (result_dir / "secure-boot-flash-capture.json").read_text(encoding="utf-8")
     )
@@ -414,7 +321,7 @@ def _assert_positive_flash_evidence(
     assert capture.get("boot_marker_present") is True
     assert capture.get("secure_boot_marker_present") is True
     assert capture.get("tick_present") is True
-    assert capture.get("result") == "secure_boot_flash_failed"
+    assert capture.get("result") == "secure_boot_positive_boot_evidence_passed"
     uart = (result_dir / "uart.log").read_text(encoding="utf-8", errors="replace")
     for marker in (
         "wolfBoot integrity valid: 1",
@@ -471,14 +378,12 @@ def test_secure_boot_build_sign_flash_uart_workflow(pytestconfig, pqc_require_ca
     toolchain, SSH gateway, configured flash helper, and configured ST-LINK VCP
     UART device are available. It builds the instrumented wolfBoot ELF, builds
     and signs the relocated HAL application, flashes both artifacts, captures
-    UART, and verifies timing evidence from a clean non-signing build-output state.
+    UART, and verifies successful secure-boot startup.
 
     The test validates positive secure-boot evidence by requiring the distinct
     secure-boot application UART marker, the normal boot marker, the tick
-    marker, and a parsed wolfBoot verification-time value after the two-artifact
-    flash workflow. Runtime stack evidence is accepted when present and must be
-    recorded as unavailable with limitations when no explicit firmware-side stack
-    marker is emitted.
+    marker, and successful integrity/authenticity results after the two-artifact
+    flash workflow. It does not require or claim a valid benchmark timing sample.
     """
 
     pqc_require_capabilities(
@@ -565,10 +470,8 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
     Flash/reset success, differing image hashes, and a fresh boot after restoring
     the matching valid image are required independent controls.
 
-    A rejected application cannot publish MQTT evidence. The legacy flash CLI may
-    return 9 after a *successful restoration boot* because it requires UART timing
-    which is now published via MQTT. Restoration therefore checks flash success
-    and explicit application boot markers independently of that timing verdict.
+    A rejected application cannot publish MQTT evidence. Restoration requires
+    CLI success and explicit application boot markers independently of timing.
     """
     pqc_require_capabilities(
         "local_toolchain", "gateway", "flash_helper", "uart_device",
@@ -657,6 +560,7 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
             evidence_dir=context.evidence_root / "restoration",
         )
         restored_dir = _cli_result_dir(restore_completed, results_dir)
+        assert restore_completed.returncode == 0, restore_completed.stdout + restore_completed.stderr
         restored_capture = json.loads(
             (restored_dir / "secure-boot-flash-capture.json").read_text(encoding="utf-8")
         )
@@ -669,9 +573,7 @@ def test_secure_boot_negative_corrupted_application_then_restore_workflow(
             f"No restored application UART boot marker for {algorithm}. "
             f"CLI return code={restore_completed.returncode}; UART:\n{restored_uart}"
         )
-        # The legacy benchmark return code can be 9 when UART timing samples
-        # are intentionally absent. Require the distinct boot-path and normal
-        # application markers, rather than that timing-derived verdict.
+        # Verify the restored boot path independently of the CLI verdict.
         assert restored_capture["boot_marker_present"] is True
         assert restored_capture["secure_boot_marker_present"] is True
         assert restored_capture["tick_present"] is True
@@ -775,5 +677,6 @@ def test_secure_boot_diagnostic_uart_rejected_image_then_restore(
             evidence_dir=context.evidence_root / "restoration",
         )
         restored_dir = _cli_result_dir(restored, results_dir)
+        assert restored.returncode == 0, restored.stdout + restored.stderr
         restored_uart = (restored_dir / "uart.log").read_text(encoding="utf-8", errors="replace")
         assert "stm32-basic_hal1 secure-boot app" in restored_uart

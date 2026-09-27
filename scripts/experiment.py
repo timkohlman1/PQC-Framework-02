@@ -6025,12 +6025,20 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         and tick_present is False
         and secure_boot_marker_present is False
     )
+    # A startup capture can be valid while aggregate benchmark timing is
+    # unavailable (for example, typed mailbox diagnostics). Keep the two
+    # verdicts separate and require boot markers on every captured reset.
     positive_boot_evidence_passed = (
         not negative_test_requested
         and flash_result.return_code == 0
         and bool(uart_results)
-        and all(sample.get("sample_verdict") == "passed" for sample in samples)
-        and secure_boot_marker_present is True
+        and all(
+            result.return_code == 0
+            and result.boot_marker_present is True
+            and result.tick_present is True
+            and result.secure_boot_marker_present is True
+            for result in uart_results
+        )
     )
 
     any_invalid_sample = bool(samples) and any(
@@ -6046,7 +6054,10 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
     elif uart_return_code is not None and uart_return_code != 0:
         final_return_code = uart_return_code
         failure_stage = "uart"
-    elif any_invalid_sample:
+    elif not args.skip_uart and not positive_boot_evidence_passed:
+        final_return_code = 9
+        failure_stage = "positive_uart_evidence"
+    elif repeat_count > 1 and any_invalid_sample:
         final_return_code = 9
         failure_stage = "benchmark_sample"
     else:
@@ -6059,7 +6070,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
             if final_return_code == 0
             else "secure_boot_negative_test_failed"
         )
-    elif positive_boot_evidence_passed:
+    elif final_return_code == 0 and positive_boot_evidence_passed:
         result_status = "secure_boot_benchmark_repeated_run_passed" if repeat_count > 1 else "secure_boot_positive_boot_evidence_passed"
     elif final_return_code == 0 and uart_return_code is None:
         result_status = "secure_boot_flash_passed"
@@ -6354,7 +6365,7 @@ def run_secure_boot_flash_command(args: argparse.Namespace) -> int:
         if args.negative_corrupt_application:
             print("Negative test passes only when the normal application and secure-boot markers are absent after flashing the corrupted result-local image.")
         else:
-            print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, tick marker, and explicit verification timing evidence for benchmark-valid samples.")
+            print("Positive secure-boot evidence requires the distinct secure-boot UART marker, normal boot marker, and tick marker. Benchmark-valid samples additionally require explicit verification timing; --repeat-count greater than 1 requires valid benchmark samples.")
     print(f"Return code: {final_return_code}")
 
     # Retain the bounded flash verdict before finalization drops transient

@@ -270,6 +270,13 @@ secure-boot experiment profile
 
 The secure-boot workflow must not infer timing, stack, heap, or hardware success from host-side behaviour. Runtime metrics must come from explicit firmware/UART markers.
 
+Single-capture `flash-secure-boot` acceptance separates flash/startup evidence
+from benchmark eligibility: unavailable aggregate timing does not invalidate
+successful flashing and the required application boot markers. Repeated
+benchmark runs still require valid timing samples; typed operation diagnostics
+are not substituted for aggregate verification measurements. See
+`docs/005_remote_flash_workflow.md` for exit-status and hardware-test contracts.
+
 
 ### Request 14 secure-boot timing work in progress (not validated)
 

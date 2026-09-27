@@ -51,7 +51,7 @@ Secure boot consumes the configured wolfBoot artifact and signed relocated appli
 ./scripts/dev.sh experiment build-wolfboot --boot-algorithm <algorithm>
 ./scripts/dev.sh experiment build --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --configure-preset Release --build-preset Release --artifact build/Release/stm32_basic_hal1.elf
 ./scripts/dev.sh experiment sign-application --boot-algorithm <algorithm>
-./scripts/dev.sh experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm <algorithm> --repeat-count 5
+./scripts/dev.sh experiment-gateway flash-secure-boot --experiment .pqc-generated-state/campaigns/secure_boot/cases/<case>.yaml --boot-algorithm <algorithm>
 ```
 
 Supported algorithm IDs are:
@@ -127,14 +127,24 @@ generated-state preflight controls compatibility. Negative-path validation and
 restoration failures are retained separately, and a failed restoration must be
 investigated before attempting another hardware experiment.
 
-The positive flash test distinguishes a verified secure-boot startup from the
-legacy UART benchmark outcome. A `flash-secure-boot` return code of 9 is accepted
-only when the current run is finalized with a `benchmark_sample` failure and
-its retained flash/capture evidence and UART markers independently demonstrate
-successful bootloader and application flashing, integrity/authenticity results
-of zero, and application startup. This acceptance does not imply successful
-benchmark sampling, MQTT reporting, or an end-to-end workload. Other failure
-codes and incomplete positive-boot evidence fail the hardware test.
+The default single-capture `flash-secure-boot` command requires successful
+flashing, UART acquisition, and the secure-boot application, normal boot, and
+tick markers. Missing markers fail with return code 9 at
+`positive_uart_evidence`. Missing legacy aggregate timing alone does not fail
+this flash/startup workflow; timing remains unavailable and the sample is not
+valid for benchmark statistics. Typed integrity/authenticity diagnostics must
+not be relabelled as legacy aggregate verification timing.
+
+Explicit repeated benchmarking (`--repeat-count 5`, for example) additionally
+requires valid timing samples on every capture. Missing timing still fails with
+return code 9 at `benchmark_sample`; a successful startup does not make that
+benchmark pass. `--skip-uart` proves flashing only.
+
+The positive hardware test requires CLI exit 0, a successful finalized manifest,
+and retained flash/capture evidence and UART markers independently demonstrating
+both verified downloads, integrity/authenticity results of zero, and application
+startup. Restoration tests also require CLI exit 0. These checks do not prove
+benchmark sampling, MQTT reporting, or an end-to-end workload.
 
 
 ## Broker boundary

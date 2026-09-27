@@ -67,16 +67,12 @@ def test_secure_boot_result_selection_ignores_provenance_and_helper_results(tmp_
     assert module._single_secure_boot_result_dir(tmp_path) == secure_boot
 
 
-def test_secure_boot_timing_assertions_accept_fractional_milliseconds():
-    source = HARDWARE_TEST_PATH.read_text(encoding="utf-8")
-
-    assert (
-        'isinstance(manifest["boot_timing"]["derived_verification_time_ms"], '
-        '(int, float))'
-    ) in source
-    assert '"derived_verification_time_ms" not in manifest["uart"]' in source
-    assert (
-        'isinstance(manifest["secure_boot_run"]["derived_verification_time_ms"], '
-        '(int, float))'
-    ) in source
-
+def test_positive_manifest_check_accepts_compact_index_without_legacy_metrics():
+    module = _load_hardware_test_module()
+    module._assert_positive_secure_boot_manifest({
+        "run": {"state": "finalized", "return_code": 0, "failure_stage": "none"},
+        "execution_outcome": {
+            "failure_stage": "none", "result": "secure_boot_positive_boot_evidence_passed",
+        },
+        "final_index": {"status": "finalized"},
+    })
