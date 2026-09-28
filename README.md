@@ -19,7 +19,7 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 - `docs/008_chatgpt_project_prompt.md` — reusable prompt with direct-repository routing and the upload-based ChatGPT fallback
 - `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
 - `docs/006_security_and_secrets.md` — secret handling and signing-state safety
-- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, and deferred tests
+- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, deferred tests, and [A1 timing export/loading commands](docs/007_framework_architecture.md#offline-run-inventory-and-timing-dataset-analysis-request-a1) (`scripts/export_timing_dataset.py`)
 - `experiment/mqtt-broker/README.md` — broker provisioning, operation, and Linux/bash `--client-args` forwarding contract
 
 ## Default workflow

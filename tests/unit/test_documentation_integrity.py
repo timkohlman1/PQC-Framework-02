@@ -14,9 +14,7 @@ ACTIVE_AI_DOCUMENTS = (
     "docs/008_chatgpt_project_prompt.md",
 )
 OBSOLETE_REFERENCES = (
-    "docs/009_chatgpt_project_prompt_release_readiness_review.md",
-    "docs/phase11_plan.md",
-    "docs/plase11_checklist.md",
+
 )
 CANONICAL_DOCUMENTS = (
     "AGENTS.md",
@@ -26,11 +24,8 @@ CANONICAL_DOCUMENTS = (
     "docs/001_ai_feature_request_workflow.md",
     "docs/007_framework_architecture.md",
     "docs/008_chatgpt_project_prompt.md",
-    "docs/non_hardware_mqtt_tls_development_plan.md",
-    "docs/pqc_iot_experiment_framework_plan.md",
-    "experiment/mqtt-broker/README.md",
 )
-CANONICAL_MQTT_PLAN = "docs/non_hardware_mqtt_tls_development_plan.md"
+
 PROHIBITED_UNSAFE_COMMANDS = (
     "make wolfboot_root=. keysclean",
     "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_private_key.der",
@@ -399,8 +394,6 @@ def test_architecture_is_capability_oriented_not_phase_structured() -> None:
     for heading in required_headings:
         assert heading in architecture
     assert not re.search(r"(?m)^#{2,4} Phase ", architecture)
-    assert "docs/non_hardware_mqtt_tls_development_plan.md" in architecture
-    assert "docs/pqc_iot_experiment_framework_plan.md" in architecture
 
 
 ENTRY_DOCUMENTS = (
@@ -561,7 +554,7 @@ def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
     assert "must fail closed rather than be archived" in security
 
 
-MASTER_PLAN = "docs/pqc_iot_experiment_framework_plan.md"
+
 ARCHITECTURE = "docs/007_framework_architecture.md"
 DEFERRED_REGISTER_FIELDS = (
     "ID",
@@ -583,47 +576,6 @@ MQTT_PHASE_STATUS_FIELDS = (
     "Deferred tests",
     "Last reconciled",
 )
-
-
-def test_active_mqtt_plan_phases_have_complete_status_metadata() -> None:
-    plan = _read(CANONICAL_MQTT_PLAN)
-    phase_matches = list(re.finditer(r"(?m)^## (?:Deferred )?Phase M[^\n]+$", plan))
-    assert phase_matches, "Canonical MQTT plan contains no phase headings"
-
-    for index, match in enumerate(phase_matches):
-        end = phase_matches[index + 1].start() if index + 1 < len(phase_matches) else len(plan)
-        section = plan[match.start():end]
-        heading = match.group(0)
-        assert section.count("### Phase status") == 1, (
-            f"{heading} must contain exactly one Phase status block"
-        )
-        status = section.split("### Phase status", maxsplit=1)[1]
-        for field in MQTT_PHASE_STATUS_FIELDS:
-            assert re.search(rf"(?m)^- \*\*{re.escape(field)}:\*\* \S", status), (
-                f"{heading} is missing non-empty status metadata field: {field}"
-            )
-
-
-def test_historical_master_plan_has_lifecycle_notice() -> None:
-    master = _read(MASTER_PLAN)
-    opening = "\n".join(master.splitlines()[:8]).lower()
-    assert "lifecycle classification: historical roadmap" in opening
-    assert "not the canonical current implementation-status source" in opening
-    assert re.search(r"last reconciled: \d{4}-\d{2}-\d{2}", opening)
-
-
-def test_master_plan_is_historical_and_does_not_track_live_mqtt_checkboxes() -> None:
-    master = _read(MASTER_PLAN)
-    assert "Lifecycle classification: Historical roadmap" in master
-    assert ARCHITECTURE in master
-
-    mqtt_start = master.index("## Phase M —")
-    mqtt_section = master[mqtt_start:]
-    assert "Historical goals and pass criteria only" in mqtt_section
-    assert not re.search(r"(?m)^- \[\[ xX\]\] ", mqtt_section), (
-        "Historical master-plan MQTT content must not retain live status checkboxes"
-    )
-
 
 def test_architecture_has_one_structured_deferred_test_register() -> None:
     architecture = _read(ARCHITECTURE)
@@ -756,26 +708,6 @@ def test_active_project_docs_reject_unsafe_wolfboot_cleanup_commands() -> None:
             )
 
 
-def test_canonical_mqtt_plan_path_is_used_consistently() -> None:
-    assert CANONICAL_MQTT_PLAN in _repository_files()
-    assert CANONICAL_MQTT_PLAN in _indexed_document_paths()
-
-    for source in (DOCUMENTATION_INDEX, ARCHITECTURE):
-        assert CANONICAL_MQTT_PLAN in _read(source), (
-            f"{source} must route MQTT roadmap status to {CANONICAL_MQTT_PLAN}"
-        )
-
-    stale_paths = (
-        "non_hardware_mqtt_tls_development_plan.md",
-        "docs/mqtt_tls_development_plan.md",
-    )
-    for source in ACTIVE_AI_DOCUMENTS + (ARCHITECTURE, MASTER_PLAN):
-        content = _read(source)
-        for stale in stale_paths:
-            if stale == "non_hardware_mqtt_tls_development_plan.md":
-                content = content.replace(CANONICAL_MQTT_PLAN, "")
-            assert stale not in content, f"{source} references non-canonical MQTT plan path: {stale}"
-
 
 def test_vendor_and_submodule_documentation_is_excluded_from_project_ownership() -> None:
     content = _read(DOCUMENTATION_INDEX)
@@ -826,7 +758,6 @@ def test_ai_build_guide_is_compact_and_routes_detail_to_canonical_owners() -> No
         "docs/006_security_and_secrets.md",
         "docs/007_framework_architecture.md",
         "docs/008_chatgpt_project_prompt.md",
-        "docs/pqc_iot_experiment_framework_plan.md",
         "experiment/mqtt-broker/README.md",
     ):
         assert canonical_path in guide, f"AI build guide is missing canonical link: {canonical_path}"

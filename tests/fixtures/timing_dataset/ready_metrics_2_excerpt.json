@@ -1,0 +1,69 @@
+{
+  "fixture_kind": "reconstructed_parser_test_excerpt_not_original_sealed_capture",
+  "source_description": "Selected non-secret logical records from the user-supplied ready_metrics_2_energy_20260928_074914 capture. Test envelopes, IDs, snapshot and manifest are synthetic and resealed by the test fixture producer; they are not the original capture integrity identity.",
+  "records": [
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "rm2_timebase",
+      "text": "PQC_RM2_TIMEBASE schema=3 source=TIM2 timer_input_clock_hz=120000000 prescaler=119 counter_hz=1000000 counter_bits=32 wrap_handling=update_irq_64bit_extension reset_origin=operational_wolfboot_entry reset_origin_valid=1 reset_origin_kind=1 reset_origin_to_application_timebase_us=316696 handoff_bridge=LPTIM2_HSI16_DIV16 firmware_elf_sha256_source=run_manifest"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "rm2_checkpoints",
+      "text": "PQC_RM2_CHECKPOINTS schema=3 reset_origin=operational_wolfboot_entry reset_origin_valid=1 reset_origin_to_application_timebase_us=316696 tcp_connect_start_us=6235301 mqtt_readiness_checkpoint_us=6740174 mqtt_readiness_definition=tcp_connect_start_to_first_mqtt_connack_plaintext_byte mqtt_readiness_us=504873 mqtt_readiness_valid=1 application_request_us=6745980 application_first_byte_us=7122761 application_last_byte_us=9002644"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "rm2_metrics",
+      "text": "PQC_RM2_METRICS schema=3 metric_contract=ready_metrics_2_canonical_v3 payload_bytes=204800 received_bytes=204800 chunk_bytes=400 rtfb_us=7439457 rtlb_us=9319340 ttfb_us=887460 ttlb_us=2767343 req_tfb_us=376781 req_tlb_us=2256664 application_transfer_us=1879883 reset_metrics_valid=1 complete_valid=1"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "rm2_complete",
+      "text": "PQC_RM2_COMPLETE schema=3 status=success record_count=4 measurement_complete_us=9002644"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "tls",
+      "text": "PQC_TLS_HANDSHAKE_TIMING result=1 cycle_counter_available=1 timebase_available=1 start_cycle=434 end_cycle=43261750 elapsed_cycles=43261316 start_us=6272692 end_us=6633204 elapsed_us=360512\r\n"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "tls",
+      "text": "PQC_TLS_EVENT_BUFFER schema=1 iteration=0 handshake=0 count=32 capacity=64 dropped=0 overflow=0 truncated=0 incomplete=0 invalid_sequence_count=0\r\n"
+    },
+    {
+      "schema_version": 1,
+      "source": "stm32",
+      "iteration": 0,
+      "context": "tls",
+      "text": "PQC_TLS_EVENT sequence=0 parent_sequence=-1 level=2 depth=0 kind=workload name=handshake completed=1 result_available=1 result=1 start_cycle=434 end_cycle=43261750 elapsed_cycles=43261316 start_us=6272692 end_us=6633204 elapsed_us=360512\r\n"
+    }
+  ],
+  "transfer": {
+    "payload_bytes": 204800,
+    "chunk_bytes": 400
+  },
+  "expected_us": {
+    "tls_handshake": 360512,
+    "mqtt_readiness": 504873,
+    "rtfb": 7439457,
+    "rtlb": 9319340,
+    "ttfb": 887460,
+    "ttlb": 2767343,
+    "req_tfb": 376781,
+    "req_tlb": 2256664
+  }
+}
