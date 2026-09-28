@@ -110,3 +110,23 @@ def test_mqtt_tls_versions_other_than_tls13_are_rejected(tmp_path: Path, tls_ver
     result_dir.mkdir()
     with pytest.raises(ExternalDependencyError, match="must use TLS 1.3"):
         prepare_mqtt_tls_material(bundle=_bundle(tls_version=tls_version), repo_root=tmp_path, result_dir=result_dir)
+
+
+@pytest.mark.parametrize("name", ["client.key", "manifest.json"])
+def test_permission_error_is_a_prerequisite_failure_without_key_replacement(tmp_path, name):
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("permission denial requires a non-root process")
+    canonical = _write_profile(tmp_path)
+    blocked = canonical / name
+    original = blocked.read_bytes()  # Synthetic test material only.
+    blocked.chmod(0)
+    try:
+        with pytest.raises(ExternalDependencyError, match="access denied for UID") as failure:
+            prepare_mqtt_tls_material(bundle=_bundle(), repo_root=tmp_path, result_dir=tmp_path / "result")
+        assert name in str(failure.value)
+        assert "Preserve existing keys" in str(failure.value)
+        assert not (tmp_path / "result").exists()
+    finally:
+        blocked.chmod(0o600)
+    assert blocked.read_bytes() == original

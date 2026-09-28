@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,19 @@ def _require_below(path: Path, root: Path, label: str) -> Path:
 
 
 def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> ResolvedMqttTlsContext | None:
+    """Report access failures through the normal fail-closed prerequisite path."""
+    try:
+        return _prepare_mqtt_tls_material(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    except PermissionError as exc:
+        raise ExternalDependencyError(
+            f"MQTT TLS prerequisite access denied for UID {os.geteuid()}: {exc.filename}. "
+            "Inspect and repair ownership/permissions of the named file and its parent directories "
+            "as described in docs/002_host_gateway_setup.md. Preserve existing keys; "
+            "do not regenerate certificates or run the experiment as root to repair permissions."
+        ) from exc
+
+
+def _prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: Path, result_dir: Path) -> ResolvedMqttTlsContext | None:
     """Resolve pre-provisioned MQTT TLS material without generating or staging it."""
     mqtt = bundle.get("experiment", {}).get("mqtt")
     if not isinstance(mqtt, dict):
@@ -137,7 +151,7 @@ def prepare_mqtt_tls_material(*, bundle: dict[str, dict[str, Any]], repo_root: P
         raise ExternalDependencyError(
             "MQTT TLS certificate profile is not provisioned or is incomplete: " + profile_id
             + ". Missing: " + ", ".join(missing)
-            + ". Run: ./scripts/dev.sh python scripts/provision_certificates.py"
+            + ". Run from the host: python3 scripts/provision_certificates.py"
         )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

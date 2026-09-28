@@ -19,7 +19,7 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 - `docs/008_chatgpt_project_prompt.md` — reusable prompt with direct-repository routing and the upload-based ChatGPT fallback
 - `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
 - `docs/006_security_and_secrets.md` — secret handling and signing-state safety
-- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, deferred tests, and [A1 timing export/loading commands](docs/007_framework_architecture.md#offline-run-inventory-and-timing-dataset-analysis-request-a1) (`scripts/export_timing_dataset.py`)
+- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, deferred tests, and [A1 timing export/loading commands](docs/007_framework_architecture.md#offline-run-inventory-and-timing-dataset-analysis-request-a1) (`scripts/export_timing_dataset.py`); [A2 summaries and notebook](docs/007_framework_architecture.md#offline-timing-comparisons-and-starter-notebook-analysis-request-a2)
 - `experiment/mqtt-broker/README.md` — broker provisioning, operation, and Linux/bash `--client-args` forwarding contract
 
 For a quick hardware-free status check, open [`notebooks/00_checkout.ipynb`](notebooks/00_checkout.ipynb) and Run All to see Git state, tool versions and unit-test output inline.
@@ -110,10 +110,10 @@ Detailed commands and signing-tuple rules are owned by `docs/005_remote_flash_wo
 
 The repository includes plaintext, classical TLS, and hybrid PQC MQTT experiment profiles. Use `experiment/mqtt-broker/README.md` for certificate provisioning, deployment, broker lifecycle, and host-side validation.
 
-Provision all configured X.509 research profiles once before running TLS experiments:
+Provision all configured X.509 research profiles once from your normal host shell (the launcher starts its pinned Docker runtime):
 
 ```bash
-./scripts/dev.sh python scripts/provision_certificates.py
+python3 scripts/provision_certificates.py
 ```
 
 Profiles are declared under `configs/tls_auth/` and generated directly under ignored `secrets/certificates/<profile-id>/`. Experiments never create or renew certificates; a missing selected profile is a prerequisite failure.
@@ -147,7 +147,7 @@ path="$case_file"
 ./scripts/dev.sh experiment-gateway run --experiment "$path"
 ```
 
-The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. `tls_authentication` varies the canonical certificate/authentication profile and server/mutual mode. `tls_pq_only` contains the two principal `ML_KEM_768` + `mldsa65` conditions. `secure_boot` contains the twelve wolfBoot selections.
+The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. `tls_authentication` varies the canonical certificate/authentication profile and server/mutual mode. `tls_pq_only` contains the two principal `ML_KEM_768` + `mldsa65` conditions. `secure_boot` contains the twelve wolfBoot selections. For a 12-condition TLS 1.3 matrix with ten repetitions, Ready Metrics 2 and energy capture throughout, use [`tls_matrix_energy`](docs/005_remote_flash_workflow.md#tls-matrix-with-energy-and-notebook-analysis).
 
 Ready Metrics 2 is owned by `configs/workloads/ready_metrics_2.yaml`. Its default transfer is 200 KiB with 400-byte chunks. Campaign matrix keys may override workload fields without creating duplicate experiment YAML. For independent reliability trials and the explicit destructive reset, see [the reliability procedure](docs/005_remote_flash_workflow.md#ready-metrics-2-reliability-trials). Preview it with `python3 scripts/ready_metrics_2_reliability.py --runs 10 --dry-run`.
 

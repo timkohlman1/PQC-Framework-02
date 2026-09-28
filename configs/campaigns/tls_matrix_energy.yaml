@@ -1,0 +1,42 @@
+# Notebook exercise: 3 key exchanges x 2 certificate profiles x 2 auth modes.
+# Ten reset-separated attempts per condition (120 planned runtime attempts).
+# Ready Metrics 2 supplies all eight A1/A2 timings when valid evidence is captured.
+# Energy is selected for every condition; joule analysis remains an offline task.
+schema_version: 1
+profile_type: campaign
+id: tls_matrix_energy
+target: stm32l4r5_st67
+gateway: pqc_gateway1
+services:
+  experiment_broker: experiment_gateway1
+  reporting_broker: reporting_gateway1
+workload: ready_metrics_2
+instruments:
+  energy: esp32_ina228
+fixed:
+  secure_boot: integrity_sha256
+  firmware_mode: single_bank
+  standby_signing_keys: 0
+  boot_stack_profiling: false
+  boot_uart_diagnostics: false
+  network_condition: baseline
+execution:
+  repetitions: 10
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  experiment_broker: reuse_if_compatible
+  reporting_broker: always_available
+  condition: retain_within_condition
+  evidence: per_run
+matrix:
+  tls_kex:
+    - secp256r1
+    - SecP256r1MLKEM768
+    - ML_KEM_768
+  tls_auth:
+    - rsa3072
+    - mldsa65
+  auth_mode:
+    - server
+    - mutual
