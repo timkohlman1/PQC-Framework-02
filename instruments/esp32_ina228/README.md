@@ -7,8 +7,8 @@ verification are maintained in
 
 The ESP32 samples the INA228 continuously while idle and while the STM32 GPIO
 window is HIGH. STM32 PF12 drives ESP32 GPIO11 HIGH for one complete experiment
-window and LOW at its conclusion. The ESP32 retains 3 seconds of pre-trigger
-history, timestamps the falling edge, pauses acquisition, and publishes the frozen
+window and LOW at its conclusion. The ESP32 retains available pre-trigger
+history up to one second (short or absent history is allowed), timestamps the falling edge, pauses acquisition, and publishes the frozen
 20-byte `<qfff` timestamp/voltage/current/power capture to:
 
 ```text

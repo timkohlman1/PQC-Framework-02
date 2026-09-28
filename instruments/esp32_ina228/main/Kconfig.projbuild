@@ -74,13 +74,13 @@ menu "PQC energy instrument local networking"
             by the INA228 conversion-ready ALERT input.
 
     config PQC_ENERGY_PRETRIGGER_MS
-        int "Pre-trigger history included in each capture (ms)"
-        range 1000 30000
-        default 3000
+        int "Maximum optional pre-trigger history (ms)"
+        range 1 1000
+        default 1000
         help
-            Samples retained before the rising STM32 sync edge. The ESP32 keeps
-            the larger continuous PSRAM ring so this window does not constrain
-            the maximum measured interval.
+            Retain whatever samples are available before the rising STM32 sync
+            edge, up to this limit. Short or absent history is allowed. The
+            larger PSRAM ring still retains the complete measured interval.
 
     config PQC_ENERGY_RING_MAX_BYTES
         int "Maximum sample-ring allocation (bytes)"

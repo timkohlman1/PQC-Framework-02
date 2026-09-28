@@ -333,3 +333,44 @@ def test_runtime_repetition_omits_campaign_condition_log_for_baseline(tmp_path: 
     )
 
     assert "--campaign-condition-log" not in captured["command"]
+
+
+@pytest.mark.parametrize("profile,mode,certificate,expected", [
+    ("oqs", "pqc_tls_server_auth", "mldsa65", "mldsa65"),
+    ("oqs-mtls", "pqc_tls_mutual", "mldsa65", "mldsa65"),
+    ("classical-server-auth", "classical_tls_server_auth", "ecdsa_p256", "ecdsa_p256"),
+    ("classical", "classical_tls_mutual", "rsa3072", "rsa3072"),
+    ("classical", "plaintext", "mldsa65", None),
+])
+def test_campaign_broker_start_and_reuse_preserve_certificate_selection(
+    tmp_path, profile, mode, certificate, expected
+):
+    from framework.campaign_executor import CampaignExecutor
+
+    calls = []
+
+    def runner(command, cwd):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="Up (healthy)", stderr="")
+
+    bundle = {"experiment": {"mqtt": {
+        "broker_profile": profile,
+        "broker": {"port": 1883 if mode == "plaintext" else 8883},
+        "tls": {"mode": mode, "certificate_profile": certificate},
+    }}}
+    executor = CampaignExecutor(Path(__file__).resolve().parents[2], runner=runner)
+    executor._ensure_broker(bundle=bundle, identity="same", campaign_root=tmp_path)
+    executor._ensure_broker(bundle=bundle, identity="same", campaign_root=tmp_path)
+    starts = [c for c in calls if c[2] == "start"]
+    statuses = [c for c in calls if c[2] == "status"]
+    assert len(starts) == 2  # One experiment and one reporting broker, reused.
+    assert len(statuses) == 4
+    for command in starts + statuses:
+        reporting = command[command.index("--profile") + 1] == "reporting"
+        if reporting or expected is None:
+            assert "--certificate-profile" not in command
+        else:
+            assert command[command.index("--certificate-profile") + 1] == expected
+        if reporting or mode == "plaintext":
+            assert "--oqs-port" not in command
+            assert "--classical-port" not in command

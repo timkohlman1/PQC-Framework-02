@@ -47,7 +47,7 @@ def test_capture_retains_pretrigger_then_pauses_only_after_falling_edge():
     session = _session()
     kconfig = KCONFIG.read_text(encoding="utf-8")
     assert "config PQC_ENERGY_PRETRIGGER_MS" in kconfig
-    assert "default 3000" in kconfig.split("config PQC_ENERGY_PRETRIGGER_MS", 1)[1].split("config", 1)[0]
+    assert "default 1000" in kconfig.split("config PQC_ENERGY_PRETRIGGER_MS", 1)[1].split("config", 1)[0]
     assert "job->e0_us - kPretriggerUs" in session
     assert "pretrigger_complete" in session
     falling = session.split("void processFalling", 1)[1].split("void syncWorker", 1)[0]

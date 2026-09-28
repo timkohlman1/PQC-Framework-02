@@ -72,9 +72,18 @@ publication timeout, the ring is reset and INA228 acquisition resumes to build t
 next pre-trigger history. The framework does not begin another normal experiment
 until the preceding capture publication has completed.
 
-The maintained pre-trigger target is 3000 ms. Capture acceptance requires the
-requested history to be present; an undersized/newly started ring is not silently
-accepted as a complete measurement.
+Pre-trigger history is optional and capped at 1000 ms. The recorder retains only
+available samples at or after `e0_us - pretrigger_us`; short or absent pre-edge
+history does not invalidate the measured interval. `pretrigger_complete` is
+informational. The validator records `available_pretrigger_us` and
+`pretrigger_max_gap_us`; gaps wholly before the rising edge are informational.
+Measured coverage must begin within 10 ms after the rising edge and end within
+10 ms before the falling edge, with no measured-interval gap exceeding 10 ms.
+Hash, ordering, sample format, calibration and acquisition-fault checks remain
+mandatory. A gap crossing the rising edge is checked only for its measured part.
+Existing local pre-trigger settings above 1000 ms are capped in firmware, so the
+new policy requires rebuilding and manually flashing the ESP32. Existing retained
+captures and manifests are not rewritten or retroactively marked successful.
 
 Sensor acquisition remains the calibrated alert-triggered bus/shunt path:
 
@@ -158,7 +167,7 @@ The framework starts its normal reporting subscriber before the STM32 run. After
 the workload, it waits up to the configured completion timeout for a completed
 ESP32 capture already present in that raw stream. It sends no ESP32 command.
 A missing capture, malformed transfer, hash/count mismatch, acquisition fault,
-incomplete pre-trigger history, or incompatible GPIO-window duration fails
+missing measured coverage, measured-interval gaps, or incompatible GPIO-window duration fails
 energy capture and therefore fails an energy-enabled experiment.
 
 Because the ESP32 deliberately has no run ID, the framework chooses the newest
@@ -168,7 +177,7 @@ validation. During normal operation the framework serializes experiments so a ne
 GPIO window cannot begin while the previous capture is being published. If an
 unexpected rising edge is nevertheless observed during publication, the ESP32
 cancels the old transfer and intentionally does not accept that abnormal new
-window as a valid capture because its requested pre-trigger history was not sampled.
+window as a valid capture because acquisition was still paused at its rising edge.
 
 The raw reporting file is retained under both the normal STM32 result-stream
 role and the energy-result-stream role. `energy-capture.json` records the energy

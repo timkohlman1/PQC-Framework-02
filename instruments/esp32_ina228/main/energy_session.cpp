@@ -43,7 +43,7 @@
 #define CONFIG_PQC_ENERGY_PSRAM_RESERVE_BYTES (512 * 1024)
 #endif
 #ifndef CONFIG_PQC_ENERGY_PRETRIGGER_MS
-#define CONFIG_PQC_ENERGY_PRETRIGGER_MS 3000
+#define CONFIG_PQC_ENERGY_PRETRIGGER_MS 1000
 #endif
 #ifndef CONFIG_PQC_ENERGY_REPORTING_HOST
 #define CONFIG_PQC_ENERGY_REPORTING_HOST "pqc-gateway1.pqcnet"
@@ -73,7 +73,9 @@ constexpr char kChunkTopic[] = "pqc/instrument/energy/capture/chunk";
 constexpr char kCompleteTopic[] = "pqc/instrument/energy/capture/complete";
 constexpr size_t kRingBytesTarget = CONFIG_PQC_ENERGY_RING_MAX_BYTES;
 constexpr size_t kPsramReserveBytes = CONFIG_PQC_ENERGY_PSRAM_RESERVE_BYTES;
-constexpr int64_t kPretriggerUs = static_cast<int64_t>(CONFIG_PQC_ENERGY_PRETRIGGER_MS) * 1000LL;
+// Cap older local sdkconfig values as well as the current Kconfig default.
+constexpr int64_t kPretriggerUs = static_cast<int64_t>(
+    CONFIG_PQC_ENERGY_PRETRIGGER_MS > 1000 ? 1000 : CONFIG_PQC_ENERGY_PRETRIGGER_MS) * 1000LL;
 constexpr size_t kChunkBytes = 4000;
 constexpr UBaseType_t kSyncQueueLength = 8;
 constexpr UBaseType_t kCaptureQueueLength = 2;
@@ -314,12 +316,10 @@ bool prepareCaptureRange(CaptureJob *job)
         const int64_t target = job->e0_us - kPretriggerUs;
         while (start < ringCount && logicalSample(start).timestamp_us < target)
             ++start;
-        if (start > 0)
-            --start; /* retain one sample immediately before the requested pre-trigger boundary */
         end = ringCount - 1u;
         while (end > start && logicalSample(end).timestamp_us > job->e1_us)
             --end;
-        ok = logicalSample(start).timestamp_us <= job->e0_us &&
+        ok = start < end &&
              logicalSample(end).timestamp_us <= job->e1_us &&
              logicalSample(end).timestamp_us >= job->e0_us;
         if (ok) {
@@ -327,7 +327,8 @@ bool prepareCaptureRange(CaptureJob *job)
             job->sample_count = end - start + 1u;
             job->first_timestamp_us = logicalSample(start).timestamp_us;
             job->last_timestamp_us = logicalSample(end).timestamp_us;
-            job->pretrigger_complete = logicalSample(start).timestamp_us <= target;
+            // Diagnostic only: a full history is not required for capture.
+            job->pretrigger_complete = logicalSample(0).timestamp_us <= target;
         }
     }
     xSemaphoreGive(stateMutex);
@@ -501,7 +502,7 @@ void processRising(int64_t timestampUs)
     if (state.publishing) {
         /* This is outside the normal framework lifecycle. Cancel the old transfer;
          * the current HIGH interval is intentionally not accepted as a capture
-         * because the requested pre-trigger history was not sampled while paused. */
+         * because acquisition was still paused at the measured rising edge. */
         captureGeneration++;
         state.aborted_captures++;
         state.last_publish_ok = false;

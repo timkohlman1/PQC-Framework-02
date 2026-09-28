@@ -199,13 +199,12 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
             "averaging": 1,
             "i2c_hz": 400000,
             "gap_limit_us": 10000,
-            "pretrigger_us": 3000000,
         }
         _require(all(complete.get(key) == value for key, value in contract.items()),
                  "energy capture configuration/calibration mismatch")
         _require(re.fullmatch(r"[0-9a-f]{64}", str(complete.get("firmware_sha256", ""))) is not None,
                  "missing ESP32 firmware identity")
-        _require(complete.get("pretrigger_complete") is True, "requested pre-trigger history unavailable")
+        _require(type(complete.get("pretrigger_complete")) is bool, "invalid pre-trigger status")
         _require(all(type(complete.get(key)) is int and complete.get(key) == 0 for key in COUNTERS),
                  "energy acquisition/sync fault counter increment")
 
@@ -215,7 +214,7 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
         e0 = complete.get("e0_us")
         e1 = complete.get("e1_us")
         pretrigger = complete.get("pretrigger_us")
-        _require(all(type(v) is int for v in (e0, e1, pretrigger)) and 0 <= e0 < e1 and pretrigger >= 1_000_000,
+        _require(all(type(v) is int for v in (e0, e1, pretrigger)) and 0 <= e0 < e1 and 0 < pretrigger <= 1_000_000,
                  "invalid ESP32 GPIO timestamps/pre-trigger")
 
         samples = [SAMPLE_STRUCT.unpack_from(logical, offset)
@@ -226,10 +225,14 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
         _require(all(timestamps[i] < timestamps[i + 1] for i in range(len(timestamps) - 1)),
                  "non-monotonic sample timestamps")
         gap_limit = int(complete["gap_limit_us"])
-        _require(all(timestamps[i + 1] - timestamps[i] <= gap_limit for i in range(len(timestamps) - 1)),
-                 "sample timestamp gap exceeds limit")
-        _require(timestamps[0] <= e0 - pretrigger and e0 <= timestamps[-1] <= e1,
-                 "capture does not span requested pre-trigger and measured interval")
+        # Pre-edge history is best effort. Only the part of a gap inside the
+        # measured GPIO interval contributes to the continuity requirement.
+        _require(all(timestamps[i + 1] - max(timestamps[i], e0) <= gap_limit
+                     for i in range(len(timestamps) - 1) if timestamps[i + 1] >= e0),
+                 "sample timestamp gap exceeds limit in measured interval")
+        _require(e0 - pretrigger <= timestamps[0] <= e0 + gap_limit
+                 and e0 <= timestamps[-1] <= e1,
+                 "capture exceeds pre-trigger limit or does not span measured interval")
         _require(e1 - timestamps[-1] <= gap_limit,
                  "final energy sample is too far before falling GPIO edge")
         _require(complete.get("first_timestamp_us") == timestamps[0]
@@ -249,6 +252,13 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
             "logical_sha256": complete.get("logical_sha256"),
             "superseded_capture_count": max(0, len(completion_order) - 1),
             "pretrigger_us": pretrigger,
+            "pretrigger_complete": complete["pretrigger_complete"],
+            "available_pretrigger_us": max(0, e0 - timestamps[0]),
+            "pretrigger_max_gap_us": max(
+                (timestamps[i + 1] - timestamps[i]
+                 for i in range(len(timestamps) - 1) if timestamps[i + 1] < e0),
+                default=0,
+            ),
             "first_timestamp_us": timestamps[0],
             "last_timestamp_us": timestamps[-1],
             "alignment": {

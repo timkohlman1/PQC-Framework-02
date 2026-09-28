@@ -12,6 +12,8 @@ Framework build, test, and experiment workflows use the Docker wrappers. Broker 
 - `classical-server-auth`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the same staged RSA-3072 broker identity but does not request a client certificate.
 - `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses the selected staged certificate family independently of the hybrid `SecP256r1MLKEM768` key exchange and does not request a client certificate.
 
+Campaign-managed TLS brokers receive the resolved `mqtt.tls.certificate_profile` through `--certificate-profile` on startup and status checks, including reuse checks. For example, the `ready_metrics_2_energy` campaign selects `mldsa65`; it must not fall back to the Compose default `rsa3072`. Plaintext experiment and reporting brokers do not receive a TLS certificate override. Container health alone does not prove that a campaign client trusts the selected broker certificate; the authenticated readiness probe must also pass.
+
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
 Both profiles override the image entrypoint with an explicit shell script, copy the source ACL file to `/tmp/mosquitto-aclfile` inside the container, set container-local ownership and mode there, and run Mosquitto against that copy. This avoids changing bind-mounted repository files and avoids image startup attempts to change ownership of read-only config/certificate mounts.

@@ -20,7 +20,7 @@ sampling:
   shunt_conversion_us: 50
   averaging: 1
   i2c_hz: 400000
-  pretrigger_ms: 3000
+  pretrigger_ms: 1000
   sample_encoding: little_endian_ieee754_v1
   sample_record_bytes: 20
   sample_fields:

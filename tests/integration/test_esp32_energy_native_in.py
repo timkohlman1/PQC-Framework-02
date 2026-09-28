@@ -166,7 +166,11 @@ def sdk(tmp_path):
     return tmp_path
 
 
-def test_esp32_actual_recorder_emits_packed_20_byte_capture(sdk):
+@pytest.mark.parametrize("first_timestamp,capacity", [
+    (1_000_000, 1000), (3_927_027, 1000), (4_000_000, 1000),
+    (4_001_000, 1000), (1_000_000, 150),
+])
+def test_esp32_actual_recorder_emits_packed_20_byte_capture(sdk, first_timestamp, capacity):
     cxx = shutil.which("g++")
     if cxx is None:
         pytest.skip("native C++ compiler unavailable")
@@ -186,9 +190,9 @@ extern "C" void pqc_ina228_sparkfun_set_sample_callback(pqc_ina228_sample_callba
 extern "C" void pqc_ina228_sparkfun_start(i2c_port_t){}
 int main(){
  stateMutex=(void*)1; mqttClient=(void*)1; publishAckQueue=(void*)1;
- ringCapacity=1000; sampleRing=new energy_sample_record_t[ringCapacity]();
+ ringCapacity=TEST_CAPACITY; sampleRing=new energy_sample_record_t[ringCapacity]();
  state.mqtt_connected=true; captureGeneration=1; physicalHigh=false;
- for(int64_t t=1000000;t<=5000000;t+=10000){
+ for(int64_t t=TEST_FIRST_TIMESTAMP;t<=5000000;t+=10000){
    pqc_ina228_snapshot_t s={};s.online=s.valid=true;s.timestamp_us=t;
    s.bus_v=5.0;s.current_a=.1;s.power_w=.5;storeSensorSample(&s);
  }
@@ -204,7 +208,8 @@ int main(){
 ''')
     exe = sdk / "session"
     run([
-        cxx, "-std=c++17", "-Wformat=2", "-Werror=format", "-ffunction-sections", "-fdata-sections",
+        cxx, "-std=c++17", f"-DTEST_CAPACITY={capacity}", f"-DTEST_FIRST_TIMESTAMP={first_timestamp}",
+        "-DCONFIG_PQC_ENERGY_PRETRIGGER_MS=3000", "-Wformat=2", "-Werror=format", "-ffunction-sections", "-fdata-sections",
         "-I", str(sdk), "-I", str(main), str(harness), "-Wl,--gc-sections", "-o", str(exe),
     ])
     messages = []
@@ -215,18 +220,20 @@ int main(){
     completions = [obj for topic, obj in messages if topic.endswith("/complete")]
     assert chunks and len(completions) == 1
     raw = b"".join(base64.b64decode(obj["data_b64"], validate=True) for obj in chunks)
-    assert len(raw) == 401 * 20
+    retained = list(range(first_timestamp, 5_000_001, 10_000))[-capacity:]
+    expected = [timestamp for timestamp in retained if timestamp >= 3_000_000]
+    assert len(raw) == len(expected) * 20
     first = struct.unpack_from("<qfff", raw, 0)
     last = struct.unpack_from("<qfff", raw, len(raw) - 20)
-    assert first[0] == 1_000_000 and last[0] == 5_000_000
+    assert first[0] == expected[0] and last[0] == expected[-1]
     assert first[1:] == pytest.approx((5.0, 0.1, 0.5))
     complete = completions[0]
     assert complete["schema"] == 1
     assert complete["capture_id"] == "0123456789abcdef"
     assert complete["sample_record_bytes"] == 20
-    assert complete["sample_count"] == 401
-    assert complete["pretrigger_us"] == 3_000_000
-    assert complete["pretrigger_complete"] is True
+    assert complete["sample_count"] == len(expected)
+    assert complete["pretrigger_us"] == 1_000_000
+    assert complete["pretrigger_complete"] is (retained[0] <= 3_000_000)
     assert complete["sample_fields"] == ["timestamp_us", "bus_v", "current_a", "power_w"]
     assert complete["chunk_count"] == len(chunks)
     assert complete["logical_bytes"] == len(raw)

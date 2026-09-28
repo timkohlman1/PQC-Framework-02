@@ -63,9 +63,9 @@ def _stm32_epoch(run_id: str, s0: int = 10_000_000, s1: int = 11_000_000) -> lis
 
 
 def _sample_bytes(e0: int = 4_000_000, e1: int = 5_000_000) -> bytes:
-    # 3 s requested pre-trigger plus the measured interval, sampled every 10 ms.
+    # Up to 1 s optional pre-trigger plus the measured interval, sampled every 10 ms.
     records = []
-    for timestamp in range(e0 - 3_000_000, e1 + 1, 10_000):
+    for timestamp in range(e0 - 1_000_000, e1 + 1, 10_000):
         records.append(SAMPLE_STRUCT.pack(timestamp, 5.0, 0.1, 0.5))
     return b"".join(records)
 
@@ -76,8 +76,10 @@ def _energy_capture(
     e1: int = 5_000_000,
     *,
     mutations: dict | None = None,
+    timestamps: list[int] | None = None,
 ) -> list[str]:
-    logical = _sample_bytes(e0, e1)
+    logical = (_sample_bytes(e0, e1) if timestamps is None else
+               b"".join(SAMPLE_STRUCT.pack(t, 5.0, 0.1, 0.5) for t in timestamps))
     payloads = []
     # Exercise multi-chunk reconstruction while keeping record boundaries intact.
     chunk_bytes = 4000
@@ -104,10 +106,10 @@ def _energy_capture(
         "clock_hz": 1_000_000,
         "e0_us": e0,
         "e1_us": e1,
-        "pretrigger_us": 3_000_000,
+        "pretrigger_us": 1_000_000,
         "pretrigger_complete": True,
-        "first_timestamp_us": e0 - 3_000_000,
-        "last_timestamp_us": e1,
+        "first_timestamp_us": SAMPLE_STRUCT.unpack_from(logical)[0],
+        "last_timestamp_us": SAMPLE_STRUCT.unpack_from(logical, len(logical) - SAMPLE_STRUCT.size)[0],
         "sample_count": len(logical) // SAMPLE_STRUCT.size,
         "sample_record_bytes": SAMPLE_STRUCT.size,
         "sample_encoding": "little_endian_ieee754_v1",
@@ -158,7 +160,7 @@ def test_passive_capture_validates_and_derives_two_edge_alignment(tmp_path):
     assert result["passed"], result["failure_reasons"]
     assert result["capture_id"] == CAPTURE
     assert result["sample_record_bytes"] == 20
-    assert result["sample_count"] == 401
+    assert result["sample_count"] == 201
     assert result["alignment"] == {
         "esp32_start_us": 4_000_000,
         "esp32_end_us": 5_000_000,
@@ -185,7 +187,7 @@ def test_validator_ignores_stale_completed_capture_by_window_duration(tmp_path):
         {"logical_sha256": "0" * 64},
         {"effective_shunt_ohms": 0.015},
         {"pretrigger_us": 2_000_000},
-        {"pretrigger_complete": False},
+        {"pretrigger_complete": "false"},
         {"i2c_errors": 1},
         {"firmware_sha256": "not-a-hash"},
         {"sample_record_bytes": 64},
@@ -256,3 +258,30 @@ def test_wait_timeout_is_a_capture_failure_and_is_logged(tmp_path):
     capture = EnergyCapture(bundle, tmp_path, runner)
     assert not capture.wait("/tmp/raw")
     assert "failed" in (tmp_path / "energy-wait.log").read_text().lower()
+
+
+@pytest.mark.parametrize("history", [[], [3_927_027, 3_951_232], [3_999_000]])
+def test_optional_pretrigger_accepts_zero_or_short_history_and_preedge_gaps(tmp_path, history):
+    timestamps = history + list(range(4_000_000, 5_000_001, 10_000))
+    path = _write(tmp_path, _stm32_epoch("run") + _energy_capture(
+        timestamps=timestamps, mutations={"pretrigger_complete": False}))
+    result = validate_energy_evidence(path, "run")
+    assert result["passed"], result["failure_reasons"]
+    assert result["available_pretrigger_us"] == (4_000_000 - history[0] if history else 0)
+    assert result["pretrigger_complete"] is False
+    assert result["pretrigger_max_gap_us"] == (24_205 if len(history) == 2 else 0)
+
+
+@pytest.mark.parametrize("timestamps,passed", [
+    (list(range(4_001_000, 5_000_001, 1000)), True),
+    (list(range(4_010_001, 5_000_001, 1000)), False),
+    ([3_990_000] + list(range(4_020_000, 5_000_001, 1000)), False),
+    (list(range(4_000_000, 4_500_001, 1000)) + list(range(4_520_000, 5_000_001, 1000)), False),
+    (list(range(4_000_000, 4_980_001, 1000)), False),
+    ([2_999_999] + list(range(3_000_000, 5_000_001, 10_000)), False),
+])
+def test_optional_history_preserves_measured_coverage_and_one_second_cap(tmp_path, timestamps, passed):
+    path = _write(tmp_path, _stm32_epoch("run") + _energy_capture(
+        timestamps=timestamps, mutations={"pretrigger_complete": False}))
+    result = validate_energy_evidence(path, "run")
+    assert result["passed"] is passed, result["failure_reasons"]
