@@ -45,13 +45,15 @@ elif args[:2] == ["mkdir", "-p"]:
     pathlib.Path(args[-1]).mkdir(parents=True, exist_ok=True)
 ''')
     executable(binary / "docker", prefix + '''
+if args == ["info"] and os.environ.get("RM2_FAIL_SETUP") == "docker":
+    raise SystemExit(9)
 if args == ["ps", "-aq"]: print("old-container")
 if args == ["volume", "ls", "-q"]: print("old-volume")
 ''')
     executable(root / "scripts/dev.sh", prefix + '''
-if args == ["build-image"] and os.environ.get("RM2_FAIL_SETUP"):
-    raise SystemExit(9)
 if args[:2] == ["python", "scripts/resolve_campaign.py"]:
+    if os.environ.get("RM2_FAIL_SETUP") == "resolver":
+        raise SystemExit(9)
     assert args[2:] == ["ready_metrics_2.yaml"], args
     cases = root / ".pqc-generated-state/campaigns/ready_metrics_2/cases"
     cases.mkdir(parents=True)
@@ -113,9 +115,13 @@ def test_independent_processes_first_case_failure_continuation_and_rates(laborat
     manifest_paths = [Path(row["manifest"]) for row in summary["trials"] if row["manifest"]]
     assert [path.parent.name for path in manifest_paths] == [
         "2026-01-01_001_ready_metrics_2", "2026-01-01_002_ready_metrics_2"]
-    assert commands.count(["dev.sh", "build-image"]) == 1
-    assert commands.count(["provision_certificates.py"]) == 1
-    assert all(not (root / name / ".old").exists() for name in ("build", "results", "secrets", ".pqc-generated-state"))
+    # The runner reuses the prepared workspace; reset/build/provision are disabled.
+    assert ["dev.sh", "build-image"] not in commands
+    assert ["provision_certificates.py"] not in commands
+    assert [cmd for cmd in commands if cmd[0] == "docker"] == [["docker", "info"]]
+    assert not any(cmd[0] == "sudo" for cmd in commands)
+    assert all((root / name / ".old").read_text() == "disposable test content"
+               for name in ("build", "results", "secrets", ".pqc-generated-state"))
     assert all("--runtime-only" not in cmd and "--prepare-only" not in cmd for cmd in runs)
     case = root / summary["selected_case"]
     assert "repetitions: 7" in case.read_text()  # never rewritten or executed as a campaign
@@ -130,14 +136,17 @@ def test_default_dry_run_and_invalid_count_have_no_side_effects(laboratory):
         assert (root / "secrets/.old").exists()
 
 
-def test_setup_failure_stops_before_provisioning_and_trials(laboratory):
+@pytest.mark.parametrize("failure_stage", ["docker", "resolver"])
+def test_setup_failure_stops_before_trials(laboratory, failure_stage):
     root, env, ledger, cli = laboratory
-    env["RM2_FAIL_SETUP"] = "1"
+    env["RM2_FAIL_SETUP"] = failure_stage
     completed = subprocess.run([*cli, "--execute"], env=env, capture_output=True, text=True)
-    assert completed.returncode == 2
-    calls = ledger.read_text()
-    assert "experiment-gateway" not in calls
-    assert "provision_certificates.py" not in calls
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    calls = [json.loads(line) for line in ledger.read_text().splitlines()]
+    expected = [["docker", "info"]]
+    if failure_stage == "resolver":
+        expected.append(["dev.sh", "python", "scripts/resolve_campaign.py", "ready_metrics_2.yaml"])
+    assert calls == expected
     assert not (root / "results/reliability").exists()
 
 
