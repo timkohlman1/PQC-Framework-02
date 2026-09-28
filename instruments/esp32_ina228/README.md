@@ -1,23 +1,37 @@
-# Persistent ESP32-S3 / INA228 acquisition appliance
+# Persistent ESP32-S3 / INA228 passive recorder
 
-Setup, power-domain wiring, GPIO assignments, calibration identity, acquisition
-protocol, manual maintenance and verification are maintained in
-[the energy instrument guide](../../docs/010_esp32_ina228_energy_instrument.md).
+The instrument is a manually provisioned, persistent GPIO-triggered measurement
+appliance. Setup, wiring, calibration status, wire format, framework contract and
+verification are maintained in
+[`docs/010_esp32_ina228_energy_instrument.md`](../../docs/010_esp32_ina228_energy_instrument.md).
 
-The appliance records ALERT-timestamped raw sensor samples in a PSRAM ring
-targeting 7 MiB with 512 KiB free headroom, and records GPIO11 interval boundaries.
-Actual allocated capacity is reported. Acquisition pauses only for post-run
-transfer and resumes on every exit; overflowing this run's retention fails capture.
-GPIO12 receives INA228 ALERT; the shared
-400 kHz I2C bus uses SDA GPIO48 and SCL GPIO47. PF12 on the STM32 supplies the
-3.3 V interval signal. Retained evidence is published only after a framework
-run's measured intervals, through the plaintext reporting broker.
+The ESP32 samples the INA228 continuously while idle and while the STM32 GPIO
+window is HIGH. STM32 PF12 drives ESP32 GPIO11 HIGH for one complete experiment
+window and LOW at its conclusion. The ESP32 retains 3 seconds of pre-trigger
+history, timestamps the falling edge, pauses acquisition, and publishes the frozen
+20-byte `<qfff` timestamp/voltage/current/power capture to:
 
-Source implementation is not hardware validation. No achieved sample rate is
-claimed from ADC settings. Integration, affine clock fitting and scientific
-energy attribution belong to offline analysis. Local `sdkconfig` may contain
-Wi-Fi credentials and must never be committed or packaged. Campaigns do not
-build, flash or reset this persistent instrument.
+```text
+pqc/instrument/energy/capture/chunk
+pqc/instrument/energy/capture/complete
+```
 
-This revision requires the matching host collector for schema 3 compact arrays,
-base64 chunks and fresh token readiness. Historical schema 2 remains readable.
+There is no application-level MQTT command plane, association token, run ID or
+measurement name on the appliance. Acquisition remains paused while the immutable
+capture is published, then the ring is reset and sampling resumes to rebuild the
+next pre-trigger history. An unexpected rising edge during publication cancels the
+old transfer and invalidates that abnormal window; the normal framework does not
+start another experiment until the preceding publication has completed.
+
+The ring targets at most 7 MiB while preserving 512 KiB PSRAM headroom. At 20
+bytes/sample, 7 MiB can theoretically hold 367,001 records; actual allocated
+capacity is reported by the firmware and may be smaller.
+
+GPIO12 receives INA228 ALERT. The shared 400 kHz I2C bus uses SDA GPIO48 and SCL
+GPIO47. Local `sdkconfig` may contain Wi-Fi credentials and must not be committed
+or packaged.
+
+Source/native tests are not hardware validation. Cross-clock alignment and
+energy integration are performed offline from the two GPIO timestamps plus raw
+sample timestamps. Fresh hardware validation is required after changing this
+firmware.

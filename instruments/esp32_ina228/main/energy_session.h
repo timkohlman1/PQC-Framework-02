@@ -13,27 +13,24 @@ typedef struct {
     bool last_publish_ok;
     bool ring_ready;
     bool ring_overflowed;
-    bool interval_active;
-    char run_id[80];
+    bool capture_active;
+    char capture_id[17];
     uint32_t ring_capacity_samples;
     uint32_t ring_used_samples;
-    uint64_t oldest_sequence;
-    uint64_t newest_sequence;
-    uint32_t completed_interval_count;
-    uint32_t unclaimed_interval_count;
+    int64_t oldest_timestamp_us;
+    int64_t newest_timestamp_us;
+    uint32_t completed_capture_count;
+    uint32_t aborted_capture_count;
     uint32_t sync_isr_edges;
     uint32_t sync_queue_drops;
-    uint32_t sync_processed_rising;
-    uint32_t sync_processed_falling;
-    uint32_t sync_unexpected_rising;
-    uint32_t sync_orphan_falling;
 } pqc_energy_session_snapshot_t;
 
-/* Persistent framework-facing MQTT/evidence service. Acquisition starts at boot
- * and continues regardless of MQTT availability. */
+/* Persistent GPIO-triggered energy recorder. INA228 acquisition starts at boot.
+ * A rising STM32 sync edge opens one capture window; the following falling edge
+ * closes it, pauses acquisition, publishes the immutable ring contents, then resets
+ * and resumes acquisition. No MQTT command or experiment identity is accepted. */
 void pqc_energy_session_start(void);
 void pqc_energy_session_snapshot(pqc_energy_session_snapshot_t *out);
-
 
 #ifdef __cplusplus
 }

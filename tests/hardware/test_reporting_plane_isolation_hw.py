@@ -226,15 +226,17 @@ def test_persistent_esp32_reporting_integrity_under_experiment_impairment(
     raw = _indexed_file(run_dir, manifest, "stm32_result_stream")
     _indexed_file(run_dir, manifest, "energy_result_stream")
     collector = _json_file(run_dir / "mqtt-reporting-collector.log")
-    assert collector.get("expected_sources") == ["stm32", "energy"]
+    assert collector.get("expected_sources") == ["stm32"]
     validation = collector.get("validation", {})
     assert validation.get("passed") is True and validation.get("failure_reasons") == []
-    for source in ("stm32", "energy"):
-        source_result = validation.get("source_results", {}).get(source, {})
-        assert source_result.get("passed") is True
-        assert source_result.get("completion_count") == 1
-        assert source_result.get("missing_sequences") == []
-        assert source_result.get("duplicate_sequences") == []
-        assert source_result.get("observed_sha256") == source_result.get("expected_sha256")
-    observed = _parse_raw_stream(raw, run_dir.name, ("stm32", "energy"), {"stm32": 1, "energy": 1})
+    source_result = validation.get("source_results", {}).get("stm32", {})
+    assert source_result.get("passed") is True
+    assert source_result.get("completion_count") == 1
+    assert source_result.get("missing_sequences") == []
+    assert source_result.get("duplicate_sequences") == []
+    assert source_result.get("observed_sha256") == source_result.get("expected_sha256")
+    observed = _parse_raw_stream(raw, run_dir.name, ("stm32",), {"stm32": 1})
     assert observed.passed, observed.failure_reasons
+    energy = _json_file(run_dir / "energy-capture.json")
+    assert energy.get("passed") is True and energy.get("capture_received") is True
+    assert energy.get("sample_record_bytes") == 20 and energy.get("sample_count", 0) > 0

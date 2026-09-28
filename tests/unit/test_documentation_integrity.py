@@ -911,10 +911,21 @@ def test_hardware_test_standard_is_self_contained() -> None:
 
 
 # Energy operations belong in the instrument guide rather than the AI guide.
-def test_energy_guide_documents_fresh_optional_framework_contract():
+def test_energy_guide_documents_passive_gpio_capture_contract():
     root = Path(__file__).resolve().parents[2]
     guide = (root / "docs/010_esp32_ina228_energy_instrument.md").read_text()
-    for text in ("run --prepare-only", "PQC_ENERGY_GO", "energy-capture.json",
-                 "warning", "energy disabled", "offline", "schema 3"):
+    for text in (
+        "pqc/instrument/energy/capture",
+        "20-byte",
+        "pre-trigger",
+        "TIM2",
+        "offline",
+        "energy-capture.json",
+        "publish-only",
+        "acquisition is paused",
+    ):
         assert text in guide
+    assert "PQC_ENERGY_WAITING` / `PQC_ENERGY_GO` start gate is retired" in guide
+    assert "session/association protocol" in guide and "no run ID" in guide
+    assert "schema 3 energy" not in guide
     assert (root / "tests/hardware/test_energy_capture_hw.py").is_file()

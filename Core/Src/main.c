@@ -83,7 +83,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
+#if PQC_UART_OUTPUT_MODE != 0
 UART_HandleTypeDef hlpuart1;
 #endif
 
@@ -112,7 +112,7 @@ const osThreadAttr_t networkTask_attributes = {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
+#if PQC_UART_OUTPUT_MODE != 0
 static void MX_LPUART1_UART_Init(void);
 #endif
 static void MX_SPI1_Init(void);
@@ -1807,7 +1807,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
+#if PQC_UART_OUTPUT_MODE != 0
   MX_LPUART1_UART_Init();
 #endif
 #if defined(PQC_TIMEBASE_HARDWARE_SELF_TEST) && PQC_TIMEBASE_HARDWARE_SELF_TEST && (PQC_UART_OUTPUT_MODE != 0)
@@ -1840,7 +1840,6 @@ int main(void)
 #if PQC_BAREMETAL_BENCHMARK_ENABLED
   /* All cryptographic measurement completes before the RTOS and ST67 run. */
   PQC_EnergyBoundaryInitialize();
-  if (!PQC_EnergyAwaitStart()) { Error_Handler(); }
   PQC_EnergyBoundaryBegin();
   PQC_BenchmarkSTM32_Run();
   PQC_EnergyBoundaryEnd();
@@ -1971,7 +1970,7 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
-#if PQC_UART_OUTPUT_MODE != 0 || PQC_ENERGY_SYNC_ENABLED
+#if PQC_UART_OUTPUT_MODE != 0
 static void MX_LPUART1_UART_Init(void)
 {
 
@@ -2893,22 +2892,18 @@ void StartNetworkTask(void *argument)
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryInitialize();
-  if (!PQC_EnergyAwaitStart()) {
-    osThreadExit();
-    return;
-  }
-#endif
-#if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryBegin();
 #endif
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
-#if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryEnd();
-  PQC_EnergyBoundaryAppend(0U);
 #endif
 #if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryAppend(0U);
+#endif
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
@@ -2927,6 +2922,27 @@ void StartNetworkTask(void *argument)
       APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_deferred_results\r\n");
     }
   }
+#else
+#if PQC_ENERGY_SYNC_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
+  /* Repeated TLS publishes one STM32 result epoch per handshake. Emit one
+   * additional tiny epoch containing the experiment-wide GPIO/TIM2 anchors. */
+  PQC_ResultBufferReset();
+  PQC_EnergyBoundaryAppend(0U);
+  (void)PQC_ResultBufferAppendText(0U, "application", "energy_window_complete");
+  {
+    PQC_ResultBufferStatus result_status;
+    char result_sha256[65];
+    PQC_ResultBufferStatusGet(&result_status);
+    PQC_ResultBufferSha256Hex(result_sha256);
+    if (PQC_WolfMQTT_PublishDeferredResults(
+            PQC_ResultBufferData(), PQC_ResultBufferSize(), result_sha256,
+            result_status.record_count, result_status.dropped_record_count,
+            result_status.overflowed != 0U) != 0)
+    {
+      APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_energy_boundary\r\n");
+    }
+  }
+#endif
 #endif
   osThreadExit();
 }

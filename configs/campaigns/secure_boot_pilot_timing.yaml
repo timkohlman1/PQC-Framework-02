@@ -1,0 +1,52 @@
+# Preliminary timing/footprint capture: 12 profiles x 10 resets = 120 runs.
+# Resolve: ./scripts/dev.sh python scripts/resolve_campaign.py secure_boot_pilot_timing.yaml
+# Run after smoke qualification: ./scripts/dev.sh campaign-gateway secure_boot_pilot_timing
+# Ten repetitions are a pilot choice, not the final thesis sample size.
+# Keep integrity, authenticity, enclosing verification and bootloader elapsed
+# measurements separate. Firmware footprint is a per-build quantity.
+# Preparation runs are separate from the counted runtime repetitions.
+# ML-DSA-87 is included for qualification; config resolution is not runtime proof.
+schema_version: 1
+profile_type: campaign
+id: secure_boot_pilot_timing
+target: stm32l4r5_st67
+gateway: pqc_gateway1
+services:
+  experiment_broker: experiment_gateway1
+  reporting_broker: reporting_gateway1
+workload: mqtt_validation
+fixed:
+  mqtt_transport: plaintext
+  # Required inert compatibility selections for plaintext MQTT resolution.
+  tls_kex: secp256r1
+  tls_auth: rsa3072
+  auth_mode: server
+  network_condition: baseline
+  firmware_mode: dual_bank_no_ota
+  standby_signing_keys: 0
+  boot_stack_profiling: false
+  boot_uart_diagnostics: false
+# Energy is intentionally unselected: its current interval starts after wolfBoot.
+matrix:
+  secure_boot:
+    - integrity_sha256
+    - ecdsa_p256
+    - ecdsa_p384
+    - ecdsa_p521
+    - ed25519
+    - ed448
+    - rsa2048
+    - rsa3072
+    - rsa4096
+    - mldsa44
+    - mldsa65
+    - mldsa87
+execution:
+  repetitions: 10
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  experiment_broker: reuse_if_compatible
+  reporting_broker: always_available
+  condition: retain_within_condition
+  evidence: per_run

@@ -13,13 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.integration
 
 
-def test_energy_native_boundary_and_start_gate(tmp_path):
-    (tmp_path/"main.h").write_text(r'''
+def test_energy_native_experiment_boundary_is_one_gpio_window(tmp_path):
+    (tmp_path / "main.h").write_text(r"""
 #pragma once
 #include <stdint.h>
 typedef struct { uint32_t BSRR; } GPIO_TypeDef;
 typedef struct { uint32_t Pin,Mode,Pull,Speed; } GPIO_InitTypeDef;
-typedef int UART_HandleTypeDef;
 extern GPIO_TypeDef gpio;
 #define GPIOF (&gpio)
 #define GPIO_PIN_12 4096U
@@ -28,16 +27,28 @@ extern GPIO_TypeDef gpio;
 #define GPIO_SPEED_FREQ_LOW 0
 #define __HAL_RCC_GPIOF_CLK_ENABLE() ((void)0)
 #define __DSB() ((void)0)
-#define HAL_OK 0
 uint32_t __get_PRIMASK(void);
 void __disable_irq(void);
 void __set_PRIMASK(uint32_t);
 void HAL_GPIO_Init(GPIO_TypeDef*, GPIO_InitTypeDef*);
-uint32_t HAL_GetTick(void);
-int HAL_UART_Transmit(UART_HandleTypeDef*, uint8_t*, unsigned, unsigned);
-int HAL_UART_Receive(UART_HandleTypeDef*, uint8_t*, unsigned, unsigned);
-''')
-    (tmp_path/"test.c").write_text(r'''
+""")
+    (tmp_path / "pqc_timebase.h").write_text(r"""
+#pragma once
+#include <stdint.h>
+typedef struct {
+    uint8_t initialized;
+    uint32_t counter_hz;
+} PQC_TimebaseProvenance;
+const PQC_TimebaseProvenance *PQC_TimebaseGetProvenance(void);
+uint64_t PQC_TimebaseNowUs(void);
+""")
+    (tmp_path / "pqc_result_buffer.h").write_text(r"""
+#pragma once
+#include <stdbool.h>
+#include <stdint.h>
+bool PQC_ResultBufferAppendText(uint32_t iteration, const char *context, const char *text);
+""")
+    (tmp_path / "test.c").write_text(r"""
 #include "main.h"
 #include "pqc_energy_boundary.h"
 #include "pqc_timebase.h"
@@ -45,9 +56,7 @@ int HAL_UART_Receive(UART_HandleTypeDef*, uint8_t*, unsigned, unsigned);
 #include <assert.h>
 #include <string.h>
 GPIO_TypeDef gpio;
-UART_HandleTypeDef hlpuart1;
-static uint32_t mask, tick, pos, announces;
-static const char *input;
+static uint32_t mask;
 static uint64_t now = 4294967400ULL;
 static char captured[256];
 static PQC_TimebaseProvenance provenance = {.initialized=1, .counter_hz=1000000};
@@ -56,34 +65,35 @@ uint64_t PQC_TimebaseNowUs(void) { assert(mask==1); return now; }
 uint32_t __get_PRIMASK(void) { return mask; }
 void __disable_irq(void) { mask=1; }
 void __set_PRIMASK(uint32_t m) { mask=m; }
-void HAL_GPIO_Init(GPIO_TypeDef *g, GPIO_InitTypeDef *p) { assert(p->Pin==GPIO_PIN_12); }
+void HAL_GPIO_Init(GPIO_TypeDef *g, GPIO_InitTypeDef *p) { (void)g; assert(p->Pin==GPIO_PIN_12); }
 bool PQC_ResultBufferAppendText(uint32_t i, const char *context, const char *text) {
     assert(i==0); assert(strcmp(context,"energy_boundary")==0); strcpy(captured,text); return true;
 }
-uint32_t HAL_GetTick(void) { tick+=10; return tick; }
-int HAL_UART_Transmit(UART_HandleTypeDef *h, uint8_t *p, unsigned n, unsigned t) { announces++; return 0; }
-int HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *p, unsigned n, unsigned t) {
-    if (input[pos]) { *p=input[pos++]; return 0; } return 1;
-}
 int main(void) {
     PQC_EnergyBoundaryInitialize();
-    for (unsigned original=0; original<2; original++) {
-        mask=original; PQC_EnergyBoundaryBegin(); assert(mask==original);
-        assert(gpio.BSRR==GPIO_PIN_12); now+=1000;
-        PQC_EnergyBoundaryEnd(); assert(mask==original); assert(gpio.BSRR==(GPIO_PIN_12<<16));
-        PQC_EnergyBoundaryAppend(0); assert(strstr(captured,"valid=1"));
-        assert(strstr(captured,"s0_us=429496"));
-    }
-    input="noise\nPQC_ENERGY_GO\n"; assert(PQC_EnergyAwaitStart()); assert(announces);
-    input=""; pos=0; assert(!PQC_EnergyAwaitStart());
+    assert(gpio.BSRR==(GPIO_PIN_12<<16));
+    mask=0; PQC_EnergyBoundaryBegin(); assert(mask==0); assert(gpio.BSRR==GPIO_PIN_12);
+    now += 1000;
+    PQC_EnergyBoundaryEnd(); assert(mask==0); assert(gpio.BSRR==(GPIO_PIN_12<<16));
+    PQC_EnergyBoundaryAppend(0);
+    assert(strstr(captured,"scope=experiment"));
+    assert(strstr(captured,"valid=1"));
+    assert(strstr(captured,"clock=TIM2"));
+    assert(strstr(captured,"counter_hz=1000000"));
+    assert(strstr(captured,"timestamp_convention=before_gpio_write"));
+    assert(strstr(captured,"s0_us=4294967400"));
+    assert(strstr(captured,"s1_us=4294968400"));
     return 0;
 }
-''')
-    command = ["cc", "-std=c11", "-DPQC_ENERGY_SYNC_ENABLED=1", "-I", str(tmp_path), "-I", str(ROOT/"Core/Inc"),
-               str(tmp_path/"test.c"), str(ROOT/"Core/Src/pqc_energy_boundary.c"), str(ROOT/"Core/Src/pqc_energy_start.c"), "-o", str(tmp_path/"test")]
+""")
+    command = [
+        "cc", "-std=c11", "-DPQC_ENERGY_SYNC_ENABLED=1", "-I", str(tmp_path),
+        "-I", str(ROOT / "Core/Inc"), str(tmp_path / "test.c"),
+        str(ROOT / "Core/Src/pqc_energy_boundary.c"), "-o", str(tmp_path / "test"),
+    ]
     built = subprocess.run(command, capture_output=True, text=True)
     assert built.returncode == 0, built.stderr
-    ran = subprocess.run([str(tmp_path/"test")], capture_output=True, text=True, timeout=10)
+    ran = subprocess.run([str(tmp_path / "test")], capture_output=True, text=True, timeout=10)
     assert ran.returncode == 0, ran.stderr
 
 

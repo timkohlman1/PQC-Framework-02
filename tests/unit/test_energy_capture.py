@@ -1,222 +1,258 @@
-"""Protocol acceptance, disabled profile isolation, and bounded control contracts."""
+"""Passive ESP32 energy-capture contracts and resolver integration."""
+from __future__ import annotations
+
 import base64
 import hashlib
 import json
 from pathlib import Path
+import struct
 import subprocess
 
 import pytest
 import yaml
 
-from framework.energy_evidence import FIELDS, COUNTERS, validate_energy_evidence
-from framework.energy_gateway import healthy
-from framework.energy_capture import EnergyCapture
 from framework.config_resolver import ConfigResolver
-from framework.result_collector import _parse_raw_stream
+from framework.energy_capture import EnergyCapture
+from framework.energy_evidence import (
+    ENERGY_CHUNK_TOPIC,
+    ENERGY_COMPLETE_TOPIC,
+    SAMPLE_FIELDS,
+    SAMPLE_STRUCT,
+    validate_energy_evidence,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
-TOKEN = "a" * 32
+CAPTURE = "0123456789abcdef"
 
 
-def records(intervals=1, shared=False):
-    session = dict(record="session", schema=3, source="energy", run_id="run", association_token=TOKEN,
-        clock_hz=1000000, interval_count=intervals, sync_gpio=11, alert_gpio=12,
-        calibration_id="empirical_dmm_reference_loads_2026-09-25",
-        calibration_status="empirical_two_load_current_scaling", nominal_shunt_ohms=.015,
-        effective_shunt_ohms=.029, acquisition_mode="alert_triggered_bus_shunt",
-        bus_conversion_us=50, shunt_conversion_us=50, averaging=1, i2c_hz=400000,
-        gap_limit_us=10000, analysis="offline_only", sample_encoding="array_v1",
-        collection_acquisition="paused", sample_fields=FIELDS, firmware_sha256="b"*64,
-        session_id="c"*32, sample_record_bytes=64, ring_capacity_samples=114688,
-        ring_allocated_bytes=7*1024*1024, psram_reserve_bytes=512*1024, psram_total_bytes=8*1024*1024)
-    energy, stm = [session], []
-    for i in range(intervals):
-        start = 1000 + i*(1000 if shared else 10000)
-        seq = 100 + i*(1 if shared else 10)
-        energy.append(dict(record="interval", interval_index=i, interval_sequence=i+10,
-            e0_us=start+100, e1_us=start+900, start_sample_sequence=seq, end_sample_sequence=seq+1,
-            stm32_boundary_source="stm32.energy_boundary", run_association="collector_token",
-            **dict.fromkeys(COUNTERS, 0)))
-        energy.extend([[i,j,seq+j,start+j*1000,j*1000-100,5.,.1,.5,150,0,2] for j in range(2)])
-        stm.append([dict(source="stm32", iteration=i, context="energy_boundary",
-            text=f"PQC_ENERGY_BOUNDARY interval_index={i} s0_us={start+5000} s1_us={start+5800} valid=1 clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write")])
-    return energy, stm
+def _outer(topic: str, payload: dict) -> str:
+    return json.dumps({"topic": topic, "payload": payload}, separators=(",", ":")) + "\n"
 
 
-def wire(energy, stm):
-    messages = []
-    for source, epochs in (("stm32", stm), ("energy", [energy])):
-        prefix = "pqc/result/stm32" if source == "stm32" else "pqc/instrument/energy"
-        for epoch in epochs:
-            raw = b"".join(json.dumps(r).encode()+b"\n" for r in epoch)
-            # Deliberately split inside a JSON record, not at a newline boundary.
-            parts = [raw[:37], raw[37:]]
-            for seq, part in enumerate(parts):
-                payload = dict(type="chunk", source=source, run_id="run", sequence=seq)
-                payload["data_b64" if source == "energy" else "data_hex"] = base64.b64encode(part).decode() if source == "energy" else part.hex()
-                messages.append(dict(topic=f"{prefix}/run/chunk", payload=payload))
-            completion = dict(type="complete", source=source, run_id="run", logical_sha256=hashlib.sha256(raw).hexdigest(),
-                logical_bytes=len(raw), record_count=len(epoch), chunk_count=2, overflowed=False, dropped_record_count=0)
-            if source == "energy":
-                completion.update(sample_count=sum(isinstance(r,list) for r in epoch), interval_count=len(stm), acquisition_status="raw")
-            messages.append(dict(topic=f"{prefix}/run/complete", payload=completion))
-    return messages
+def _stm32_epoch(run_id: str, s0: int = 10_000_000, s1: int = 11_000_000) -> list[str]:
+    record = {
+        "source": "stm32",
+        "iteration": 0,
+        "context": "energy_boundary",
+        "text": (
+            "PQC_ENERGY_BOUNDARY scope=experiment "
+            f"s0_us={s0} s1_us={s1} valid=1 clock=TIM2 counter_hz=1000000 "
+            "timestamp_convention=before_gpio_write"
+        ),
+    }
+    logical = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+    chunk = {
+        "type": "chunk",
+        "source": "stm32",
+        "run_id": run_id,
+        "sequence": 0,
+        "data_hex": logical.hex(),
+    }
+    complete = {
+        "type": "complete",
+        "source": "stm32",
+        "run_id": run_id,
+        "chunk_count": 1,
+        "logical_bytes": len(logical),
+        "logical_sha256": hashlib.sha256(logical).hexdigest(),
+    }
+    return [
+        _outer(f"pqc/result/stm32/{run_id}/chunk", chunk),
+        _outer(f"pqc/result/stm32/{run_id}/complete", complete),
+    ]
 
 
-def validate(tmp_path, messages, n=1):
-    path = tmp_path/"raw.ndjson"
-    path.write_text("".join(json.dumps(m)+"\n" for m in messages))
-    return validate_energy_evidence(path, "run", TOKEN, n)
+def _sample_bytes(e0: int = 4_000_000, e1: int = 5_000_000) -> bytes:
+    # 3 s requested pre-trigger plus the measured interval, sampled every 10 ms.
+    records = []
+    for timestamp in range(e0 - 3_000_000, e1 + 1, 10_000):
+        records.append(SAMPLE_STRUCT.pack(timestamp, 5.0, 0.1, 0.5))
+    return b"".join(records)
 
 
-@pytest.mark.parametrize("shared", [False, True])
-def test_accepts_per_interval_sequences_and_shared_bracketing_samples(tmp_path, shared):
-    messages = wire(*records(2, shared))
-    assert validate(tmp_path, messages, 2)["passed"]
-    result = _parse_raw_stream(tmp_path/"raw.ndjson", run_id="run", expected_sources=("stm32","energy"), expected_completion_counts={"stm32":2,"energy":1})
-    assert result.passed
+def _energy_capture(
+    capture_id: str = CAPTURE,
+    e0: int = 4_000_000,
+    e1: int = 5_000_000,
+    *,
+    mutations: dict | None = None,
+) -> list[str]:
+    logical = _sample_bytes(e0, e1)
+    payloads = []
+    # Exercise multi-chunk reconstruction while keeping record boundaries intact.
+    chunk_bytes = 4000
+    chunks = [logical[i : i + chunk_bytes] for i in range(0, len(logical), chunk_bytes)]
+    for sequence, data in enumerate(chunks):
+        payloads.append(
+            _outer(
+                ENERGY_CHUNK_TOPIC,
+                {
+                    "type": "chunk",
+                    "source": "energy",
+                    "schema": 1,
+                    "capture_id": capture_id,
+                    "sequence": sequence,
+                    "data_b64": base64.b64encode(data).decode(),
+                },
+            )
+        )
+    completion = {
+        "type": "complete",
+        "source": "energy",
+        "schema": 1,
+        "capture_id": capture_id,
+        "clock_hz": 1_000_000,
+        "e0_us": e0,
+        "e1_us": e1,
+        "pretrigger_us": 3_000_000,
+        "pretrigger_complete": True,
+        "first_timestamp_us": e0 - 3_000_000,
+        "last_timestamp_us": e1,
+        "sample_count": len(logical) // SAMPLE_STRUCT.size,
+        "sample_record_bytes": SAMPLE_STRUCT.size,
+        "sample_encoding": "little_endian_ieee754_v1",
+        "sample_fields": list(SAMPLE_FIELDS),
+        "chunk_count": len(chunks),
+        "logical_bytes": len(logical),
+        "logical_sha256": hashlib.sha256(logical).hexdigest(),
+        "sync_gpio": 11,
+        "alert_gpio": 12,
+        "calibration_id": "empirical_dmm_reference_loads_2026-09-25",
+        "calibration_status": "empirical_two_load_current_scaling",
+        "nominal_shunt_ohms": 0.015,
+        "effective_shunt_ohms": 0.029,
+        "acquisition_mode": "alert_triggered_bus_shunt",
+        "bus_conversion_us": 50,
+        "shunt_conversion_us": 50,
+        "averaging": 1,
+        "i2c_hz": 400000,
+        "gap_limit_us": 10000,
+        "i2c_errors": 0,
+        "alert_timeouts": 0,
+        "coalesced_alerts": 0,
+        "timing_errors": 0,
+        "saturation_errors": 0,
+        "sample_gaps": 0,
+        "sync_queue_drops": 0,
+        "ring_capacity_samples": 300000,
+        "ring_allocated_bytes": 6000000,
+        "psram_total_bytes": 8388608,
+        "psram_reserve_bytes": 524288,
+        "firmware_sha256": "b" * 64,
+    }
+    if mutations:
+        completion.update(mutations)
+    payloads.append(_outer(ENERGY_COMPLETE_TOPIC, completion))
+    return payloads
 
 
-@pytest.mark.parametrize("mutation", ["token", "calibration", "gap", "counter", "bracket", "boundary", "sequence", "float_sequence", "nan", "missing_epoch", "stm32_record"])
-def test_rejects_invalid_raw_acquisition_after_valid_transfer_hash(tmp_path, mutation):
-    energy, stm = records()
-    if mutation == "token": energy[0]["association_token"] = "d"*32
-    if mutation == "calibration": energy[0]["effective_shunt_ohms"] = .015
-    if mutation == "gap": energy[-1][3] += 20000; energy[-1][4] += 20000
-    if mutation == "counter": energy[1]["i2c_errors"] = 1
-    if mutation == "bracket": energy[2][3] += 200; energy[2][4] += 200
-    if mutation == "boundary": stm[0][0]["text"] = stm[0][0]["text"].replace("valid=1", "valid=0")
-    if mutation == "sequence": energy[-1][2] += 1
-    if mutation == "float_sequence": energy[-1][2] = float(energy[-1][2])
-    if mutation == "nan": energy[-1][5] = float("nan")
-    if mutation == "missing_epoch": stm = []
-    if mutation == "stm32_record": stm = [[[]]]
-    assert not validate(tmp_path, wire(energy, stm))["passed"]
+def _write(tmp_path: Path, lines: list[str]) -> Path:
+    path = tmp_path / "mqtt-reporting-raw.ndjson"
+    path.write_text("".join(lines), encoding="utf-8")
+    return path
 
 
-@pytest.mark.parametrize("mutation", ["hash", "bytes", "count", "duplicate", "missing", "terminal", "wrong_run", "bad_base64", "stm32_overflow"])
-def test_rejects_broken_or_terminal_transfer(tmp_path, mutation):
-    messages = wire(*records())
-    if mutation == "hash": messages[-1]["payload"]["logical_sha256"] = "0"*64
-    if mutation == "bytes": messages[-1]["payload"]["logical_bytes"] += 1
-    if mutation == "count": messages[-1]["payload"]["record_count"] += 1
-    if mutation == "duplicate": messages.insert(-1, messages[-2])
-    if mutation == "missing": messages.pop()
-    if mutation == "terminal": messages[-1]["payload"].update(type="error", status="capacity_exceeded")
-    if mutation == "wrong_run": messages[-1]["payload"]["run_id"] = "other"
-    if mutation == "bad_base64": messages[-2]["payload"]["data_b64"] = "?!"
-    if mutation == "stm32_overflow": messages[2]["payload"]["overflowed"] = True
-    assert not validate(tmp_path, messages)["passed"]
+def test_passive_capture_validates_and_derives_two_edge_alignment(tmp_path):
+    path = _write(tmp_path, _stm32_epoch("run") + _energy_capture())
+    result = validate_energy_evidence(path, "run")
+    assert result["passed"], result["failure_reasons"]
+    assert result["capture_id"] == CAPTURE
+    assert result["sample_record_bytes"] == 20
+    assert result["sample_count"] == 401
+    assert result["alignment"] == {
+        "esp32_start_us": 4_000_000,
+        "esp32_end_us": 5_000_000,
+        "stm32_start_us": 10_000_000,
+        "stm32_end_us": 11_000_000,
+        "linear_scale_stm32_us_per_esp32_us": 1.0,
+        "timestamp_convention": "STM32 TIM2 sampled before GPIO write; ESP32 timestamps observed GPIO edges",
+    }
 
 
-def test_readiness_requires_exact_fresh_healthy_token():
-    status = dict(source="energy", status="ready", association_token=TOKEN, sensor_online=True,
-        sensor_valid=True, acquisition="continuous", status_timestamp_us=200000, sample_timestamp_us=199000,
-        ring_capacity_samples=10, ring_used_samples=1, sample_record_bytes=64, ring_allocated_bytes=640)
-    assert healthy(status, TOKEN)
-    for changes in ({"association_token":"b"*32}, {"sample_timestamp_us":100000}, {"sensor_valid":False},
-                    {"acquisition":"paused_for_collection"}, {"ring_used_samples":0}, {"ring_allocated_bytes":1}):
-        assert not healthy({**status, **changes}, TOKEN)
+def test_validator_ignores_stale_completed_capture_by_window_duration(tmp_path):
+    stale = _energy_capture("1111111111111111", 1_000_000, 3_000_000)
+    current = _energy_capture(CAPTURE, 4_000_000, 5_000_000)
+    path = _write(tmp_path, stale + _stm32_epoch("run") + current)
+    result = validate_energy_evidence(path, "run")
+    assert result["passed"], result["failure_reasons"]
+    assert result["capture_id"] == CAPTURE
+    assert result["superseded_capture_count"] == 1
 
 
-def energy_case(tmp_path, workload="ready_metrics"):
-    config = yaml.safe_load((ROOT/"configs/campaigns/baseline.yaml").read_text())
-    config.update(instruments={"energy":"esp32_ina228"}, workload=workload)
-    path = tmp_path/"energy.yaml"
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"logical_sha256": "0" * 64},
+        {"effective_shunt_ohms": 0.015},
+        {"pretrigger_us": 2_000_000},
+        {"pretrigger_complete": False},
+        {"i2c_errors": 1},
+        {"firmware_sha256": "not-a-hash"},
+        {"sample_record_bytes": 64},
+    ],
+)
+def test_rejects_invalid_completion_contract(tmp_path, mutation):
+    path = _write(tmp_path, _stm32_epoch("run") + _energy_capture(mutations=mutation))
+    result = validate_energy_evidence(path, "run")
+    assert not result["passed"]
+    assert result["failure_reasons"]
+
+
+def test_rejects_missing_or_duration_incompatible_stm32_boundary(tmp_path):
+    no_boundary = _write(tmp_path, _energy_capture())
+    assert not validate_energy_evidence(no_boundary, "run")["passed"]
+
+    mismatch = _write(tmp_path, _stm32_epoch("run", 10_000_000, 10_500_000) + _energy_capture())
+    result = validate_energy_evidence(mismatch, "run")
+    assert not result["passed"]
+    assert "duration" in result["failure_reasons"][0]
+
+
+def _energy_case(tmp_path, workload="ready_metrics"):
+    config = yaml.safe_load((ROOT / "configs/campaigns/baseline.yaml").read_text())
+    config.update(instruments={"energy": "esp32_ina228"}, workload=workload)
+    path = tmp_path / "energy.yaml"
     path.write_text(yaml.safe_dump(config))
     resolver = ConfigResolver(ROOT)
     case = resolver.expand_campaign(path)[0]
     return case, resolver.to_legacy_bundle(case)
 
 
-def test_energy_changes_firmware_identity_not_experiment_choices(tmp_path):
-    case, bundle = energy_case(tmp_path)
+def test_energy_selection_changes_firmware_identity_but_not_crypto_choices(tmp_path):
+    case, bundle = _energy_case(tmp_path)
     baseline = ConfigResolver(ROOT).expand_campaign("baseline")[0]
     assert case["choices"] == baseline["choices"]
     assert case["provenance"]["firmware_identity"] != baseline["provenance"]["firmware_identity"]
     assert bundle["experiment"]["instruments"]["energy"]
 
 
-def test_control_lifecycle_uses_plain_token_and_bounded_framework_gateway(tmp_path):
-    _, bundle = energy_case(tmp_path)
+def test_energy_capture_lifecycle_only_waits_for_existing_stream(tmp_path):
+    _, bundle = _energy_case(tmp_path)
+    completion = json.loads(_energy_capture()[-1])["payload"]
     calls = []
+
     def runner(command, **kwargs):
-        import shlex
-        args = json.loads(shlex.split(command[-1])[-1]); calls.append(args)
-        assert kwargs["timeout"] <= 315
-        return subprocess.CompletedProcess(command, 0, "ack\n", "")
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, json.dumps(completion) + "\n", "")
+
     capture = EnergyCapture(bundle, tmp_path, runner)
-    assert capture.associate() and capture.collect("/tmp/report.ndjson") and capture.cleanup()
-    assert [c["action"] for c in calls] == ["cleanup", "associate", "collect", "cleanup"]
-    assert calls[1]["token"] == calls[2]["token"] == capture.token
-    assert calls[0]["token"] != calls[-1]["token"] != capture.token
-
-
-def test_failed_cleanup_prevents_association(tmp_path):
-    _, bundle = energy_case(tmp_path)
-    calls = []
-    def runner(command, **kwargs):
-        calls.append(command)
-        raise subprocess.TimeoutExpired(command, 1)
-    assert not EnergyCapture(bundle, tmp_path, runner).associate()
+    assert capture.wait("/tmp/report.ndjson")
+    assert capture.completion == completion
     assert len(calls) == 1
+    command_text = " ".join(calls[0][0])
+    assert '"run_id":"' in command_text or "run_id" in command_text
+    assert "mosquitto_pub" not in command_text
+    assert "associate" not in command_text
+    assert calls[0][1]["timeout"] <= 315
+    assert (tmp_path / "energy-wait.log").exists()
 
 
-def test_cancelled_collection_returns_failure_for_finally_cleanup(tmp_path):
-    _, bundle = energy_case(tmp_path)
-    def runner(*args, **kwargs):
-        raise KeyboardInterrupt()
+def test_wait_timeout_is_a_capture_failure_and_is_logged(tmp_path):
+    _, bundle = _energy_case(tmp_path)
+
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1)
+
     capture = EnergyCapture(bundle, tmp_path, runner)
-    assert not capture.collect("/tmp/raw")
-    assert "failed" in (tmp_path/"energy-collect.log").read_text()
-
-
-def test_unsupported_reporting_warns_and_removes_energy(tmp_path, monkeypatch):
-    from dataclasses import replace
-    original = ConfigResolver.load_profile
-    def load(self, domain, ident):
-        profile = original(self, domain, ident)
-        if domain == "workload":
-            profile = replace(profile, data={**profile.data, "evidence": {"deferred_reporting":False}})
-        return profile
-    monkeypatch.setattr(ConfigResolver, "load_profile", load)
-    with pytest.warns(UserWarning, match="Energy measurement disabled"):
-        case, bundle = energy_case(tmp_path)
-    assert not case["selections"].get("instruments")
-    assert not bundle["experiment"].get("instruments")
-
-
-def test_sync_faults_between_intervals_are_rejected(tmp_path):
-    _, bundle = energy_case(tmp_path)
-    capture = EnergyCapture(bundle, tmp_path)
-    capture.readiness = dict(sync_unexpected_rising=4, sync_orphan_falling=2,
-                            sync_queue_drops=0, sync_processed_rising=20, sync_processed_falling=20)
-    capture.resumed_status = {**capture.readiness, "sync_processed_rising":21,"sync_processed_falling":21}
-    assert capture.sync_valid()
-    capture.resumed_status["sync_unexpected_rising"] += 1
-    assert not capture.sync_valid()
-
-
-def test_partial_energy_retention_does_not_invalidate_stm32_artifact(tmp_path):
-    from framework.manifest import create_result_folder, update_manifest, finalize_run_evidence
-    _, bundle = energy_case(tmp_path)
-    folder, _ = create_result_folder(bundle, tmp_path/"results")
-    (folder/"mqtt-reporting-raw.ndjson").write_text("retained incomplete capture\n")
-    update_manifest(folder/"manifest.json", {"result_collection": {
-        "status":"invalid", "raw_stream":"mqtt-reporting-raw.ndjson", "source_integrity":{"stm32":{"passed":True}}},
-        "energy_capture":{"passed":False}})
-    final = finalize_run_evidence(folder/"manifest.json")
-    roles = {a["role"]:a for a in final["artifacts"]}
-    assert roles["stm32_result_stream"]["acquisition"]["status"] == "available"
-    assert roles["energy_result_stream"]["acquisition"]["status"] == "invalid"
-    assert roles["energy_result_stream"]["sha256"]
-    assert not final["capture_acceptance"]["accepted"]
-
-
-def test_preparation_contract_requires_deployment_but_not_runtime(tmp_path):
-    from framework.run_evidence import build_capture_contract
-    _, bundle = energy_case(tmp_path)
-    contract = build_capture_contract(bundle, operation="prepare_only")
-    required = {i["role"] for i in contract["items"] if i["requirement"] == "required"}
-    assert {"application_elf", "build_log", "deployment_provenance", "flash_log"} <= required
-    assert not {"energy_result_stream", "stm32_result_stream", "packet_capture"} & required
+    assert not capture.wait("/tmp/raw")
+    assert "failed" in (tmp_path / "energy-wait.log").read_text().lower()

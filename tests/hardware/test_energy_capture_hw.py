@@ -33,20 +33,23 @@ def test_energy_campaign(workload, pytestconfig, pqc_require_capabilities):
     manifest_path = next(results.glob("*/campaign-manifest.json"))
     manifest = json.loads(manifest_path.read_text())
     assert manifest["state"] == "completed" and len(manifest["runs"]) == 2
-    tokens = set()
+    captures = set()
     for run in manifest["runs"]:
         path = Path(run["manifest"])
         final = json.loads(path.read_text())
         assert final["capture_acceptance"]["accepted"]
         acceptance = json.loads(path.with_name("energy-capture.json").read_text())
-        assert acceptance["passed"] and acceptance["acquisition_resumed"] and acceptance["workload_passed"]
-        association = json.loads(path.with_name("energy-association.json").read_text())
-        assert association["expected_intervals"] == (2 if workload == "tls_handshake_repeat" else 1)
-        tokens.add(association["association_token"])
+        assert acceptance["passed"] and acceptance["capture_received"] and acceptance["workload_passed"]
+        assert acceptance["sample_count"] > 0
+        assert acceptance["sample_record_bytes"] == 20
+        assert acceptance["alignment"]["stm32_end_us"] > acceptance["alignment"]["stm32_start_us"]
+        assert acceptance["alignment"]["esp32_end_us"] > acceptance["alignment"]["esp32_start_us"]
+        assert not path.with_name("energy-association.json").exists()
+        captures.add(acceptance["capture_id"])
         roles = {a["role"]: a for a in final["artifacts"]}
         for role in ("stm32_result_stream", "energy_result_stream"):
             assert roles[role]["acquisition"]["status"] == "available"
-    assert len(tokens) == 2
+    assert len(captures) == 2
     for group in manifest["firmware_groups"]:
         preparation = manifest_path.parent/group["preparation_manifest"]
         prepared = json.loads(preparation.read_text())

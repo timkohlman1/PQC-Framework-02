@@ -1,387 +1,257 @@
-# ESP32 / INA228 Energy Instrument
-
-## Ownership and implementation scope
-
-This guide and the instrument source were imported from commit
-`7a25e8fc507f23a5346dfa6014087be05fab81bd` as the baseline for rebuilding
-the surrounding integration. The appliance and its pinned dependencies remain
-unchanged. STM32 boundary capture, framework association/collection, and raw
-acceptance are implemented freshly; earlier host changes were not restored.
-Hardware acceptance requires the live test below, not source or native tests.
-
-The extracted device-only tests are:
-
-```bash
-./scripts/dev.sh pytest tests/unit/test_esp32_energy_instrument_source.py
-./scripts/dev.sh pytest tests/integration/test_esp32_energy_native_in.py -m integration
-```
-
-The source checks inspect only instrument firmware and configuration. The
-native tests compile and exercise the ESP32 recorder with SDK/device doubles
-and syntax-check the sensor adapter against the pinned SparkFun APIs. No
-STM32, host collector, broker, GPIO device, Wi-Fi credentials or physical
-instrument is needed. They do not validate an ESP-IDF target build, real
-cryptography, acquisition rate, calibration or physical hardware operation.
+# ESP32-S3 / INA228 passive energy instrument
 
 ## Purpose
 
-This guide owns the setup and operational contract for the persistent ESP32-S3 / SparkFun INA228 energy instrument used by the experiment framework. The acquisition electronics are laboratory instrumentation, not target firmware: they are provisioned manually, remain powered between experiment runs, and are not reflashed or reset by normal campaign execution.
+The ESP32-S3/INA228 is a persistent, manually provisioned measurement appliance.
+It is intentionally outside the experiment control plane. The STM32 exposes one
+GPIO window for the complete measured workload; the ESP32 observes that window,
+retains raw samples around it, and publishes the completed capture through the
+impairment-exempt plaintext reporting broker.
 
-The instrument measures the external regulated 5 V rail feeding the NUCLEO-L4R5ZI-P target and ST67 expansion through E5V. ST-LINK USB and the ESP32/INA228 acquisition electronics remain outside the measured power domain.
+The appliance does **not** receive experiment commands over MQTT. It does not
+know the experiment run ID, workload name, TLS algorithm, handshake number, or
+TIM2 timestamps. Those semantics remain in STM32/framework evidence and are
+joined offline using the two GPIO edges.
 
-## Target power setup
-
-For the maintained NUCLEO setup:
-
-- fit JP6 across pins 1-2 to select E5V;
-- remove JP1;
-- apply the external E5V source before attaching ST-LINK USB during initial laboratory setup;
-- retain ST-LINK USB for debugger/SWD/UART power and signalling only; and
-- do not route the measured load return current through the INA228 logic-ground lead.
-
-These are physical setup requirements. Normal campaigns may health-check the instrument and evidence, but do not move jumpers or manage the ESP32 firmware lifecycle.
-
-## INA228 power-path wiring
-
-The maintained high-side connection is:
-
-```text
-external 5 V (+) -> INA228 IN+
-INA228 IN-        -> target/load (+)
-INA228 VBUS       -> same load-side positive node as IN-
-external 5 V (-)  -> target/load GND
-INA228 GND        -> common signal/reference GND
-ESP32 GND         -> common signal/reference GND
-```
-
-IN- is not ground. The measured load current flows from IN+ through the breakout shunt to IN-. VBUS senses the load-side bus voltage.
-
-## Sensor library and calibration identity
-
-The firmware uses the pinned SparkFun INA2XX driver and SparkFun Toolkit submodules rather than project-local INA228 register-scaling code. The breakout is marked R015 and is retained as a nominal 15 mOhm hardware identity.
-
-Reference-load checks on the maintained instrument showed that using the nominal 15 mOhm value over-reported current by approximately a factor of two. An empirical effective calibration value of 29 mOhm is therefore used by the current firmware. This is intentionally recorded separately from the nominal shunt value.
-
-The current calibration status is laboratory/empirical, not traceable metrology. The maintained checks performed before this integration included bus-voltage comparison and two known resistive loads, including a measured 300.8 ohm load for which the series DMM reference was approximately 17.05 mA and the calibrated firmware reported approximately 16.9-17.0 mA. Do not reinterpret the nominal R015 marking as the calibrated value.
-
-## Persistent framework service
-
-The ESP32 connects opportunistically to the dedicated plaintext, impairment-exempt reporting broker. No experiment TLS credentials are provisioned to the instrument, and reporting-broker availability is **not** an acquisition prerequisite.
-
-INA228 acquisition starts when the persistent ESP32 firmware boots. Every valid sensor sample is timestamped on the continuously running ESP32 microsecond clock and copied into a circular buffer allocated from external PSRAM. The default sample-ring target is 7 MiB on the 8 MiB board. Interval descriptors are allocated first; the ring is then capped by the target, the largest contiguous PSRAM block and free PSRAM minus 512 KiB of headroom. Allocation is rounded down to whole records. Actual allocation, record size, capacity, detected PSRAM and reserved headroom are reported; the configured target is not a claim of actual allocation. When the ring becomes full it overwrites the oldest samples; an interval that references overwritten samples is rejected rather than silently truncated.
-
-## Interval boundaries and raw clock correlation
-
-Wire STM32 D8/PF12 to ESP32 GPIO11, INA228 active-low conversion-ready
-ALERT to GPIO12, and common signal ground. Both inputs use 3.3 V logic.
-PF12 rising starts an interval; falling ends it. The ESP32 uses its continuous
-`esp_timer_get_time()` clock without resetting it at an interval boundary.
-
-STM32 `PQC_EnergyBoundaryBegin/End` read the extended TIM2 1 MHz timebase
-immediately **before** the corresponding PF12 BSRR write, with interrupts
-briefly masked and the previous PRIMASK restored. Only after falling does
-`PQC_EnergyBoundaryAppend` serialize `PQC_ENERGY_BOUNDARY` into the existing
-hashed STM32 result stream. It retains `s0_us`, `s1_us`, interval index,
-clock identity/frequency, timestamp convention and validity. Ordinary workloads
-retain the existing interval around application execution (including network
-bring-up). Repeated TLS workloads delimit each iteration separately, ending
-before formatting and reporting; they retain one STM32 result epoch per iteration.
-
-Schema 2 and 3 energy interval records retain raw ESP32 `e0_us` and `e1_us` plus
-`stm32_boundary_source=stm32.energy_boundary`. S0/S1 and E0/E1 remain in
-their respective hashed raw streams, joined by the collector run ID and
-zero-based `interval_index`. They are not estimated from MQTT or UART arrival
-times. The former permanently false `stm32_start_valid/stm32_end_valid` fields
-are replaced by this explicit cross-source contract. Missing STM32 pairs fail
-capture acceptance. No additional GPIO pulses per operation are required.
-
-Offline analysis can map the existing STM32 operation timestamps with:
-
-```text
-E(S) = E0 + (E1-E0)/(S1-S0) * (S-S0)
-```
-
-Two points determine offset and linear rate error. They cannot quantify
-nonlinear drift or GPIO/ISR latency; validate those separately. Capture checks
-ordered boundaries and matching interval indices/counts. Capture applies no
-assumed clock-rate tolerance or calibration. No affine coefficients,
-per-operation energy, integrated energy totals, or scientific metrics are
-calculated or inserted into the run manifest during capture.
-
-## Persistent collection and association
-
-An energy-enabled collector publishes a fresh 128-bit association token before
-STM32 execution, then checks a fresh acknowledgement carrying that exact token,
-valid recent sensor data and an allocated ring. An old retained status cannot
-satisfy this check. The instrument snapshots the token in the rising-edge ISR.
-A new token is refused during an active interval or collection. Energy-enabled
-runs fail preflight if the appliance cannot acknowledge healthy acquisition;
-energy-disabled runs and preparation do not require this capability. Failure
-after execution rejects capture separately from STM32 workload outcome.
-
-After the workload, the collector requests the exact token and expected interval
-count (one normally, the selected handshake count for a repeated TLS workload).
-Only matching completed intervals may be claimed. **Unlabeled fallback is
-disabled**: a single leftover preparation interval is not proof of run identity.
-Energy campaign preparation uses `run --prepare-only`: build/sign/flash with no
-validation workload, association, or collection. Energy-enabled firmware waits
-at a bounded UART control gate (60 seconds) on every boot; the host waits up to
-30 seconds for `PQC_ENERGY_WAITING` and sends `PQC_ENERGY_GO` only after fresh
-association. Preparation never sends that command. A later measurement resets
-the STM32 and requires a new periodic announcement after reset before releasing
-its gate. Thus flashing cannot start an unrecorded
-workload. Diagnostic UART settings remain unchanged, but the two control-plane
-messages require LPUART1 even with diagnostic output disabled. Energy-disabled
-firmware has no gate, pin initialization, GPIO window, or boundary records.
-The start wait is outside the energy interval. Existing reset-relative timing
-still includes this control delay; capture does not subtract or reinterpret it.
-Use the retained absolute TIM2 timestamps and interval boundaries for offline
-analysis rather than treating gated reset-to-readiness as an ungated baseline.
-Supported runs contain 1–32 intervals. Ring retention is finite: collect before
-samples wrap. Long multi-interval runs can exceed it and must fail explicitly.
-
-Only a post-run collect can pause acquisition. Before acknowledging the pause,
-the service requires a retained sample after the last falling edge. It never
-pauses between repeated TLS handshakes. The frozen ring remains stable during
-transfer; acquisition resumes after success, failure, cancellation or timeout.
-Resuming resets the intentional pause's timestamp baseline, so it does not
-become a sensor gap fault. Genuine in-run gaps remain failures. The live display
-labels this state as paused for transfer.
-
-Completed traces use bounded sequenced QoS1 chunks with one outstanding chunk,
-followed by a completion containing logical SHA-256, byte/record/chunk counts,
-interval/sample counts and raw acquisition status. Every chunk checks the
-physical sync input as well as acquisition state. The framework serializes
-collection before the next run, so no bulk ESP32 publication is scheduled
-during a measured interval. An unexpected rising edge during publication aborts
-further chunks and invalidates the overlapping interval; packets already
-submitted cannot be retracted. Hardware acceptance must verify this scheduling
-and the physical boundary on the reporting path.
-
-Schema 3 uses compact sample arrays with the ordered `sample_fields` declared
-in the initial session record. Every previous raw sample field is retained;
-voltage/current/power retain the same nine-significant-digit serialization.
-Chunks carry `data_b64` instead of hexadecimal text. Hashes and byte/record
-counts cover the exact decoded newline-delimited bytes, before normalization.
-The common transport reader accepts hexadecimal STM32 chunks; current energy
-acceptance requires schema 3 arrays and the declared fixed column order. No fitted
-clock, integrated energy or per-operation attribution is generated.
-
-Each 4096-byte logical chunk fits, including base64 expansion and its envelope,
-in the 8192-byte MQTT output buffer. This avoids fragmenting a large publish
-across the former default buffer. Completion records expose chunk payload bytes,
-time spent publishing/acknowledging chunks, and elapsed collection time up to
-completion creation (excluding its own acknowledgement). These are operational
-transport counters, not scientific results. Actual new throughput remains a
-hardware verification requirement.
-
-Post-run collection has a bounded 180-second completion deadline. A recorded
-8.53-second interval was still transferring after the previous 60-second limit;
-raising the deadline does not extend ring retention or relax hash/count checks.
-The firmware also limits each collection to 300 seconds, with bounded 5-second
-network operations and PUBACK waits; host cancellation is checked between
-chunks and during acknowledgement waits. These limits do not guarantee that a
-near-full ring transfers in 180 seconds on every network. Increase the profile's
-completion deadline up to the host's 300-second cap when measuring long runs,
-and establish a practical transfer limit from actual completion counters.
-An explicit `PQC_REPORTING_FAILURE` ends the host's reporting wait so collection
-can retain failed-run energy promptly. With no terminal indication, the normal
-bounded reporting timeout still applies and may exceed available retention.
-
-An incomplete or invalid required result collection rejects capture acceptance,
-even when the raw file itself was retained successfully. STM32 execution outcome
-remains a separate field. The hardware test resolves its repeated-TLS workload
-through the campaign matrix and checks the expected epoch count before deployment.
-
-The collector retains `mqtt-reporting-raw.ndjson` as both `stm32_result_stream`
-and `energy_result_stream`, validates envelope integrity and raw completeness,
-and only then allows broker teardown. A captured file alone does not establish
-valid energy evidence. Wrong tokens, missing/duplicate boundaries, overwritten
-samples, gaps, sensor/sync faults, calibration/configuration mismatch and
-count/hash failures reject capture. Failed traces remain raw evidence.
-
-## Finite retention and capacity failures
-
-`capacity_samples = ring_allocated_bytes / sample_record_bytes`. The maintained
-ESP32 record is 64 bytes; a full 7 MiB allocation holds 114688 samples. Actual
-session/status metadata is authoritative if compiler layout or allocation changes.
-At an **observed** 717 samples/s this is approximately 160 seconds; at 520
-samples/s it is approximately 221 seconds. These examples are not a new rate
-measurement or a guaranteed duration. Leave margin for both bracketing samples,
-variation in sample rate and collection startup.
-
-Retention covers the time from the first required sample until the post-run
-pause, including gaps between intervals and STM32 reporting/teardown delays.
-It is not merely the sum of measured interval durations. After the pause, transfer
-time no longer consumes retention. Normal background ring wrapping is expected.
-If this run's first required sample has already been overwritten, the appliance
-emits a terminal `type=error`, `status=capacity_exceeded` record on the run's
-`/complete` topic. It includes capacity, allocated bytes, record size, retained
-sample sequence bounds and retained span. This is not a successful completion.
-The collector stops waiting, retains the error and any partial raw stream,
-rejects energy capture and preserves any independently valid STM32 stream.
-An overwritten interval belonging to an older token cannot invalidate a new run.
-
-Status/session records expose `retained_span_us` as raw buffer coverage. A ring
-may span an earlier deliberate collection pause, so do not infer a guaranteed
-future retention limit from that span. Use actual sample spacings within a
-continuous interval for rate estimates. Offline tools must read schema 3's
-`sample_fields` before interpreting compact sample arrays.
-
-## Acquisition rate and retained quality evidence
-
-The I2C bus shared with the touch controller remains at 400 kHz. The sensor uses
-back-to-back **triggered bus+shunt conversions**, each set to 50 us with averaging
-1. Continuous acquisition means the acquisition task and PSRAM ring run from
-boot, except during post-run transfer; it does not require the INA228 ADC continuous-conversion mode. ALERT
-provides each completed-conversion timestamp. The task reads diagnostic flags,
-bus voltage, calibrated current and sensor power through SparkFun, retains the
-snapshot, then triggers the next conversion. Registers therefore remain stable
-through the read. This avoids mixing values from successive continuous
-conversions. The sensor's hardware energy accumulator is not used in triggered
-mode. Per-sample and interval energy integration belongs to offline analysis.
-
-The previous redundant shunt-voltage read and per-sample integration/logging are
-removed. I2C command links use bounded local storage instead of per-transaction
-heap allocation. Re-triggering reuses the SparkFun ADC configuration bitfield
-read back after setup and performs a single write, avoiding a redundant
-configuration read for every sample. No faster shared-bus speed or achieved 2000 Hz rate is assumed.
-The 100 us ADC-only cycle is **not** the acquisition period: I2C, touch activity,
-RTOS scheduling and retention add time. This is the fastest configured ADC
-setting with coherent read-before-retrigger handling; only a hardware sweep
-can establish the maximum sustainable acquisition rate on this appliance.
-The earlier roughly 520 Hz trace is user-reported baseline evidence, not a
-measurement of this replacement firmware.
-
-Each raw sample retains its sequence, absolute ALERT timestamp, signed relative
-time, bus/current/power values, I2C read duration and diagnostic/status flags.
-Intervals include one retained sample on each side of the boundary for later
-offline boundary treatment; no interpolation occurs during capture. Cumulative
-I2C-error, ALERT-timeout, coalesced-alert, timing-error, saturation and sample-gap
-counters are differenced over these bracketing samples. Any increment rejects
-the interval. The explicit gap threshold is 10 ms; it is not a rate target.
-Sync queue drops and unexpected edges also prevent acceptance. Samples are
-located by their timestamps, not by the delayed edge worker's execution time.
-
-Retain sample count, first/last timestamps and all spacings when assessing rate
-offline; report `(N-1)*1e6/(t_last-t_first)` with gap and error counts. Never
-substitute nominal conversion settings for that evidence. Session metadata
-retains a boot-session identity, firmware ELF SHA-256, configuration values,
-calibration identity and empirical calibration status. Empirical calibration
-is permitted and explicitly distinguished from traceable metrology.
-
-## Live display
-
-The `Live` page shows raw voltage/current/power, sample count and a bounded
-rolling power graph. The `Session` page shows recorder/buffer/publication status.
-Neither page defines experiment boundaries or calculates scientific energy.
-
-## Configuration
-
-The instrument profile is `configs/instruments/energy/esp32_ina228.yaml`. Selecting:
+Selecting the instrument remains optional:
 
 ```yaml
 instruments:
   energy: esp32_ina228
 ```
 
-makes energy evidence independently required for that resolved experiment. Timing, memory and TLS instrumentation remain separately controlled and are not implied or disabled by the energy selection.
+Normal campaigns never build, flash, reset, or reconfigure the ESP32.
 
-Unsupported workloads or reporting-broker selections produce a warning and
-resolve with energy disabled. Supported workloads are MQTT validation,
-ready-metrics, ready-metrics-2, repeated TLS, and the baremetal benchmark with
-deferred MQTT reporting. Baremetal measurement ends before RTOS/network startup;
-ordinary MQTT measurement includes application network startup. Repeated TLS
-uses one interval per connection/handshake, ending before result formatting.
-Energy requires hardware reset between runs. OTA multi-boot capture is not
-supported. The appliance profile describes observed configuration; campaigns
-do not send it to the ESP32 or change the empirical calibration.
+## Hardware boundary
 
-`energy-association.json`, `energy-*.log`, and `energy-capture.json` retain the
-token, bounded control outcomes, workload result and raw acceptance separately.
-The common raw MQTT file remains independently hash-validated per producer.
-Cleanup cancels retained collect, probes resumed acquisition with a fresh
-temporary token, then clears retained associate. Failure stops the campaign.
+The maintained wiring is:
 
-The ESP32 local `sdkconfig` owns laboratory Wi-Fi credentials and must remain uncommitted. Non-secret defaults such as reporting-broker host/port, client ID, sensor initialization retry period and continuous PSRAM ring size are exposed through `main/Kconfig.projbuild`.
+- STM32 D8/PF12 -> ESP32 GPIO11: 3.3 V experiment-window signal.
+- INA228 ALERT -> ESP32 GPIO12.
+- shared ESP32 I2C: SDA GPIO48, SCL GPIO47, 400 kHz.
+- reporting transport: plaintext MQTT on the dedicated reporting broker.
 
-Hardware campaigns that need gateway access must be launched through the gateway-capable wrapper, for example:
+PF12 is configured LOW during STM32 energy-boundary initialization. Immediately
+before asserting PF12 HIGH the STM32 records `s0_us` from the maintained 1 MHz
+TIM2 timebase. Immediately before deasserting PF12 LOW it records `s1_us`.
+The retained marker is:
 
-```bash
-./scripts/dev.sh campaign-gateway path/to/energy-campaign.yaml
+```text
+PQC_ENERGY_BOUNDARY scope=experiment s0_us=<...> s1_us=<...> valid=1 clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write
 ```
 
-## Verification and pass criteria
+There is one GPIO HIGH interval per experiment. Repeated TLS therefore does not
+pulse the GPIO once per handshake. Existing TIM2 TLS/benchmark instrumentation
+continues to describe internal sub-intervals; offline analysis projects those
+TIM2 intervals onto the one ESP32 trace.
 
-Run from the repository root:
+The former UART `PQC_ENERGY_WAITING` / `PQC_ENERGY_GO` start gate is retired.
+STM32 reset/initialization returns PF12 LOW. During the normal framework lifecycle
+there is no next rising edge until the preceding ESP32 publication has completed.
+An unexpected rising edge during publication cancels that old transfer and leaves
+the abnormal new window without a valid capture.
+
+## ESP32 acquisition lifecycle
+
+The appliance starts INA228 acquisition at boot and continuously writes raw
+samples into a PSRAM circular buffer. MQTT connectivity is not required for
+sampling.
+
+On GPIO11 rising edge the ESP32 records `e0_us` from `esp_timer_get_time()` and
+opens a capture. Acquisition continues normally throughout the measured HIGH
+interval. On the falling edge it records `e1_us` first, closes the measured
+interval, and then requests the INA228 acquisition task to pause. The pause waits
+for any in-flight sample to finish; samples later than `e1_us` are excluded when
+the capture range is selected.
+
+While acquisition is paused, the selected pre-trigger history plus all usable
+samples through `e1_us` are immutable in PSRAM and are published over MQTT. There
+is no concurrent ring writer and therefore no ring-overwrite tracking during
+publication. When publication succeeds, fails, or reaches the instrument's bounded
+publication timeout, the ring is reset and INA228 acquisition resumes to build the
+next pre-trigger history. The framework does not begin another normal experiment
+until the preceding capture publication has completed.
+
+The maintained pre-trigger target is 3000 ms. Capture acceptance requires the
+requested history to be present; an undersized/newly started ring is not silently
+accepted as a complete measurement.
+
+Sensor acquisition remains the calibrated alert-triggered bus/shunt path:
+
+- bus conversion: 50 us;
+- shunt conversion: 50 us;
+- averaging: 1;
+- I2C: 400 kHz;
+- nominal shunt: 0.015 ohm;
+- effective empirical shunt value: 0.029 ohm;
+- calibration identity: `empirical_dmm_reference_loads_2026-09-25`.
+
+These settings are configuration evidence, not a claimed sampling rate. Actual
+sample timestamps remain the rate evidence. The existing empirical calibration
+status is retained; this change does not upgrade it to traceable metrology.
+
+## Compact sample format
+
+Only information needed for later analysis is stored in the PSRAM ring. Each
+sample is a packed little-endian 20-byte record:
+
+| Offset | Type | Field | Meaning |
+| ---: | --- | --- | --- |
+| 0 | signed 64-bit | `timestamp_us` | ESP32 monotonic sample timestamp |
+| 8 | IEEE-754 float32 | `bus_v` | bus voltage, V |
+| 12 | IEEE-754 float32 | `current_a` | current, A |
+| 16 | IEEE-754 float32 | `power_w` | instantaneous power, W |
+
+Python struct notation is `<qfff`.
+
+Sequence numbers, I2C read duration, diagnostic flags, cumulative fault
+counters, experiment identity, measurement names, interval descriptors, and
+association state are not repeated in every sample. Capture-level acquisition
+counter deltas are retained once in the completion message instead.
+
+For the configured 7 MiB maximum ring, the theoretical record capacity is:
+
+```text
+7 * 1024 * 1024 = 7,340,032 bytes
+floor(7,340,032 / 20) = 367,001 samples
+```
+
+The former 64-byte record size could hold:
+
+```text
+7,340,032 / 64 = 114,688 samples
+```
+
+Thus the compact record provides about `64 / 20 = 3.2` times the sample history
+at the same byte limit. Actual allocation may be smaller because the firmware
+also preserves a 512 KiB PSRAM reserve and is bounded by the largest available
+PSRAM block; the firmware reports the actual capacity.
+
+Voltage and current remain in the raw record even though offline energy can be
+derived from power. They preserve the measurements used to diagnose/calibrate
+power without reintroducing per-sample protocol/session metadata. A future
+format reduction to timestamp+power would be a separate evidence-format change.
+
+## MQTT transfer contract
+
+The ESP32 is publish-only at the application level. It subscribes to no MQTT
+control topic and receives no collect/associate/cleanup command.
+
+It publishes QoS 1 messages to two fixed topics:
+
+```text
+pqc/instrument/energy/capture/chunk
+pqc/instrument/energy/capture/complete
+```
+
+Chunk messages contain only schema/source, an opaque 16-hex-digit `capture_id`,
+chunk sequence, and base64 packed sample bytes. The capture ID groups transport
+messages; it is not an experiment identity.
+
+The completion message retains the minimum information needed to validate and
+interpret the stream: `e0_us`, `e1_us`, pre-trigger status, sample count and
+bounds, sample format, chunk count, logical byte count, SHA-256 of the packed
+sample bytes, firmware identity, actual ring capacity, calibration/configuration
+identity, and capture-level acquisition/sync fault deltas.
+
+The framework starts its normal reporting subscriber before the STM32 run. After
+the workload, it waits up to the configured completion timeout for a completed
+ESP32 capture already present in that raw stream. It sends no ESP32 command.
+A missing capture, malformed transfer, hash/count mismatch, acquisition fault,
+incomplete pre-trigger history, or incompatible GPIO-window duration fails
+energy capture and therefore fails an energy-enabled experiment.
+
+Because the ESP32 deliberately has no run ID, the framework chooses the newest
+completed capture whose ESP32 edge duration agrees with the single STM32
+experiment-window duration within 5 ms or 1%, then performs full integrity/format
+validation. During normal operation the framework serializes experiments so a new
+GPIO window cannot begin while the previous capture is being published. If an
+unexpected rising edge is nevertheless observed during publication, the ESP32
+cancels the old transfer and intentionally does not accept that abnormal new
+window as a valid capture because its requested pre-trigger history was not sampled.
+
+The raw reporting file is retained under both the normal STM32 result-stream
+role and the energy-result-stream role. `energy-capture.json` records the energy
+acceptance and the selected cross-clock anchors. Scientific integration remains
+outside the execution manifest.
+
+## TIM2 alignment and offline analysis
+
+Let the STM32 edge timestamps be `(s0, s1)` and the ESP32 observed edge
+timestamps be `(e0, e1)`. A first-order two-point mapping is:
+
+```text
+scale = (s1 - s0) / (e1 - e0)
+TIM2(e) = s0 + (e - e0) * scale
+```
+
+This corrects a constant offset and first-order relative clock-rate difference
+instead of assuming the STM32 and ESP32 oscillators are identical. Pre-trigger
+samples use the same mapping by extrapolation.
+
+Once a TIM2 interval has been mapped into the ESP32 sample time domain, offline
+analysis can integrate `power_w` over sample time to derive energy for that
+interval. Boundary interpolation/integration policy belongs to the analysis
+artifact and must record its method and input hashes; the firmware does not
+calculate scientific interval energy.
+
+The two-edge fit does not remove GPIO propagation delay, ESP32 interrupt latency,
+or any edge-asymmetry bias. A logic-analyser comparison is still required before
+claiming a bounded cross-device timing error.
+
+## Configuration and secrets
+
+The instrument profile is `configs/instruments/energy/esp32_ina228.yaml`. Its
+endpoint is descriptive and declares `direction: publish_only` and
+`command_plane: none`.
+
+The ESP32 local `sdkconfig` may contain laboratory Wi-Fi credentials and must
+remain uncommitted. Non-secret defaults are maintained in
+`main/Kconfig.projbuild`, including broker host/port/client ID, GPIOs,
+pre-trigger duration, MQTT/publisher task stacks, ring limit, and PSRAM reserve.
+
+Energy-enabled resolution still requires a workload with deferred reporting and
+hardware reset between runs. OTA multi-boot energy capture remains unsupported.
+Unsupported combinations warn and resolve with energy disabled where the
+maintained resolver already defines that behaviour.
+
+## Verification
+
+Run software checks from the repository root:
 
 ```bash
 ./scripts/dev.sh pytest tests/unit
 ./scripts/dev.sh pytest tests/integration -m integration
-./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware
-./scripts/dev.sh pytest tests/integration/test_energy_stm32_in.py -m integration
 ```
 
-The energy hardware test owns broker setup, canonical case resolution, STM32
-build/preparation/flash, two repetitions each of single- and two-interval
-workloads, capture validation and temporary-configuration cleanup. Gateway,
-UART, flash and the manually provisioned persistent instrument are laboratory
-capabilities. It neither builds nor resets the ESP32. Missing gateway/toolchain
-capabilities skip in an ordinary run and fail under `--pqc-require-hardware`;
-an appliance readiness failure rejects the attempted capture.
+The ESP32 source/native tests validate the publish-only protocol, 20-byte record,
+pre-trigger selection, post-falling-edge acquisition pause, frozen-ring publication,
+resume/reset behaviour, packed transport framing, source configuration and pinned
+SparkFun API using software doubles. They are not ESP-IDF/hardware evidence.
 
-Unit/native integration gates must pass. A skip is not hardware evidence.
-Campaign acceptance requires finalized manifests, accepted capture, both raw
-stream roles, complete matching S/E pairs, exact token association, valid
-hash/count/completion, positive monotonic sample timing and zero acquisition
-error counters. Energy-disabled campaigns and preparation must remain runnable
-without claiming energy. The native tests use SDK/device doubles; they are
-not an ESP-IDF target build or a hardware rate test.
-
-After applying firmware source changes, explicitly perform manual appliance
-maintenance in an ESP-IDF 5.5 environment; normal campaigns never do this:
+Manual appliance maintenance remains explicit and outside normal campaigns:
 
 ```bash
 cd /home/timk/rmit/PQC-Framework-02/instruments/esp32_ina228
+idf.py reconfigure
 idf.py build
-# Set this to the physical ESP32 serial-by-id path before running maintenance.
 ESP32_PORT=/dev/serial/by-id/YOUR_ESP32_DEVICE
 idf.py -p "$ESP32_PORT" flash
-# Reconnect peripherals and leave the appliance powered. Validation uses MQTT;
-# startup UART access is not required.
 ```
 
-Existing local `sdkconfig` files may still contain the retired
-`CONFIG_PQC_ENERGY_RING_BYTES` setting. `idf.py reconfigure` loads the new
-`CONFIG_PQC_ENERGY_RING_MAX_BYTES` and `CONFIG_PQC_ENERGY_PSRAM_RESERVE_BYTES`
-defaults; check their non-secret values before building. Do not share the full
-`sdkconfig`, which can contain Wi-Fi credentials. Firmware and host collector
-must both be updated for schema 3 and the fresh readiness acknowledgement.
+Do not share the generated local `sdkconfig` if it contains Wi-Fi credentials.
 
-On 2026-09-27, the fresh implementation passed the ordinary ready-metrics
-hardware campaign with two independently accepted runs and one preparation.
-Both retained matching raw boundaries, valid hashes/counts, and resumed
-acquisition. An earlier attempt reported STM32 DNS error 202, missed reporting,
-and exceeded retention; that failed evidence was retained. The repeated-TLS
-hardware campaign produced no STM32 result epochs or GPIO intervals after its
-start gate, returned `intervals_unavailable`, and stopped before repetition 2.
-Its cause is unestablished. Multi-interval live acceptance remains deferred
-(DTR-013); unit/native checks do not replace it. No ST67/lwIP behaviour was changed.
+After the updated ESP32 has been manually flashed, the hardware gate is:
 
-Before thesis use, retain calibration validation separately from finalized run
-capture: actual breakout/shunt identity, a no-load zero-offset check, DMM bus
-voltage, at least three known loads spanning the intended range, reference
-uncertainties, and a timed constant-load trace. Integrate only in an offline
-analysis output with input hashes, tool version, parameters and output hashes;
-compare against independently measured power and elapsed time. Do not upgrade
-the empirical calibration status without that evidence. Verify GPIO timestamp
-latency and absence of reporting chunks inside the measured boundary with a
-logic analyzer and reporting capture. Repeat sustained acquisition with the
-normal display/Wi-Fi load, including broker outages and buffer exhaustion.
-These physical/calibration/rate gates cannot be replaced by unit tests.
+```bash
+cd /home/timk/rmit/PQC-Framework-02
+./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware
+```
 
-Technical references: [TI INA228 datasheet](https://www.ti.com/lit/ds/symlink/ina228.pdf)
-(ADC/ALERT behavior) and [ESP-IDF 5.5 legacy I2C implementation](https://github.com/espressif/esp-idf/blob/v5.5/components/driver/i2c/i2c.c)
-(static command-link transport). The pinned SparkFun driver still owns scaling.
-
-MQTT buffer configuration reference: [ESP-MQTT / ESP-IDF 5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/api-reference/protocols/mqtt.html).
+The earlier 2026-09-27 single-interval evidence belongs to the superseded
+session/association protocol. It is useful historical evidence that the physical
+measurement path could complete, but it does **not** validate this simplified
+wire format, passive lifecycle, one-window repeated-TLS behaviour, or new host
+matching logic. Fresh hardware evidence is required before those behaviours are
+claimed successful. The corresponding deferred-test entry is DTR-013 in
+`docs/007_framework_architecture.md`.

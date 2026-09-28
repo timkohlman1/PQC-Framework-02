@@ -199,16 +199,14 @@ add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
 
-# Diagnostic output remains excluded in disabled mode. Energy-enabled firmware
-# still needs HAL UART for its pre-workload control gate.
+# Diagnostic UART output remains excluded in disabled mode. Energy capture no
+# longer has a UART start gate, so it does not require the UART HAL drivers.
 if(PQC_UART_OUTPUT_MODE STREQUAL "disabled")
     set(PQC_UART_OUTPUT_MODE_VALUE 0)
-    if(NOT PQC_ENERGY_SYNC_ENABLED)
-        list(REMOVE_ITEM STM32_Drivers_Src
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
-        )
-    endif()
+    list(REMOVE_ITEM STM32_Drivers_Src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_uart_ex.c
+    )
 elseif(PQC_UART_OUTPUT_MODE STREQUAL "minimal")
     set(PQC_UART_OUTPUT_MODE_VALUE 1)
 elseif(PQC_UART_OUTPUT_MODE STREQUAL "full")

@@ -148,7 +148,7 @@ path="$case_file"
 
 The `tls_key_exchange` campaign contains the four classical, three hybrid ML-KEM, and three standalone ML-KEM groups. `tls_authentication` varies the canonical certificate/authentication profile and server/mutual mode. `tls_pq_only` contains the two principal `ML_KEM_768` + `mldsa65` conditions. `secure_boot` contains the twelve wolfBoot selections.
 
-Ready Metrics 2 is owned by `configs/workloads/ready_metrics_2.yaml`. Its default transfer is 200 KiB with 400-byte chunks. Campaign matrix keys may override workload fields without creating duplicate experiment YAML.
+Ready Metrics 2 is owned by `configs/workloads/ready_metrics_2.yaml`. Its default transfer is 200 KiB with 400-byte chunks. Campaign matrix keys may override workload fields without creating duplicate experiment YAML. For independent reliability trials and the explicit destructive reset, see [the reliability procedure](docs/005_remote_flash_workflow.md#ready-metrics-2-reliability-trials). Preview it with `python3 scripts/ready_metrics_2_reliability.py --runs 10 --dry-run`.
 
 Network conditions are selected through `configs/network_conditions/` and the `network_degradation` campaign. The first-class campaign executor applies a condition once at the condition boundary, retains it across repetitions, and removes it during guaranteed campaign cleanup. Impairment applies only to the dedicated experiment-broker interface and remains isolated from reporting/control traffic.
 
@@ -170,7 +170,7 @@ Final ready-metrics RAM evidence is emitted after the measured workload. `PQC_RA
 
 The source-controlled experiment configuration is now organised by independently selectable profile domain under `configs/targets`, `configs/gateways`, `configs/instruments`, `configs/services`, `configs/workloads`, `configs/tls_kex`, `configs/tls_auth`, `configs/secure_boot`, `configs/network_conditions`, and `configs/campaigns`. Legacy concrete experiment, board/host/boot, algorithm, wolfBoot-template, certificate-profile, and experiment-grid trees have been retired. Generated campaign cases are the only operational experiment inputs.
 
-Optional `instruments: {energy: esp32_ina228}` capture uses the persistent appliance and normal campaign wrapper. See the [energy instrument guide](docs/010_esp32_ina228_energy_instrument.md) for wiring, preparation, bounded collection and evidence limits. Normal campaigns never flash or reset the ESP32.
+Optional `instruments: {energy: esp32_ina228}` capture uses the persistent passive appliance and normal campaign wrapper. STM32 PF12 brackets one complete experiment window; the ESP32 retains a pre-trigger ring and publishes the completed packed trace on fixed reporting-broker topics without an MQTT command/association protocol. See the [energy instrument guide](docs/010_esp32_ina228_energy_instrument.md) for wiring, sample format, offline TIM2 alignment and evidence limits. Normal campaigns never flash or reset the ESP32.
 
 When `experiment.py run` consumes a canonical generated case, the case's `choices.secure_boot` selection is carried automatically into the wolfBoot build/sign/flash path. An explicit conflicting secure-boot selection is rejected before hardware side effects.
 

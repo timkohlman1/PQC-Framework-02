@@ -54,50 +54,32 @@ def test_collector_rejects_missing_duplicate_and_wrong_run_id(tmp_path):
     assert any('run_id mismatch' in reason for reason in result.failure_reasons)
 
 
-def test_collector_validates_each_source_in_its_own_sequence_namespace(tmp_path):
-    run_id='run-1'
-    stm=b'{"timing":1}\n'
-    energy=b'{"sample":1}\n{"sample":2}\n'
-    path=tmp_path/'raw.ndjson'
-    path.write_text('\n'.join([
-        _line(f'pqc/result/stm32/{run_id}/chunk',{"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":stm.hex()}),
-        _line(f'pqc/instrument/energy/{run_id}/chunk',{"type":"chunk","source":"energy","run_id":run_id,"sequence":0,"data_hex":energy.hex()}),
-        _line(f'pqc/result/stm32/{run_id}/complete',_complete('stm32',run_id,stm,1,1)),
-        _line(f'pqc/instrument/energy/{run_id}/complete',_complete('energy',run_id,energy,2,1)),
-    ])+'\n',encoding='utf-8')
-    result=_parse_raw_stream(path,run_id,("stm32","energy"))
+def test_common_collector_ignores_fixed_topic_energy_payloads_for_separate_validation(tmp_path):
+    run_id = "run-1"
+    stm = b'{"timing":1}\n'
+    path = tmp_path / "raw.ndjson"
+    path.write_text("\n".join([
+        _line(f"pqc/result/stm32/{run_id}/chunk", {"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":stm.hex()}),
+        _line("pqc/instrument/energy/capture/chunk", {"type":"chunk","source":"energy","schema":1,"capture_id":"0123456789abcdef","sequence":0,"data_b64":"AAAA"}),
+        _line(f"pqc/result/stm32/{run_id}/complete", _complete("stm32", run_id, stm, 1, 1)),
+        _line("pqc/instrument/energy/capture/complete", {"type":"complete","source":"energy","schema":1,"capture_id":"0123456789abcdef"}),
+    ]) + "\n", encoding="utf-8")
+    result = _parse_raw_stream(path, run_id, ("stm32",))
     assert result.passed
-    assert result.completion_count == 2
-    assert result.observed_chunk_count == 2
-    assert set(result.source_results) == {'stm32','energy'}
-    assert result.source_results['stm32']['passed'] is True
-    assert result.source_results['energy']['passed'] is True
+    assert result.completion_count == 1
+    assert set(result.source_results) == {"stm32"}
 
 
-def test_collector_rejects_source_topic_mismatch(tmp_path):
-    run_id='run-1'; path=tmp_path/'raw.ndjson'
-    path.write_text(_line(
-        f'pqc/instrument/energy/{run_id}/chunk',
-        {"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":"610a"},
-    )+'\n',encoding='utf-8')
-    result=_parse_raw_stream(path,run_id)
-    assert not result.passed
-    assert any('source/topic mismatch' in reason for reason in result.failure_reasons)
-
-
-
-def test_configured_instrument_is_a_required_result_source(tmp_path):
-    run_id='run-1'
-    logical=b'{"timing":1}\n'
-    path=tmp_path/'raw.ndjson'
-    path.write_text('\n'.join([
-        _line(f'pqc/result/stm32/{run_id}/chunk',{"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":logical.hex()}),
-        _line(f'pqc/result/stm32/{run_id}/complete',_complete('stm32',run_id,logical,1,1)),
-    ])+'\n',encoding='utf-8')
-    result=_parse_raw_stream(path,run_id,("stm32","energy"))
-    assert not result.passed
-    assert 'required energy source missing' in result.failure_reasons
-
+def test_energy_is_not_a_common_run_scoped_required_source(tmp_path):
+    run_id = "run-1"
+    logical = b'{"timing":1}\n'
+    path = tmp_path / "raw.ndjson"
+    path.write_text("\n".join([
+        _line(f"pqc/result/stm32/{run_id}/chunk", {"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":logical.hex()}),
+        _line(f"pqc/result/stm32/{run_id}/complete", _complete("stm32", run_id, logical, 1, 1)),
+    ]) + "\n", encoding="utf-8")
+    result = _parse_raw_stream(path, run_id, ("stm32",))
+    assert result.passed
 
 
 def test_collector_accepts_mosquitto_json_transport_wrapper(tmp_path):
@@ -142,10 +124,20 @@ def test_collector_accepts_mosquitto_json_transport_wrapper(tmp_path):
     assert result.completion_count == 1
     assert result.source_results["stm32"]["observed_record_count"] == 1
 
-def test_common_topics_include_stm32_and_enabled_instruments():
-    bundle={"experiment":{"instruments":{"energy":{"profile":"esp32_ina228"}}}}
-    assert result_topics(bundle,"r") == ("pqc/result/stm32/r/#","pqc/instrument/energy/r/#")
-    assert expected_result_sources(bundle) == ("stm32","energy")
+def test_common_topics_include_fixed_energy_capture_but_common_source_validation_stays_stm32_only():
+    bundle = {"experiment": {"instruments": {"energy": {"profile": "esp32_ina228"}}}}
+    assert result_topics(bundle, "r") == ("pqc/result/stm32/r/#", "pqc/instrument/energy/capture/#")
+    assert expected_result_sources(bundle) == ("stm32",)
+
+
+def test_repeat_energy_adds_one_boundary_epoch_to_stm32_completion_count():
+    bundle = {
+        "experiment": {
+            "workload": {"iterations": {"handshakes_per_run": 7}},
+            "instruments": {"energy": {"profile": "esp32_ina228"}},
+        }
+    }
+    assert expected_completion_counts(bundle) == {"stm32": 8}
 
 
 def test_collector_accepts_multiple_complete_boot_epochs_for_same_source(tmp_path):

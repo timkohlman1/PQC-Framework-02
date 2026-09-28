@@ -470,18 +470,19 @@ static void update_session_ui(lv_timer_t *timer)
     pqc_energy_session_snapshot_t session;
     pqc_energy_session_snapshot(&session);
     if (session.publishing) lv_label_set_text(session_state_label, "State: PUBLISHING");
-    else if (session.interval_active) lv_label_set_text(session_state_label, "State: INTERVAL ACTIVE");
+    else if (session.capture_active) lv_label_set_text(session_state_label, "State: CAPTURE ACTIVE");
     else if (session.ring_ready) lv_label_set_text(session_state_label, "State: CONTINUOUS RECORDING");
     else lv_label_set_text(session_state_label, "State: BUFFER UNAVAILABLE");
 
     char text[128];
-    snprintf(text, sizeof(text), "Last run: %s", session.run_id[0] ? session.run_id : "--");
+    snprintf(text, sizeof(text), "Capture: %s", session.capture_id[0] ? session.capture_id : "--");
     lv_label_set_text(session_run_label, text);
-    snprintf(text, sizeof(text), "Ring: %" PRIu32 "/%" PRIu32 "  pending=%" PRIu32 "%s",
+    snprintf(text, sizeof(text), "Ring: %" PRIu32 "/%" PRIu32 "%s",
              session.ring_used_samples, session.ring_capacity_samples,
-             session.unclaimed_interval_count, session.ring_overflowed ? " WRAPPED" : "");
+             session.ring_overflowed ? " WRAPPED" : "");
     lv_label_set_text(session_samples_label, text);
-    snprintf(text, sizeof(text), "Energy analysis: offline");
+    snprintf(text, sizeof(text), "Complete: %" PRIu32 "  aborted: %" PRIu32,
+             session.completed_capture_count, session.aborted_capture_count);
     lv_label_set_text(session_energy_label, text);
     snprintf(text, sizeof(text), "Reporting MQTT: %s", session.mqtt_connected ? "CONNECTED" : "DISCONNECTED");
     lv_label_set_text(session_mqtt_label, text);
@@ -550,11 +551,11 @@ static void instrument_ui_init(lv_obj_t *screen)
     power_series = lv_chart_add_series(power_chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
 
     page_session = make_page(screen);
-    make_label(page_session, "FRAMEWORK SESSION", 4, 6);
+    make_label(page_session, "GPIO CAPTURE", 4, 6);
     session_state_label = make_label(page_session, "State: IDLE", 4, 36);
-    session_run_label = make_label(page_session, "Run ID: --", 4, 65);
+    session_run_label = make_label(page_session, "Capture: --", 4, 65);
     session_samples_label = make_label(page_session, "Samples: 0/0", 4, 94);
-    session_energy_label = make_label(page_session, "Last interval energy: 0.000 mJ", 4, 123);
+    session_energy_label = make_label(page_session, "Complete: 0  aborted: 0", 4, 123);
     session_mqtt_label = make_label(page_session, "Reporting MQTT: DISCONNECTED", 4, 152);
     network_label = make_label(page_session, "Wi-Fi: NOT CONFIGURED", 4, 181);
     clock_label = make_label(page_session, "Time: --:--:--", 4, 204);

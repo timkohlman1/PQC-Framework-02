@@ -59,7 +59,7 @@ def _extract_mosquitto_version(text: str) -> str | None:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from framework.energy_capture import EnergyCapture, enabled as energy_enabled, start_gate_script
+from framework.energy_capture import EnergyCapture, enabled as energy_enabled
 from framework.energy_evidence import validate_energy_evidence
 
 from framework.artifacts import copy_artifact_to_result
@@ -210,7 +210,11 @@ def _expected_stm32_result_epochs(bundle: dict[str, dict[str, Any]]) -> int:
     workload = experiment.get("workload", {}) if isinstance(experiment, dict) else {}
     iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
     if _is_tls_handshake_repeat_application(bundle) and isinstance(iterations, dict):
-        return max(1, int(iterations.get("handshakes_per_run", 1)))
+        count = max(1, int(iterations.get("handshakes_per_run", 1)))
+        instruments = experiment.get("instruments", {}) if isinstance(experiment, dict) else {}
+        if isinstance(instruments, dict) and instruments.get("energy") is not None:
+            count += 1  # final experiment-wide TIM2/GPIO boundary epoch
+        return count
     return 1
 
 
@@ -1700,7 +1704,6 @@ def _execute_mqtt_e2e_uart_capture(
 ):
     ota_wait_mode: str | None = None
     energy = EnergyCapture(bundle, result_dir) if energy_enabled(bundle) else None
-    energy_started = False
     if energy is not None and ota_plan is not None:
         raise ValueError("Energy capture requires a bounded single-boot run; OTA plans are not supported")
     if ota_plan is not None:
@@ -2038,9 +2041,6 @@ def _execute_mqtt_e2e_uart_capture(
         )
     reporting_completion_topic = f"pqc/result/stm32/{result_dir.name}/complete"
     reporting_stream = shlex.quote(result_collector.remote_stream_path)
-    energy_release = ""
-    if energy is not None:
-        energy_release = start_gate_script(str(bundle["host"]["uart"]["device"]))
     common_prefix = (
         f"response_file={response_file}; uart_file={uart_file}; "
         'rm -f "$response_file" "$uart_file"; '
@@ -2048,7 +2048,6 @@ def _execute_mqtt_e2e_uart_capture(
         + transfer_responder_command
         + uart_capture_setup
         + f"{restart_command} 1>&2; reset_rc=$?; "
-        + energy_release
         + f'boot_marker={shlex.quote(boot_marker)}; boot_seen=0; '
         + f'reporting_completion_topic={shlex.quote(reporting_completion_topic)}; reporting_complete_seen=0; '
         + f'expected_reporting_completions={expected_stm32_result_epochs}; reporting_completion_count=0; '
@@ -2173,11 +2172,6 @@ def _execute_mqtt_e2e_uart_capture(
     ssh_command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
 
     def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
-        nonlocal energy_started
-        if energy is not None:
-            if not energy.associate():
-                return CommandExecution(command=[], return_code=46, stdout="", stderr="Energy association failed", duration_seconds=0)
-            energy_started = True
         start = time.perf_counter()
         completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
@@ -2324,8 +2318,7 @@ def _execute_mqtt_e2e_uart_capture(
             failure_stage = "broker_response"
     finally:
         workload_passed = passed
-        energy_collected = energy.collect(result_collector.remote_stream_path) if energy is not None and energy_started else False
-        energy_resumed = energy.cleanup() if energy is not None else True
+        energy_received = energy.wait(result_collector.remote_stream_path) if energy is not None else True
         collector_result = stop_and_collect_gateway_result_collector(
             collector=result_collector, repo_root=repo_root, result_dir=result_dir
         )
@@ -2345,15 +2338,12 @@ def _execute_mqtt_e2e_uart_capture(
         }})
         if energy is not None:
             energy_validation = validate_energy_evidence(
-                result_dir / "mqtt-reporting-raw.ndjson", energy.run_id, energy.token, energy.intervals
+                result_dir / "mqtt-reporting-raw.ndjson", result_dir.name
             )
             energy_validation.update({"workload_passed": workload_passed,
-                                      "collection_completed": energy_collected,
-                                      "acquisition_resumed": energy_resumed,
-                                      "sync_counters_valid": energy.sync_valid()})
-            for key in ("collection_completed", "acquisition_resumed", "sync_counters_valid"):
-                if not energy_validation[key]:
-                    energy_validation["failure_reasons"].append(key + " failed")
+                                      "capture_received": energy_received})
+            if not energy_received:
+                energy_validation["failure_reasons"].append("capture_received failed")
             energy_validation["passed"] = energy_validation["passed"] and not energy_validation["failure_reasons"]
             (result_dir / "energy-capture.json").write_text(json.dumps(energy_validation, indent=2) + "\n")
             update_manifest(result_dir / "manifest.json", {"energy_capture": energy_validation})
@@ -4787,8 +4777,6 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         boot_algorithm=args.boot_algorithm,
         target_profile=args.target_profile,
     )
-    if getattr(args, "prepare_only", False) and not energy_enabled(bundle):
-        raise ValueError("--prepare-only requires energy-gated firmware")
     if energy_enabled(bundle) and getattr(args, "ota_plan", None) is not None:
         raise ValueError("Energy capture does not support multi-boot OTA plans")
     result_dir, manifest = create_result_folder(bundle, args.results_dir,
@@ -5057,7 +5045,7 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
     if getattr(args, "prepare_only", False):
         update_manifest(result_dir / "manifest.json", {"result": "preparation_passed"})
     _report_run_result(
-        passed_label="STM32 preparation passed; workload not executed"
+        passed_label="STM32 preparation passed; no workload evidence collected"
         if getattr(args, "prepare_only", False)
         else "MQTT secure-boot end-to-end run passed"
         if _is_st67_mqtt_e2e(bundle)
@@ -5330,7 +5318,7 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     explicit_boot_algorithm = getattr(args, "boot_algorithm", None)
     if explicit_boot_mode == "direct_flash":
         if getattr(args, "prepare_only", False):
-            raise ValueError("Energy preparation requires the normal signed wolfBoot path")
+            raise ValueError("--prepare-only requires the normal signed wolfBoot path")
         if explicit_boot_algorithm:
             print(
                 "Error: --boot-algorithm cannot be combined with --boot-mode direct_flash.",
@@ -7140,7 +7128,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--prepare-only", action="store_true",
-        help="Build/sign/flash energy-gated firmware without releasing the workload start gate.",
+        help="Build/sign/flash the selected signed wolfBoot case without collecting workload evidence; flashed firmware may run until the next reset.",
     )
     run_parser.add_argument(
         "--runtime-only",

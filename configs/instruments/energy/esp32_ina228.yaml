@@ -2,7 +2,7 @@ schema_version: 1
 profile_type: instrument
 instrument_type: energy
 id: esp32_ina228
-description: Persistent manually provisioned ESP32-S3/INA228 recorder; profile is descriptive, not a device configuration command.
+description: Persistent manually provisioned ESP32-S3/INA228 GPIO-triggered recorder; profile is descriptive and sends no device command.
 lifecycle:
   provisioning: manual_once
   runtime: persistent
@@ -11,6 +11,7 @@ lifecycle:
 endpoint:
   transport: mqtt
   broker_service: reporting_gateway1
+  direction: publish_only
 clock:
   frequency_hz: 1000000
 sampling:
@@ -19,6 +20,14 @@ sampling:
   shunt_conversion_us: 50
   averaging: 1
   i2c_hz: 400000
+  pretrigger_ms: 3000
+  sample_encoding: little_endian_ieee754_v1
+  sample_record_bytes: 20
+  sample_fields:
+    - timestamp_us
+    - bus_v
+    - current_a
+    - power_w
 calibration:
   id: empirical_dmm_reference_loads_2026-09-25
   status: empirical_two_load_current_scaling
@@ -28,7 +37,12 @@ synchronisation:
   stm32_output: D8/PF12
   esp32_input_gpio: 11
   alert_gpio: 12
+  capture_window: one_per_experiment
 result_transfer:
+  mqtt_topic_prefix: pqc/instrument/energy/capture
   completion_timeout_seconds: 180
+  integrity: sha256
+  command_plane: none
 evidence:
   analysis: offline_only
+  clock_alignment: two_gpio_edges

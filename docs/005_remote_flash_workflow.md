@@ -368,3 +368,75 @@ The file-owned hardware workflow retains the raw UART plus flash/reset evidence.
 default diagnostics-off build, an empty UART capture remains negative-path evidence only
 when paired with successful flash/reset evidence and a subsequent known-good restoration;
 it does not identify wolfBoot's internal rejection reason.
+
+
+## Ready Metrics 2 reliability trials
+
+`scripts/ready_metrics_2_reliability_v2.py` is a standard-library host orchestrator.
+Run it as your normal Linux user from the repository root; it needs normal-user
+Docker access and uses `sudo` only for directory cleanup. It prints a plan by
+default. Leave any older executing script in place; start version 2 with
+`--execute` only after the current run has finished and its results have been saved. `--execute` explicitly authorizes the destructive setup:
+
+```bash
+python3 scripts/ready_metrics_2_reliability_v2.py --runs 10 --dry-run
+python3 scripts/ready_metrics_2_reliability_v2.py --runs 100 --execute
+```
+
+Execution empties **all content, including hidden files and keys**, from
+`.pqc-generated-state/`, `build/`, `results/`, and `secrets/`, retaining the four
+directories. This is an intentional complete reset of disposable laboratory
+state, not routine signing-tuple cleanup. Existing results and signing identities
+will be lost. It then removes all containers (including running containers),
+images, named and anonymous volumes, unused custom networks, and default-builder
+cache on the selected local Docker daemon, including other projects. Built-in
+networks, other Docker contexts/builders, remote gateway Docker, and host Docker
+configuration are not erased. Symlink/mount cleanup roots and non-local Docker
+endpoints are refused. Use a dedicated, idle lab checkout and Docker daemon.
+
+The script calls `./scripts/dev.sh build-image`, then calls
+`python3 scripts/provision_certificates.py` on the host because that provisioner
+owns a pinned Docker runtime itself; the framework image does not expose a nested
+Docker daemon. All configured certificate profiles are provisioned. SSH/VPN
+credentials and local Wi-Fi inputs must already exist outside the deleted folders.
+The current campaign selects `integrity_sha256`, which requires no signing key;
+framework-owned signing workflows handle key prerequisites for other selections.
+No private material is printed or included in the summary.
+
+Version 2 restores the full setup sequence. It checks that
+`configs/campaigns/ready_metrics_2.yaml` exists, but passes only the filename
+`ready_metrics_2.yaml` to `./scripts/dev.sh python scripts/resolve_campaign.py`
+because the resolver supplies the campaign directory. It then chooses the lexically first generated case. The current empty matrix resolves
+to one case. For each requested trial it invokes a fresh
+`./scripts/dev.sh experiment-gateway run --experiment <case> --results-dir <batch>/runs`.
+It does not use the campaign executor, `execution.repetitions`, `--runtime-only`,
+or preparation reuse. Each full invocation owns build/sign/flash, broker lifecycle,
+reset and evidence collection; the framework may reuse compatible build artifacts.
+The Docker image and provisioned keys persist between trials. No short gateway-lock
+timeout is added. Setup failure stops the batch; trial failure is recorded and the
+next independent invocation proceeds. Ctrl-C stops further trials.
+
+Results are under `results/reliability/<UTC-time>-<unique-id>/runs/<run-id>/`.
+A shared results parent lets the framework allocate distinct sequential run IDs;
+only the new manifest from each invocation is inspected, never a previous result.
+`summary.json` is updated after every trial, with the repository commit, selected
+case, command, process exit, manifest path, UART paths and classification. Current
+schema success requires exit code zero, manifest run return code zero, no failure
+stage, explicit completed execution, accepted capture, and a finalized index.
+Legacy manifests require run return code zero and an explicit supported run-pass
+verdict. Unknown schemas fail closed. This measures framework execution/capture
+reliability; it does not independently certify every scientific metric.
+
+UART matching is case-sensitive, whole-word `ERROR`; `error`, `ERRORS` and
+`NO_ERROR` do not match. Success and UART ERROR are separate statistics. Both
+headline percentages divide by **attempted runs**, including failed launches.
+Missing, empty or unreadable UART captures are unknown, never verified clean.
+The summary also reports the ERROR percentage among trials with known UART status.
+With unknown captures, the headline ERROR rate is only the observed lower bound.
+Exit codes: 0 = all attempted runs succeeded; 1 = at least one failed trial;
+2 = invalid arguments/setup failure; 130 = interrupted. No trials means no rate.
+
+The script uses existing CLI entry points, but compatibility with earlier commits
+is not guaranteed: provisioning, CLI and manifest contracts must still match.
+Unit tests and subprocess tests with disposable command shims validate orchestration;
+those simulated results do not establish Docker purge/rebuild or hardware success.

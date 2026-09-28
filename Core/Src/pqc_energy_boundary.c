@@ -5,6 +5,7 @@
 #include "pqc_result_buffer.h"
 #include <inttypes.h>
 #include <stdio.h>
+
 static uint64_t start_us, end_us;
 static uint8_t active, valid;
 
@@ -27,13 +28,17 @@ void PQC_EnergyBoundaryInitialize(void)
     pin.Pull = GPIO_NOPULL;
     pin.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOF, &pin);
+    start_us = 0U;
+    end_us = 0U;
+    active = 0U;
+    valid = 0U;
 }
 
 void PQC_EnergyBoundaryBegin(void)
 {
     uint32_t mask = __get_PRIMASK();
     __disable_irq();
-    valid = !active && PQC_TimebaseGetProvenance()->initialized;
+    valid = (!active && PQC_TimebaseGetProvenance()->initialized) ? 1U : 0U;
     start_us = PQC_TimebaseNowUs();
     GPIOF->BSRR = GPIO_PIN_12;
     __DSB();
@@ -48,26 +53,25 @@ void PQC_EnergyBoundaryEnd(void)
     end_us = PQC_TimebaseNowUs();
     GPIOF->BSRR = (uint32_t)GPIO_PIN_12 << 16U;
     __DSB();
-    valid = valid && active && end_us > start_us;
+    valid = (valid && active && end_us > start_us) ? 1U : 0U;
     active = 0U;
     __set_PRIMASK(mask);
 }
 
-void PQC_EnergyBoundaryAppend(uint32_t interval_index)
+void PQC_EnergyBoundaryAppend(uint32_t result_iteration)
 {
     char line[256];
     char s0[21], s1[21];
     (void)snprintf(line, sizeof(line),
-        "PQC_ENERGY_BOUNDARY interval_index=%" PRIu32
-        " s0_us=%s s1_us=%s"
-        " valid=%u clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write",
-        interval_index, decimal(start_us, s0), decimal(end_us, s1), (unsigned)(valid && !active));
-    (void)PQC_ResultBufferAppendText(interval_index, "energy_boundary", line);
+        "PQC_ENERGY_BOUNDARY scope=experiment s0_us=%s s1_us=%s "
+        "valid=%u clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write",
+        decimal(start_us, s0), decimal(end_us, s1), (unsigned)(valid && !active));
+    (void)PQC_ResultBufferAppendText(result_iteration, "energy_boundary", line);
     valid = 0U;
 }
 #else
 void PQC_EnergyBoundaryInitialize(void) {}
 void PQC_EnergyBoundaryBegin(void) {}
 void PQC_EnergyBoundaryEnd(void) {}
-void PQC_EnergyBoundaryAppend(uint32_t index) { (void)index; }
+void PQC_EnergyBoundaryAppend(uint32_t result_iteration) { (void)result_iteration; }
 #endif

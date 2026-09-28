@@ -365,7 +365,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_tls_instrumentation.c
     Core/Src/pqc_timebase.c
     Core/Src/pqc_energy_boundary.c
-    Core/Src/pqc_energy_start.c
     Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here

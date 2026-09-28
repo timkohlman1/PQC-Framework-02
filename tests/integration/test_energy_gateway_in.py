@@ -1,84 +1,91 @@
-"""Exercise the gateway control subprocess protocol using local MQTT client doubles."""
+"""Gateway-side passive energy wait protocol tests."""
+from __future__ import annotations
+
+import hashlib
 import json
-import os
-from pathlib import Path
-import sys
 
 import pytest
+
 from framework.energy_gateway import main
-from framework.energy_capture import start_gate_script
 
 pytestmark = pytest.mark.integration
 
 
-def test_start_gate_ignores_a_marker_from_before_reset(tmp_path):
-    import subprocess
-    import time
-    import shlex
-    uart = tmp_path/"uart"
-    device = tmp_path/"device"
-    uart.write_text("PQC_ENERGY_WAITING\n")
-    command = f"uart_file={shlex.quote(str(uart))}; reset_rc=0; " + start_gate_script(str(device))
-    process = subprocess.Popen(["sh","-c",command])
-    try:
-        time.sleep(.25)
-        assert not device.exists(), "stale pre-reset announcement released workload"
-        with uart.open("a") as output:
-            output.write("PQC_ENERGY_WAITING\n")
-        assert process.wait(timeout=2) == 0
-        assert device.read_text() == "PQC_ENERGY_GO\n"
-    finally:
-        if process.poll() is None:
-            process.kill(); process.wait()
+def _line(topic: str, payload: dict) -> str:
+    return json.dumps({"topic": topic, "payload": payload}) + "\n"
 
 
-def test_suback_token_acknowledgement_and_retained_cleanup(tmp_path, monkeypatch, capsys):
-    pub = tmp_path/"mosquitto_pub"
-    pub.write_text(f"#!{sys.executable}\n" + r'''
-import json, os, pathlib, sys
-a=sys.argv; topic=a[a.index('-t')+1]; data=a[a.index('-m')+1] if '-m' in a else ''
-with pathlib.Path(os.environ['ENERGY_TEST_DIR'],'commands').open('a') as f: f.write(json.dumps([topic,data])+'\n')
-if topic.endswith('/associate') and data:
-    pathlib.Path(os.environ['ENERGY_TEST_DIR'],'token').write_text(data)
-''')
-    sub = tmp_path/"mosquitto_sub"
-    sub.write_text(f"#!{sys.executable}\n" + r'''
-import json, os, pathlib, time
-print('Client received SUBACK',flush=True)
-p=pathlib.Path(os.environ['ENERGY_TEST_DIR'],'token')
-while True:
-    if p.exists():
-        print(json.dumps(dict(type='status',source='energy',status='ready',association_token=p.read_text(),
-            sensor_online=True,sensor_valid=True,acquisition='continuous',status_timestamp_us=1000,sample_timestamp_us=999,
-            ring_capacity_samples=10,ring_used_samples=2,sample_record_bytes=64,ring_allocated_bytes=640)),flush=True)
-    time.sleep(.05)
-''')
-    pub.chmod(0o700); sub.chmod(0o700)
-    monkeypatch.setenv("PATH",str(tmp_path)+os.pathsep+os.environ["PATH"])
-    monkeypatch.setenv("ENERGY_TEST_DIR",str(tmp_path))
-    args=dict(action="associate",host="unused",port=1886,run_id="run",token="a"*32,timeout=2)
-    assert main(args) == 0
-    assert main({**args,"action":"cleanup","token":"b"*32}) == 0
-    commands=[json.loads(line) for line in (tmp_path/"commands").read_text().splitlines()]
-    assert commands[0] == ["pqc/control/instrument/energy/associate","a"*32]
-    assert ["pqc/control/instrument/energy/collect",""] in commands
-    assert commands[-1] == ["pqc/control/instrument/energy/associate",""]
-    # Even an expired health probe must clear retained commands before returning.
-    assert main({**args,"action":"cleanup","token":"c"*32,"timeout":0}) == 1
-    commands=[json.loads(line) for line in (tmp_path/"commands").read_text().splitlines()]
-    assert commands[-2:] == [["pqc/control/instrument/energy/collect", ""],
-                              ["pqc/control/instrument/energy/associate", ""]]
+def _stm32_lines(run_id="run", s0=10_000_000, s1=11_000_000):
+    record = {
+        "context": "energy_boundary",
+        "text": (
+            "PQC_ENERGY_BOUNDARY scope=experiment "
+            f"s0_us={s0} s1_us={s1} valid=1 clock=TIM2 counter_hz=1000000 "
+            "timestamp_convention=before_gpio_write"
+        ),
+    }
+    logical = (json.dumps(record) + "\n").encode()
+    return [
+        _line(
+            f"pqc/result/stm32/{run_id}/chunk",
+            {"type":"chunk","source":"stm32","run_id":run_id,"sequence":0,"data_hex":logical.hex()},
+        ),
+        _line(
+            f"pqc/result/stm32/{run_id}/complete",
+            {"type":"complete","source":"stm32","run_id":run_id,"chunk_count":1,
+             "logical_bytes":len(logical),"logical_sha256":hashlib.sha256(logical).hexdigest()},
+        ),
+    ]
 
 
-def test_terminal_capacity_failure_returns_promptly_and_preserves_stream(tmp_path, monkeypatch):
-    import subprocess
-    calls=[]
-    monkeypatch.setattr(subprocess,"run",lambda command,**kwargs:calls.append(command))
-    stream=tmp_path/"raw"
-    raw=json.dumps({"topic":"pqc/instrument/energy/run/complete", "payload":{
-        "type":"error","source":"energy","run_id":"run","status":"capacity_exceeded","ring_allocated_bytes":7340032}})+"\n"
-    stream.write_text(raw)
-    assert main(dict(action="collect",host="unused",port=1886,run_id="run",token="a"*32,intervals=1,timeout=.2,stream=str(stream))) == 1
-    assert stream.read_text() == raw
-    request=json.loads(calls[0][-1])
-    assert request["association_token"] == "a"*32 and request["expected_intervals"] == 1
+def _energy_complete(capture_id="0123456789abcdef", e0=4_000_000, e1=5_000_000):
+    return _line(
+        "pqc/instrument/energy/capture/complete",
+        {"type":"complete","source":"energy","schema":1,"capture_id":capture_id,"e0_us":e0,"e1_us":e1},
+    )
+
+
+def test_wait_returns_duration_compatible_passive_capture_without_publishing_commands(tmp_path, capsys):
+    stream = tmp_path / "raw.ndjson"
+    stream.write_text(
+        _energy_complete("1111111111111111", 1_000_000, 3_000_000)
+        + "".join(_stm32_lines())
+        + _energy_complete(),
+        encoding="utf-8",
+    )
+    assert main({"stream": str(stream), "timeout": 0.2, "run_id": "run"}) == 0
+    output = capsys.readouterr().out
+    completion = json.loads(output.strip())
+    assert completion["capture_id"] == "0123456789abcdef"
+
+
+def test_wait_times_out_when_capture_duration_does_not_match_stm32_window(tmp_path, capsys):
+    stream = tmp_path / "raw.ndjson"
+    stream.write_text("".join(_stm32_lines()) + _energy_complete(e0=1_000_000, e1=3_000_000), encoding="utf-8")
+    assert main({"stream": str(stream), "timeout": 0.05, "run_id": "run"}) == 1
+    assert "timed out" in capsys.readouterr().out.lower()
+
+
+def test_wait_ignores_stm32_boundary_from_another_run(tmp_path, capsys):
+    stream = tmp_path / "raw.ndjson"
+    stream.write_text("".join(_stm32_lines("other")) + _energy_complete(), encoding="utf-8")
+    assert main({"stream": str(stream), "timeout": 0.05, "run_id": "run"}) == 1
+    assert "timed out" in capsys.readouterr().out.lower()
+
+
+def test_wait_tolerates_stream_file_appearing_after_poll_starts(tmp_path, monkeypatch, capsys):
+    stream = tmp_path / "late.ndjson"
+    import framework.energy_gateway as gateway
+
+    real_sleep = gateway.time.sleep
+    calls = {"count": 0}
+
+    def sleep(seconds):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            stream.write_text("".join(_stm32_lines()) + _energy_complete(), encoding="utf-8")
+        real_sleep(min(seconds, 0.001))
+
+    monkeypatch.setattr(gateway.time, "sleep", sleep)
+    assert main({"stream": str(stream), "timeout": 0.2, "run_id": "run"}) == 0
+    assert json.loads(capsys.readouterr().out.strip())["source"] == "energy"

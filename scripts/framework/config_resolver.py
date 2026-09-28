@@ -313,10 +313,8 @@ class ConfigResolver:
             else:
                 if instruments["energy"].profile_id != "esp32_ina228":
                     raise ResolutionError("unsupported energy appliance profile")
-                if not 1 <= int(iterations.get("handshakes_per_run", 1)) <= 32:
-                    raise ResolutionError("energy capture supports 1 to 32 intervals")
                 if execution.get("reset_between_runs", "hardware_reset") != "hardware_reset":
-                    raise ResolutionError("energy capture requires a fresh hardware reset/start gate per run")
+                    raise ResolutionError("energy capture requires hardware reset between runs so the sync GPIO returns low before the next capture")
         profile_objects = [target, gateway, workload, tls_kex, tls_auth, secure_boot, network, exp, rep, *instruments.values()]
         hashes = {p.domain + ":" + p.profile_id: p.content_sha256 for p in profile_objects}
         public_choices = {

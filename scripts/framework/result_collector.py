@@ -78,7 +78,12 @@ def result_topics(bundle: dict[str, dict[str, Any]], run_id: str) -> tuple[str,.
     instruments=bundle.get("experiment",{}).get("instruments",{})
     if isinstance(instruments,dict):
         for kind in sorted(instruments):
-            if instruments[kind] is not None:
+            if instruments[kind] is None:
+                continue
+            if kind == "energy":
+                # Passive appliance: fixed topic, no run ID or command plane.
+                topics.append("pqc/instrument/energy/capture/#")
+            else:
                 topics.append(f"pqc/instrument/{kind}/{run_id}/#")
     return tuple(topics)
 
@@ -88,7 +93,7 @@ def expected_result_sources(bundle: dict[str, dict[str, Any]]) -> tuple[str, ...
     instruments=bundle.get("experiment",{}).get("instruments",{})
     if isinstance(instruments,dict):
         for kind in sorted(instruments):
-            if instruments[kind] is not None:
+            if instruments[kind] is not None and kind != "energy":
                 sources.append(kind)
     return tuple(sources)
 
@@ -100,6 +105,11 @@ def expected_completion_counts(bundle: dict[str, dict[str, Any]]) -> dict[str, i
     iterations=workload.get("iterations",{}) if isinstance(workload,dict) else {}
     if isinstance(iterations,dict) and "handshakes_per_run" in iterations:
         counts["stm32"]=int(iterations["handshakes_per_run"])
+        instruments=experiment.get("instruments",{}) if isinstance(experiment,dict) else {}
+        if isinstance(instruments,dict) and instruments.get("energy") is not None:
+            # Repeated TLS emits one extra tiny STM32 epoch containing the
+            # experiment-wide TIM2/GPIO anchors after the handshake epochs.
+            counts["stm32"] += 1
     return counts
 
 
@@ -248,6 +258,10 @@ def _parse_raw_stream(
             continue
         if not isinstance(obj, dict):
             failures.append(f"line {lineno}: payload is not an object")
+            continue
+        if topic.startswith("pqc/instrument/energy/capture/"):
+            # Energy uses its own fixed-topic binary integrity contract and is
+            # validated separately by framework.energy_evidence.
             continue
         if obj.get("run_id") != run_id:
             failures.append(f"line {lineno}: run_id mismatch")

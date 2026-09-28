@@ -1,126 +1,122 @@
-"""Bounded gateway-side appliance control, using installed mosquitto clients.
+"""Wait for a passive ESP32 capture that matches the STM32 GPIO window.
 
-Executed by the framework over its configured gateway; standard library only.
-Never builds, resets, flashes, or configures the appliance.
+Executed on the gateway; standard library only. It never publishes MQTT
+commands. The common result collector has already subscribed to the STM32
+run-scoped results and the ESP32 fixed capture topic, so this helper only reads
+that growing file until both sides expose a duration-compatible edge pair.
 """
+import base64
 import json
-import os
-import selectors
-import subprocess
+import re
 import sys
 import time
 
-PREFIX = "pqc/control/instrument/energy/"
+COMPLETE_TOPIC = "pqc/instrument/energy/capture/complete"
+CAPTURE_ID = re.compile(r"[0-9a-f]{16}")
+BOUNDARY = re.compile(r"(\w+)=([^\s]+)")
 
 
-def healthy(status, token):
+def _payload(line):
+    message = json.loads(line)
+    payload = message.get("payload")
+    if isinstance(payload, dict) and "payload" in payload:
+        payload = payload["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return str(message.get("topic", "")), payload
+
+
+def _chunk_bytes(obj):
+    if "data_hex" in obj:
+        return bytes.fromhex(obj["data_hex"])
+    if "data_b64" in obj:
+        return base64.b64decode(obj["data_b64"], validate=True)
+    raise ValueError("chunk encoding missing")
+
+
+def _scan(path, run_id):
+    stm32_chunks = {}
+    boundaries = []
+    completions = []
+    with open(path, encoding="utf-8") as stream:
+        for line in stream:
+            if not line.endswith("\n"):
+                continue
+            try:
+                topic, obj = _payload(line)
+            except (ValueError, KeyError, TypeError):
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if topic == COMPLETE_TOPIC:
+                if (obj.get("type") == "complete" and obj.get("source") == "energy"
+                        and obj.get("schema") == 1
+                        and CAPTURE_ID.fullmatch(str(obj.get("capture_id", "")))):
+                    completions.append(obj)
+                continue
+            stm32_prefix = f"pqc/result/stm32/{run_id}/"
+            if not topic.startswith(stm32_prefix):
+                continue
+            if obj.get("source") != "stm32" or obj.get("run_id") != run_id:
+                continue
+            if obj.get("type") == "chunk":
+                try:
+                    stm32_chunks[int(obj["sequence"])] = _chunk_bytes(obj)
+                except (ValueError, KeyError, TypeError):
+                    pass
+                continue
+            if obj.get("type") != "complete":
+                continue
+            try:
+                count = int(obj["chunk_count"])
+                if set(stm32_chunks) != set(range(count)):
+                    stm32_chunks = {}
+                    continue
+                logical = b"".join(stm32_chunks[i] for i in range(count))
+                for raw in logical.splitlines():
+                    record = json.loads(raw)
+                    if isinstance(record, dict) and record.get("context") == "energy_boundary":
+                        values = dict(BOUNDARY.findall(str(record.get("text", ""))))
+                        if values.get("scope") == "experiment" and values.get("valid") == "1":
+                            boundaries.append((int(values["s0_us"]), int(values["s1_us"])))
+            except (ValueError, KeyError, TypeError):
+                pass
+            stm32_chunks = {}
+    return boundaries, completions
+
+
+def _compatible(stm32, energy):
     try:
-        return (status.get("source") == "energy" and status.get("status") == "ready"
-                and status.get("association_token") == token
-                and status.get("sensor_online") is True and status.get("sensor_valid") is True
-                and status.get("acquisition") == "continuous"
-                and 0 <= status["status_timestamp_us"] - status["sample_timestamp_us"] < 100000
-                and status["ring_capacity_samples"] >= 2 and status["ring_used_samples"] >= 1
-                and status["sample_record_bytes"] > 0
-                and status["ring_allocated_bytes"] == status["ring_capacity_samples"] * status["sample_record_bytes"])
-    except (KeyError, TypeError):
+        s0, s1 = stm32
+        e0, e1 = int(energy["e0_us"]), int(energy["e1_us"])
+        stm_duration = s1 - s0
+        esp_duration = e1 - e0
+        tolerance = max(5000, stm_duration // 100)  # 5 ms or 1%
+        return stm_duration > 0 and esp_duration > 0 and abs(stm_duration - esp_duration) <= tolerance
+    except (KeyError, TypeError, ValueError):
         return False
 
 
 def main(args):
-    base = ["-h", args["host"], "-p", str(args["port"]), "-q", "1"]
-    end = time.monotonic() + args["timeout"]
-
-    def publish(topic, data, *, final_cleanup=False):
-        remaining = 5 if final_cleanup else min(5, end - time.monotonic())
-        if remaining <= 0:
-            raise TimeoutError("Energy control deadline expired")
-        subprocess.run(["mosquitto_pub", *base, "-r", "-t", PREFIX + topic,
-                        *(["-n"] if not data else ["-m", data])], check=True, timeout=remaining)
-
-    if args["action"] == "collect":
-        publish("collect", json.dumps({"type": "collect", "source": "energy",
-                "run_id": args["run_id"], "association_token": args["token"],
-                "expected_intervals": args["intervals"]}))
-        with open(args["stream"], encoding="utf-8") as stream:
-            while time.monotonic() < end:
-                position = stream.tell()
-                line = stream.readline()
-                if not line.endswith("\n"):
-                    stream.seek(position)
-                    time.sleep(.05)
-                    continue
-                try:
-                    message = json.loads(line)
-                    obj = message["payload"]
-                    if isinstance(obj, dict) and "payload" in obj:
-                        obj = obj["payload"]
-                    if isinstance(obj, str):
-                        obj = json.loads(obj)
-                    if (message["topic"] == f'pqc/instrument/energy/{args["run_id"]}/complete'
-                            and obj.get("run_id") == args["run_id"] and obj.get("source") == "energy"):
-                        print(json.dumps(obj), flush=True)
-                        return 0 if obj.get("type") == "complete" else 1
-                except (ValueError, KeyError, TypeError):
-                    continue
-        print("Energy collection timed out", flush=True)
-        return 1
-
-    # The subscriber is started before publication. -d provides an explicit
-    # SUBACK so a fast readiness reply cannot be lost in a subscribe race.
-    process = subprocess.Popen(["mosquitto_sub", *base, "-d", "-t", PREFIX + "status"],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
-    buffer = b""
-    subscribed = False
-    last_publish = 0
-    try:
-        while time.monotonic() < end:
-            now = time.monotonic()
-            if subscribed and now - last_publish >= 1:
-                if args["action"] == "cleanup":
-                    publish("collect", "")
-                publish("associate", args["token"])
-                last_publish = now
-            for key, _ in selector.select(.1):
-                data = os.read(key.fileobj.fileno(), 65536)
-                if not data:
-                    raise RuntimeError("status subscriber exited")
-                buffer += data
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    if b"received SUBACK" in line:
-                        subscribed = True
-                    try:
-                        status = json.loads(line)
-                    except ValueError:
-                        continue
-                    if healthy(status, args["token"]):
-                        print(json.dumps(status), flush=True)
-                        return 0
-        print("No fresh healthy energy acknowledgement", flush=True)
-        return 1
-    finally:
-        selector.close()
-        process.terminate()
+    end = time.monotonic() + float(args["timeout"])
+    while time.monotonic() < end:
         try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        if args["action"] == "cleanup":
-            # Clear even when fresh health cannot be established. A failed
-            # cleanup must not leave a probe token/collect to replay later.
-            try:
-                publish("collect", "", final_cleanup=True)
-            finally:
-                publish("associate", "", final_cleanup=True)
+            boundaries, completions = _scan(args["stream"], str(args["run_id"]))
+            if len(boundaries) == 1:
+                for completion in reversed(completions):
+                    if _compatible(boundaries[0], completion):
+                        print(json.dumps(completion), flush=True)
+                        return 0
+        except OSError:
+            pass
+        time.sleep(0.1)
+    print("Energy capture completion timed out", flush=True)
+    return 1
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main(json.loads(sys.argv[1])))
     except Exception as exc:
-        print(f"Energy control failed: {exc}", flush=True)
+        print(f"Energy wait failed: {exc}", flush=True)
         sys.exit(1)
