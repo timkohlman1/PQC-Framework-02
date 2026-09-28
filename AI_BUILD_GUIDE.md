@@ -33,7 +33,6 @@ Canonical owners:
 - Flashing, UART capture, secure-boot operation, and diagnostic fallback commands: `docs/005_remote_flash_workflow.md`
 - Secrets, credentials, signing material, and generated-state safety: `docs/006_security_and_secrets.md`
 - MQTT broker operation and host-side validation: `experiment/mqtt-broker/README.md`
-- Master framework roadmap and lifecycle classification: `docs/pqc_iot_experiment_framework_plan.md`
 
 Do not duplicate detailed topic instructions in this guide. Update the canonical owner and keep only the rule or boundary needed for safe AI work here.
 

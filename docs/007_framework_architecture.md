@@ -69,7 +69,7 @@ success and evidence retention remain subject to the recorded hardware test resu
 
 ## Architectural organization
 
-The architecture is organized by stable capability and evidence ownership rather than implementation chronology. Roadmap sequencing and phase status belong to `docs/non_hardware_mqtt_tls_development_plan.md`; historical framework sequencing belongs to `docs/pqc_iot_experiment_framework_plan.md`. This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
+The architecture is organized by stable capability and evidence ownership rather than implementation chronology.  This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
 
 ### External dependency ownership
 
@@ -175,6 +175,11 @@ Secure-boot commands select an algorithm ID and resolve the requested build, sig
 
 ```text
 scripts/experiment.py                       Per-run experiment CLI/authority
+scripts/export_timing_dataset.py            Offline run inventory/timing CSV export and verification
+scripts/framework/timing_dataset.py         Selected-input integrity, inventory and dataset lineage
+scripts/framework/timing_metrics.py         Current deferred-record decoding and A1 scalar formulas
+scripts/framework/timing_dataset_schema.py  Versioned columns, units, nulls and metric definitions
+scripts/framework/timing_dataset_loader.py  Typed loading and notebook-ready timing view
 scripts/run_campaign.py                     First-class campaign execution CLI
 scripts/framework/artifacts.py              Result artifact helpers
 scripts/framework/benchmark_aggregation.py  Benchmark summary JSON/CSV generation
@@ -208,6 +213,35 @@ Software-build evidence from the container includes Python test results, safe co
 Application signing inside the container uses the runtime-mounted workspace. Private signing keys and generated signing material must remain local generated state, such as under `secrets/wolfboot/`, and must not be committed, sent in build contexts, copied into replacement artifacts, or baked into images. The container includes an SSH client but no SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Gateway-capable checks require `PQC_CONTAINER_ENABLE_GATEWAY=1` plus runtime-provided SSH configuration, known-hosts data, and credentials; the wrapper commands set this flag only for gateway and hardware subcommands.
 
 Generated-state preflight is the primary compatibility and provenance mechanism for framework build, wolfBoot build, application-signing, and artifact-consuming workflows. Pytest session-start cleanup is supplementary cross-platform hygiene for stale host-specific CMake and wolfBoot object/dependency/host-tool outputs. It does not establish compatibility or provenance and must not remove source files, canonical signing keys under `secrets/wolfboot/`, or reusable wolfBoot signing-tuple members.
+
+### Runtime ownership and private output
+
+`scripts/container_runtime.py` is installed into the development image and is
+invoked with isolated Python before any workspace code. `scripts/dev.sh` passes
+the invoking non-root UID/GID, supplementary groups and umask for every workload
+mode. Only container account/home setup and ownership of verified empty,
+separately mounted hardware build/state roots happen before the irreversible
+privilege drop. SSH copying and all framework/build/signing/test processes run
+as that user. No recursive host-tree ownership repair or root workload fallback
+is performed. The private dataset staging-directory policy remains unchanged:
+A1 outputs can remain `0700`, now owned by their invoking user.
+
+The separate certificate provisioner shares the drop-to-user helper after its
+existing Alpine package installation and before material generation; its mask
+is `0077`. Tool/image/package pins, firmware, evidence schemas, capture integrity,
+gateway/service privilege policies and signing-tuple lifecycle are unchanged.
+See `docs/002_host_gateway_setup.md` for the one-time explicit legacy-output
+repair, rebuild instructions and the supported local/non-remapped daemon boundary.
+
+`scripts/check_container_host_user.py`, exposed as `./scripts/dev.sh check-host-user`,
+is a stdlib-only host-side Docker integration gate with a temporary workspace
+and dummy SSH files. It does not use the user's SSH credentials or reach a gateway.
+`tests/unit/test_container_host_user.py` covers identity validation, wrapper modes,
+argument/environment preservation, drop ordering, private SSH copying and overlay
+refusal cases. `tests/integration/test_container_host_user_in.py` invokes the real
+Docker gate where available; CI runs it directly on the host after image build.
+CI also verifies host ownership/private directories after its existing provisioning
+step. These software checks must not be reported as live gateway or STM32 success.
 
 ## Firmware scheduler model
 
@@ -408,6 +442,21 @@ The validation model rejects mismatched backend/evidence combinations, fake/no-n
 
 When MQTT/TLS schema fields are present, the initial result manifest includes an `mqtt_tls` block. The block records the evidence class, backend, TLS mode, broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Unavailable metrics are first-class records with a source and reason. Fake transport control-flow results are embedded only as simulated fake evidence. This schema does not claim Wi-Fi association, IP address, TCP connection, TLS handshake, MQTT connect, publish, reconnect, latency, throughput, STM32 runtime success, or ST67W61M1-backed success without explicit real evidence.
 
+### Checkout notebook
+
+Open `notebooks/00_checkout.ipynb` in the existing Linux Jupyter environment and
+Run All. It displays the current Git branch/commit and dirty paths, submodule
+revisions, host/container versions, wrapper syntax and Git whitespace checks,
+dependency-pin validation, and `./scripts/dev.sh pytest tests/unit -ra` output.
+Commands stream stdout/stderr directly into their cells; failures remain visible
+and subsequent checks continue. A final in-memory summary lists exit statuses.
+
+The notebook creates no separate reports, manifests, exports or result directories.
+The framework's normal pytest evidence/cache and generated-state hygiene still
+apply. It uses the existing Docker image via `scripts/dev.sh`; gateway, broker,
+firmware build and hardware workflows are excluded. Status and unit-test success
+are software evidence only. The notebook is self-contained and has no reporter CLI.
+
 ## Test architecture
 
 ```text
@@ -581,6 +630,9 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 
 | ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
 |---|---|---|---|---|---|---|---|
+| DTR-HOST-USER | Host-user runtime identity and private output ownership | Rebuilt-image Docker ownership gate, pinned provisioning and complete build/test regression | Upload session has no Docker executable/daemon and only selected source files; unit and local-process checks cannot validate Docker mounts or the complete toolchain | Non-root Linux user, local non-remapped Docker daemon, rebuilt development image and complete checkout; package access for existing CI provisioning | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py`; CI certificate ownership check | `./scripts/dev.sh build-image`; `./scripts/dev.sh check-host-user`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build`; existing CI provisioning/ownership steps | implemented; real Docker/provisioning/build gates pending development-host or CI evidence |
+| DTR-HOST-USER-GATEWAY | Non-root gateway wrapper and isolated hardware outputs | Live SSH/gateway and representative hardware regression after identity change | Dummy SSH/volume tests do not establish real SSH credentials, remote helper permissions or hardware lifecycle | Rebuilt development image, runtime SSH credentials, gateway and STM32 where required | Existing `tests/integration/test_gateway_flash_helper_in.py` and `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway`; `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred; these commands can build/flash hardware and require retained evidence |
+| DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | The upload session lacks Docker and a complete checkout. User-supplied 2026-09-28 development-host output verifies the A1 unit/local-process integration boundary and real-capture export/check/loading; the full unit gate still failed the README length check. The documentation correction requires a fresh regression run | Complete Linux development checkout and the existing Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit/test_timing_dataset_documentation.py tests/unit/test_documentation_integrity.py`; `./scripts/dev.sh pytest tests/unit/test_docker_default_workflow_docs.py`; `./scripts/dev.sh pytest tests/unit` | partially verified: A1 wrapper unit/integration and real-capture replay passed; post-correction documentation/full unit output pending |
 | DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
 | DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |
 | DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Dedicated gateway-mediated known-image UART/hardware assertion | Existing hardware evidence checks task-context ordering in the secure-boot benchmark path, but there is no focused baseline test that builds/flashes the image and asserts the complete M6.1 lifecycle and unavailable-field contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
@@ -1013,6 +1065,257 @@ Raw captured files are immutable after successful collection through the framewo
 Finalised schema-v3 manifests are deliberately compact. Verbose runtime blocks used temporarily during orchestration (including parsed UART/TLS/memory/secure-boot stage payloads) are discarded from the root manifest. Reproducibility/deployment metadata needed beyond the compact index is written once to `run-provenance.json` and hashed as required evidence. Unregistered retained files are listed in `retained_files` using only result-relative path, byte size and SHA-256; semantic contract artefacts retain their richer role/producer/requirement envelope.
 
 Scientific ingestion and analysis occur after capture. Derived outputs do not reopen or mutate the finalized run manifest. They are stored under the result-local `analysis/` namespace with separate lineage records containing parser/analyser identity and version, direct input SHA-256 values, analysis parameters, output size and output SHA-256. Reanalysis may create a new lineage/output record while the original raw capture and finalized run manifest remain unchanged. Request 7 is the first explicit consumer of this offline-analysis boundary, but the same rule applies to later timing, memory, TLS, benchmark and energy ingestion.
+
+### Offline run inventory and timing dataset (Analysis Request A1)
+
+`scripts/export_timing_dataset.py` accepts repeated explicit `--run-dir` inputs or
+one explicitly selected `--results-root`, plus a new `--output` directory. It is a
+read-only consumer of retained evidence, not an experiment command. Generated
+cross-run products belong under an explicitly named `results/analysis/<dataset>/`
+location. No per-run derivatives are needed by A1; if later consumers create
+those, the existing run-local `analysis/` ownership remains unchanged. Outputs
+must not be inside, equal to, or an ancestor of a selected raw run. Existing
+output directories and symlink inputs/destinations are refused. The CLI reports
+per-run problems in the dataset rather than failing the entire batch; exit 0
+means export/check completed, not scientific success. Bad selections, output
+collisions and invalid dataset checks exit 2.
+
+Root discovery excludes `analysis`, `preparations`, `prerequisites`,
+`cryptographic-material`, `builds`, `secrets`, `.git`, `.venv`, `__pycache__` and
+`.pqc-generated-state`. It stops descending once a run is found. Known non-run
+manifests are listed as exclusions in the selection snapshot; unreadable
+candidate manifests remain inventory entries. Explicit run inputs may identify
+missing directories and still receive an unavailable inventory row. An empty
+discovery is an error rather than a misleading empty successful dataset.
+
+**Commands and typed loading.**
+
+Export selected **existing** captures without running experiments, signing, building
+firmware, contacting a gateway, or changing raw evidence. No additional Python
+packages are required. Use a new generated destination for each snapshot:
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+    --results-root results/campaigns/SELECTED_CAMPAIGN \
+    --output results/analysis/SELECTED_DATASET
+```
+
+To select individual runs instead, repeat `--run-dir`; do not combine it with
+`--results-root`:
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+    --run-dir results/campaigns/SELECTED_CAMPAIGN/runs/SELECTED_RUN \
+    --output results/analysis/SELECTED_DATASET
+```
+
+The products are `runs.csv`, `timings.csv`, `issues.csv`, `dataset.json` and
+`dataset.sha256`. A successful command means the dataset was generated, **not**
+that its experiments succeeded or all timings are available. Failed, incomplete
+and unreadable selected inputs remain visible. Existing datasets are never
+silently overwritten. The selected root is snapshotted; later runs do not change
+an existing dataset.
+
+Verify the exported tables and their exact original consumed inputs:
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+    --check results/analysis/SELECTED_DATASET --verify-source-inputs
+```
+
+For a relocated dataset whose original capture paths are unavailable, omit
+`--verify-source-inputs`; table and metadata integrity checks still run. This is
+not a fresh full-capture audit: unconsumed PCAPs, keys, images and optional channels
+are not revalidated. Capture acceptance, selected-input integrity, execution
+outcome and individual timing validity are separate fields.
+
+Load in an existing Python/notebook environment from the repository root:
+
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("scripts").resolve()))
+from framework.timing_dataset_loader import load_dataset
+
+dataset = load_dataset("results/analysis/SELECTED_DATASET")
+view = dataset.timing_view()  # typed row dictionaries; None stays missing
+```
+
+The shared loader keeps identifiers as strings and timestamps as exact Python
+integers. Do not use automatic CSV dtype inference or replace missing values with
+zero. The view retains failures and metric-specific timing-policy exclusions; it
+performs no statistical comparison. Jupyter server setup, notebook execution,
+pandas/NumPy/Matplotlib dependencies and statistical summaries belong to A2, not
+this command. Definitions, source references and limitations are documented below.
+
+A1 software verification (no hardware required):
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_timing_dataset.py
+./scripts/dev.sh pytest tests/integration/test_timing_dataset_in.py -m integration
+```
+
+**Verified format and reuse.** Input support is bounded to finalized
+`pqc-run-evidence` v3 with capture contract v2, resolved-case/provenance snapshots
+v1, reporting and logical-record envelopes v1, current outer TLS timing markers,
+TLS event-buffer/repeated-iteration schema 1, and Ready Metrics 2 marker schema 3.
+The implementation reuses `validate_manifest_schema`, `canonical_sha256`,
+`evaluate_capture_acceptance`, `sha256_file`, the collector's `_parse_raw_stream`,
+`energy_evidence.envelope`/`chunk_bytes`, TLS field extraction and
+`build_derived_record`. A1 never calls capture finalization/freezing helpers and
+never changes raw content or permissions. It does not invoke the reliability
+runner or the legacy workload-subscriber parser. The inspected current Ready
+Metrics producer no longer publishes the older scientific subscriber bundle;
+its connect-duration diagnostic is not the RM2 first-CONNACK-byte checkpoint.
+A missing current readiness checkpoint is therefore unavailable, not a renamed
+legacy connect duration. The existing outer TLS marker remains usable without
+requiring unrelated memory/primitive/phase coverage.
+
+**Integrity and identities.** The sealed index is recomputed and the recorded
+capture-acceptance decision checked using the capture evaluator. Only
+`resolved-case.json`, `run-provenance.json` and `mqtt-reporting-raw.ndjson` are
+selected for content ingestion, using their manifest roles and exact current
+run-relative paths. Their lengths/hashes are checked before interpretation and
+all consumed input bytes are rechecked before publishing the dataset. A1 records
+`capture_recheck=selected_inputs_only`: the manifest's capture acceptance remains
+the historical decision, not a new verification of every image, PCAP, private
+material or unrelated artifact. A missing unrelated artifact cannot invalidate
+an otherwise supported timing. Corruption of the consumed reporting file does
+invalidate its timings even when the file also carries energy; invalid energy
+acquisition content in an otherwise hash-consistent file is not interpreted by
+A1 and cannot invalidate STM32 timing records.
+
+The `run_key` hashes the recorded run ID and the exact manifest hash. Join tables
+on this key, not a directory basename or `run_id` alone. The existing allocator
+numbers runs within each results root, so distinct captures can legitimately
+reuse a run ID across campaign roots; this produces an explicit collision
+warning while retaining separate capture keys. An envelope/logical identity
+conflict inside a capture makes the affected measurements unavailable. Repeated
+identical paths or identical-manifest copies do not duplicate observations;
+selected copies with conflicting required-input availability/integrity are
+reported and cannot produce valid timing rows. Explicit `retry_of_run_id` and
+`attempt_index` configuration fields, where present, are retained without
+inventing retry links; otherwise they are null. Campaign repetition comes from
+`configuration.campaign_execution`, not filename parsing or the campaign's
+configured repetition count. Firmware/configuration identities and recorded
+build/preparation references are retained without claiming new build or
+preparation verification. Missing build numbers/source commits remain null with
+inventory reasons; a recorded `preparation.verified=false` remains false.
+
+Reporting epochs are transport completion boundaries, **not** inferred resets or
+boot epochs. The actual logical `iteration` and recorded handshake/invocation
+identifiers remain distinct. A repeated-handshake run contributes rows only for
+encountered timing/status iterations; aggregate-only evidence does not generate
+per-iteration observations, and a final energy-boundary epoch is not an extra
+handshake. Run-level availability rows use null iteration/epoch IDs. Conflicting
+iteration identities, duplicate chunks, missing completions, result-buffer
+truncation and unknown schemas remain diagnostics, not guessed compatibility.
+TLS phase-buffer overflow does not by itself invalidate an independently
+recorded outer handshake scalar, and no phase/primitive attribution is performed.
+
+**Metric definitions (all values are integer microseconds).** Let `T` be
+`tcp_connect_start_us`, `M` the first-CONNACK-plaintext-byte readiness checkpoint,
+`Q` the application request, `F` the first application payload byte, `L` the last
+application payload byte, and `O` the valid reset-origin-to-application-timebase
+offset. These are not broker/gateway timestamps.
+
+| Metric column name | Formula | Meaning/evidence boundary |
+|---|---|---|
+| `tls_handshake` | `end_us - start_us` | Outer instrumented handshake; successful result 1 and available application timebase; any recorded outer event must agree |
+| `mqtt_readiness` | `M - T` | TCP connect attempt to first MQTT CONNACK plaintext byte; not application TTFB |
+| `rtfb` | `O + F` | Operational wolfBoot entry to first application payload byte |
+| `rtlb` | `O + L` | Operational wolfBoot entry to last application payload byte |
+| `ttfb` | `F - T` | TCP connect attempt, after DNS, to first application payload byte |
+| `ttlb` | `L - T` | TCP connect attempt, after DNS, to last application payload byte |
+| `req_tfb` | `F - Q` | Application request to first application payload byte |
+| `req_tlb` | `L - Q` | Application request to last application payload byte |
+
+RM2 scalars are recalculated from checkpoints and checked against the recorded
+values. Its application-transfer metrics require matching payload/received-byte
+counts, valid completion and consistent ordering. MQTT readiness validity does
+not require valid reset handoff or the transfer scalar bundle. Invalid/missing
+reset origin disables `rtfb`/`rtlb` only; application TIM2 values are never
+substituted for reset-relative timing. TIM2 input frequency, prescaler, effective
+1 MHz rate, counter width and wrap extension are cross-checked when the RM2
+provenance marker exists. Repeated status records identify `TIM2_1MHz`; the generic
+outer TLS marker only establishes available application microsecond timing, so
+its unrecorded timer configuration remains absent rather than copied from a
+current profile. No cycle-to-time conversion is performed. Failed TLS attempts
+retain result/outcome and source references but have no successful-latency value.
+
+Boot stack-profiling runs retain measured values for inspection but every A1
+timing carries `timing_policy_exclusion=boot_stack_profiling`. Boot-UART diagnostic
+runs flag reset-relative `rtfb`/`rtlb` only. Neither policy flag is a capture or
+mathematical-validity failure. No comparison is selected by A1:
+`comparison_inclusion=not_assessed`. The unfiltered view preserves these flags;
+A2 must apply applicable control matching and exclusion rules before aggregation.
+
+**Products and loader.** `runs.csv` contains captured configuration/build
+identities, selected controls, network condition, execution/capture decisions
+and observed repetition/iteration identities. `capture_class` retains the sealed
+capture contract's `experiment_class`; `evidence_class` remains the separately
+recorded workload evidence class. Positive runs and deliberate negative-validation
+captures must not be pooled as the same experiment class. Configured impairment is separate
+from verified-applied/observed impairment, which A1 does not derive.
+`timings.csv` is a long-form scalar table with run/epoch/iteration/handshake
+identifiers, validity/reason, boundary timestamps, clock provenance, metric
+version and source references. `issues.csv` retains failures and parsing/integrity
+findings. `dataset.json` stores the frozen discovered inputs, consumed hashes,
+schemas/dtypes, formulas, parser/source-file fingerprints, parameters, Python
+identity and output hashes. `dataset.sha256` covers the metadata without a
+recursive self-hash. SHA-256 matching provides consistency checks, not a digital
+signature or independent proof of capture authenticity.
+
+`framework.timing_dataset_loader.load_dataset(path, verify_inputs=False)` checks
+metadata/table hashes, exact column schemas, types, units, null/value invariants
+and table joins. Identifiers remain strings, booleans remain booleans, JSON
+columns become structured Python values, and timestamps remain Python integers,
+including integers above 2**53. The CSV null token is `\N`; string values beginning
+with a backslash have that first backslash doubled. A true observed zero remains
+zero; unavailable values are `None` with a reason. `timing_view()` pivots into
+one row per run/transport epoch/recorded iteration and preserves runs without
+measurements. It neither drops failures nor calculates summaries. Avoid direct
+CSV dtype inference. In a future pandas consumer, request nullable integer
+dtypes explicitly rather than allowing a mixed `int`/`None` column to become a
+floating-point timestamp.
+
+Exports are byte-equivalent for the same paths, bytes, parser and Python version.
+Relocation, alias selection, parser fingerprints and environment changes are
+declared provenance differences. Output directory and generation wall time are
+not embedded as unstable scientific values. A previously exported dataset can
+be checked without rediscovery using `--check`; add `--verify-source-inputs` to
+recheck its original consumed file paths. Dataset validation checks output bytes
+by default, so relocated frozen datasets remain usable without raw evidence
+present. No secret values or raw payloads are copied into the scalar export;
+exports still contain experiment metadata and are not a public-release process.
+
+**Verification and limits.** Unit fixtures provide hand-checkable values for all
+eight formulas, missing/invalid boundaries, legitimate zero/large integers,
+failed/unreadable inputs, deduplication, tampering, schema/identity refusals,
+optional-channel isolation, policy flags and unchanged raw content/permissions.
+Local integration tests run the real exporter and loader in separate Python
+processes with synthetic captures; the same tests are runnable through Docker.
+The narrowly selected real RM2 marker excerpt is explicitly reconstructed test
+data with new synthetic envelopes/IDs/seals, not the original capture identity.
+Offline replay against the supplied completed RM2 measurement and earlier
+infrastructure-readiness failure has been exercised separately. The earlier
+manifest records `campaign_broker_readiness`, not a TLS-handshake or application
+transfer failure. Replay does not revalidate absent unrelated artifacts or
+establish new hardware success.
+
+User-supplied Linux/Docker output on 2026-09-28 confirms 61 A1 unit tests,
+3 local-process integration tests and 9 Docker-workflow documentation tests
+passed, plus real-capture export, consumed-input verification and typed loading.
+The full unit suite reported 1,058 passed and one README-length failure
+(267 lines against a 200-line limit); it was not a clean full-suite pass.
+A1 usage now resides in this canonical section, with a short README link, and
+`tests/unit/test_timing_dataset_documentation.py` guards that routing and the
+location/required fields of the A1 deferred-test entry. Post-correction Docker
+regression output remains outstanding in DTR-A1-CONTAINER. Original retained
+Ready Metrics/repeated-handshake captures were not supplied for this change;
+those parser paths have source/fixture coverage, not a real-capture smoke claim.
+A1 adds no dependencies, notebooks, statistics, energy integration, memory
+accounting, packet decoding or firmware/execution changes.
 
 ### Offline packet-capture analysis (Implementation Request 7)
 

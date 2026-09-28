@@ -233,7 +233,6 @@ def test_compose_filename_is_canonical():
         ROOT / "README.md",
         ROOT / "AI_BUILD_GUIDE.md",
         ROOT / "docs/007_framework_architecture.md",
-        ROOT / "docs/non_hardware_mqtt_tls_development_plan.md",
     ):
         text = path.read_text(encoding="utf-8")
         assert "docker-compose.yml" not in text

@@ -19,9 +19,10 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 - `docs/008_chatgpt_project_prompt.md` — reusable prompt with direct-repository routing and the upload-based ChatGPT fallback
 - `docs/005_remote_flash_workflow.md` — build, signing, flash, secure-boot, UART, and packet-capture procedures
 - `docs/006_security_and_secrets.md` — secret handling and signing-state safety
-- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, and deferred tests
+- `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, deferred tests, and [A1 timing export/loading commands](docs/007_framework_architecture.md#offline-run-inventory-and-timing-dataset-analysis-request-a1) (`scripts/export_timing_dataset.py`)
 - `experiment/mqtt-broker/README.md` — broker provisioning, operation, and Linux/bash `--client-args` forwarding contract
 
+For a quick hardware-free status check, open [`notebooks/00_checkout.ipynb`](notebooks/00_checkout.ipynb) and Run All to see Git state, tool versions and unit-test output inline.
 ## Default workflow
 
 The default development path is Docker-hosted Linux execution through the project wrapper script `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.

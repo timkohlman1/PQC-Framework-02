@@ -51,4 +51,9 @@ COPY requirements-dev.txt /tmp/pqc-framework-requirements-dev.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /tmp/pqc-framework-requirements-dev.txt
 
+# Bootstrap is image-owned and runs with isolated Python before any workspace
+# code. It requires runtime host IDs and drops root before the workload starts.
+COPY scripts/container_runtime.py /usr/local/libexec/pqc-container-runtime.py
+ENTRYPOINT ["/usr/local/bin/python3", "-I", "/usr/local/libexec/pqc-container-runtime.py"]
+
 CMD ["python", "-m", "pytest", "tests/unit"]

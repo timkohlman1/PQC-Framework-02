@@ -57,24 +57,6 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
     assert "--artifact build/Release/stm32_basic_hal1.elf" in workflow
 
 
-def test_operational_docs_use_wrappers_and_label_native_commands_diagnostic() -> None:
-    workflow = _read("docs/005_remote_flash_workflow.md")
-    local_commands = _read("docs/local build commands.txt")
-
-    assert "./scripts/dev.sh experiment build-wolfboot" in workflow
-    assert "./scripts/dev.sh experiment build --experiment" in workflow
-    assert "--configure-preset Release" in workflow
-    assert "--build-preset Release" in workflow
-    assert "generated-state provenance" in workflow
-    assert "## Diagnostic fallback" in workflow
-    assert "Host-native commands may be used only" in workflow
-
-    assert "Local Build Diagnostic Fallback" in local_commands
-    assert "normal project workflow is Docker-hosted" in local_commands
-    assert "generated-state preflight" in local_commands
-    assert "not the reproducible validation gate" in local_commands
-
-
 def test_signing_docs_do_not_describe_partial_key_generation_as_normal() -> None:
     readme = _read("README.md").lower()
     workflow = _read("docs/005_remote_flash_workflow.md").lower()

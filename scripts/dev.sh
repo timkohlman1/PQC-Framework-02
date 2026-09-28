@@ -85,15 +85,7 @@ run_container() (
     # Hardware tests must be able to start from a repository with no generated
     # state or build output. Anonymous Docker volumes hide any host copies and
     # are removed automatically with docker run --rm.
-    workspace_overlay_args="--mount type=volume,target=/workspace/.pqc-generated-state --mount type=volume,target=/workspace/build"
-  fi
-
-  wifi_args=""
-  if [ -n "${PQC_WIFI_SSID:-}" ]; then
-    wifi_args="$wifi_args PQC_WIFI_SSID"
-  fi
-  if [ -n "${PQC_WIFI_PSK:-}" ]; then
-    wifi_args="$wifi_args PQC_WIFI_PSK"
+    workspace_overlay_args="--mount type=volume,target=/workspace/.pqc-generated-state,volume-nocopy --mount type=volume,target=/workspace/build,volume-nocopy"
   fi
 
   campaign_env_args=""
@@ -121,80 +113,62 @@ run_container() (
     fi
   done
 
-  # Build the docker invocation explicitly so secret values are inherited from
-  # this temporary process environment (-e NAME), not exposed on the command
-  # line as -e NAME=value.
+  # One runtime path for every workload. The installed, isolated bootstrap
+  # creates container-only account/home state then drops to these host IDs.
+  # Explicitly naming it makes an old image fail, rather than run as root.
+  PQC_RUNTIME_UID=$(id -u)
+  PQC_RUNTIME_GID=$(id -g)
+  PQC_RUNTIME_GROUPS=$(id -G)
+  PQC_RUNTIME_UMASK=$(umask)
+  PQC_RUNTIME_ISOLATED=$isolate_generated
+  export PQC_RUNTIME_UID PQC_RUNTIME_GID PQC_RUNTIME_GROUPS
+  export PQC_RUNTIME_UMASK PQC_RUNTIME_ISOLATED
+
+  if [ "$PQC_RUNTIME_UID" -eq 0 ] || [ "$PQC_RUNTIME_GID" -eq 0 ]; then
+    echo "Run scripts/dev.sh from your normal non-root user shell, without sudo." >&2
+    exit 2
+  fi
+
+  # Keep the image's maintained default for `dev.sh run` with no command.
+  if [ "$#" -eq 0 ]; then set -- python -m pytest tests/unit; fi
+  set -- "$image_name" -I /usr/local/libexec/pqc-container-runtime.py "$@"
   if [ "$gateway" -eq 1 ]; then
     if [ ! -d "$ssh_source" ]; then
       echo "Gateway mode requires an SSH directory. Set PQC_DOCKER_SSH_DIR or create $ssh_source." >&2
       exit 2
     fi
-
-    if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm \
-        -v "$repo_root:/workspace" \
-        $workspace_overlay_args \
-        -w /workspace \
-        $campaign_env_args $ota_env_args \
-        -e PQC_WIFI_SSID \
-        -e PQC_WIFI_PSK \
-        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
-        -v "$ssh_source:/host-ssh:ro" \
-        "$image_name" \
-        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
-    elif [ -n "${PQC_WIFI_SSID:-}" ]; then
-      docker run --rm \
-        -v "$repo_root:/workspace" \
-        $workspace_overlay_args \
-        -w /workspace \
-        $campaign_env_args $ota_env_args \
-        -e PQC_WIFI_SSID \
-        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
-        -v "$ssh_source:/host-ssh:ro" \
-        "$image_name" \
-        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
-    elif [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm \
-        -v "$repo_root:/workspace" \
-        $workspace_overlay_args \
-        -w /workspace \
-        $campaign_env_args $ota_env_args \
-        -e PQC_WIFI_PSK \
-        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
-        -v "$ssh_source:/host-ssh:ro" \
-        "$image_name" \
-        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
-    else
-      docker run --rm \
-        -v "$repo_root:/workspace" \
-        $workspace_overlay_args \
-        -w /workspace \
-        $campaign_env_args $ota_env_args \
-        -e PQC_CONTAINER_ENABLE_GATEWAY=1 \
-        -v "$ssh_source:/host-ssh:ro" \
-        "$image_name" \
-        sh -lc 'mkdir -p /root/.ssh && cp -r /host-ssh/. /root/.ssh/ && chmod 700 /root/.ssh && find /root/.ssh -type f -exec chmod 600 {} \; && find /root/.ssh -type d -exec chmod 700 {} \; && exec "$@"' sh "$@"
-    fi
-  else
-    if [ -n "${PQC_WIFI_SSID:-}" ] && [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID -e PQC_WIFI_PSK "$image_name" "$@"
-    elif [ -n "${PQC_WIFI_SSID:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_SSID "$image_name" "$@"
-    elif [ -n "${PQC_WIFI_PSK:-}" ]; then
-      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args -e PQC_WIFI_PSK "$image_name" "$@"
-    else
-      docker run --rm -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace $campaign_env_args $ota_env_args "$image_name" "$@"
-    fi
+    set -- -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v "$ssh_source:/host-ssh:ro" "$@"
   fi
+  # Secret values are inherited by NAME, never interpolated into arguments.
+  if [ -n "${PQC_WIFI_SSID:-}" ]; then set -- -e PQC_WIFI_SSID "$@"; fi
+  if [ -n "${PQC_WIFI_PSK:-}" ]; then set -- -e PQC_WIFI_PSK "$@"; fi
+  docker run --rm --user 0:0 --security-opt no-new-privileges \
+    --entrypoint /usr/local/bin/python3 \
+    -e PQC_RUNTIME_UID -e PQC_RUNTIME_GID -e PQC_RUNTIME_GROUPS \
+    -e PQC_RUNTIME_UMASK -e PQC_RUNTIME_ISOLATED \
+    -v "$repo_root:/workspace" $workspace_overlay_args -w /workspace \
+    $campaign_env_args $ota_env_args "$@"
+
 )
 
 if [ "$#" -eq 0 ]; then
-  echo "Usage: scripts/dev.sh <gateway-lock|build-image|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
+  echo "Usage: scripts/dev.sh <gateway-lock|build-image|check-host-user|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
   exit 2
 fi
 
 command=$1
 shift
+
+# Refuse root before the gateway lock launcher can perform any operation.
+case "$command" in
+  build-image|gateway-lock) ;;
+  *)
+    if [ "$(id -u)" -eq 0 ] || [ "$(id -g)" -eq 0 ]; then
+      echo "Run scripts/dev.sh from your normal non-root user shell, without sudo." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 # Wrap gateway-capable commands before Docker starts. Keep the lease across
 # child processes launched by an entire hardware test or campaign.
@@ -215,6 +189,9 @@ case "$command" in
     ;;
   build-image)
     docker build -f docker/python/Dockerfile -t "$image_name" .
+    ;;
+  check-host-user)
+    exec python3 "$repo_root/scripts/check_container_host_user.py" "$@"
     ;;
   pytest)
     run_container python -m pytest "$@"
