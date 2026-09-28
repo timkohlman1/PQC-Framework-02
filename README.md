@@ -22,7 +22,7 @@ The non-network lwIP runtime smoke checks version, IPv4 formatting, and checksum
 - `docs/007_framework_architecture.md` — architecture, capability matrix, evidence model, deferred tests, and [A1 timing export/loading commands](docs/007_framework_architecture.md#offline-run-inventory-and-timing-dataset-analysis-request-a1) (`scripts/export_timing_dataset.py`)
 - `experiment/mqtt-broker/README.md` — broker provisioning, operation, and Linux/bash `--client-args` forwarding contract
 
-For hardware-free thesis provenance, run [`notebooks/00_checkout.ipynb`](notebooks/00_checkout.ipynb); see the [checkout report contract](docs/007_framework_architecture.md#checkout-notebook-and-thesis-provenance).
+For a quick hardware-free status check, open [`notebooks/00_checkout.ipynb`](notebooks/00_checkout.ipynb) and Run All to see Git state, tool versions and unit-test output inline.
 ## Default workflow
 
 The default development path is Docker-hosted Linux execution through the project wrapper script `scripts/dev.sh`. Host-native commands remain available as an explicit fallback for diagnosis only and are not the reproducible validation gate.
