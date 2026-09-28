@@ -69,7 +69,7 @@ success and evidence retention remain subject to the recorded hardware test resu
 
 ## Architectural organization
 
-The architecture is organized by stable capability and evidence ownership rather than implementation chronology. Roadmap sequencing and phase status belong to `docs/non_hardware_mqtt_tls_development_plan.md`; historical framework sequencing belongs to `docs/pqc_iot_experiment_framework_plan.md`. This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
+The architecture is organized by stable capability and evidence ownership rather than implementation chronology.  This document owns the current system layers, firmware and framework boundaries, evidence model, generated-state architecture, test architecture, capability matrix, and deferred-test register.
 
 ### External dependency ownership
 
@@ -213,6 +213,35 @@ Software-build evidence from the container includes Python test results, safe co
 Application signing inside the container uses the runtime-mounted workspace. Private signing keys and generated signing material must remain local generated state, such as under `secrets/wolfboot/`, and must not be committed, sent in build contexts, copied into replacement artifacts, or baked into images. The container includes an SSH client but no SSH keys, VPN keys, broker credentials, private certificates, private signing keys, or other secrets. Gateway-capable checks require `PQC_CONTAINER_ENABLE_GATEWAY=1` plus runtime-provided SSH configuration, known-hosts data, and credentials; the wrapper commands set this flag only for gateway and hardware subcommands.
 
 Generated-state preflight is the primary compatibility and provenance mechanism for framework build, wolfBoot build, application-signing, and artifact-consuming workflows. Pytest session-start cleanup is supplementary cross-platform hygiene for stale host-specific CMake and wolfBoot object/dependency/host-tool outputs. It does not establish compatibility or provenance and must not remove source files, canonical signing keys under `secrets/wolfboot/`, or reusable wolfBoot signing-tuple members.
+
+### Runtime ownership and private output
+
+`scripts/container_runtime.py` is installed into the development image and is
+invoked with isolated Python before any workspace code. `scripts/dev.sh` passes
+the invoking non-root UID/GID, supplementary groups and umask for every workload
+mode. Only container account/home setup and ownership of verified empty,
+separately mounted hardware build/state roots happen before the irreversible
+privilege drop. SSH copying and all framework/build/signing/test processes run
+as that user. No recursive host-tree ownership repair or root workload fallback
+is performed. The private dataset staging-directory policy remains unchanged:
+A1 outputs can remain `0700`, now owned by their invoking user.
+
+The separate certificate provisioner shares the drop-to-user helper after its
+existing Alpine package installation and before material generation; its mask
+is `0077`. Tool/image/package pins, firmware, evidence schemas, capture integrity,
+gateway/service privilege policies and signing-tuple lifecycle are unchanged.
+See `docs/002_host_gateway_setup.md` for the one-time explicit legacy-output
+repair, rebuild instructions and the supported local/non-remapped daemon boundary.
+
+`scripts/check_container_host_user.py`, exposed as `./scripts/dev.sh check-host-user`,
+is a stdlib-only host-side Docker integration gate with a temporary workspace
+and dummy SSH files. It does not use the user's SSH credentials or reach a gateway.
+`tests/unit/test_container_host_user.py` covers identity validation, wrapper modes,
+argument/environment preservation, drop ordering, private SSH copying and overlay
+refusal cases. `tests/integration/test_container_host_user_in.py` invokes the real
+Docker gate where available; CI runs it directly on the host after image build.
+CI also verifies host ownership/private directories after its existing provisioning
+step. These software checks must not be reported as live gateway or STM32 success.
 
 ## Firmware scheduler model
 
@@ -413,6 +442,74 @@ The validation model rejects mismatched backend/evidence combinations, fake/no-n
 
 When MQTT/TLS schema fields are present, the initial result manifest includes an `mqtt_tls` block. The block records the evidence class, backend, TLS mode, broker metadata, metric records, metric summary, limitations, and evidence-boundary flags. Unavailable metrics are first-class records with a source and reason. Fake transport control-flow results are embedded only as simulated fake evidence. This schema does not claim Wi-Fi association, IP address, TCP connection, TLS handshake, MQTT connect, publish, reconnect, latency, throughput, STM32 runtime success, or ST67W61M1-backed success without explicit real evidence.
 
+### Checkout notebook and thesis provenance
+
+`notebooks/00_checkout.ipynb` is the root analysis notebook for a hardware-free software
+checkout report. It uses `scripts/checkout_report.py` (Python standard library, Python
+3.10+) from an existing Linux host Jupyter kernel. Start in the repository or its
+`notebooks/` directory, save the notebook, then Restart Kernel and Run All. An explicit
+`REPO_ROOT` setting supports another launch directory. Jupyter setup remains owned by
+the analysis environment; no package installation is performed by the notebook.
+
+The fixed check list is `sh -n scripts/dev.sh`, staged and unstaged `git diff --check`,
+wrapped immutable dependency-pin validation, `./scripts/dev.sh pytest tests/unit`,
+and the explicitly selected reporter integration test. No general integration suite,
+gateway, broker, build, signing or physical hardware command is selected. Existing
+pytest startup hygiene may clean incompatible generated build state. Test-owned
+ignored results are still produced by the normal pytest provenance hooks. Each check
+uses its own run-local pytest evidence and cache directories, avoiding dependence on
+a previously root-owned `results/automated-tests/` directory.
+
+Host orchestration can also run without a notebook UI:
+
+```bash
+python3 scripts/checkout_report.py
+```
+
+This host command is an orchestrator, not a host-native framework validation fallback:
+it executes framework Python/pytest using `./scripts/dev.sh`. It requires local Docker
+access and an already built development image (`./scripts/dev.sh build-image` is an
+explicit prerequisite if missing). It inspects only image identity, pins wrapper calls
+to that immutable ID, and never automatically builds or pulls an image. Docker/image
+unavailability is recorded as incomplete, while host-only checks still run.
+
+Each execution creates a unique ignored `results/checkout/<run-id>/` containing
+`report.json` (schema version 1, record type `checkout_report`), `report.md`, per-command
+logs, pytest JUnit counts and `report.sha256`. The JSON records UTC start/end times,
+exact argv/exit codes, host elapsed seconds, before/after Git branch/commit and dirty
+paths (including staged, unstaged, untracked, renamed and submodule states), recursive
+submodule revisions, selected source hashes, host/kernel versions and container/tool
+versions. It inventories log/JUnit/Markdown artifacts and run-local pytest manifests/logs by size and SHA-256. The separate
+checksum identifies the JSON without a self-referential hash. Each new run leaves prior
+reports intact; notebook output cells and `.ipynb_checkpoints/` are not source evidence.
+
+Retain the complete run directory and reference its run ID, JSON SHA-256, Git commit,
+dirty state and actual outcomes from downstream thesis analysis. In the run directory,
+`sha256sum -c report.sha256` verifies the report identity; artifact hashes in the JSON
+support verification of the companion files. This report is separate from experiment
+manifests and does not mutate or interpret raw experiment evidence.
+
+A dirty worktree cannot be reconstructed from its commit alone. File-status records and
+selected source hashes do not constitute a full source archive. Avoid concurrent edits;
+before/after comparison detects Git-status/submodule and selected-input changes, not
+every possible source-content change. No raw diffs, remote URLs, ignored files,
+credential files or environment dump are collected. Logs apply bounded pattern redaction
+but arbitrary test output still requires review before sharing. Missing prerequisites,
+missing JUnit, unavailable Git identity and interruption yield incomplete evidence;
+ordinary failures remain failed, and skips remain separately visible. No passing tests
+is incomplete. A pass covers only the explicitly listed software checks. Host elapsed
+seconds are not device timing, and this report establishes no gateway, hardware,
+UART, flashing, firmware runtime, memory, benchmark, MQTT/TLS or end-to-end result.
+
+Validation uses unit edge cases and a real Git/subprocess integration fixture with
+disposable Docker/wrapper shims; shim success is not real Docker evidence. The notebook
+is delivered with all code outputs cleared. Run:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_checkout_report.py
+./scripts/dev.sh pytest tests/integration/test_checkout_report_in.py -m integration
+```
+
 ## Test architecture
 
 ```text
@@ -586,6 +683,9 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 
 | ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
 |---|---|---|---|---|---|---|---|
+| DTR-CHECKOUT-JUPYTER | Checkout notebook display and kernel execution | Real Jupyter kernel/UI acceptance | The agent environment has no Jupyter kernel, nbclient or nbformat; output-free notebook structure and Python cells can be checked, and the same reporter can run through real Docker separately | Existing Linux analysis Jupyter environment, Docker daemon and local framework image; no gateway or hardware | `tests/integration/test_checkout_report_in.py` covers the process boundary; notebook Run All is the remaining UI acceptance | Open `notebooks/00_checkout.ipynb`, Restart Kernel and Run All, then verify `report.sha256` and inspect the displayed report | deferred: real Jupyter execution pending |
+| DTR-HOST-USER | Host-user runtime identity and private output ownership | Rebuilt-image Docker ownership gate, pinned provisioning and complete build/test regression | Upload session has no Docker executable/daemon and only selected source files; unit and local-process checks cannot validate Docker mounts or the complete toolchain | Non-root Linux user, local non-remapped Docker daemon, rebuilt development image and complete checkout; package access for existing CI provisioning | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py`; CI certificate ownership check | `./scripts/dev.sh build-image`; `./scripts/dev.sh check-host-user`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build`; existing CI provisioning/ownership steps | implemented; real Docker/provisioning/build gates pending development-host or CI evidence |
+| DTR-HOST-USER-GATEWAY | Non-root gateway wrapper and isolated hardware outputs | Live SSH/gateway and representative hardware regression after identity change | Dummy SSH/volume tests do not establish real SSH credentials, remote helper permissions or hardware lifecycle | Rebuilt development image, runtime SSH credentials, gateway and STM32 where required | Existing `tests/integration/test_gateway_flash_helper_in.py` and `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway`; `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred; these commands can build/flash hardware and require retained evidence |
 | DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | The upload session lacks Docker and a complete checkout. User-supplied 2026-09-28 development-host output verifies the A1 unit/local-process integration boundary and real-capture export/check/loading; the full unit gate still failed the README length check. The documentation correction requires a fresh regression run | Complete Linux development checkout and the existing Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit/test_timing_dataset_documentation.py tests/unit/test_documentation_integrity.py`; `./scripts/dev.sh pytest tests/unit/test_docker_default_workflow_docs.py`; `./scripts/dev.sh pytest tests/unit` | partially verified: A1 wrapper unit/integration and real-capture replay passed; post-correction documentation/full unit output pending |
 | DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
 | DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |

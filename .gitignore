@@ -85,3 +85,6 @@ secrets/wolfboot/tuples/
 # Canonical local cryptographic material
 /secrets/
 
+
+# Jupyter autosave artifacts
+.ipynb_checkpoints/

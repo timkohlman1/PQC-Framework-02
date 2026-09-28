@@ -364,18 +364,30 @@ def provision_local(args: argparse.Namespace) -> None:
 def provision_with_docker(args: argparse.Namespace) -> None:
     if shutil.which("docker") is None:
         raise SystemExit("Docker CLI is required for certificate provisioning; normal execution uses the pinned provisioning image")
+    if sys.platform != "linux" or os.getuid() == 0 or os.getgid() == 0:
+        raise SystemExit("Run certificate provisioning as your normal non-root Linux user, without sudo")
     config_dir = Path(args.config_dir).resolve()
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
     command = [
-        "docker", "run", "--rm",
+        "docker", "run", "--rm", "--user", "0:0",
+        "--security-opt", "no-new-privileges",
+        "-e", f"PQC_RUNTIME_UID={os.getuid()}",
+        "-e", f"PQC_RUNTIME_GID={os.getgid()}",
+        "-e", "PQC_RUNTIME_GROUPS=" + " ".join(str(g) for g in sorted(set(os.getgroups()) | {os.getgid()})),
+        "-e", "PQC_RUNTIME_UMASK=0077",
+        "-v", f"{script.with_name('container_runtime.py')}:/work/container_runtime.py:ro",
         "-v", f"{script}:/work/provision_certificates.py:ro",
         "-v", f"{config_dir}:/work/configs:ro",
         "-v", f"{output.parent}:/output",
         DOCKER_IMAGE, "sh", "-ec",
-        "apk add --no-cache python3 py3-yaml openssl >/dev/null && exec python3 /work/provision_certificates.py --local-openssl --config-dir /work/configs --output /output/" + output.name + " \"$@\"",
-        "provision-certificates",
+        # Package installation alone needs root. The shared bootstrap drops
+        # privileges before reading profiles or writing private material.
+        "apk add --no-cache python3 py3-yaml openssl >/dev/null && "
+        "exec python3 -I /work/container_runtime.py python3 /work/provision_certificates.py "
+        "--local-openssl --config-dir /work/configs --output \"$@\"",
+        "provision-certificates", f"/output/{output.name}",
     ]
     forwarded: list[str] = []
     for profile in args.profile or []:

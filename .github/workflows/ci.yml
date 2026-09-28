@@ -44,6 +44,9 @@ jobs:
       - name: Build project container image
         run: ./scripts/dev.sh build-image
 
+      - name: Verify host-user container ownership without hardware
+        run: ./scripts/dev.sh check-host-user
+
       - name: Show container tool versions
         run: |
           ./scripts/dev.sh run sh -lc '
@@ -70,6 +73,21 @@ jobs:
 
       - name: Provision ephemeral MQTT certificate profiles
         run: python scripts/provision_certificates.py
+
+      - name: Verify provisioned material ownership
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          root = Path("secrets/certificates")
+          assert root.is_dir()
+          for path in [root, *root.rglob("*")]:
+              st = path.stat()
+              assert (st.st_uid, st.st_gid) == (os.getuid(), os.getgid()), "incorrect certificate ownership"
+              if path.is_dir():
+                  assert st.st_mode & 0o077 == 0, "certificate directory is not private"
+          PYCODE
 
       - name: Run baseline framework status
         shell: bash
