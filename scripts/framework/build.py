@@ -400,6 +400,7 @@ def _write_application_selection(
     )
     path.write_text(
         f'set(PQC_STM32_MQTT_APPLICATION "{application}")\n'
+        + f'set(PQC_ENERGY_SYNC_ENABLED {int(bool(bundle.get("experiment", {}).get("instruments", {}).get("energy")))})\n'
         + repeat_selection
         + benchmark_selection
         + f'set(PQC_UART_LOG_LEVEL "{uart_log_level}")\n'

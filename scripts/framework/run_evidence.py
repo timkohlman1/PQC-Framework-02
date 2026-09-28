@@ -159,6 +159,9 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
     the common artefact envelope.
     """
     features = infer_experiment_features(bundle)
+    if operation == "prepare_only":
+        features = {**features, "primary_class": "prepare_only", "mqtt_runtime": False,
+                    "tls_runtime": False, "network_degradation": False, "ota": False, "energy": False}
     if operation == "build_only":
         features = {
             **features,
@@ -178,7 +181,12 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
         _contract_item("cryptographic_material_inventory", "optional", "provisioning"),
     ]
 
-    if features["build_only"]:
+    if operation == "prepare_only":
+        items += [_contract_item("build_log", "required", "build"),
+                  _contract_item("application_elf", "required", "build"),
+                  _contract_item("deployment_provenance", "required", "deployment"),
+                  _contract_item("flash_log", "required", "deployment")]
+    elif features["build_only"]:
         items += [
             _contract_item("build_log", "required", "build"),
             _contract_item("application_elf", "required", "build"),

@@ -15,6 +15,7 @@
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
 #include "pqc_result_buffer.h"
+#include "pqc_energy_boundary.h"
 #include "pqc_boot_evidence.h"
 #include "pqc_wolfssl_memory.h"
 

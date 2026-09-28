@@ -59,6 +59,9 @@ def _extract_mosquitto_version(text: str) -> str | None:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from framework.energy_capture import EnergyCapture, enabled as energy_enabled
+from framework.energy_evidence import validate_energy_evidence
+
 from framework.artifacts import copy_artifact_to_result
 from framework.build_records import resolve_verified_build_record
 from framework.build import execute_build
@@ -207,7 +210,11 @@ def _expected_stm32_result_epochs(bundle: dict[str, dict[str, Any]]) -> int:
     workload = experiment.get("workload", {}) if isinstance(experiment, dict) else {}
     iterations = workload.get("iterations", {}) if isinstance(workload, dict) else {}
     if _is_tls_handshake_repeat_application(bundle) and isinstance(iterations, dict):
-        return max(1, int(iterations.get("handshakes_per_run", 1)))
+        count = max(1, int(iterations.get("handshakes_per_run", 1)))
+        instruments = experiment.get("instruments", {}) if isinstance(experiment, dict) else {}
+        if isinstance(instruments, dict) and instruments.get("energy") is not None:
+            count += 1  # final experiment-wide TIM2/GPIO boundary epoch
+        return count
     return 1
 
 
@@ -1696,6 +1703,9 @@ def _execute_mqtt_e2e_uart_capture(
     campaign_condition_log: Path | None = None,
 ):
     ota_wait_mode: str | None = None
+    energy = EnergyCapture(bundle, result_dir) if energy_enabled(bundle) else None
+    if energy is not None and ota_plan is not None:
+        raise ValueError("Energy capture requires a bounded single-boot run; OTA plans are not supported")
     if ota_plan is not None:
         ota_plan_path = Path(ota_plan)
         if not ota_plan_path.is_absolute():
@@ -2021,7 +2031,7 @@ def _execute_mqtt_e2e_uart_capture(
             ') & transfer_responder_pid=$!; '
         )
     uart_output_mode = str(experiment.get("firmware", {}).get("uart_output_mode", "minimal")).lower()
-    if uart_output_mode == "disabled":
+    if uart_output_mode == "disabled" and energy is None:
         uart_capture_setup = f': >"$uart_file"; sleep {hard_limit_seconds} & capture_pid=$!; '
     else:
         uart_capture_setup = (
@@ -2080,6 +2090,9 @@ def _execute_mqtt_e2e_uart_capture(
         ota_terminal_probe = ""
 
     reporting_break = "" if ota_wait_mode is not None else " break;"
+    if energy is not None:
+        ota_terminal_probe = ('if grep -Fq "PQC_REPORTING_FAILURE" "$uart_file"; then '
+                              'reporting_failed=1; break; fi; ')
     if ota_wait_mode is not None:
         completion_stop = (
             f'if [ "$ota_terminal_seen" -eq 1 ]; then sleep {completion_grace_seconds}; '
@@ -2104,7 +2117,9 @@ def _execute_mqtt_e2e_uart_capture(
         )
 
     common_suffix = (
-        completion_stop
+        ('if [ "${reporting_failed:-0}" -eq 1 ]; then kill "$capture_pid" 2>/dev/null || true; fi; '
+         if energy is not None else '')
+        + completion_stop
         + 'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
         + transfer_responder_cleanup
@@ -2302,6 +2317,8 @@ def _execute_mqtt_e2e_uart_capture(
         elif not broker_response_passed:
             failure_stage = "broker_response"
     finally:
+        workload_passed = passed
+        energy_received = energy.wait(result_collector.remote_stream_path) if energy is not None else True
         collector_result = stop_and_collect_gateway_result_collector(
             collector=result_collector, repo_root=repo_root, result_dir=result_dir
         )
@@ -2319,6 +2336,20 @@ def _execute_mqtt_e2e_uart_capture(
             "source_integrity": collector_result.validation.source_results,
             "failure_reason": collector_result.failure_reason,
         }})
+        if energy is not None:
+            energy_validation = validate_energy_evidence(
+                result_dir / "mqtt-reporting-raw.ndjson", result_dir.name
+            )
+            energy_validation.update({"workload_passed": workload_passed,
+                                      "capture_received": energy_received})
+            if not energy_received:
+                energy_validation["failure_reasons"].append("capture_received failed")
+            energy_validation["passed"] = energy_validation["passed"] and not energy_validation["failure_reasons"]
+            (result_dir / "energy-capture.json").write_text(json.dumps(energy_validation, indent=2) + "\n")
+            update_manifest(result_dir / "manifest.json", {"energy_capture": energy_validation})
+            if not energy_validation["passed"]:
+                passed = False
+                failure_stage = "energy_capture" if workload_passed else failure_stage
         if collector_result.return_code != 0:
             passed = False
             if failure_stage == "none":
@@ -4746,7 +4777,10 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         boot_algorithm=args.boot_algorithm,
         target_profile=args.target_profile,
     )
-    result_dir, manifest = create_result_folder(bundle, args.results_dir)
+    if energy_enabled(bundle) and getattr(args, "ota_plan", None) is not None:
+        raise ValueError("Energy capture does not support multi-boot OTA plans")
+    result_dir, manifest = create_result_folder(bundle, args.results_dir,
+        operation="prepare_only" if getattr(args, "prepare_only", False) else None)
     _report_experiment_start(bundle, manifest["run_id"])
     start = perf_counter()
 
@@ -4973,8 +5007,10 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         finalize_run_evidence(result_dir / "manifest.json")
         return flash_result.return_code
 
-    emit_progress("uart", "Running experiment validation through wolfBoot")
-    if _is_st67_mqtt_e2e(bundle):
+    emit_progress("uart", "Preparation complete" if getattr(args, "prepare_only", False) else "Running experiment validation through wolfBoot")
+    if getattr(args, "prepare_only", False):
+        uart_result, final_return_code, failure_stage = None, 0, "none"
+    elif _is_st67_mqtt_e2e(bundle):
         uart_result, final_return_code, failure_stage = _execute_mqtt_e2e_uart_capture(
             bundle=bundle,
             repo_root=repo_root,
@@ -5006,8 +5042,12 @@ def _run_full_wolfboot_command(args: argparse.Namespace) -> int:
         referenced_build_artifact_sha256=getattr(build_result, "firmware_sha256", None),
         referenced_build_manifest=getattr(build_result, "build_record_manifest_path", None),
     )
+    if getattr(args, "prepare_only", False):
+        update_manifest(result_dir / "manifest.json", {"result": "preparation_passed"})
     _report_run_result(
-        passed_label="MQTT secure-boot end-to-end run passed"
+        passed_label="STM32 preparation passed; no workload evidence collected"
+        if getattr(args, "prepare_only", False)
+        else "MQTT secure-boot end-to-end run passed"
         if _is_st67_mqtt_e2e(bundle)
         else "Secure-boot run passed",
         final_return_code=final_return_code,
@@ -5267,6 +5307,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     from time import perf_counter
 
     if getattr(args, "runtime_only", False):
+        if getattr(args, "prepare_only", False):
+            raise ValueError("--prepare-only and --runtime-only are mutually exclusive")
         if getattr(args, "build_number", None) is not None:
             print("Error: --runtime-only cannot be combined with --build-number.", file=sys.stderr)
             return 2
@@ -5275,6 +5317,8 @@ def run_full_baseline_command(args: argparse.Namespace) -> int:
     explicit_boot_mode = getattr(args, "boot_mode", None)
     explicit_boot_algorithm = getattr(args, "boot_algorithm", None)
     if explicit_boot_mode == "direct_flash":
+        if getattr(args, "prepare_only", False):
+            raise ValueError("--prepare-only requires the normal signed wolfBoot path")
         if explicit_boot_algorithm:
             print(
                 "Error: --boot-algorithm cannot be combined with --boot-mode direct_flash.",
@@ -7081,6 +7125,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--boot-uart-diagnostics", action="store_true", default=False,
         help="Enable Request-17 wolfBoot early-boot UART diagnostics. Diagnostic builds are excluded from timing comparisons.",
+    )
+    run_parser.add_argument(
+        "--prepare-only", action="store_true",
+        help="Build/sign/flash the selected signed wolfBoot case without collecting workload evidence; flashed firmware may run until the next reset.",
     )
     run_parser.add_argument(
         "--runtime-only",

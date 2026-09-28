@@ -8,7 +8,7 @@ A document being indexed does not make every statement in it current. Lifecycle 
 
 ## Ownership rules
 
-Project-owned documentation consists of the tracked root entry documents, tracked documents under `docs/`, and the tracked MQTT broker documentation listed below. Every project-owned document must appear in this index.
+Project-owned documentation consists of the tracked root entry documents, tracked documents under `docs/`, and the tracked MQTT broker and instrument entry documentation listed below. Every project-owned document must appear in this index.
 
 During local development, integrity checks also include non-ignored documentation additions in these locations before they are staged. They still require an existing file and complete index metadata; they do not stage or commit files.
 
@@ -17,6 +17,8 @@ Documentation inside vendor or submodule trees is upstream-owned and is excluded
 - `tools/wolfboot/`
 - `Middlewares/Third_Party/wolfMQTT/`
 - `Middlewares/Third_Party/wolfSSL/`
+- `instruments/esp32_ina228/lib/SparkFun_INA2XX_Arduino_Library/`
+- `instruments/esp32_ina228/lib/SparkFun_Toolkit/`
 
 Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generated build trees, virtual environments, result directories, and dependency caches is also outside this index unless a project-owned document is explicitly listed below.
 
@@ -27,6 +29,7 @@ Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generat
 - **AI workflow:** maintained instructions or prompt material for AI-assisted work.
 - **Active plan:** maintained roadmap with current implementation status and remaining work.
 - **Historical plan:** preserved goals and sequencing; not a current-state authority.
+- **Historical reference with current extraction scope:** imported baseline documentation whose current scope is explicitly bounded; historical integration descriptions are not current capability claims.
 - **Decision record:** preserved architectural decision and rationale; later current references may supersede operational details.
 - **Remediation plan:** bounded maintenance plan used to execute documentation corrections.
 
@@ -47,6 +50,7 @@ Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generat
 | `docs/007_framework_architecture.md` | Architecture reference | Current reference | Detailed current architecture, capability matrix, evidence boundaries, file map, and deferred-test register | Developers, reviewers, test authors, researchers |
 | `docs/008_chatgpt_project_prompt.md` | AI prompt | AI workflow | Reusable prompt routing direct-repository sessions to AGENTS.md and retaining the upload-based ChatGPT fallback | Developers starting AI-assisted work |
 | `docs/009_dual_bank_ota_workflow.md` | Dual-bank OTA workflow | Current reference | STM32L4R5 dual-bank firmware modes, authenticated OTA staging/activation, rollback/confirmation behavior, and OTA evidence/test workflow | Firmware, secure-boot, OTA, and test maintainers |
+| `docs/010_esp32_ina228_energy_instrument.md` | Energy instrument guide | Current reference | Retained appliance, optional STM32/framework capture, raw acceptance and physical validation | Instrument developers and operators |
 | `docs/README.md` | Documentation index | Current reference | Project documentation inventory, ownership, lifecycle, audience, and exclusion rules | All documentation users and maintainers |
 | `docs/baremetal_benchmark_measurement_core.md` | Benchmark operational guide | Operational guide | STM32 pre-scheduler cycle measurement boundaries, selected primitive coverage, raw evidence and verification commands; architecture matrix stays in `docs/007_framework_architecture.md` | Firmware, benchmark and test maintainers |
 | `docs/decisions/0001_keep_cubemx_project_at_repo_root.md` | Architecture decision record | Decision record | Rationale for retaining the CubeMX project at repository root | Firmware and build-system maintainers |
@@ -57,6 +61,7 @@ Other third-party material under `Drivers/`, `Middlewares/Third_Party/`, generat
 | `docs/pqc_iot_experiment_framework_plan.md` | Framework roadmap | Historical plan | Original framework goals, sequencing, checklists, and pass criteria | Maintainers reviewing project history and original intent |
 | `experiment/mqtt-broker/README.md` | Broker operations guide | Operational guide | Canonical MQTT broker Compose profiles, provisioning, deployment, validation, and broker evidence limits | Network/security developers and gateway operators |
 | `experiment/mqtt-broker/config/oqs/README.md` | OQS broker profile reference | Operational guide | OQS Mosquitto profile algorithms, generated certificate material, and runtime diagnostic limits | PQC/TLS experimenters and broker maintainers |
+| `instruments/esp32_ina228/README.md` | Instrument entry point | Current reference | Routes the extracted device source to its instrument guide; does not establish surrounding framework integration | Instrument developers |
 
 ## Subject routing
 

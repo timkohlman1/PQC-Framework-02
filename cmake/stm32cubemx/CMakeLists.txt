@@ -199,8 +199,8 @@ add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
 
-# Request 15 UART transport modes. disabled is a true compile-time exclusion:
-# do not link the HAL UART implementation when the experiment profile disables UART.
+# Diagnostic UART output remains excluded in disabled mode. Energy capture no
+# longer has a UART start gate, so it does not require the UART HAL drivers.
 if(PQC_UART_OUTPUT_MODE STREQUAL "disabled")
     set(PQC_UART_OUTPUT_MODE_VALUE 0)
     list(REMOVE_ITEM STM32_Drivers_Src

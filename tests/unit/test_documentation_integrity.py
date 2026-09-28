@@ -663,6 +663,7 @@ PROJECT_DOCUMENT_PATTERNS = (
     re.compile(r"^(?:AGENTS|README|AI_BUILD_GUIDE)\.md$"),
     re.compile(r"^docs/.*\.(?:md|txt)$"),
     re.compile(r"^experiment/mqtt-broker/(?:README\.md|config/oqs/README\.md)$"),
+    re.compile(r"^instruments/esp32_ina228/README\.md$"),
 )
 INDEXED_DOCUMENT_PATH = re.compile(r"(?m)^\| `([^`]+\.(?:md|txt))` \|")
 
@@ -907,3 +908,24 @@ def test_hardware_test_standard_is_self_contained() -> None:
     assert "Automated hardware tests" in flash
     assert "test_application_timebase_hw.py" in flash
     assert "PQC_TIMEBASE_UART_LOG" not in architecture.split("| DTR-015 |", 1)[1].splitlines()[0]
+
+
+# Energy operations belong in the instrument guide rather than the AI guide.
+def test_energy_guide_documents_passive_gpio_capture_contract():
+    root = Path(__file__).resolve().parents[2]
+    guide = (root / "docs/010_esp32_ina228_energy_instrument.md").read_text()
+    for text in (
+        "pqc/instrument/energy/capture",
+        "20-byte",
+        "pre-trigger",
+        "TIM2",
+        "offline",
+        "energy-capture.json",
+        "publish-only",
+        "acquisition is paused",
+    ):
+        assert text in guide
+    assert "PQC_ENERGY_WAITING` / `PQC_ENERGY_GO` start gate is retired" in guide
+    assert "session/association protocol" in guide and "no run ID" in guide
+    assert "schema 3 energy" not in guide
+    assert (root / "tests/hardware/test_energy_capture_hw.py").is_file()

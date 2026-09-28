@@ -849,6 +849,7 @@ def test_write_application_selection_uses_profile_application(tmp_path):
     assert path == tmp_path / "build" / "Release" / "pqc_generated" / "pqc_application_selection.cmake"
     assert path.read_text(encoding="utf-8") == (
         'set(PQC_STM32_MQTT_APPLICATION "mqtt_validation")\n'
+        'set(PQC_ENERGY_SYNC_ENABLED 0)\n'
         'set(PQC_UART_LOG_LEVEL "info")\n'
         'set(PQC_UART_OUTPUT_MODE "minimal")\n'
         'set(PQC_FIRMWARE_MODE "single_bank")\n'

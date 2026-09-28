@@ -12,6 +12,8 @@ Framework build, test, and experiment workflows use the Docker wrappers. Broker 
 - `classical-server-auth`: Eclipse Mosquitto over TLS 1.3 on port `8883` by default. It uses the same staged RSA-3072 broker identity but does not request a client certificate.
 - `oqs`: Open Quantum Safe Mosquitto on port `8884` by default. It uses the selected staged certificate family independently of the hybrid `SecP256r1MLKEM768` key exchange and does not request a client certificate.
 
+Campaign-managed TLS brokers receive the resolved `mqtt.tls.certificate_profile` through `--certificate-profile` on startup and status checks, including reuse checks. For example, the `ready_metrics_2_energy` campaign selects `mldsa65`; it must not fall back to the Compose default `rsa3072`. Plaintext experiment and reporting brokers do not receive a TLS certificate override. Container health alone does not prove that a campaign client trusts the selected broker certificate; the authenticated readiness probe must also pass.
+
 The OQS profile is for protocol evaluation only. It must not be treated as production TLS infrastructure, and PQC TLS success must be supported by explicit broker/client logs.
 
 Both profiles override the image entrypoint with an explicit shell script, copy the source ACL file to `/tmp/mosquitto-aclfile` inside the container, set container-local ownership and mode there, and run Mosquitto against that copy. This avoids changing bind-mounted repository files and avoids image startup attempts to change ownership of read-only config/certificate mounts.
@@ -366,7 +368,7 @@ In Wireshark, open **Edit → Preferences → Protocols → TLS** and select the
 
 ## Reporting broker
 
-Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/result/#`, `pqc/instrument/#`, and `pqc/control/#` traffic and requires no experiment certificate material. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
+Canonical campaigns require a second broker service identified by `configs/services/mqtt_broker/reporting_gateway1.yaml`. It is intentionally plaintext/non-TLS and uses the compose profile `reporting` (default host port 1886). It carries only `pqc/result/#`, `pqc/instrument/#`, and `pqc/control/#` traffic and requires no experiment certificate material. The persistent ESP32 energy appliance is application-level publish-only on `pqc/instrument/energy/capture/#`; it requires no energy-specific `pqc/control/#` command. The gateway network design must keep this listener on the host/control path and outside all `tc`/NetEm/MTU impairment applied to the experiment data plane.
 
 The reporting service health check performs a deterministic retained publish/subscribe round trip on `pqc/control/health`, then clears the retained probe. This validates broker readiness and the configured reporting ACL without relying on periodic `$SYS` publications or TLS/PKI material.
 

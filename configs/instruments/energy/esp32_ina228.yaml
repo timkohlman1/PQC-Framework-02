@@ -2,7 +2,7 @@ schema_version: 1
 profile_type: instrument
 instrument_type: energy
 id: esp32_ina228
-description: Persistent ESP32 + INA228 external target-energy acquisition instrument.
+description: Persistent manually provisioned ESP32-S3/INA228 GPIO-triggered recorder; profile is descriptive and sends no device command.
 lifecycle:
   provisioning: manual_once
   runtime: persistent
@@ -11,37 +11,38 @@ lifecycle:
 endpoint:
   transport: mqtt
   broker_service: reporting_gateway1
-  client_id: pqc-energy-esp32-ina228
+  direction: publish_only
 clock:
   frequency_hz: 1000000
-sensor:
-  type: INA228
-  shunt_resistance_ohms: 0.01
-  max_current_amps: 5.0
-  averaging: 1
 sampling:
-  rate_hz: 2000
-  conversion_ready_alert: true
-synchronisation:
-  source: stm32_gpio
-  rising_edge: interval_start
-  falling_edge: interval_end
-  drift_compensation: per_interval
+  acquisition_mode: alert_triggered_bus_shunt
+  bus_conversion_us: 50
+  shunt_conversion_us: 50
+  averaging: 1
+  i2c_hz: 400000
+  pretrigger_ms: 1000
+  sample_encoding: little_endian_ieee754_v1
+  sample_record_bytes: 20
+  sample_fields:
+    - timestamp_us
+    - bus_v
+    - current_a
+    - power_w
 calibration:
-  reference: calibration/esp32_ina228.yaml
-buffering:
-  mode: local_until_session_complete
-  max_samples: 250000
-  overflow: fail_session
+  id: empirical_dmm_reference_loads_2026-09-25
+  status: empirical_two_load_current_scaling
+  nominal_shunt_ohms: 0.015
+  effective_shunt_ohms: 0.029
+synchronisation:
+  stm32_output: D8/PF12
+  esp32_input_gpio: 11
+  alert_gpio: 12
+  capture_window: one_per_experiment
 result_transfer:
-  transport: mqtt
-  publish_while_interval_active: false
-  policy: bounded_sequenced_records_then_completion_hash
-  topic_namespace: pqc/results/{run_id}/energy
+  mqtt_topic_prefix: pqc/instrument/energy/capture
+  completion_timeout_seconds: 180
+  integrity: sha256
+  command_plane: none
 evidence:
-  required:
-  - session_metadata
-  - sync_pairs
-  - energy_trace
-  - calibration_identity
-  - completion_hash
+  analysis: offline_only
+  clock_alignment: two_gpio_edges

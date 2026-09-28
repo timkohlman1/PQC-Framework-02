@@ -26,6 +26,7 @@
 #include "lwip.h"
 #include "pqc_wifi_config.h"
 #include "pqc_network_interface.h"
+#include "pqc_energy_boundary.h"
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
 #endif
@@ -1838,8 +1839,12 @@ int main(void)
 #endif
 #if PQC_BAREMETAL_BENCHMARK_ENABLED
   /* All cryptographic measurement completes before the RTOS and ST67 run. */
+  PQC_EnergyBoundaryInitialize();
+  PQC_EnergyBoundaryBegin();
   PQC_BenchmarkSTM32_Run();
+  PQC_EnergyBoundaryEnd();
   PQC_ResultBufferReset();
+  PQC_EnergyBoundaryAppend(0U);
   PQC_BenchmarkSTM32_AppendResults();
 #endif
 
@@ -2885,10 +2890,20 @@ void StartNetworkTask(void *argument)
   PQC_ResultBufferReset();
 #endif
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryInitialize();
+  PQC_EnergyBoundaryBegin();
+#endif
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryEnd();
+#endif
 #if !PQC_TLS_HANDSHAKE_REPEAT_ENABLED
+#if !PQC_BAREMETAL_BENCHMARK_ENABLED
+  PQC_EnergyBoundaryAppend(0U);
+#endif
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);
@@ -2907,6 +2922,27 @@ void StartNetworkTask(void *argument)
       APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_deferred_results\r\n");
     }
   }
+#else
+#if PQC_ENERGY_SYNC_ENABLED && !PQC_BAREMETAL_BENCHMARK_ENABLED
+  /* Repeated TLS publishes one STM32 result epoch per handshake. Emit one
+   * additional tiny epoch containing the experiment-wide GPIO/TIM2 anchors. */
+  PQC_ResultBufferReset();
+  PQC_EnergyBoundaryAppend(0U);
+  (void)PQC_ResultBufferAppendText(0U, "application", "energy_window_complete");
+  {
+    PQC_ResultBufferStatus result_status;
+    char result_sha256[65];
+    PQC_ResultBufferStatusGet(&result_status);
+    PQC_ResultBufferSha256Hex(result_sha256);
+    if (PQC_WolfMQTT_PublishDeferredResults(
+            PQC_ResultBufferData(), PQC_ResultBufferSize(), result_sha256,
+            result_status.record_count, result_status.dropped_record_count,
+            result_status.overflowed != 0U) != 0)
+    {
+      APP_UART_WriteString("PQC_REPORTING_FAILURE stage=publish_energy_boundary\r\n");
+    }
+  }
+#endif
 #endif
   osThreadExit();
 }

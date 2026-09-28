@@ -363,16 +363,27 @@ def _materialize_preparation_case(
 
 
 def _broker_ctl_command(
-    repo_root: Path, subcommand: str, *, profile: str | None = None, broker_port: int | None = None
+    repo_root: Path, subcommand: str, *, profile: str | None = None, broker_port: int | None = None,
+    certificate_profile: str | None = None,
 ) -> list[str]:
     command = [sys.executable, str(repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"), subcommand,
                "--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
+    if certificate_profile:
+        command.extend(["--certificate-profile", certificate_profile])
     if profile:
         command.extend(["--profile", profile])
     if broker_port:
         port_option = "--oqs-port" if profile and profile.startswith("oqs") else "--classical-port"
         command.extend([port_option, str(broker_port)])
     return command
+
+
+def _broker_certificate_profile(bundle: dict[str, dict[str, Any]]) -> str | None:
+    """Select the same certificate family as the resolved TLS clients."""
+    tls = bundle["experiment"]["mqtt"].get("tls", {})
+    if str(tls.get("mode", "")).lower() == "plaintext":
+        return None
+    return str(tls.get("certificate_profile") or "").strip() or None
 
 
 def _broker_profile_and_port(bundle: dict[str, dict[str, Any]]) -> tuple[str, int | None]:
@@ -754,6 +765,8 @@ class CampaignExecutor:
             "--results-dir", str(preparation_results),
         ]
         log_path = campaign_root / "logs" / f"preparation-{group_index:04d}.log"
+        if representative.get("selections", {}).get("instruments", {}).get("energy"):
+            command.append("--prepare-only")
         rc, produced_manifest, output = _run_experiment(
             repo_root=self.repo_root,
             command=command,
@@ -792,7 +805,10 @@ class CampaignExecutor:
         self._broker_bundle = bundle
         for wanted_profile, wanted_port in ((profile, port), ("reporting", None)):
             command = _broker_ctl_command(
-                self.repo_root, "start", profile=wanted_profile, broker_port=wanted_port
+                self.repo_root, "start", profile=wanted_profile, broker_port=wanted_port,
+                certificate_profile=(
+                    _broker_certificate_profile(bundle) if wanted_profile != "reporting" else None
+                ),
             )
             completed = self.runner(command, self.repo_root)
             self._append_control_log(campaign_root, "broker-start.log", command, completed)
@@ -807,7 +823,10 @@ class CampaignExecutor:
         ok = True
         for wanted_profile, wanted_port in ((profile, port), ("reporting", None)):
             command = _broker_ctl_command(
-                self.repo_root, "status", profile=wanted_profile, broker_port=wanted_port
+                self.repo_root, "status", profile=wanted_profile, broker_port=wanted_port,
+                certificate_profile=(
+                    _broker_certificate_profile(bundle) if wanted_profile != "reporting" else None
+                ),
             )
             completed = self.runner(command, self.repo_root)
             self._append_control_log(campaign_root, "broker-health.log", command, completed)
