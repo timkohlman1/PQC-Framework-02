@@ -218,12 +218,12 @@ def main(argv: list[str] | None = None) -> int:
         if os.geteuid() == 0:
             raise ValueError("Run as your normal user; this script uses sudo only for directory cleanup.")
         require_local_docker(root)
-        clean_workspace(root)
-        purge_docker(root)
-        command(["./scripts/dev.sh", "build-image"], root)
+        #clean_workspace(root)
+        #purge_docker(root)
+        #command(["./scripts/dev.sh", "build-image"], root)
         # This repository provisioner owns its own pinned Docker runtime. Running
         # it through dev.sh would require unsupported Docker-in-Docker/socket access.
-        command([sys.executable, "scripts/provision_certificates.py"], root)
+        #command([sys.executable, "scripts/provision_certificates.py"], root)
         command(["./scripts/dev.sh", "python", "scripts/resolve_campaign.py", CAMPAIGN], root)
         cases = sorted((root / CASES).glob("*.yaml"))
         if not cases:
