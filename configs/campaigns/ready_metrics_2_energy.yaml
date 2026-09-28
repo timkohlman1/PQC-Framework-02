@@ -1,0 +1,27 @@
+schema_version: 1
+profile_type: campaign
+target: stm32l4r5_st67
+gateway: pqc_gateway1
+services:
+  experiment_broker: experiment_gateway1
+  reporting_broker: reporting_gateway1
+workload: ready_metrics_2
+instruments:
+  energy: esp32_ina228
+fixed:
+  tls_kex: ML_KEM_768
+  tls_auth: mldsa65
+  auth_mode: server
+  secure_boot: integrity_sha256
+  network_condition: baseline
+execution:
+  repetitions: 1
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  experiment_broker: reuse_if_compatible
+  reporting_broker: always_available
+  condition: retain_within_condition
+  evidence: per_run
+id: ready_metrics_2_energy
+matrix: {}
