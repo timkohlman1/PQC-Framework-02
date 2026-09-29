@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--dataset", required=True, type=Path)
     parser.add_argument("--spec", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--resources", action="store_true", help="Include A3 resources from verified retained inputs")
     parser.add_argument("--execute-notebook", action="store_true")
     parser.add_argument("--notebook", type=Path, default=Path(__file__).resolve().parents[1] / "notebooks/timing_comparison.ipynb")
     args = parser.parse_args()
@@ -26,7 +27,7 @@ def main():
             from nbclient import NotebookClient
             notebook = nbformat.read(args.notebook, as_version=4)
             os.environ.update(PQC_A2_DATASET=str(args.dataset.resolve()), PQC_A2_SPEC=str(args.spec.resolve()),
-                              PQC_A2_OUTPUT=str(args.output.resolve()))
+                              PQC_A2_OUTPUT=str(args.output.resolve()), PQC_A3_RESOURCES="1" if args.resources else "0")
             NotebookClient(notebook, timeout=180, kernel_name="python3", allow_errors=False,
                            resources={"metadata": {"path": str(Path(__file__).resolve().parents[1])}}).execute()
             if not (args.output / "summary.json").is_file():
@@ -37,7 +38,7 @@ def main():
                 "executed_notebook_sha256": digest(args.output / "executed.ipynb"),
                 "note": "Execution timestamps and rendering metadata are not deterministic."}, indent=2) + "\n")
         else:
-            export_summary(args.dataset, spec, args.output)
+            export_summary(args.dataset, spec, args.output, resources=args.resources)
         print(json.dumps({"output": str(args.output), "status": "exported"}))
         return 0
     except Exception as exc:

@@ -244,7 +244,7 @@ def summarise(dataset, spec):
     return frames, spec
 
 
-def export_summary(dataset_path, spec, output):
+def export_summary(dataset_path, spec, output, *, resources=False):
     """New output directory only; record direct inputs, selections and output hashes."""
     dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
     dataset = load_dataset(dataset_path)
@@ -252,6 +252,15 @@ def export_summary(dataset_path, spec, output):
     if any(output == p or output in p.parents or p in output.parents for p in forbidden):
         raise ValueError("summary output must be separate from dataset and raw runs")
     frames, spec = summarise(dataset, spec)
+    resource_provenance = None
+    if resources:
+        from framework.resource_analysis import summarise_resources
+        resource_frames, resource_provenance = summarise_resources(dataset, spec)
+        frames.update(resource_frames)
+        for source in resource_provenance["inputs"]:
+            parent = Path(source["path"]).resolve().parent
+            if output == parent or parent in output.parents or output in parent.parents:
+                raise ValueError("summary output overlaps resource evidence")
     output.mkdir(parents=True, exist_ok=False)
     for name, frame in frames.items():
         exported = frame.copy()
@@ -274,6 +283,8 @@ def export_summary(dataset_path, spec, output):
                  Path(__file__).with_name("timing_dataset_schema.py"))},
         environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
         outputs={p.name: digest(p) for p in sorted(output.iterdir())})
+    if resource_provenance is not None:
+        lineage["resources"] = resource_provenance
     (output / "summary.json").write_text(json.dumps(lineage, indent=2, sort_keys=True, allow_nan=False) + "\n")
     return frames
 

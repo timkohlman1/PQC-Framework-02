@@ -636,6 +636,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-OQS-MTLS-CHAIN | Container-local CA chain and dedicated health-topic ACL | Gateway deployment and blocked campaign retry | Local Docker verifies broker behavior but not gateway deployment or STM32 mutual TLS | Gateway and STM32/ST67 laboratory | `tests/integration/test_oqs_mtls_permissions_in.py`; `scripts/check_oqs_mtls_broker.py` local gate; retained campaign manifests | `python3 scripts/check_oqs_mtls_broker.py`; `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | local Docker passed 2026-09-29 for RSA-3072 and ML-DSA-65: healthy startup, staged-file access, authenticated publish and rejection without client certificate; live campaign retry pending |
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
+| DTR-A3-MATCHED | A3 application resource comparisons | Real-evidence matched profile delta acceptance | Retained TLS matrix has unknown source revision and QoS controls; some pairs also differ in evidence class. Absolute resource import succeeds but controls cannot be silently waived | Retained runs with known comparable controls and explicit analysis specification; no new instrumentation | `tests/integration/test_resource_analysis_in.py` (extend retained-evidence coverage when suitable records exist) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_RESOURCE_SUMMARY --resources` | partially verified 2026-09-29: 12 unique retained ELF builds imported; synthetic matched deltas and CLI/notebook equivalence pass; real matched deltas deferred for provenance gaps |
 | DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | Earlier upload-session README-length failure required a fresh regression | Complete Linux development checkout and rebuilt Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_timing_dataset_in.py -m integration` | closed during A2: 2026-09-28 Docker full unit regression passed, including A1 and documentation tests; A1 local integration rechecked |
 | DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
 | DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |
@@ -1484,6 +1485,100 @@ comparison with this inspection-only specification. This verifies offline
 consumption of an existing A1 dataset, not a fresh raw capture audit or new
 hardware success. A2 does not add memory,
 energy, TLS phase attribution, firmware changes or new experiment measurements.
+
+
+### Offline application resource comparisons (Analysis Request A3)
+
+A3 is an opt-in companion to the A1 dataset and A2 summary workflow, implemented
+in `scripts/framework/resource_analysis.py`. Existing A1 CSV contracts, timing
+summaries and timing-only notebook execution are unchanged. Enable resources in
+`notebooks/timing_comparison.ipynb` with `INCLUDE_RESOURCES`, or use the batch CLI:
+
+```bash
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+  --dataset results/analysis/SELECTED_DATASET \
+  --spec notebooks/SELECTED_SPEC.json \
+  --output results/analysis/NEW_RESOURCE_SUMMARY --resources
+```
+
+Add `--execute-notebook` for clean-kernel notebook execution. Resource analysis
+requires the original retained inputs at the dataset's recorded paths; run a
+Docker-created dataset inside the same `/workspace` mount. It never changes raw
+captures, runs a build, flashes firmware or instruments memory. Resource exports
+are `resource_builds.csv`, `resource_observations.csv`,
+`resource_distributions.csv` and `resource_differences.csv`; `summary.json`
+records parser/version, definitions, input paths/hashes and output hashes.
+Only scalar metrics and lineage are exported, not ELF contents, UART text,
+cryptographic material or whole provenance documents.
+
+**Build identity and footprint.** A static observation is one unique application
+ELF SHA-256, regardless of the number of runs or build numbers referencing it.
+A run firmware hash can identify a signed image. In that case the preparation's
+verified manifest and provenance must explicitly associate that image hash with
+the application ELF hash; a matching build number alone is insufficient. This
+association does not prove flashing or execution, and preparation verification
+status remains in the A2 inventory. Only fixed retained `firmware.elf`,
+`firmware.bin` and provenance names are read through manifest-selected roles.
+Recorded `/workspace/results/` preparation references may be relocated within
+the selected run's results root; symlinks and traversal are refused.
+
+The bounded decoder supports ELF32 little-endian ARM executables with the
+maintained STM32L4R5 RAM/RAM2/RAM3 linker symbols and region layout. Flash bytes
+count the union of allocated file-backed section load addresses, including the
+Flash copy of initialized RAM data. Debug data, ELF headers, segment alignment
+padding and NOBITS reservations are excluded. Application image span includes
+gaps between those sections; retained binary length is a separate metric. These
+are application footprints, not signed-header capacity or bootloader footprint.
+RAM static base and linker reservation remain separate. RAM3 allocated storage
+includes the result buffer and workspace; their subset reservations must not be
+added to that storage again. Unknown layouts or absent/invalid artifacts produce
+null values with reasons, never configured capacity substituted for measurement.
+
+**Runtime scope and accounting.** A3 decodes existing integrity-checked deferred
+`memory` records and `PQC_TLS_HANDSHAKE_MEMORY` records, using A1 run keys,
+transport epochs, record references and input hashes. Final heap, newlib and
+workspace measurements retain run-lifetime scope with no synthetic iteration
+identity. TLS before/after heap-free and stack-minimum-free checkpoints preserve
+the recorded iteration, but are not reset per-handshake peaks. Available bounded
+diagnostic task-stack checkpoints are retained separately, with task/stage and
+UART line references; absent task or TLS evidence is not inferred from capacity.
+
+FreeRTOS heap backing storage is already included in static RAM; dynamically
+allocated task stacks are already included in heap allocation. Workspace peaks
+are maximum requested capacity within the RAM3 reservation, not observed touched
+bytes. Newlib allocation grows above the static base. MSP watermarks exclude
+startup before `main()`; saturated measurements are retained as lower bounds and
+excluded from exact-peak summaries. Independent regional peaks are never labelled
+an observed simultaneous whole-system peak: `simultaneous_system_peak_bytes`
+remains unavailable with the accounting explanation. No aggregate RAM requirement
+is computed by adding these overlapping quantities.
+
+Native values are bytes; **1 KiB = 1024 bytes**. Comparisons reuse A2 conditions,
+filters, exclusions and control matching. Static medians count unique builds;
+runtime medians use one unambiguous final lifetime observation per completed,
+input-verified run. Duplicate final records/multiple epochs are visible but
+excluded from those summaries. No resource confidence intervals are inferred.
+Absolute and percentage differences require matched known controls; unknown
+controls, unavailable metrics and zero percentage baselines retain reasons.
+
+**Validation.** Known-answer fixtures cover section/region accounting, build
+reuse, lifetime scope, saturation, malformed/missing evidence, unit conversion,
+control matching, source tampering and secret-path refusal. CLI and clean-kernel
+notebook integration must agree on all four resource tables:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_resource_analysis.py
+./scripts/dev.sh pytest tests/integration/test_resource_analysis_in.py -m integration
+```
+
+The retained TLS matrix dataset was exported during A3 development: 12 unique
+application ELF builds supplied 108 valid static resource values. Its recorded
+specification leaves QoS and source revision controls unknown, and some profile
+pairs have different evidence classes. Those matched deltas remain unavailable;
+absolute resource tables still retain run/build/source references. This is an
+offline parser/export check against retained evidence, not a new hardware run.
+The missing real matched-delta acceptance is tracked in DTR-A3-MATCHED.
+
 
 ### Offline packet-capture analysis (Implementation Request 7)
 

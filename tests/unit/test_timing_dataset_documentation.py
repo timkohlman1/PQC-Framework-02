@@ -42,3 +42,11 @@ def test_timing_dataset_deferred_entry_is_in_consolidated_register() -> None:
     assert len(cells) == 8 and all(cells), "A1 row must retain all register fields"
     assert cells[5].startswith("`tests/")
     assert "./scripts/dev.sh" in cells[6]
+
+
+def test_resource_analysis_routes_and_accounting_limits():
+    text = (ROOT / ARCHITECTURE).read_text()
+    section = text.split("### Offline application resource comparisons (Analysis Request A3)", 1)[1].split("\n### ", 1)[0]
+    for phrase in ("--resources", "resource_builds.csv", "1 KiB = 1024 bytes", "simultaneous_system_peak_bytes", "lower bounds", "tests/integration/test_resource_analysis_in.py"):
+        assert phrase in section
+    assert "#offline-application-resource-comparisons-analysis-request-a3" in (ROOT / "README.md").read_text()
