@@ -637,6 +637,8 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-OQS-MTLS-CHAIN | Container-local CA chain and dedicated health-topic ACL | Gateway deployment and blocked campaign retry | Local Docker verifies broker behavior but not gateway deployment or STM32 mutual TLS | Gateway and STM32/ST67 laboratory | `tests/integration/test_oqs_mtls_permissions_in.py`; `scripts/check_oqs_mtls_broker.py` local gate; retained campaign manifests | `python3 scripts/check_oqs_mtls_broker.py`; `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | local Docker passed 2026-09-29 for RSA-3072 and ML-DSA-65: healthy startup, staged-file access, authenticated publish and rejection without client certificate; live campaign retry pending |
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
+| DTR-A5-TRIAL | Network impairment pilot campaign and notebook presets | Gateway/STM32 execution of 15 planned attempts | Current request creates a campaign for the operator to run; offline tests do not establish impairment or runtime success | Available gateway, STM32/ST67, experiment/reporting brokers and configured credentials | `tests/integration/test_network_trial_in.py` (offline); retained campaign runtime evidence | `./scripts/dev.sh campaign-gateway network_trial` then the export/notebook commands in `docs/005_remote_flash_workflow.md` | pending operator trial; offline resolver and report pipeline tested separately |
+| DTR-A5-EVIDENCE | A5 retained packet and impairment reports | Real baseline/impaired matched acceptance | Baseline PCAPs are retained, but no impaired-condition capture with attributable client identity was identified; synthetic analysis cannot establish RQ3 results | Explicit retained baseline/impaired captures, device-flow association and comparable controls; offline only | `tests/integration/test_network_analysis_in.py` (extend with retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_SUMMARY` | partially verified 2026-09-29: real baseline import and synthetic checks passed; real impaired/matched evidence unavailable |
 | DTR-A4-EVIDENCE | A4 TLS attribution and equal-run repeated-handshake inference | Real retained repeated-handshake and matched-profile acceptance | Existing TLS matrix parses, but missing source/QoS controls prevent matched deltas; unequal-repeat inference is verified with synthetic captures only | Explicitly selected retained repeated-workload captures and comparable profile controls; offline analysis only | `tests/integration/test_tls_analysis_in.py` (extend with suitable retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_TLS_SUMMARY --tls` | partially verified 2026-09-29: retained attribution import passed; real repeated/matched acceptance deferred |
 | DTR-A3-MATCHED | A3 application resource comparisons | Real-evidence matched profile delta acceptance | Retained TLS matrix has unknown source revision and QoS controls; some pairs also differ in evidence class. Absolute resource import succeeds but controls cannot be silently waived | Retained runs with known comparable controls and explicit analysis specification; no new instrumentation | `tests/integration/test_resource_analysis_in.py` (extend retained-evidence coverage when suitable records exist) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_RESOURCE_SUMMARY --resources` | partially verified 2026-09-29: 12 unique retained ELF builds imported; synthetic matched deltas and CLI/notebook equivalence pass; real matched deltas deferred for provenance gaps |
 | DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | Earlier upload-session README-length failure required a fresh regression | Complete Linux development checkout and rebuilt Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_timing_dataset_in.py -m integration` | closed during A2: 2026-09-28 Docker full unit regression passed, including A1 and documentation tests; A1 local integration rechecked |
@@ -1698,6 +1700,113 @@ records; one selected run lacked usable inputs. All matched operation deltas wer
 refused because required controls were unavailable. This verifies retained-format
 parsing, not new hardware success or causal TLS comparisons. Real repeated-workload
 acceptance and matched comparisons remain in DTR-A4-EVIDENCE.
+
+### Offline network and impairment comparisons (Analysis Request A5)
+
+`scripts/framework/network_analysis.py` extends A2 through `--network-spec`.
+`notebooks/network_comparison.ipynb` executes the same shared functions and shows
+condition-response plots, completion coverage, flow summaries and a selected-run
+packet diagnostic table. No live capture, impairment changes or firmware changes
+are performed. Existing A1–A4 contracts and default exports remain unchanged.
+
+```bash
+./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_SUMMARY
+./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_NOTEBOOK --execute-notebook
+```
+
+The network selection JSON maps exact A1 `run_key` values to objects of this form
+(use the actual retained client identity, broker endpoint and evidence reference):
+
+```json
+{
+  "client_ip": "192.0.2.2",
+  "server_ip": "192.0.2.1",
+  "server_port": 8883,
+  "evidence_reference": "retained device-address evidence and packet association",
+  "window": {"kind": "retained_flow"}
+}
+```
+
+The addresses above are documentation examples, not measured device identities.
+Selections are explicitly labelled **operator assertions**, not automatic device
+identification. Do not select a client by broker port alone. The broker must match
+the retained resolved workload endpoint. Missing selections remain unavailable.
+Alternatively specify `{"kind":"pcap_epoch","start":1,"end":2,"definition":"named window"}`
+with actual gateway epoch boundaries; the interval is half-open `[start,end)`.
+Clock association is never inferred from flow identity, and device timestamps
+cannot be supplied as a PCAP window. A retained-flow window includes the entire
+captured four-tuple lifetime, not just a TLS handshake.
+
+**Metrics and lineage.** `network_flows.csv` separates four-tuples and TCP directions.
+`wire_bytes` is the sum of PCAP original frame lengths at the capture link layer;
+`tcp_payload_bytes` counts captured TCP payload octets. Both include repeated
+transmissions. Packet/segment counts, sequence-overlap indicators and bytes,
+first-fragment observations and plaintext ServerHello version/cipher/key-share
+codes remain usable without decryption. Missing PCAP and missing TLS key log are
+separate availability states. Certificate identity is unavailable without supported
+decryption. Only bounded, complete ServerHello records are decoded; HelloRetryRequest
+is excluded. No key log or packet payload is exported.
+
+Sequence overlap uses the union of previously seen ranges, so an out-of-order
+packet filling a gap is not itself called a retransmission. Overlap is an analyser
+indicator, not a causal diagnosis. Repeated SYN/possible tuple reuse and sequence
+wrap make overlap totals unavailable. Later IPv4 fragments cannot safely be
+assigned by port and remain outside flow counts; first-fragment counts explicitly
+state that boundary. Captured TCP payload-segment counts do not reconstruct
+application-message segmentation. Truncation is flagged, and captures from `any`
+may contain duplicate observations: no interface deduplication is claimed.
+
+Existing packet-derived JSON is accepted only with matching analyser version,
+output hash, lineage input set and retained input hashes. Stale derived output
+fails rather than silently being used. When absent, the existing offline built-in
+analyser runs in memory with external decryption disabled. The finalized capture
+is unchanged. Local input paths/hashes, source hashes, selection and definitions
+are recorded under `summary.json.network`. These reports are local analysis,
+not a public evidence release. Regenerate stale derived analysis explicitly using
+the existing `scripts/analyse_packet_capture.py` command.
+
+**Conditions and comparisons.** Configured properties, independently verified
+applied gateway state and observed properties are separate. Retained network-state
+logs are checked with the existing directional qdisc/MTU verifier. That proves
+recorded state only, not achieved throughput, RTT or loss; observed impairment
+parameters remain unavailable. Axes are rate in kbit/s, configured RTT in ms,
+independent per-direction loss in percent, and MTU in bytes.
+`network_comparisons.csv` reuses A2 timing/control matching and adds transport
+metrics (per-run sums across selected flows, directions separate). Transport
+summaries are success-conditional; failed-run packet diagnostics remain visible.
+Completion denominators and unknown outcomes stay in A2 `completeness.csv`.
+All other TLS/workload and network properties must be fixed. Declare only
+`network_condition`, its profile hash and the selected
+`controls.network_configured.<axis>` as treatments. Mixed impairments, varying
+window definitions, waived TLS/workload controls and enabled/disabled transitions
+remain refused comparisons. In particular, a disabled profile's zero rate/MTU
+is not an observed infinite rate or a measured MTU. Plots show supported matched
+median differences, with unavailable comparisons visible in tables.
+
+Synthetic unit and local CLI/notebook integration checks cover multi-client flow
+isolation, reporting exclusion, stale lineage, missing decryption, window bounds,
+ServerHello extraction, overlap accounting and impairment axes. Real baseline
+captures exist, but no retained impaired-condition capture was identified during
+A5 inspection; real matched acceptance remains in DTR-A5-EVIDENCE.
+The retained `ready_metrics_2_energy_20260928_074914` run was imported offline on
+2026-09-29, selecting the STM32 address identified by its retained broker log.
+The two direction rows contain 109 outgoing and 199 incoming captured packets,
+with 1,719 and 269,003 captured TCP payload bytes respectively. These are
+retained-flow totals, not handshake byte measurements. The local report is
+`results/analysis/a5_retained_baseline_20260929/verified-summary`, with its explicit selection
+and A2 specification in the parent directory. Docker validation of the full unit
+suite plus A2/A3/A4/A5 offline integration tests passed (1,194 tests); the real baseline notebook also executed successfully.
+No hardware or new end-to-end network success follows from these offline tests.
+
+The optional `network_trial` campaign provides an enabled netem reference and
+four one-factor conditions, with three repetitions each. Its four
+`notebooks/network_trial_<axis>.json` presets declare the actual domain-qualified
+network profile hashes (`network_condition:<id>`) as treatments. Other profile
+domains remain controls. `scripts/prepare_network_selection.py` prepares conservative
+selections from hash-verified broker client identity and PCAP endpoint intersections;
+missing or ambiguous evidence remains unavailable. Operational commands and
+limits are in [the network trial guide](005_remote_flash_workflow.md#network-impairment-trial-and-a5-notebook).
+This extends the A5 workflow without changing impairment execution or firmware.
 
 ### Offline packet-capture analysis (Implementation Request 7)
 

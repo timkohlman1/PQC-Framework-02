@@ -245,7 +245,7 @@ def summarise(dataset, spec, *, metrics=None):
     return frames, spec
 
 
-def export_summary(dataset_path, spec, output, *, resources=False, tls=False):
+def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None):
     """New output directory only; record direct inputs, selections and output hashes."""
     dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
     dataset = load_dataset(dataset_path)
@@ -267,6 +267,11 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False):
         from framework.tls_analysis import summarise_tls
         tls_frames, tls_provenance = summarise_tls(dataset, spec)
         frames.update(tls_frames)
+    network_provenance = None
+    if network is not None:
+        from framework.network_analysis import summarise_network
+        network_frames, network_provenance = summarise_network(dataset, spec, network)
+        frames.update(network_frames)
     output.mkdir(parents=True, exist_ok=False)
     for name, frame in frames.items():
         exported = frame.copy()
@@ -275,6 +280,9 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False):
                                        for v in exported[col]], dtype=object)
         exported.to_csv(output / (name + ".csv"), index=False, na_rep=r"\N")
     plot_summary(frames, spec, output)
+    if network is not None:
+        from framework.network_analysis import plot_network
+        plot_network(frames, output)
     lineage = dict(schema="pqc-timing-summary", version=VERSION, specification=spec,
         estimands={"latency": "success-conditional observation median; repeated samples descriptive only",
                    "completion": "completed / (completed + failed); unknown and explicit exclusions reported separately",
@@ -289,6 +297,8 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False):
                  Path(__file__).with_name("timing_dataset_schema.py"))},
         environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
         outputs={p.name: digest(p) for p in sorted(output.iterdir())})
+    if network_provenance is not None:
+        lineage['network'] = network_provenance
     if tls_provenance is not None:
         lineage["tls"] = tls_provenance
     if resource_provenance is not None:

@@ -1,0 +1,33 @@
+{
+  "conditions": {
+    "reference": {
+      "network_condition": "trial_reference"
+    },
+    "rate": {
+      "network_condition": "validation_rate"
+    }
+  },
+  "baseline": "reference",
+  "filters": {
+    "workload": "ready_metrics_2",
+    "tls_kex": "SecP256r1MLKEM768",
+    "tls_auth": "rsa3072",
+    "auth_mode": "server",
+    "secure_boot": "integrity_sha256"
+  },
+  "treatment": [
+    "network_condition",
+    "controls.network_configured.rate_kbit",
+    "controls.profile_hashes.network_condition:trial_reference",
+    "controls.profile_hashes.network_condition:validation_rate"
+  ],
+  "not_applicable": {},
+  "exclude_runs": {},
+  "independent_runs": false,
+  "seed": 20260929,
+  "resamples": 2000,
+  "percentiles": [
+    90,
+    95
+  ]
+}
