@@ -50,3 +50,12 @@ def test_resource_analysis_routes_and_accounting_limits():
     for phrase in ("--resources", "resource_builds.csv", "1 KiB = 1024 bytes", "simultaneous_system_peak_bytes", "lower bounds", "tests/integration/test_resource_analysis_in.py"):
         assert phrase in section
     assert "#offline-application-resource-comparisons-analysis-request-a3" in (ROOT / "README.md").read_text()
+
+
+def test_tls_analysis_routes_and_evidence_limits():
+    text = (ROOT / ARCHITECTURE).read_text()
+    section = text.split("### Offline TLS attribution and repeated handshakes (Analysis Request A4)", 1)[1].split("\n### ", 1)[0]
+    for phrase in ("--tls", "tls_attribution.csv", "tls_per_run.csv", "not applicable",
+                   "not measured network delay", "DTR-A4-EVIDENCE", "tests/integration/test_tls_analysis_in.py"):
+        assert phrase in section
+    assert "#offline-tls-attribution-and-repeated-handshakes-analysis-request-a4" in (ROOT / "README.md").read_text()

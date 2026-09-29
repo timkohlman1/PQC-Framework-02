@@ -119,8 +119,9 @@ def independence_reason(runs, spec):
     return None
 
 
-def summarise(dataset, spec):
+def summarise(dataset, spec, *, metrics=None):
     """Return export-ready frames. Failed/unknown/filter-excluded runs stay visible."""
+    metrics = METRICS if metrics is None else metrics
     validate_spec(spec, dataset)
     spec = {"filters": {}, "controls": [], "treatment": [], "not_applicable": {},
             "exclude_runs": {}, "percentiles": [90, 95], "seed": 20260928,
@@ -165,7 +166,7 @@ def summarise(dataset, spec):
         if completed + failed < 2:
             inference = inference or "fewer_than_two_known_outcomes"
         lo, hi = (None, None) if inference else wilson(completed, completed+failed, spec["confidence"])
-        for metric in METRICS:
+        for metric in metrics:
             selected = [s for s in samples if (s["condition"], s["capture_class"], s["evidence_class"]) == group and s["metric"] == metric]
             usable = [s for s in selected if not s["exclusion_reason"]]
             contributing = {s["run_key"] for s in usable}
@@ -182,7 +183,7 @@ def summarise(dataset, spec):
                 "contributing_iterations": len({(s["run_key"], s["epoch_index"], s["iteration_id"]) for s in usable if s["iteration_id"] is not None}),
                 "runs_without_usable_metric": len(included)-len(contributing)})
             values = [s["value_us"] for s in usable]
-            stats = {**base, "metric": metric, "unit": "us", "n_runs": len(contributing), "n_observations": len(values)}
+            stats = {**base, "metric": metric, "unit": metrics[metric]["unit"], "n_runs": len(contributing), "n_observations": len(values)}
             q1, median, q3 = (None, None, None) if not values else (float(v) for v in np.quantile(values, [.25, .5, .75], method="linear"))
             stats.update(q1=q1, median=median, q3=q3, iqr=q3-q1 if values else None)
             for p in spec["percentiles"]:
@@ -218,7 +219,7 @@ def summarise(dataset, spec):
                 problems.append("unknown_control:" + key)
             elif len({json.dumps(v, sort_keys=True) for v in values}) > 1:
                 problems.append("conflicting_control:" + key)
-        for metric in METRICS:
+        for metric in metrics:
             rows = [r for r in distributions if r["metric"] == metric]
             a = [r for r in rows if r["condition"] == baseline]
             b = [r for r in rows if r["condition"] == label]
@@ -229,7 +230,7 @@ def summarise(dataset, spec):
                 reason = reason or "no_successful_latency_samples"
             delta = None if reason else b[0]["median"]-a[0]["median"]
             percent = None if reason or a[0]["median"] == 0 else 100*delta/a[0]["median"]
-            differences.append(dict(condition=label, baseline=baseline, metric=metric, unit="us", delta_median=delta,
+            differences.append(dict(condition=label, baseline=baseline, metric=metric, unit=metrics[metric]["unit"], delta_median=delta,
                 percent_difference=percent, reason=reason, percent_reason=reason or ("zero_baseline" if a[0]["median"] == 0 else None),
                 baseline_runs=a[0]["n_runs"] if len(a)==1 else 0, treatment_runs=b[0]["n_runs"] if len(b)==1 else 0))
     # Object dtype prevents nullable integer identities/timestamps being coerced to floats.
@@ -244,7 +245,7 @@ def summarise(dataset, spec):
     return frames, spec
 
 
-def export_summary(dataset_path, spec, output, *, resources=False):
+def export_summary(dataset_path, spec, output, *, resources=False, tls=False):
     """New output directory only; record direct inputs, selections and output hashes."""
     dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
     dataset = load_dataset(dataset_path)
@@ -261,6 +262,11 @@ def export_summary(dataset_path, spec, output, *, resources=False):
             parent = Path(source["path"]).resolve().parent
             if output == parent or parent in output.parents or output in parent.parents:
                 raise ValueError("summary output overlaps resource evidence")
+    tls_provenance = None
+    if tls:
+        from framework.tls_analysis import summarise_tls
+        tls_frames, tls_provenance = summarise_tls(dataset, spec)
+        frames.update(tls_frames)
     output.mkdir(parents=True, exist_ok=False)
     for name, frame in frames.items():
         exported = frame.copy()
@@ -283,6 +289,8 @@ def export_summary(dataset_path, spec, output, *, resources=False):
                  Path(__file__).with_name("timing_dataset_schema.py"))},
         environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
         outputs={p.name: digest(p) for p in sorted(output.iterdir())})
+    if tls_provenance is not None:
+        lineage["tls"] = tls_provenance
     if resource_provenance is not None:
         lineage["resources"] = resource_provenance
     (output / "summary.json").write_text(json.dumps(lineage, indent=2, sort_keys=True, allow_nan=False) + "\n")

@@ -178,6 +178,7 @@ scripts/experiment.py                       Per-run experiment CLI/authority
 scripts/export_timing_dataset.py            Offline run inventory/timing CSV export and verification
 scripts/framework/timing_dataset.py         Selected-input integrity, inventory and dataset lineage
 scripts/framework/timing_metrics.py         Current deferred-record decoding and A1 scalar formulas
+scripts/framework/tls_analysis.py           Offline TLS attribution and per-run handshake summaries
 scripts/framework/timing_dataset_schema.py  Versioned columns, units, nulls and metric definitions
 scripts/framework/timing_dataset_loader.py  Typed loading and notebook-ready timing view
 scripts/run_campaign.py                     First-class campaign execution CLI
@@ -636,6 +637,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-OQS-MTLS-CHAIN | Container-local CA chain and dedicated health-topic ACL | Gateway deployment and blocked campaign retry | Local Docker verifies broker behavior but not gateway deployment or STM32 mutual TLS | Gateway and STM32/ST67 laboratory | `tests/integration/test_oqs_mtls_permissions_in.py`; `scripts/check_oqs_mtls_broker.py` local gate; retained campaign manifests | `python3 scripts/check_oqs_mtls_broker.py`; `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | local Docker passed 2026-09-29 for RSA-3072 and ML-DSA-65: healthy startup, staged-file access, authenticated publish and rejection without client certificate; live campaign retry pending |
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
+| DTR-A4-EVIDENCE | A4 TLS attribution and equal-run repeated-handshake inference | Real retained repeated-handshake and matched-profile acceptance | Existing TLS matrix parses, but missing source/QoS controls prevent matched deltas; unequal-repeat inference is verified with synthetic captures only | Explicitly selected retained repeated-workload captures and comparable profile controls; offline analysis only | `tests/integration/test_tls_analysis_in.py` (extend with suitable retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_TLS_SUMMARY --tls` | partially verified 2026-09-29: retained attribution import passed; real repeated/matched acceptance deferred |
 | DTR-A3-MATCHED | A3 application resource comparisons | Real-evidence matched profile delta acceptance | Retained TLS matrix has unknown source revision and QoS controls; some pairs also differ in evidence class. Absolute resource import succeeds but controls cannot be silently waived | Retained runs with known comparable controls and explicit analysis specification; no new instrumentation | `tests/integration/test_resource_analysis_in.py` (extend retained-evidence coverage when suitable records exist) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_RESOURCE_SUMMARY --resources` | partially verified 2026-09-29: 12 unique retained ELF builds imported; synthetic matched deltas and CLI/notebook equivalence pass; real matched deltas deferred for provenance gaps |
 | DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | Earlier upload-session README-length failure required a fresh regression | Complete Linux development checkout and rebuilt Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_timing_dataset_in.py -m integration` | closed during A2: 2026-09-28 Docker full unit regression passed, including A1 and documentation tests; A1 local integration rechecked |
 | DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
@@ -1579,6 +1581,123 @@ absolute resource tables still retain run/build/source references. This is an
 offline parser/export check against retained evidence, not a new hardware run.
 The missing real matched-delta acceptance is tracked in DTR-A3-MATCHED.
 
+
+### Offline TLS attribution and repeated handshakes (Analysis Request A4)
+
+A4 extends the existing A1 typed loader and A2 export with `--tls`; A1 tables,
+metric definitions and default A2 behaviour remain backward compatible.
+`scripts/framework/tls_analysis.py` rechecks the selected capture inputs, uses
+recorded resolved-case profiles and decodes current deferred STM32 records. It
+never edits/reseals manifests, contacts gateways, runs experiments or reads
+private keys/key logs. Unknown schemas, identity conflicts and changed consumed
+inputs cannot silently become compatible evidence. Optional energy validity
+remains independent of TLS attribution.
+
+```bash
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+  --dataset results/analysis/SELECTED_DATASET \
+  --spec notebooks/SELECTED_SPEC.json \
+  --output results/analysis/NEW_TLS_SUMMARY --tls
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+  --dataset results/analysis/SELECTED_DATASET \
+  --spec notebooks/SELECTED_SPEC.json \
+  --output results/analysis/NEW_TLS_NOTEBOOK --tls --execute-notebook
+./scripts/dev.sh notebook
+```
+
+The clean-kernel command selects `notebooks/tls_attribution.ipynb` by default.
+For interactive use, open that notebook and edit its first configuration cell
+before Run All. Output must be a new directory separate from raw runs and the
+A1 dataset. Exit 0 confirms export; exit 2 signals invalid inputs/specification or
+execution failure. A successful export can contain unavailable measurements and
+refused comparisons: inspect the findings, coverage and exclusion columns.
+
+**Tables and lineage.** `tls_attribution.csv` retains run, transport epoch,
+iteration, handshake, sequence/parent/depth, semantic operation, hierarchy kind,
+invocation-versus-aggregate representation, count, integer timestamps, elapsed
+microseconds, aggregate minimum/maximum, result code, clock provenance, source
+record references and validity/reason. Recorded scalar fields are retained for
+inspection. `tls_coverage.csv` distinguishes observed, required-but-missing,
+not-applicable and unestablished-stage evidence; `tls_issues.csv` records findings.
+`tls_iterations.csv` preserves explicit repeat status, TCP/TLS outcome and failure
+stage. `tls_handshakes.csv` retains every observed attempt, including unknown or
+unavailable outcomes. A run-level availability row is not an observed handshake.
+No configured repetition count manufactures missing iterations.
+
+`tls_per_run.csv` reports observed/successful/failed/unknown iteration and handshake
+counts separately (a TCP failure alone is not an observed handshake), valid timing counts and the within-run median of valid successful handshakes. Repeat workloads
+without an explicit iteration outcome remain unknown. Failed framework runs and
+explicit exclusions remain visible in the shared inventory. Their measurements
+are not included in success-conditional comparison distributions. Raw capture
+acceptance, operation validity and comparison eligibility remain distinct.
+
+`tls_run_distributions.csv`, `tls_run_differences.csv`,
+`tls_run_completeness.csv` and `tls_run_observations.csv` reuse A2 selection,
+control matching, negative/positive evidence strata and run independence rules.
+The continuous estimand is the **across-run median of within-run successful-handshake
+medians**. Each contributing run has equal weight regardless of its handshake
+count. Bootstrap inference still requires explicit independence, at least two
+runs, and no linked/retried attempts. A2's pooled handshake percentiles remain
+descriptive, not independent-run inference. The original A2 completeness table
+and A4 per-run counts report runs and handshakes separately.
+
+`tls_operation_distributions.csv`, `tls_operation_differences.csv` and
+`tls_operation_observations.csv` use one within-run median of per-handshake totals
+per operation and representation, with explicit `us` or `count` units. Aggregates
+use their recorded count/total. Invocation totals combine only non-overlapping
+spans of the **same** semantic operation within one handshake. Overlapping spans
+produce a finding and are excluded. Aggregate and invocation representations are
+never added together; aggregate-only records never invent sequence/parent IDs.
+No absent operation is filled with zero. A recorded valid zero remains zero.
+`tls_kex_comparisons.csv`, `tls_certificate_comparisons.csv` and
+`tls_authentication_comparisons.csv` collect the corresponding operation and
+handshake deltas. A pair must vary exactly one TLS dimension, with each profile
+fixed inside its named condition. Mixed-dimensional comparisons remain explicitly
+refused in the complete differences tables.
+
+Select named KEX, certificate-family or server-versus-mutual-auth conditions using
+the A2 specification. Declare only the selected dimension and its corresponding
+recorded control paths/profile hashes as treatments; hold all other applicable
+controls fixed. Unknown controls refuse deltas, as in A2. Client signing in
+server-only mode is **not applicable**, not measured zero. Required-event absence
+is asserted after explicit handshake success. On failed/unknown handshakes,
+unobserved stages remain unestablished; recorded protocol spans still identify
+what was reached. Unexpected profile-specific operations are explicit findings.
+
+**Timing boundaries.** Current instrumentation records monotonic microseconds
+from the application timebase, independently of DWT cycles. A4 consumes the
+recorded microseconds and availability marker, retains clock evidence and never
+converts cycles using an assumed CPU frequency. These are inclusive elapsed
+measurements under RTOS scheduling, not isolated primitive benchmark samples.
+Nested phases/security functions/crypto operations must not be summed into a
+"Total Crypto" cost. Handshake minus crypto is not measured network delay.
+Unmatched/incomplete spans, invalid parents, duration conflicts, overflow,
+truncation, dropped records and malformed sequence evidence remain findings.
+Ordered evidence is unavailable when its hierarchy is incomplete; independently
+recorded aggregates may remain usable when ordered slots overflow.
+
+The `tls` section of `summary.json` identifies parser/schema version 1.0.0,
+metric meanings, direct-input and parser hashes. The shared export retains A1
+metadata, the effective analysis specification, environment, null encoding,
+column contracts and output hashes. Integer source values stay integers through
+the shared object-typed frames; statistical medians/quantiles can be fractional.
+No raw capture tree or secret-bearing file is exported.
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_tls_analysis.py
+./scripts/dev.sh pytest tests/integration/test_tls_analysis_in.py -m integration
+./scripts/dev.sh pytest tests/unit
+```
+
+A4 synthetic fixtures test nesting, aggregate-only evidence, missing and unexpected
+profile operations, unmatched spans/overflow, input tampering, unknown outcomes,
+unequal repetition counts, control refusal and CLI/clean-kernel equivalence.
+On 2026-09-29 an offline smoke check of the existing
+`tls_matrix_energy_20260928_final_01` dataset imported 5,590 valid attribution
+records; one selected run lacked usable inputs. All matched operation deltas were
+refused because required controls were unavailable. This verifies retained-format
+parsing, not new hardware success or causal TLS comparisons. Real repeated-workload
+acceptance and matched comparisons remain in DTR-A4-EVIDENCE.
 
 ### Offline packet-capture analysis (Implementation Request 7)
 
