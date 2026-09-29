@@ -638,6 +638,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
 | DTR-A5-TRIAL | Network impairment pilot campaign and notebook presets | Gateway/STM32 execution of 15 planned attempts | Current request creates a campaign for the operator to run; offline tests do not establish impairment or runtime success | Available gateway, STM32/ST67, experiment/reporting brokers and configured credentials | `tests/integration/test_network_trial_in.py` (offline); retained campaign runtime evidence | `./scripts/dev.sh campaign-gateway network_trial` then the export/notebook commands in `docs/005_remote_flash_workflow.md` | pending operator trial; offline resolver and report pipeline tested separately |
+| DTR-A7-EVIDENCE | A7 normal secure-boot reports | Retained matched profile differences, boot RAM and boot energy acceptance | Retained evidence may lack matched source/image controls, bootloader ELF retention and boot-aligned energy intervals; synthetic tests prove parser behavior only | Comparable retained records with known provenance and matching boot intervals; no new flashing or acquisition in A7 | `tests/integration/test_secure_boot_analysis_in.py` (extend retained acceptance) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/boot-selection.json --secure-boot --output results/analysis/NEW_BOOT_SUMMARY` | partially verified 2026-09-29: 120 retained boot reports and signed-image layouts imported; matched differences, bootloader static/RAM and boot energy remain unavailable |
 | DTR-A6-EVIDENCE | A6 energy totals and bounded-phase reports | Real whole-window and matched-configuration acceptance; physical acquisition qualification | Retained trace supports internal phases but ends before closing edge; electrical boundary absent from schema and parser math cannot establish instrument accuracy | Retained bracketed intervals, lab electrical-boundary references, comparable controls and independently qualified acquisition; no new experiment authorized by A6 | `tests/integration/test_energy_analysis_in.py` (extend retained acceptance); existing `tests/hardware/test_energy_capture_hw.py` for separately authorized instrument work | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/timing-comparison.json --energy-spec results/analysis/energy-selection.json --output results/analysis/NEW_ENERGY_SUMMARY` | partially verified 2026-09-29: real 6,677-sample phase trace imported; whole-window/matched/physical qualification deferred |
 | DTR-A5-EVIDENCE | A5 retained packet and impairment reports | Real baseline/impaired matched acceptance | Baseline PCAPs are retained, but no impaired-condition capture with attributable client identity was identified; synthetic analysis cannot establish RQ3 results | Explicit retained baseline/impaired captures, device-flow association and comparable controls; offline only | `tests/integration/test_network_analysis_in.py` (extend with retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_SUMMARY` | partially verified 2026-09-29: real baseline import and synthetic checks passed; real impaired/matched evidence unavailable |
 | DTR-A4-EVIDENCE | A4 TLS attribution and equal-run repeated-handshake inference | Real retained repeated-handshake and matched-profile acceptance | Existing TLS matrix parses, but missing source/QoS controls prevent matched deltas; unequal-repeat inference is verified with synthetic captures only | Explicitly selected retained repeated-workload captures and comparable profile controls; offline analysis only | `tests/integration/test_tls_analysis_in.py` (extend with suitable retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_TLS_SUMMARY --tls` | partially verified 2026-09-29: retained attribution import passed; real repeated/matched acceptance deferred |
@@ -2187,3 +2188,112 @@ diagnostic-enabled valid/rejected images and restoration while the existing diag
 negative test remains the Request-14 control. Representative dual-bank decisions are
 emitted by the hardware-swap path; success is claimed only after the corresponding
 capability-gated hardware/OTA evidence is supplied.
+
+## Offline normal secure-boot analysis (analysis request A7)
+
+`--secure-boot` extends the existing A1/A2 offline report command and includes A3
+application resource accounting. It reads retained inputs only; it does not build,
+sign, flash, run OTA, or read signing material. The standalone notebook is
+`notebooks/secure_boot_comparison.ipynb`. Existing A1–A6 options remain compatible.
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py --results-root results/campaigns/secure_boot_20260928_051009/runs --output results/analysis/NEW_BOOT_DATASET
+./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/NEW_BOOT_DATASET --spec results/analysis/boot-selection.json --secure-boot --output results/analysis/NEW_BOOT_SUMMARY
+# Add --execute-notebook to run the notebook in a clean kernel.
+```
+
+Use an explicit A2 specification with disjoint conditions selected by `secure_boot`,
+an explicit baseline, and treatment paths `secure_boot` and
+`controls.choices.secure_boot`. Other changing profile-hash controls must be
+explicitly declared as treatments when scientifically appropriate. Unknown
+source, workload, TLS, capture, and image controls suppress matched differences.
+Recorded image payload lengths and bootloader HCLK must agree; equal lengths alone do not establish
+identical application content. Inspect the retained image identities and build
+references alongside application/source/configuration controls. Integrity-only is
+an integrity reference, never equivalent signature authentication.
+
+Outputs are `secure_boot_observations.csv`, `secure_boot_outcomes.csv`,
+`secure_boot_outcome_counts.csv`, `secure_boot_resources.csv`,
+`secure_boot_distributions.csv`, `secure_boot_differences.csv`, and timing/resource
+PNG plots. `summary.json` records parser identity, consumed file hashes, boundaries,
+and policy. A1 source verification and manifest-registered artifact hashes are
+checked before use; mismatched artifacts become unavailable. Inputs are rechecked
+before export. No arbitrary credential paths or raw payloads are exported.
+
+The current supported mailbox is v8/schema 1. Integrity-call cycles,
+authenticity-call cycles, selected-image verification cycles, and
+`hal_init_entry_to_hal_prepare_boot` elapsed time remain distinct. Conversion
+uses each recorded bootloader HCLK, never the application frequency. The total
+requires a consistent 1 MHz, 16-bit handoff bridge and explicit origin/status.
+Application-start timing is unavailable in the current records. Inclusive
+boundaries must not be summed. Duplicate records, invalid flags/clocks, unsupported
+mailboxes, contradictory configured/observed profiles or mailbox clocks, and invalid reporting epochs cannot produce usable timing. Structural
+mailbox validity does not prove freshness against stale retained SRAM.
+
+Normal handoff requires successful recorded verification, selected image identity,
+and valid handoff timing in the application's deferred report. The content digest
+is wolfBoot's verified-image-content identity, not a packaged-file hash. Both are
+retained separately. An expected negative-validation result is a validation pass,
+not normal boot success; missing MQTT workload evidence has the negative capture
+class interpretation. Unexpected handoff in a negative case is visible. Timing
+summaries exclude negative, stack-profiled, UART-diagnostic and ambiguous multi-epoch
+runs. Normal boot observations do not require subsequent MQTT workload success.
+
+Static bootloader metrics reuse the maintained ELF section decoder: allocated
+file-backed sections for Flash and `.data + .bss` for static RAM, explicitly
+excluding stack and other reservations. ELF file size is not Flash usage. A3
+application regional/lifetime accounting remains separate. Runtime boot stack
+watermarks require the instrumented selected-image verification boundary and
+are never added to application RAM as concurrent demand. Static samples are
+deduplicated by artifact SHA-256; runtime samples are per run. Missing retained
+bootloader images remain unavailable rather than resolved from mutable build paths.
+
+Image layout uses the retained WOLF firmware-length prefix and TLV header. Header
+capacity, metadata bytes actually occupied, signature TLV bytes, and firmware
+payload are separate; signature bytes are a subset of header use. No thesis header
+or bank constants are copied. No bank capacity or public-key size is inferred.
+
+A6 remains independently usable with `--energy`/`--energy-spec`. Its currently
+supported intervals have application-origin boundaries, not a matching boot
+interval; A7 boot energy is unavailable and cannot be inferred from those phases.
+Missing energy never blocks timing, outcome, or resource reports. Distributions
+are descriptive medians across unique builds/images or individual boot runs, not
+new confidence intervals or a claim of independent experiments.
+
+Offline verification:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_secure_boot_analysis.py
+./scripts/dev.sh pytest tests/integration/test_secure_boot_analysis_in.py -m integration
+./scripts/dev.sh pytest tests/unit
+```
+
+Fixtures cover known cycle conversions, separate boundaries, invalid mailbox and
+bridge fields, successful handoff, expected rejection, header capacity/use,
+artifact identity, and control mismatches. CLI/clean-kernel equivalence tests
+exercise the report boundary. Real comparison limitations remain in DTR-A7-EVIDENCE.
+
+Retained smoke comparison on 2026-09-29: the explicit 120-run
+`secure_boot_20260928_051009/runs` inventory produced 120 application-reported normal
+handoffs across 12 profiles (10 per profile). The clean-kernel A7 notebook exported
+600 boundary rows: 470 valid, 10 signature-not-applicable, and 120 unavailable
+application-start observations. Selected descriptive medians follow; these are
+retained observations, **not matched causal differences**:
+
+| Profile | Integrity call (ms) | Authenticity call (ms) | HAL entry to prepare-boot (ms) | Actual signature TLV bytes |
+|---|---:|---:|---:|---:|
+| integrity_sha256 | 301.062525 | not applicable | 301.196 | not applicable |
+| ecdsa_p256 | 301.0884875 | 40.7158 | 341.95 | 64 |
+| mldsa44 | 301.165925 | 50.0528375 | 351.364 | 2420 |
+| mldsa65 | 301.165925 | 84.039575 | 385.351 | 3309 |
+| mldsa87 | 301.165925 | 144.212 | 445.523 | 4627 |
+
+All selected payload lengths were 264,968 bytes. Missing source revision, MQTT
+controls and per-profile hash controls suppress matched deltas; controls were not
+waived to manufacture results. Retained bootloader ELF roles were unavailable, so
+bootloader static sizes remain unavailable. Normal timing runs contain no boot
+stack watermark. No matching boot-energy interval is supported by A6. The report
+is under `results/analysis/a7-secure-boot-20260929-verified`, with its explicit A2
+specification and frozen A1 dataset in the same `results/analysis` parent. Raw
+captures remain unchanged. This offline inspection does not claim new hardware,
+flashing, energy-acquisition or end-to-end success.

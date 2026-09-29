@@ -245,7 +245,7 @@ def summarise(dataset, spec, *, metrics=None):
     return frames, spec
 
 
-def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None, energy=None):
+def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None, energy=None, secure_boot=False):
     """New output directory only; record direct inputs, selections and output hashes."""
     dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
     dataset = load_dataset(dataset_path)
@@ -254,7 +254,7 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
         raise ValueError("summary output must be separate from dataset and raw runs")
     frames, spec = summarise(dataset, spec)
     resource_provenance = None
-    if resources:
+    if resources or secure_boot:
         from framework.resource_analysis import summarise_resources
         resource_frames, resource_provenance = summarise_resources(dataset, spec)
         frames.update(resource_frames)
@@ -277,6 +277,15 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
         from framework.energy_analysis import summarise_energy
         energy_frames, energy_provenance = summarise_energy(dataset, spec, energy)
         frames.update(energy_frames)
+    boot_provenance = None
+    if secure_boot:
+        from framework.secure_boot_analysis import summarise_secure_boot
+        boot_frames, boot_provenance = summarise_secure_boot(dataset, spec)
+        frames.update(boot_frames)
+        for source in boot_provenance['inputs']:
+            parent = Path(source['path']).resolve().parent
+            if output == parent or parent in output.parents or output in parent.parents:
+                raise ValueError('summary output overlaps secure-boot evidence')
     output.mkdir(parents=True, exist_ok=False)
     for name, frame in frames.items():
         exported = frame.copy()
@@ -291,6 +300,9 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
     if energy is not None:
         from framework.energy_analysis import plot_energy
         plot_energy(frames, output)
+    if secure_boot:
+        from framework.secure_boot_analysis import plot_secure_boot
+        plot_secure_boot(frames, output)
     lineage = dict(schema="pqc-timing-summary", version=VERSION, specification=spec,
         estimands={"latency": "success-conditional observation median; repeated samples descriptive only",
                    "completion": "completed / (completed + failed); unknown and explicit exclusions reported separately",
@@ -305,6 +317,8 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
                  Path(__file__).with_name("timing_dataset_schema.py"))},
         environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
         outputs={p.name: digest(p) for p in sorted(output.iterdir())})
+    if boot_provenance is not None:
+        lineage['secure_boot'] = boot_provenance
     if energy_provenance is not None:
         lineage["energy"] = energy_provenance
     if network_provenance is not None:
