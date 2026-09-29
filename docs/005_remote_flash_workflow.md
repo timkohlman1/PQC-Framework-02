@@ -441,6 +441,91 @@ is not guaranteed: provisioning, CLI and manifest contracts must still match.
 Unit tests and subprocess tests with disposable command shims validate orchestration;
 those simulated results do not establish Docker purge/rebuild or hardware success.
 
+## Network impairment trial and A5 notebook
+
+`configs/campaigns/network_trial.yaml` runs five fixed-TLS conditions with three
+hardware-reset repetitions each: **15 planned runtime attempts**. It uses
+Ready Metrics 2 (200 KiB, 400-byte chunks), `SecP256r1MLKEM768`, RSA-3072 server
+authentication, integrity-only secure boot and single-bank firmware. Energy is
+not selected. The existing reporting path remains impairment-exempt.
+
+| Profile | Rate (kbit/s) | Configured RTT (ms) | Loss (% independently per direction) | MTU (bytes) |
+|---|---:|---:|---:|---:|
+| `trial_reference` | 100000 | 0 | 0 | 1500 |
+| `validation_rate` | 256 | 0 | 0 | 1500 |
+| `validation_rtt` | 100000 | 100 | 0 | 1500 |
+| `validation_loss` | 100000 | 0 | 1 | 1500 |
+| `validation_mtu` | 100000 | 0 | 0 | 1200 |
+
+All five profiles enable netem; the reference is an enabled, configured reference,
+not a claim of 100 Mbit/s achieved throughput or zero physical RTT. Each treatment
+changes only one property. Existing validation profiles are reused unchanged.
+The executor retains each condition across repetitions and cleans up through its
+normal workflow. Runs are grouped, not randomised; three repetitions are a pilot,
+not evidence of statistical independence. No gateway or hardware run is implied
+by offline resolution/tests.
+
+Resolve first; expect five cases, one firmware identity and three repetitions:
+
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py network_trial
+```
+
+When the gateway/STM32 and brokers are available, run the trial:
+
+```bash
+./scripts/dev.sh campaign-gateway network_trial
+```
+
+This performs the framework-owned preparation, flashing and runtime measurements.
+Let an occupied gateway lock wait. Failed runs remain evidence; do not treat
+15 planned attempts as 15 successful captures. The configured rate limit may
+extend runtime, and loss/MTU conditions may fail. Resume an interrupted campaign
+with its exact manifest via `campaign-gateway --resume`, as described below for
+the TLS matrix. This trial has not yet been hardware validated; see DTR-A5-TRIAL.
+
+Use the exact resulting campaign directory (replace `<timestamp>`), then export
+and verify an A1 dataset. Use fresh output directories on subsequent trials:
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+  --results-root "results/campaigns/network_trial_<timestamp>" \
+  --output results/analysis/network_trial_dataset_01
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+  --check results/analysis/network_trial_dataset_01 --verify-source-inputs
+./scripts/dev.sh python scripts/prepare_network_selection.py \
+  --dataset results/analysis/network_trial_dataset_01 \
+  --output results/analysis/network_trial_selection_01
+for axis in rate rtt loss mtu; do
+  ./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+    --dataset results/analysis/network_trial_dataset_01 \
+    --spec "notebooks/network_trial_${axis}.json" \
+    --network-spec results/analysis/network_trial_selection_01/network-selection.json \
+    --output "results/analysis/network_trial_${axis}_01" --execute-notebook
+done
+```
+
+The helper verifies retained broker logs, PCAPs and resolved snapshots. It matches
+the exact configured STM32 MQTT client ID to a broker-observed address/port and
+intersects that with the retained workload-broker flow. It refuses ambiguous
+addresses or extra client ports without identity evidence. It never reads key-log
+contents or exports payloads. Review `selection-status.json`: missing broker
+identity (including failed TLS handshakes), missing captures, and NAT mismatches
+remain unselected. You may supply an explicit A5 selection using other retained
+identity evidence; do not guess by broker port alone. A broker match is not clock
+synchronisation or an independent-run declaration.
+
+Each output contains `executed.ipynb`, condition/transport plots, packet diagnostics,
+completeness and comparison tables. The presets compare one axis against the
+reference and leave `independent_runs: false`, exclusions empty and unknown-control
+waivers empty. A2 still refuses matched deltas when source revision, QoS or other
+required controls are unknown; absolute flow/timing tables and completion coverage
+remain useful for evaluating the notebook. Inspect refusal reasons instead of
+waiving unknown controls. If a whole condition was blocked before capture, its
+profile may be absent from the dataset: retain that campaign failure and create an
+explicit reduced analysis selection rather than inventing runs. No usable raw
+runs means there is no analysis dataset to export.
+
 ## TLS matrix with energy and notebook analysis
 
 `configs/campaigns/tls_matrix_energy.yaml` is a 12-condition TLS 1.3 exercise:
