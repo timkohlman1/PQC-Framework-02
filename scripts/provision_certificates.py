@@ -153,7 +153,7 @@ def _write_extensions(path: Path, lines: list[str]) -> None:
 
 
 def _generate_key(profile: Profile, directory: Path) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     private_key = directory / "private-key.pem"
     public_key = directory / "public-key.pem"
     _openssl(["genpkey", *[str(v) for v in profile.key["genpkey_args"]], "-out", str(private_key)])
@@ -326,11 +326,13 @@ def _check_required_algorithms(profiles: list[Profile]) -> None:
 
 
 def provision_local(args: argparse.Namespace) -> None:
+    if sys.platform == "linux" and (os.getuid() == 0 or os.getgid() == 0):
+        raise SystemExit("Refusing root certificate generation; run the host Docker launcher as your normal user")
     config_dir = Path(args.config_dir).resolve()
     output = Path(args.output).resolve()
     profiles = load_profiles(config_dir, args.profile)
     _check_required_algorithms(profiles)
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(mode=0o700, parents=True, exist_ok=True)
     for profile in profiles:
         destination = output / profile.profile_id
         if destination.exists():
@@ -338,7 +340,7 @@ def provision_local(args: argparse.Namespace) -> None:
                 raise SystemExit(f"certificate profile already exists: {destination}; pass --force to replace selected profile(s)")
             shutil.rmtree(destination)
         staging = output / f".{profile.profile_id}-staging-{secrets.token_hex(6)}"
-        staging.mkdir()
+        staging.mkdir(mode=0o700)
         try:
             with tempfile.TemporaryDirectory(prefix=f"pqc-x509-{profile.profile_id}-") as temp_name:
                 temp_dir = Path(temp_name)

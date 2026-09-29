@@ -92,3 +92,15 @@ def test_ci_provisions_certificates_from_host_into_pinned_runtime():
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "run: python scripts/provision_certificates.py" in workflow
     assert "./scripts/dev.sh python scripts/provision_certificates.py" not in workflow
+
+
+
+def test_local_provisioning_refuses_root_before_generating_or_replacing(monkeypatch, tmp_path):
+    module = _load_module()
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(module.os, "getuid", lambda: 0)
+    monkeypatch.setattr(module, "load_profiles", lambda *args: pytest.fail("must refuse before reading profiles"))
+    args = module.build_parser().parse_args(["--output", str(tmp_path / "certs"), "--force", "--local-openssl"])
+    with pytest.raises(SystemExit, match="Refusing root certificate generation"):
+        module.provision_local(args)
+    assert not (tmp_path / "certs").exists()

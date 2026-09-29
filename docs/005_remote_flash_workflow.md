@@ -440,3 +440,162 @@ The script uses existing CLI entry points, but compatibility with earlier commit
 is not guaranteed: provisioning, CLI and manifest contracts must still match.
 Unit tests and subprocess tests with disposable command shims validate orchestration;
 those simulated results do not establish Docker purge/rebuild or hardware success.
+
+## TLS matrix with energy and notebook analysis
+
+`configs/campaigns/tls_matrix_energy.yaml` is a 12-condition TLS 1.3 exercise:
+
+| Dimension | Values |
+|---|---|
+| Key exchange | `secp256r1`, `SecP256r1MLKEM768`, `ML_KEM_768` |
+| Certificate authentication | `rsa3072`, `mldsa65` |
+| Authentication mode | `server`, `mutual` |
+
+Each condition requests ten framework runs with a hardware reset between runs:
+120 planned runtime attempts, plus framework-owned preparation. The existing
+executor groups by firmware and runs repetitions consecutively; this is not a
+randomised/block-balanced design and reset separation alone does not prove
+statistical independence. Account for temporal drift before inferential use.
+
+All cases use `ready_metrics_2`, the profile's 200 KiB transfer with 400-byte
+chunks, baseline network conditions, `integrity_sha256` secure boot, single-bank
+firmware, minimal UART and disabled boot stack/UART diagnostics. These fixed
+controls allow all eight A1 timing metrics to be collected when the required
+boundaries and evidence are valid. No successful values are promised by a
+configuration alone. The selection spans KEX and authentication families; a
+classical KEX with ML-DSA certificates is not an all-classical TLS configuration.
+
+The persistent `esp32_ina228` instrument is selected in every case. Energy stream
+capture is required by the resolved runtime contract; the instrument must already
+be powered, provisioned and connected as documented in the instrument guide.
+This campaign does not reflash or command the ESP32. Every run keeps its own raw
+capture and integrity record; A2 does not yet derive energy in joules (A6), TLS
+primitive attribution (A4), or boot-verification summaries (A7).
+
+Resolve and inspect the matrix without building firmware or accessing the gateway:
+
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py tls_matrix_energy
+```
+
+Expected: `.pqc-generated-state/campaigns/tls_matrix_energy/` contains
+`campaign-resolved.yaml` with `case_count: 12`, and twelve case YAML files, each
+with `repetitions: 10`, `reset_between_runs: hardware_reset`, and the energy
+instrument selected. The configuration has offline test coverage; first full
+hardware validation is tracked by DTR-TLS-MATRIX-ENERGY.
+
+When ready to run the hardware experiment:
+
+```bash
+./scripts/dev.sh campaign-gateway tls_matrix_energy
+```
+
+This command performs preparation/build/signing/flash and the requested runtime
+repetitions through the framework. Failed runtime repetitions are recorded and
+execution continues with the remaining repetitions and conditions. After all
+attempts, `completed_with_failures` and exit code 1 distinguish a finished matrix
+with failures from all-success (`completed`, exit code 0). Preparation and broker
+setup failures mark the affected firmware group's remaining repetitions `blocked`
+(no runtime measurement), clean up, and continue to the next firmware group.
+The summary separates completed, failed and blocked repetitions. Condition
+verification and cleanup errors still stop execution; 120 is the planned count, not proof of 120
+completed captures. The two selected certificate profiles and compatible brokers
+are handled by the maintained preparation/orchestration path. Existing Wi-Fi,
+gateway and instrument prerequisites apply. Do not run a second campaign against
+the same laboratory resources. Let an occupied gateway lock wait; Ctrl-C cancels.
+Use the exact resulting campaign directory in subsequent commands. Resume an
+interrupted campaign using its recorded manifest, without changing the source.
+Resume skips validated successes and retries failed or missing repetitions; prior
+run evidence and retry logs remain available. Before any pending repetitions in
+an existing firmware group, resume runs normal preparation/build/sign/flash again,
+restoring both wolfBoot and the signed application. A preparation or flash failure
+blocks that group's measurements; after successful cleanup the next group is tried. Fully validated completed groups perform no
+hardware work. This restores firmware rather than reading back its identity;
+preparation may rebuild/re-sign, and changed firmware hashes invalidate old
+successes in that group so they are measured again:
+
+
+```bash
+./scripts/dev.sh campaign-gateway --resume "results/campaigns/tls_matrix_energy_<timestamp>/campaign-manifest.json"
+```
+
+Export the selected recorded campaign (replace `<timestamp>` with its actual
+identifier; do not select a scientific baseline by directory name):
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+    --results-root "results/campaigns/tls_matrix_energy_<timestamp>" \
+    --output results/analysis/tls_matrix_energy_dataset_01
+./scripts/dev.sh python scripts/export_timing_dataset.py \
+    --check results/analysis/tls_matrix_energy_dataset_01 --verify-source-inputs
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+    --dataset results/analysis/tls_matrix_energy_dataset_01 \
+    --spec notebooks/tls_matrix_energy.example.json \
+    --output results/analysis/tls_matrix_energy_summary_01 --execute-notebook \
+    --notebook notebooks/tls_matrix_energy.ipynb
+```
+
+The companion analysis preset names each of the twelve combinations explicitly,
+using `secp256r1__rsa3072__server` as the reference. It retains failures, makes no
+exclusions or unknown-control waivers, and leaves `independent_runs: false`.
+The declared treatment includes only the selected TLS KEX, certificate and
+authentication-mode properties and their profile identities. Absolute per-condition
+distributions, percentiles and completeness are useful immediately. Differences
+between combinations changing multiple factors are combined-configuration deltas,
+not isolated KEX/authentication effects.
+
+A2 deliberately requires the same recorded evidence class for matched differences;
+it therefore refuses cross-classical/hybrid/pure-PQC matches. Unknown controls
+(such as missing source revision or an unrecorded MQTT setting) also refuse
+matching. This campaign does not repair old provenance or change the matching
+rules. Inspect `differences.csv` reasons instead of relabelling classes, inferring
+missing controls or setting `not_applicable` merely to obtain a number. A future
+justified comparison policy or provenance correction may be needed for those
+matches. This does not block absolute timing summaries or energy capture.
+
+For interactive work, launch `./scripts/dev.sh notebook` and open
+`notebooks/tls_matrix_energy.ipynb`. It has its own configuration and preserves any
+existing secure-boot notebook customisation. In its configuration cell use
+`ROOT = Path("/workspace")` inside the Docker server, and set:
+
+```python
+DATASET = ROOT / "results/analysis/tls_matrix_energy_dataset_01"
+SPEC_FILE = ROOT / "notebooks/tls_matrix_energy.example.json"
+OUTPUT = ROOT / "results/analysis/tls_matrix_energy_interactive_01"
+SPEC = json.loads(SPEC_FILE.read_text())
+```
+
+For PDF export, save the executed notebook, then use JupyterLab's File → Save
+and Export Notebook As → PDF. The development image includes snapshot-pinned
+Pandoc and TeX Live/XeLaTeX dependencies; no Jupyter plugin is needed. After an
+image update, save your notebook, stop the existing server with Ctrl-C, rebuild
+with `./scripts/dev.sh build-image`, and start `./scripts/dev.sh notebook` again.
+Restarting only the kernel keeps the old container and will not load new tools.
+A terminal export of saved outputs (without re-executing cells) is also available:
+
+```bash
+./scripts/dev.sh run python -m jupyter nbconvert --to pdf \
+    notebooks/tls_matrix_energy.ipynb \
+    --output-dir results/analysis/tls_matrix_energy_pdf
+```
+
+The normal configuration cell imports `json` and `Path` and adds `ROOT / "scripts"`
+to `sys.path`. Use a new output path on every run. For clearer plots or a bounded
+within-family question, filter to one KEX (for example add
+`"tls_kex": "ML_KEM_768"` to `SPEC["filters"]`) and set
+`SPEC["baseline"] = "ML_KEM_768__rsa3072__server"`. Conditions outside that filter
+remain in inventory with exclusion reasons; their comparison rows are unsupported.
+Keep the chosen baseline within the filter. The four retained conditions then
+show certificate and mutual-auth differences within that KEX family, subject to
+all the same control checks.
+
+Offline verification:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_tls_matrix_energy_campaign.py
+./scripts/dev.sh pytest tests/integration/test_tls_matrix_energy_campaign_in.py -m integration
+```
+
+The integration tests use real resolver/CLI processes, broker command dry-runs
+and explicitly synthetic timing records through A1 and the clean-kernel notebook.
+They do not establish hardware TLS compatibility or live energy acceptance.

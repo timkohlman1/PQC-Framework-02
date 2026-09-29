@@ -28,6 +28,37 @@ class CampaignError(RuntimeError):
     """Raised when campaign execution cannot proceed safely."""
 
 
+class CampaignCleanupError(CampaignError):
+    """Shared infrastructure could not be removed safely."""
+
+
+class GroupSetupError(CampaignError):
+    """Preparation or broker setup prevents this firmware group from running."""
+
+    def __init__(self, stage: str, message: str):
+        super().__init__(message)
+        self.stage = stage
+
+
+def _setup_step(stage: str, operation: Callable[..., Any], **kwargs: Any) -> Any:
+    try:
+        return operation(**kwargs)
+    except CampaignCleanupError:
+        raise
+    except CampaignError as exc:
+        raise GroupSetupError(stage, str(exc)) from exc
+
+
+class RepetitionError(CampaignError):
+    """A finished runtime attempt failed; subsequent repetitions may proceed."""
+
+    def __init__(self, message: str, *, manifest: Path | None, return_code: int, log: Path):
+        super().__init__(message)
+        self.manifest = manifest
+        self.return_code = return_code
+        self.log = log
+
+
 def canonical_sha256(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -452,6 +483,9 @@ class CampaignExecutor:
             if state.get("source_identity") != source_identity:
                 raise CampaignError("resume manifest does not match the current campaign source/resolution")
             campaign_root = manifest_path.parent
+            state.pop("final_index", None)
+            state.pop("failure", None)
+            state.pop("completed_at", None)
             state["resumed_at"] = _now()
             state["state"] = "running"
         else:
@@ -473,157 +507,229 @@ class CampaignExecutor:
         active_condition: GatewayNetworkDegradation | None = None
         try:
             for group_index, group in enumerate(groups, start=1):
-                representative = group["cases"][0]
-                preparation_manifest, firmware_sha256 = self._ensure_preparation(
-                    campaign_root=campaign_root,
-                    generated_root=generated_root,
-                    state=state,
-                    manifest_path=manifest_path,
-                    group_index=group_index,
-                    representative=representative,
-                    firmware_identity=group["firmware_identity"],
-                )
-                group_state = state["firmware_groups"][group_index - 1]
-                group_state["validated_firmware_sha256"] = firmware_sha256
-                _write_json_atomic(manifest_path, state)
+                firmware_sha256 = None
+                try:
+                    representative = group["cases"][0]
+                    if resume_manifest is not None and self._resume_group_completed(
+                        state=state, group=group, group_index=group_index,
+                        campaign_root=campaign_root, campaign_id=str(campaign_data["id"]),
+                        repetitions=policy.repetitions,
+                    ):
+                        _write_json_atomic(manifest_path, state)
+                        continue
+                    preparation_manifest, firmware_sha256 = _setup_step("preparation", self._ensure_preparation,
+                        campaign_root=campaign_root,
+                        generated_root=generated_root,
+                        state=state,
+                        manifest_path=manifest_path,
+                        group_index=group_index,
+                        representative=representative,
+                        firmware_identity=group["firmware_identity"],
+                        force_reflash=resume_manifest is not None,
+                    )
+                    group_state = state["firmware_groups"][group_index - 1]
+                    group_state["validated_firmware_sha256"] = firmware_sha256
+                    _write_json_atomic(manifest_path, state)
 
-                bundle = self.resolver.to_legacy_bundle(representative)
-                wanted_broker_identity = broker_identity(bundle, representative)
-                self._ensure_broker(bundle=bundle, identity=wanted_broker_identity, campaign_root=campaign_root)
-                group_state["broker_identity"] = wanted_broker_identity
-                _write_json_atomic(manifest_path, state)
+                    bundle = self.resolver.to_legacy_bundle(representative)
+                    wanted_broker_identity = broker_identity(bundle, representative)
+                    _setup_step("broker_setup", self._ensure_broker, bundle=bundle, identity=wanted_broker_identity, campaign_root=campaign_root)
+                    group_state["broker_identity"] = wanted_broker_identity
+                    _write_json_atomic(manifest_path, state)
 
-                condition_groups: dict[str, list[dict[str, Any]]] = {}
-                condition_order: list[str] = []
-                for case in group["cases"]:
-                    cid = condition_identity(case)
-                    if cid not in condition_groups:
-                        condition_groups[cid] = []
-                        condition_order.append(cid)
-                    condition_groups[cid].append(case)
+                    condition_groups: dict[str, list[dict[str, Any]]] = {}
+                    condition_order: list[str] = []
+                    for case in group["cases"]:
+                        cid = condition_identity(case)
+                        if cid not in condition_groups:
+                            condition_groups[cid] = []
+                            condition_order.append(cid)
+                        condition_groups[cid].append(case)
 
-                for cid in condition_order:
+                    for cid in condition_order:
+                        if active_condition is not None:
+                            cleanup = remove_gateway_network_degradation(
+                                degradation=active_condition, repo_root=self.repo_root
+                            )
+                            if cleanup.return_code != 0:
+                                cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
+                                raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
+                            active_condition = None
+                        condition_cases = condition_groups[cid]
+                        condition_bundle = self.resolver.to_legacy_bundle(condition_cases[0])
+                        control_dir = campaign_root / "control" / f"condition-{cid[:12]}"
+                        control_dir.mkdir(parents=True, exist_ok=True)
+                        active_condition, apply_result = apply_gateway_network_degradation(
+                            bundle=condition_bundle, repo_root=self.repo_root, result_dir=control_dir
+                        )
+                        if apply_result is not None and active_condition is None:
+                            raise CampaignError(
+                                f"failed to apply condition {condition_cases[0]['choices']['network_condition']}"
+                            )
+                        state.setdefault("condition_events", []).append({
+                            "condition_identity": cid,
+                            "network_condition": condition_cases[0]["choices"]["network_condition"],
+                            "status": "applied" if active_condition is not None else "baseline",
+                            "control_log": (
+                                None if active_condition is None else str(active_condition.log_path.relative_to(campaign_root))
+                            ),
+                            "at": _now(),
+                        })
+                        _write_json_atomic(manifest_path, state)
+
+                        for case in condition_cases:
+                            case_path = self._case_path(generated_root, case)
+                            for repetition in range(1, policy.repetitions + 1):
+                                if self._resume_completed(
+                                    state=state,
+                                    campaign_id=str(campaign_data["id"]),
+                                    case=case,
+                                    cid=cid,
+                                    repetition=repetition,
+                                    firmware_sha256=firmware_sha256,
+                                ):
+                                    continue
+                                _setup_step("broker_setup", self._ensure_broker,
+                                    bundle=self.resolver.to_legacy_bundle(case),
+                                    identity=broker_identity(self.resolver.to_legacy_bundle(case), case),
+                                    campaign_root=campaign_root,
+                                )
+                                before_packets = None
+                                if active_condition is not None:
+                                    observed_before = verify_gateway_network_degradation(
+                                        degradation=active_condition, repo_root=self.repo_root
+                                    )
+                                    before_packets = gateway_impairment_packet_counts(observed_before.stdout)
+                                    if observed_before.return_code != 0 or before_packets is None:
+                                        raise CampaignError(
+                                            "retained network condition failed effective-state/counter verification before repetition "
+                                            f"{repetition}; inspect {active_condition.log_path}"
+                                        )
+                                try:
+                                    run_manifest = self._run_repetition(
+                                        campaign_root=campaign_root,
+                                        campaign_id=str(campaign_data["id"]),
+                                        case=case,
+                                        case_path=case_path,
+                                        preparation_manifest=preparation_manifest,
+                                        firmware_sha256=firmware_sha256,
+                                        cid=cid,
+                                        repetition=repetition,
+                                        policy=policy,
+                                        condition_log=(
+                                            None if active_condition is None
+                                            else active_condition.log_path
+                                        ),
+                                    )
+                                except RepetitionError as exc:
+                                    self._record_run(
+                                        state=state, case=case, cid=cid, repetition=repetition,
+                                        run_manifest=exc.manifest, firmware_sha256=firmware_sha256,
+                                        failure={"message": str(exc), "return_code": exc.return_code,
+                                                 "log": str(exc.log)},
+                                    )
+                                    _write_json_atomic(manifest_path, state)
+                                    print(f"Campaign repetition failed; continuing: {exc}", file=sys.stderr, flush=True)
+                                    continue
+                                if active_condition is not None:
+                                    observed_after = verify_gateway_network_degradation(
+                                        degradation=active_condition, repo_root=self.repo_root
+                                    )
+                                    after_packets = gateway_impairment_packet_counts(observed_after.stdout)
+                                    with active_condition.log_path.open("a", encoding="utf-8") as evidence:
+                                        evidence.write(
+                                            f"\nRepetition {repetition} packet counters: "
+                                            f"before={before_packets}, after={after_packets}\n"
+                                        )
+                                    if observed_after.return_code != 0 or after_packets is None:
+                                        raise CampaignError(
+                                            "retained network condition failed effective-state/counter verification after repetition "
+                                            f"{repetition}; inspect {active_condition.log_path}"
+                                        )
+                                    if any(after <= before for after, before in zip(after_packets, before_packets)):
+                                        raise CampaignError(
+                                            "experiment-broker egress and IFB ingress counters must both advance "
+                                            f"during repetition {repetition}; inspect {active_condition.log_path}"
+                                        )
+                                self._record_run(
+                                    state=state,
+                                    case=case,
+                                    cid=cid,
+                                    repetition=repetition,
+                                    run_manifest=run_manifest,
+                                    firmware_sha256=firmware_sha256,
+                                )
+                                _write_json_atomic(manifest_path, state)
+
+                    if active_condition is not None:
+                        cleanup = remove_gateway_network_degradation(
+                            degradation=active_condition, repo_root=self.repo_root
+                        )
+                        state.setdefault("condition_events", []).append({
+                            "condition_identity": condition_identity(group["cases"][-1]),
+                            "status": "removed" if cleanup.return_code == 0 else "cleanup_failed",
+                            "at": _now(),
+                            "return_code": cleanup.return_code,
+                        })
+                        if cleanup.return_code != 0:
+                            cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
+                            raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
+                        active_condition = None
+                    group_state["state"] = "completed"
+                    group_state.pop("failure", None)
+                    _write_json_atomic(manifest_path, state)
+                except GroupSetupError as exc:
+                    group_state = state["firmware_groups"][group_index - 1]
+                    group_state["state"] = "blocked"
+                    group_state["failure"] = {"stage": exc.stage, "message": str(exc), "at": _now()}
+                    for blocked_case in group["cases"]:
+                        for blocked_rep in range(1, policy.repetitions + 1):
+                            existing = next((run for run in state["runs"]
+                                             if run["case_id"] == blocked_case["id"]
+                                             and run["repetition_index"] == blocked_rep), None)
+                            if existing and existing.get("state") == "failed":
+                                continue
+                            if firmware_sha256 is not None and self._resume_completed(
+                                state=state, campaign_id=str(campaign_data["id"]), case=blocked_case,
+                                cid=condition_identity(blocked_case), repetition=blocked_rep,
+                                firmware_sha256=firmware_sha256,
+                            ):
+                                continue
+                            # A preparation failure must not erase previously completed evidence.
+                            if firmware_sha256 is None and existing and existing.get("state") == "completed":
+                                continue
+                            self._record_run(
+                                state=state, case=blocked_case, cid=condition_identity(blocked_case),
+                                repetition=blocked_rep, run_manifest=None,
+                                firmware_sha256=firmware_sha256,
+                                failure={"stage": exc.stage, "message": str(exc),
+                                         "runtime_started": False, "control_logs": str(campaign_root / "control")},
+                                blocked=True,
+                            )
+                    _write_json_atomic(manifest_path, state)
+                    # Shared infrastructure must be removed before trying another group.
                     if active_condition is not None:
                         cleanup = remove_gateway_network_degradation(
                             degradation=active_condition, repo_root=self.repo_root
                         )
                         if cleanup.return_code != 0:
                             cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
-                            raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
+                            raise CampaignError(cleanup_errors[-1])
                         active_condition = None
-                    condition_cases = condition_groups[cid]
-                    condition_bundle = self.resolver.to_legacy_bundle(condition_cases[0])
-                    control_dir = campaign_root / "control" / f"condition-{cid[:12]}"
-                    control_dir.mkdir(parents=True, exist_ok=True)
-                    active_condition, apply_result = apply_gateway_network_degradation(
-                        bundle=condition_bundle, repo_root=self.repo_root, result_dir=control_dir
-                    )
-                    if apply_result is not None and active_condition is None:
-                        raise CampaignError(
-                            f"failed to apply condition {condition_cases[0]['choices']['network_condition']}"
-                        )
-                    state.setdefault("condition_events", []).append({
-                        "condition_identity": cid,
-                        "network_condition": condition_cases[0]["choices"]["network_condition"],
-                        "status": "applied" if active_condition is not None else "baseline",
-                        "control_log": (
-                            None if active_condition is None else str(active_condition.log_path.relative_to(campaign_root))
-                        ),
-                        "at": _now(),
-                    })
-                    _write_json_atomic(manifest_path, state)
+                    cleanup_error = self._stop_brokers(campaign_root)
+                    if cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+                        raise CampaignError(cleanup_error)
+                    print(f"Campaign firmware group {group_index} blocked during {exc.stage}; "
+                          f"continuing to next group: {exc}", file=sys.stderr, flush=True)
+                    continue
 
-                    for case in condition_cases:
-                        case_path = self._case_path(generated_root, case)
-                        for repetition in range(1, policy.repetitions + 1):
-                            if self._resume_completed(
-                                state=state,
-                                campaign_id=str(campaign_data["id"]),
-                                case=case,
-                                cid=cid,
-                                repetition=repetition,
-                                firmware_sha256=firmware_sha256,
-                            ):
-                                continue
-                            self._ensure_broker(
-                                bundle=self.resolver.to_legacy_bundle(case),
-                                identity=broker_identity(self.resolver.to_legacy_bundle(case), case),
-                                campaign_root=campaign_root,
-                            )
-                            before_packets = None
-                            if active_condition is not None:
-                                observed_before = verify_gateway_network_degradation(
-                                    degradation=active_condition, repo_root=self.repo_root
-                                )
-                                before_packets = gateway_impairment_packet_counts(observed_before.stdout)
-                                if observed_before.return_code != 0 or before_packets is None:
-                                    raise CampaignError(
-                                        "retained network condition failed effective-state/counter verification before repetition "
-                                        f"{repetition}; inspect {active_condition.log_path}"
-                                    )
-                            run_manifest = self._run_repetition(
-                                campaign_root=campaign_root,
-                                campaign_id=str(campaign_data["id"]),
-                                case=case,
-                                case_path=case_path,
-                                preparation_manifest=preparation_manifest,
-                                firmware_sha256=firmware_sha256,
-                                cid=cid,
-                                repetition=repetition,
-                                policy=policy,
-                                condition_log=(
-                                    None if active_condition is None
-                                    else active_condition.log_path
-                                ),
-                            )
-                            if active_condition is not None:
-                                observed_after = verify_gateway_network_degradation(
-                                    degradation=active_condition, repo_root=self.repo_root
-                                )
-                                after_packets = gateway_impairment_packet_counts(observed_after.stdout)
-                                with active_condition.log_path.open("a", encoding="utf-8") as evidence:
-                                    evidence.write(
-                                        f"\nRepetition {repetition} packet counters: "
-                                        f"before={before_packets}, after={after_packets}\n"
-                                    )
-                                if observed_after.return_code != 0 or after_packets is None:
-                                    raise CampaignError(
-                                        "retained network condition failed effective-state/counter verification after repetition "
-                                        f"{repetition}; inspect {active_condition.log_path}"
-                                    )
-                                if any(after <= before for after, before in zip(after_packets, before_packets)):
-                                    raise CampaignError(
-                                        "experiment-broker egress and IFB ingress counters must both advance "
-                                        f"during repetition {repetition}; inspect {active_condition.log_path}"
-                                    )
-                            self._record_run(
-                                state=state,
-                                case=case,
-                                cid=cid,
-                                repetition=repetition,
-                                run_manifest=run_manifest,
-                                firmware_sha256=firmware_sha256,
-                            )
-                            _write_json_atomic(manifest_path, state)
-
-                if active_condition is not None:
-                    cleanup = remove_gateway_network_degradation(
-                        degradation=active_condition, repo_root=self.repo_root
-                    )
-                    state.setdefault("condition_events", []).append({
-                        "condition_identity": condition_identity(group["cases"][-1]),
-                        "status": "removed" if cleanup.return_code == 0 else "cleanup_failed",
-                        "at": _now(),
-                        "return_code": cleanup.return_code,
-                    })
-                    if cleanup.return_code != 0:
-                        cleanup_errors.append(cleanup.failure_reason or "condition cleanup failed")
-                        raise CampaignError(cleanup.failure_reason or "condition cleanup failed")
-                    active_condition = None
-                group_state["state"] = "completed"
-                _write_json_atomic(manifest_path, state)
-
-            state["state"] = "completed"
+            failed = sum(run.get("state") == "failed" for run in state["runs"])
+            blocked = sum(run.get("state") == "blocked" for run in state["runs"])
+            state["summary"] = {"planned": len(cases) * policy.repetitions,
+                                "completed": len(state["runs"]) - failed - blocked,
+                                "failed": failed, "blocked": blocked}
+            state["state"] = "completed_with_failures" if failed or blocked else "completed"
             state["completed_at"] = _now()
         except BaseException as exc:
             state["state"] = "failed"
@@ -644,10 +750,10 @@ class CampaignExecutor:
                 "errors": cleanup_errors,
                 "completed_at": _now(),
             }
-            if cleanup_errors and state.get("state") == "completed":
+            if cleanup_errors and state.get("state") in {"completed", "completed_with_failures"}:
                 state["state"] = "failed"
                 state["failure"] = {"type": "CleanupError", "message": "; ".join(cleanup_errors), "at": _now()}
-            if state.get("state") == "completed" and state.get("cleanup", {}).get("status") == "passed":
+            if state.get("state") in {"completed", "completed_with_failures"} and state.get("cleanup", {}).get("status") == "passed":
                 final_payload = {key: value for key, value in state.items() if key != "final_index"}
                 state["final_index"] = {
                     "status": "finalized",
@@ -722,6 +828,33 @@ class CampaignExecutor:
             raise CampaignError(f"materialized campaign case is missing: {path}")
         return path
 
+    def _resume_group_completed(
+        self, *, state: dict[str, Any], group: dict[str, Any], group_index: int,
+        campaign_root: Path, campaign_id: str, repetitions: int,
+    ) -> bool:
+        """Skip hardware work only when every saved repetition still validates."""
+        recorded = state["firmware_groups"][group_index - 1].get("preparation_manifest")
+        if not recorded:
+            return False
+        path = Path(recorded)
+        if not path.is_absolute():
+            path = campaign_root / path
+        try:
+            firmware_sha = validate_preparation_manifest(
+                path, expected_firmware_identity=group["firmware_identity"]
+            )
+        except CampaignError:
+            return False
+        return all(
+            self._resume_completed(
+                state=state, campaign_id=campaign_id, case=case,
+                cid=condition_identity(case), repetition=repetition,
+                firmware_sha256=firmware_sha,
+            )
+            for case in group["cases"]
+            for repetition in range(1, repetitions + 1)
+        )
+
     def _ensure_preparation(
         self,
         *,
@@ -732,6 +865,7 @@ class CampaignExecutor:
         group_index: int,
         representative: dict[str, Any],
         firmware_identity: str,
+        force_reflash: bool = False,
     ) -> tuple[Path, str]:
         group_state = state["firmware_groups"][group_index - 1]
         recorded = group_state.get("preparation_manifest")
@@ -743,12 +877,30 @@ class CampaignExecutor:
                 firmware_sha = validate_preparation_manifest(
                     recorded_path, expected_firmware_identity=firmware_identity
                 )
-                return recorded_path, firmware_sha
+                if not force_reflash:
+                    return recorded_path, firmware_sha
             except CampaignError:
                 group_state["preparation_manifest"] = None
                 group_state["validated_firmware_sha256"] = None
                 group_state["state"] = "preparation_stale"
                 _write_json_atomic(manifest_path, state)
+
+        if recorded:
+            group_state.setdefault("previous_preparations", []).append({
+                "manifest": recorded,
+                "firmware_sha256": group_state.get("validated_firmware_sha256"),
+                "replaced_at": _now(),
+                "reason": "resume_reflash" if force_reflash else "stale_preparation",
+            })
+        if force_reflash:
+            # A prior successful flash says nothing about current board contents.
+            # Re-enter the normal preparation path before allowing runtime reuse.
+            group_state["state"] = "resume_reflash_required"
+            group_state["preparation_manifest"] = None
+            group_state["validated_firmware_sha256"] = None
+            _write_json_atomic(manifest_path, state)
+            print(f"Restoring firmware for resumed group {group_index} via preparation/build/sign/flash",
+                  flush=True)
 
         prep_case_path = generated_root / "preparation-cases" / f"firmware-{group_index:04d}.yaml"
         _materialize_preparation_case(
@@ -767,6 +919,11 @@ class CampaignExecutor:
         log_path = campaign_root / "logs" / f"preparation-{group_index:04d}.log"
         if representative.get("selections", {}).get("instruments", {}).get("energy"):
             command.append("--prepare-only")
+        if log_path.exists():
+            attempt = 2
+            while log_path.with_name(f"{log_path.stem}-attempt-{attempt}.log").exists():
+                attempt += 1
+            log_path = log_path.with_name(f"{log_path.stem}-attempt-{attempt}.log")
         rc, produced_manifest, output = _run_experiment(
             repo_root=self.repo_root,
             command=command,
@@ -783,6 +940,7 @@ class CampaignExecutor:
             "preparation_manifest": produced_manifest.relative_to(campaign_root).as_posix(),
             "validated_firmware_sha256": firmware_sha,
             "state": "prepared",
+            "preparation_reason": "resume_reflash" if force_reflash else "initial_or_stale",
         })
         _write_json_atomic(manifest_path, state)
         return produced_manifest, firmware_sha
@@ -791,9 +949,13 @@ class CampaignExecutor:
         if self._broker_active_identity == identity and self._broker_bundle is not None:
             if self._broker_health(bundle=bundle, campaign_root=campaign_root):
                 return
-            self._stop_brokers(campaign_root)
+            cleanup_error = self._stop_brokers(campaign_root)
+            if cleanup_error:
+                raise CampaignCleanupError(cleanup_error)
         elif self._broker_active_identity is not None:
-            self._stop_brokers(campaign_root)
+            cleanup_error = self._stop_brokers(campaign_root)
+            if cleanup_error:
+                raise CampaignCleanupError(cleanup_error)
 
         profile, port = _broker_profile_and_port(bundle)
         deploy_command = _broker_ctl_command(self.repo_root, "deploy")
@@ -815,7 +977,9 @@ class CampaignExecutor:
             if completed.returncode != 0:
                 raise CampaignError(f"failed to start broker profile {wanted_profile}")
         if not self._broker_health(bundle=bundle, campaign_root=campaign_root):
-            self._stop_brokers(campaign_root)
+            cleanup_error = self._stop_brokers(campaign_root)
+            if cleanup_error:
+                raise CampaignCleanupError(cleanup_error)
             raise CampaignError("broker health check failed after campaign start")
 
     def _broker_health(self, *, bundle: dict[str, dict[str, Any]], campaign_root: Path) -> bool:
@@ -841,9 +1005,11 @@ class CampaignExecutor:
         command = _broker_ctl_command(self.repo_root, "stop")
         completed = self.runner(command, self.repo_root)
         self._append_control_log(campaign_root, "broker-stop.log", command, completed)
+        if completed.returncode != 0:
+            return "broker cleanup failed"
         self._broker_active_identity = None
         self._broker_bundle = None
-        return None if completed.returncode == 0 else "broker cleanup failed"
+        return None
 
     def _append_control_log(
         self,
@@ -897,26 +1063,38 @@ class CampaignExecutor:
         if policy.reset_between_runs == "none":
             command.append("--skip-hardware-reset")
         log_path = campaign_root / "logs" / f"{case['id']}-rep-{repetition:04d}.log"
-        rc, produced_manifest, output = _run_experiment(
-            repo_root=self.repo_root,
-            command=command,
-            results_dir=results_dir,
-            runner=self.runner,
-            log_path=log_path,
-        )
-        if produced_manifest is None:
-            raise CampaignError(f"repetition produced no run manifest; see {log_path}")
+        if log_path.exists():
+            attempt = 2
+            while log_path.with_name(f"{log_path.stem}-attempt-{attempt}.log").exists():
+                attempt += 1
+            log_path = log_path.with_name(f"{log_path.stem}-attempt-{attempt}.log")
+        try:
+            rc, produced_manifest, output = _run_experiment(
+                repo_root=self.repo_root,
+                command=command,
+                results_dir=results_dir,
+                runner=self.runner,
+                log_path=log_path,
+            )
+        except CampaignError as exc:
+            raise RepetitionError(str(exc), manifest=None, return_code=0, log=log_path) from exc
+        failure = None
         if rc != 0:
-            raise CampaignError(f"repetition failed for {case['id']} #{repetition}; see {log_path}")
-        if not validate_completed_run(
-            produced_manifest,
-            campaign_id=campaign_id,
-            case_id=str(case["id"]),
-            condition_id=cid,
-            repetition_index=repetition,
-            firmware_sha256=firmware_sha256,
-        ):
-            raise CampaignError(f"repetition evidence validation failed: {produced_manifest}")
+            failure = f"repetition failed for {case['id']} #{repetition}; see {log_path}"
+        elif produced_manifest is None:
+            failure = f"repetition produced no run manifest; see {log_path}"
+        else:
+            try:
+                valid = validate_completed_run(
+                    produced_manifest, campaign_id=campaign_id, case_id=str(case["id"]),
+                    condition_id=cid, repetition_index=repetition, firmware_sha256=firmware_sha256,
+                )
+            except CampaignError:
+                valid = False
+            if not valid:
+                failure = f"repetition evidence validation failed: {produced_manifest}"
+        if failure:
+            raise RepetitionError(failure, manifest=produced_manifest, return_code=rc, log=log_path)
         return produced_manifest
 
     def _record_run(
@@ -926,8 +1104,10 @@ class CampaignExecutor:
         case: dict[str, Any],
         cid: str,
         repetition: int,
-        run_manifest: Path,
+        run_manifest: Path | None,
         firmware_sha256: str,
+        failure: dict[str, Any] | None = None,
+        blocked: bool = False,
     ) -> None:
         existing = next((item for item in state["runs"] if item.get("case_id") == case["id"] and item.get("repetition_index") == repetition), None)
         record = {
@@ -938,14 +1118,19 @@ class CampaignExecutor:
             "condition_identity": cid,
             "network_condition": case["choices"]["network_condition"],
             "repetition_index": repetition,
-            "manifest": str(run_manifest),
-            "state": "completed",
+            "manifest": str(run_manifest) if run_manifest else None,
+            "state": "blocked" if blocked else "failed" if failure else "completed",
+            "failure": failure,
             "completed_at": _now(),
         }
         if existing is None:
             state["runs"].append(record)
         else:
+            history = existing.get("previous_attempts", [])
+            history.append({key: value for key, value in existing.items() if key != "previous_attempts"})
+            existing.clear()
             existing.update(record)
+            existing["previous_attempts"] = history
 
     def _resume_completed(
         self,

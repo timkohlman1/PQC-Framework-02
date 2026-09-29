@@ -37,6 +37,41 @@ explicit public-file and private-key modes are unchanged. Do not reprovision or
 rotate existing material merely to repair ownership. Broker/service containers
 and gateway-side privilege policies are not remapped to a desktop UID.
 
+### Certificate-specific ownership verification
+
+Run the provisioner from the normal **host** shell with `python3
+scripts/provision_certificates.py`; it launches the pinned certificate container
+itself. The development image intentionally has no Docker CLI, so nesting this
+launcher under `./scripts/dev.sh python` is unsupported. Both the host launcher
+and local generation entry point refuse root generation. New certificate
+directories are `0700`, private keys `0600`, and files belong to the invoking
+UID/GID. Existing root-owned material still needs the one-time repair below;
+rebuilding an image cannot change its host ownership.
+
+Exercise the real provisioning boundary with disposable RSA-3072 and ML-DSA-65
+profiles, without replacing canonical certificates:
+
+```bash
+python3 scripts/check_certificate_ownership.py
+```
+
+Expected: `status: verified`, your numeric UID/GID, and two checked profiles.
+This host-side gate starts the pinned provisioning container, checks host-visible
+ownership, owner read/write access, private-key modes and private directories,
+then removes its temporary output. Initial package installation may need network
+access. It never reads or changes `secrets/certificates/`. The corresponding
+`tests/integration/test_certificate_ownership_in.py` skips inside the development
+container because nested Docker is unavailable; that skip does not replace the
+host command above.
+
+MQTT prerequisite permission failures now use `ExternalDependencyError`, naming
+the inaccessible path and caller UID. The existing experiment failure path can
+record `external_dependencies` rather than escaping via an unhandled traceback.
+Repair ownership instead of changing `0600` keys to world-readable files or
+using `--force` to regenerate certificates. Sealed results and Git objects may
+intentionally be owner-read-only even when ownership is correct; they do not
+need write permission for certificate prerequisite validation.
+
 ### Apply and verify the runtime change
 
 Rebuild once after updating the runtime helper. An old image fails because it

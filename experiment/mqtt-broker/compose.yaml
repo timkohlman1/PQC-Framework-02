@@ -161,6 +161,7 @@ services:
         rm -rf /tmp/mosquitto-certs
         mkdir -p /tmp/mosquitto-certs
         cp /mosquitto/config/certs/ca.crt /tmp/mosquitto-certs/ca.crt
+        cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt
         cp /mosquitto/config/certs/intermediate-ca.crt /tmp/mosquitto-certs/intermediate-ca.crt
         cat /mosquitto/config/certs/server.crt /mosquitto/config/certs/intermediate-ca.crt > /tmp/mosquitto-certs/server.crt
         cp /mosquitto/config/certs/server.key /tmp/mosquitto-certs/server.key
@@ -175,7 +176,7 @@ services:
         fi
         chown "$$runtime_user:$$runtime_group" /tmp/mosquitto-certs/*
         chmod 0640 /tmp/mosquitto-certs/server.key /tmp/mosquitto-certs/healthcheck.key
-        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt /tmp/mosquitto-certs/healthcheck.crt
+        chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt /tmp/mosquitto-certs/healthcheck.crt
         mkdir -p /mosquitto/keylog
         rm -f /mosquitto/keylog/mqtt-broker-tls-keylog.log
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
@@ -192,7 +193,7 @@ services:
       - ./config/oqs-mtls/aclfile:/mosquitto/config/aclfile.source:ro
       - ../../secrets/certificates/${MQTT_CERTIFICATE_PROFILE:-rsa3072}:/mosquitto/config/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --cert /tmp/mosquitto-certs/healthcheck.crt --key /tmp/mosquitto-certs/healthcheck.key --tls-version tlsv1.3 -t pqc/framework/health -m ready >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 8883 --cafile /tmp/mosquitto-certs/ca.crt --insecure --cert /tmp/mosquitto-certs/healthcheck.crt --key /tmp/mosquitto-certs/healthcheck.key --tls-version tlsv1.3 -q 1 -t pqc/framework/health -m ready >/dev/null 2>&1"]
       interval: 30s
       timeout: 12s
       retries: 3

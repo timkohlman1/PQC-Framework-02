@@ -61,3 +61,13 @@ def test_dockerignore_excludes_wolfboot_generated_keytools_and_signing_material(
 
     missing = sorted(pattern for pattern in required_patterns if pattern not in text)
     assert missing == []
+
+
+def test_notebook_pdf_dependencies_are_pinned_to_the_debian_snapshot():
+    text = (_repo_root() / "docker/python/Dockerfile").read_text()
+    assert "ARG DEBIAN_SNAPSHOT=20260914T040000Z" in text
+    for package in (
+        "pandoc=3.1.11.1+ds-2", "texlive-xetex=2024.20250309-1",
+        "texlive-fonts-recommended=2024.20250309-1", "texlive-plain-generic=2024.20250309-2",
+    ):
+        assert package in text

@@ -62,8 +62,13 @@ load_local_dotenv() {
 run_container() (
   gateway=0
   isolate_generated=0
+  notebook=0
   while [ "$#" -gt 0 ]; do
     case "${1:-}" in
+      --notebook)
+        notebook=1
+        shift
+        ;;
       --gateway)
         gateway=1
         shift
@@ -78,7 +83,7 @@ run_container() (
     esac
   done
 
-  load_local_dotenv
+  if [ "$notebook" -eq 0 ]; then load_local_dotenv; fi
 
   workspace_overlay_args=""
   if [ "$isolate_generated" -eq 1 ]; then
@@ -132,6 +137,9 @@ run_container() (
   # Keep the image's maintained default for `dev.sh run` with no command.
   if [ "$#" -eq 0 ]; then set -- python -m pytest tests/unit; fi
   set -- "$image_name" -I /usr/local/libexec/pqc-container-runtime.py "$@"
+  if [ "$notebook" -eq 1 ]; then
+    set -- -p 127.0.0.1:8888:8888 "$@"
+  fi
   if [ "$gateway" -eq 1 ]; then
     if [ ! -d "$ssh_source" ]; then
       echo "Gateway mode requires an SSH directory. Set PQC_DOCKER_SSH_DIR or create $ssh_source." >&2
@@ -152,7 +160,7 @@ run_container() (
 )
 
 if [ "$#" -eq 0 ]; then
-  echo "Usage: scripts/dev.sh <gateway-lock|build-image|check-host-user|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|python|python-gateway|cmake|shell|run> [args...]" >&2
+  echo "Usage: scripts/dev.sh <gateway-lock|build-image|check-host-user|pytest|pytest-gateway|pytest-hardware|experiment|experiment-gateway|campaign|campaign-gateway|notebook|python|python-gateway|cmake|shell|run> [args...]" >&2
   exit 2
 fi
 
@@ -216,6 +224,13 @@ case "$command" in
     ;;
   campaign-gateway)
     run_container --gateway python scripts/run_campaign.py "$@"
+    ;;
+  notebook)
+    if [ "$#" -ne 0 ]; then
+      echo "notebook accepts no server overrides; edit the notebook configuration instead." >&2
+      exit 2
+    fi
+    run_container --notebook python -m jupyterlab --ip=0.0.0.0 --port=8888 --no-browser --ServerApp.port_retries=0
     ;;
   python)
     run_container python "$@"

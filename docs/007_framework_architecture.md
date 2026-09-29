@@ -630,9 +630,13 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 
 | ID | Feature | Missing test layer | Reason | Required capability or phase | Intended test file | Eventual verification command | Status |
 |---|---|---|---|---|---|---|---|
-| DTR-HOST-USER | Host-user runtime identity and private output ownership | Rebuilt-image Docker ownership gate, pinned provisioning and complete build/test regression | Upload session has no Docker executable/daemon and only selected source files; unit and local-process checks cannot validate Docker mounts or the complete toolchain | Non-root Linux user, local non-remapped Docker daemon, rebuilt development image and complete checkout; package access for existing CI provisioning | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py`; CI certificate ownership check | `./scripts/dev.sh build-image`; `./scripts/dev.sh check-host-user`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build`; existing CI provisioning/ownership steps | implemented; real Docker/provisioning/build gates pending development-host or CI evidence |
+| DTR-HOST-USER | Host-user runtime identity and private output ownership | Remaining local firmware/wolfBoot build regression | Docker ownership and certificate provisioning are now verified on the development host; those gates do not establish firmware build/runtime success | Non-root Linux user, local non-remapped Docker daemon, development image and complete checkout | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_certificate_ownership_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py` | `./scripts/dev.sh check-host-user`; `python3 scripts/check_certificate_ownership.py`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build` | partially verified 2026-09-29: host-user Docker gate passed, disposable RSA-3072/ML-DSA-65 provisioning passed at UID/GID 1000:1000, and 1137 unit tests passed; firmware build gates remain pending |
 | DTR-HOST-USER-GATEWAY | Non-root gateway wrapper and isolated hardware outputs | Live SSH/gateway and representative hardware regression after identity change | Dummy SSH/volume tests do not establish real SSH credentials, remote helper permissions or hardware lifecycle | Rebuilt development image, runtime SSH credentials, gateway and STM32 where required | Existing `tests/integration/test_gateway_flash_helper_in.py` and `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway`; `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred; these commands can build/flash hardware and require retained evidence |
-| DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | The upload session lacks Docker and a complete checkout. User-supplied 2026-09-28 development-host output verifies the A1 unit/local-process integration boundary and real-capture export/check/loading; the full unit gate still failed the README length check. The documentation correction requires a fresh regression run | Complete Linux development checkout and the existing Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit/test_timing_dataset_documentation.py tests/unit/test_documentation_integrity.py`; `./scripts/dev.sh pytest tests/unit/test_docker_default_workflow_docs.py`; `./scripts/dev.sh pytest tests/unit` | partially verified: A1 wrapper unit/integration and real-capture replay passed; post-correction documentation/full unit output pending |
+| DTR-CAMPAIGN-RESUME-FLASH | Restore expected firmware on campaign resume | Live resume after an intervening different firmware flash | Prepared offline while a user campaign owns the board; subprocess tests cannot prove physical flash | Gateway, STM32/ST67, build/sign prerequisites and brokers | `tests/hardware/test_campaign_executor_hw.py` (extend with intervening flash and resume) | `./scripts/dev.sh pytest-hardware tests/hardware/test_campaign_executor_hw.py -m hardware --pqc-require-hardware` after extending the live resume scenario | pending live intervening-flash/resume validation |
+| DTR-OQS-MTLS-CHAIN | Container-local CA chain and dedicated health-topic ACL | Gateway deployment and blocked campaign retry | Local Docker verifies broker behavior but not gateway deployment or STM32 mutual TLS | Gateway and STM32/ST67 laboratory | `tests/integration/test_oqs_mtls_permissions_in.py`; `scripts/check_oqs_mtls_broker.py` local gate; retained campaign manifests | `python3 scripts/check_oqs_mtls_broker.py`; `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | local Docker passed 2026-09-29 for RSA-3072 and ML-DSA-65: healthy startup, staged-file access, authenticated publish and rejection without client certificate; live campaign retry pending |
+| DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
+| DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
+| DTR-A1-CONTAINER | A1 offline timing export and typed loader | Post-correction Docker-hosted documentation and full unit regression | Earlier upload-session README-length failure required a fresh regression | Complete Linux development checkout and rebuilt Docker Python image; no gateway, credentials or hardware | `tests/unit/test_timing_dataset_documentation.py`, `tests/unit/test_documentation_integrity.py`, `tests/unit/test_docker_default_workflow_docs.py` and `tests/integration/test_timing_dataset_in.py` | `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_timing_dataset_in.py -m integration` | closed during A2: 2026-09-28 Docker full unit regression passed, including A1 and documentation tests; A1 local integration rechecked |
 | DTR-R4-STACK | Request 4 wolfBoot stack watermark, mode isolation and mailbox v8 | Containerized wolfBoot/application build, bounded gateway/STM32 verification and OTA handoff regression | Local syntax/source tests cannot prove actual stack depth, absence of RAM corruption, normal-mode non-interference or SRAM2 handoff on hardware | STM32 target, Docker cross-toolchain, gateway, broker and maintained secure-boot profiles | `tests/hardware/test_secure_boot_flash_workflow_hw.py` and `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_secure_boot_flash_workflow_hw.py -m hardware --pqc-require-hardware`; profile-enabled campaign `./scripts/dev.sh experiment-gateway run --experiment <resolved secure_boot_stack case>`; then targeted OTA smoke test | deferred pending explicit cross-build, STM32 high-water evidence and bounded OTA regression |
 | DTR-GWLOCK | Cross-development-host gateway resource exclusion and recovery | Live multi-host contention, force-release and hardware/campaign lifecycle | Unit subprocess flock tests cannot show that remote experimental processes stop before reassignment or validate hardware state after interrupted flashing | Two Linux development machines, shared gateway SSH account, gateway Python 3 and STM32 hardware | `tests/integration/test_gateway_lock_in.py` and `tests/hardware/test_gateway_lock_hw.py` | `./scripts/dev.sh gateway-lock status` from both machines; run a gated representative `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` while competing for the lock; verify forced recovery only after the old operation is stopped | deferred: unit-only protocol verification; no live gateway/multi-host evidence |
 | DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Dedicated gateway-mediated known-image UART/hardware assertion | Existing hardware evidence checks task-context ordering in the secure-boot benchmark path, but there is no focused baseline test that builds/flashes the image and asserts the complete M6.1 lifecycle and unavailable-field contract | Gateway, flash helper, UART device, and known-image baseline run capability | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred |
@@ -1019,9 +1023,13 @@ Broker compatibility is a hash over the effective experiment service/profile ide
 
 Every repetition has a distinct Request-16 run directory and finalized `pqc-run-evidence` manifest. The compact configuration index retains campaign id, case id, condition identity, repetition index, preparation-manifest reference, final firmware SHA-256, reset choice and infrastructure ownership. Campaign-level state is kept separately in `campaign-manifest.json`, recording source/configuration identity, expanded cases, firmware grouping, preparation dependencies, condition events/order, repetitions, per-run manifest references, failure state and cleanup outcome.
 
-Resume is explicit (`scripts/run_campaign.py --resume <campaign-manifest.json>`). The source/resolution identity must still match. A recorded preparation is reused only after its finalized manifest, firmware identity and authoritative firmware SHA-256 validate. A completed repetition is skipped only when its finalized manifest has successful execution, accepted raw capture and matching campaign/case/condition/repetition/firmware fields. Stale or partial entries are rerun. Broker and impairment process state is never trusted from the previous process: infrastructure is re-established and checked before resumed execution.
+Runtime subprocess failures and rejected per-run evidence are recorded as failed repetitions and do not stop the remaining matrix. The finalized campaign index reports `completed_with_failures` with completed/failed/planned counts; the CLI returns 1 only after finishing the matrix and cleanup when any repetitions failed (all-success returns 0). Preparation and broker setup failures block the remaining unstarted repetitions in the affected firmware group and continue to the next group after successful cleanup. These `blocked` entries have no runtime manifest and are counted separately from failed runtime attempts; resume retries them. Already completed and failed runtime evidence remains retained. Condition verification, cleanup failures and interruption remain fatal. Resume retries failures while retaining previous attempt references and separate retry logs. Failed attempts do not have to advance impairment packet counters; the condition is checked again before the next attempt.
+
+Resume is explicit (`scripts/run_campaign.py --resume <campaign-manifest.json>`). The source/resolution identity must still match. A recorded preparation is reused only after its finalized manifest, firmware identity and authoritative firmware SHA-256 validate. A completed repetition is skipped only when its finalized manifest has successful execution, accepted raw capture and matching campaign/case/condition/repetition/firmware fields. Stale or partial entries are rerun. Fully validated completed firmware groups are skipped before hardware work. Each group with pending repetitions is prepared/built/signed/flashed again on resume, even when its saved preparation is valid: that historical record does not establish the current device contents. Both wolfBoot and the application are restored by the normal preparation path; a preparation/flash failure blocks that group before runtime reuse; subsequent groups may proceed after successful cleanup. Prior preparation references are retained, and a changed firmware SHA-256 causes previously successful repetitions in that group to be rerun under the existing matching rules. This is restoration by flashing, not flash readback or device attestation. Broker and impairment process state is never trusted from the previous process: infrastructure is re-established and checked before resumed execution.
 
 Campaign repetition is an outer independent framework/device run. It is separate from workload-internal iterations such as multiple fresh TLS handshakes within one boot. `reset_between_runs: hardware_reset` uses the existing gateway reset helper at the beginning of every repetition; `none` suppresses that outer reset only when the selected workload explicitly permits it.
+
+The `tls_matrix_energy` campaign combines three KEX families, two certificate profiles and server/mutual authentication using Ready Metrics 2. It selects the passive energy instrument for all twelve conditions and requests ten reset-separated runs each. The companion `notebooks/tls_matrix_energy.example.json` exercises A2 without waiving unknown controls or merging evidence classes. Operation and notebook commands are in [the TLS matrix procedure](005_remote_flash_workflow.md#tls-matrix-with-energy-and-notebook-analysis); first live matrix evidence remains tracked by DTR-TLS-MATRIX-ENERGY.
 
 ## Controlled network degradation grid
 
@@ -1311,11 +1319,171 @@ The full unit suite reported 1,058 passed and one README-length failure
 A1 usage now resides in this canonical section, with a short README link, and
 `tests/unit/test_timing_dataset_documentation.py` guards that routing and the
 location/required fields of the A1 deferred-test entry. Post-correction Docker
-regression output remains outstanding in DTR-A1-CONTAINER. Original retained
+full unit regression passed during A2 on 2026-09-28; see DTR-A1-CONTAINER. Original retained
 Ready Metrics/repeated-handshake captures were not supplied for this change;
 those parser paths have source/fixture coverage, not a real-capture smoke claim.
 A1 adds no dependencies, notebooks, statistics, energy integration, memory
 accounting, packet decoding or firmware/execution changes.
+
+### Offline timing comparisons and starter notebook (Analysis Request A2)
+
+A2 consumes the hash-checked A1 loader through
+`scripts/framework/timing_summary.py`; it never parses raw captures or executes
+experiments. `scripts/summarise_timing_dataset.py` and
+`notebooks/timing_comparison.ipynb` use the same functions. The notebook is a
+research starter, not evidence that RQ1/RQ4 have enough measurements.
+
+Build the development image once after dependency changes, then copy the example
+analysis specification and edit the copy before selecting data:
+
+```bash
+./scripts/dev.sh build-image
+cp notebooks/timing_comparison.example.json /tmp/timing-comparison.json
+```
+
+The example selects all runs as one **named baseline** for completeness inspection;
+it deliberately makes no treatment comparison and no independence assertion.
+Set `conditions` to non-overlapping field/value selectors, for example
+`{"classical":{"tls_kex":"secp256r1"},"candidate":{"tls_kex":"ML_KEM_768"}}`,
+and `baseline` to the explicitly selected reference label. This example names
+recorded properties, not filenames or a recommended historical baseline.
+`filters` applies exact matches to recorded values; unknown properties cannot
+match. For this example declare `tls_kex` and
+`controls.tls.key_exchange_group` as treatment paths, plus only other properties
+that intentionally change with the treatment. Review all reported conflicts.
+The `controls` array can add recorded control paths. The implementation also
+checks core properties and every recorded configured control leaf by default.
+Do not remove controls simply to obtain a numeric difference.
+
+Target, gateway, workload, payload/chunk size, authentication, secure boot,
+firmware mode, source revision, diagnostic flags, configured network properties,
+MQTT settings and service/profile properties must remain fixed unless explicitly
+declared treatments. ELF/configuration/build identities remain in inventory for
+provenance and are not required equal. Treatment-specific profile hashes may
+be declared treatment paths; unrelated profiles remain controls. A1 does not
+export private credential hashes. Missing controls refuse matched interpretation;
+absolute distributions remain available. `not_applicable` maps control paths to
+explicit methodological reasons, never automatic guesses for missing values.
+Recorded observed/applied network state remains unavailable and is not inferred
+from configured controls. Capture/evidence classes are separate strata; mixed
+classes cannot silently form a single matched comparison. Positive and negative
+validation cases are never pooled.
+
+`exclude_runs` maps exact A1 run keys to reasons, including any operator-selected
+infrastructure exclusions. Every selected input remains in inventory; filtered,
+nonmatching and explicitly excluded attempts retain their reasons. By default,
+failures remain included and there is no outlier removal. Completion means the
+recorded framework execution outcome `completed`, not inferred protocol success.
+The binary denominator is **completed + failed** included runs; other outcomes
+are unknown and separately counted. Capture acceptance and timing validity are
+reported separately and do not convert an unknown outcome to a success/failure.
+
+Latency distributions include completed runs with verified selected inputs,
+valid measurements and no applicable A1 timing-policy exclusion. Timeout
+thresholds never become latency samples. Missing optional measurements remain
+unavailable; no zero is inserted. Tables include contributing runs, recorded
+iterations and observations. Quartiles and configurable `percentiles` use linear
+interpolation; IQR is Q3 minus Q1. Matched differences subtract baseline median
+from treatment median; percentage difference divides by baseline median and is
+null with `zero_baseline` when the reference is zero. These are descriptive
+between-condition differences, not paired-run estimates or causal conclusions.
+
+Inference requires `independent_runs: true`, an explicit researcher assertion
+that the sampled framework runs are independent. Repetition labels alone do not
+establish independence. Defaults: seed 20260928, 2,000 bootstrap resamples and
+95% confidence. The continuous estimand is the success-conditional median; the
+percentile bootstrap resamples whole run observations equally and uses linear
+quantiles. At least two contributing runs and one observation per run per metric
+are required. Any recorded repeated intra-run observations suppress this
+interval until A4 supplies per-run summaries, even if only one repeated
+observation is valid. Binary completion uses the two-sided Wilson score interval
+on independent known framework-run outcomes, with at least two known outcomes.
+Recorded linked retries/attempt indices above one suppress both inference types.
+Small samples can give unstable or degenerate intervals; these methods are not
+hypothesis tests. Every suppressed interval has an explicit reason.
+
+Batch export (repository root; specification must be within the mounted workspace):
+
+```bash
+mkdir -p results/analysis
+cp /tmp/timing-comparison.json results/analysis/timing-comparison.json
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+    --dataset results/analysis/SELECTED_DATASET \
+    --spec results/analysis/timing-comparison.json \
+    --output results/analysis/SELECTED_SUMMARY
+```
+
+Choose a new output directory each time; existing outputs, raw-run descendants
+and dataset descendants are refused. Products: inventory, observations, issues,
+completeness, distributions and differences CSVs, timing-distribution and
+matched-difference PNGs, and `summary.json`. CSV nulls use `\N`; identifiers and
+observation timestamps retain A1 integer/string values. `summary.json` records
+the A1 metadata/lineage, direct dataset hashes, effective selection/statistical
+parameters, methods, source fingerprints, package/Python versions and output
+hashes. Input captures and the A1 snapshot remain unchanged. Raw secrets and
+key logs are not consumed. These local scalar exports are not a public release.
+
+Clean-kernel execution, with cell errors causing a nonzero exit:
+
+```bash
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+    --dataset results/analysis/SELECTED_DATASET \
+    --spec results/analysis/timing-comparison.json \
+    --output results/analysis/SELECTED_NOTEBOOK_SUMMARY --execute-notebook
+```
+
+The extra `executed.ipynb` and `notebook-execution.json` record the executed
+notebook and its source/specification/output hashes. Execution timestamps and
+render metadata may differ; scientific CSV values reproduce for the same
+inputs, specification and software versions. A failed run may leave partial
+output for diagnosis; use a new destination on retry. Exit 0 means analysis
+execution succeeded, not that all comparisons are supported.
+
+Interactive use:
+
+```bash
+./scripts/dev.sh notebook
+```
+
+Open the token-authenticated localhost URL printed by Jupyter and select
+`notebooks/timing_comparison.ipynb`. Edit the configuration cell's dataset,
+specification and new output paths, then restart the kernel and run all cells.
+Docker publishes only `127.0.0.1:8888`; the server binds within the container to
+accept that forwarding. Authentication is retained, no public host binding or
+server override is accepted, and an occupied port fails rather than silently
+changing ports. Stop with Ctrl-C. Notebook startup does not load Wi-Fi `.env`
+values or mount gateway credentials.
+
+Verification (synthetic tests, no firmware builds or gateway access):
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_timing_summary.py
+./scripts/dev.sh pytest tests/integration/test_timing_summary_in.py -m integration
+./scripts/dev.sh pytest tests/unit/test_documentation_integrity.py tests/unit/test_docker_default_workflow_docs.py
+./scripts/dev.sh pytest tests/unit
+```
+
+Known-answer fixtures cover arithmetic, denominators, zero references, unknown
+controls, mixed capture classes, explicit exclusions, retries and repeated
+observations. Local-process tests compare batch and clean-kernel scientific
+CSVs, verify raw input immutability, refuse tampering and prove deliberate cell
+failure propagates. Notebook integration tests generate their own synthetic raw
+runs and A1 datasets under pytest temporary directories. They execute temporary
+copies of the real notebooks with only the first configuration cell replaced by
+test-owned dataset/specification/output paths; saved interactive campaign settings
+and outputs are not CI prerequisites, and the source notebooks remain unchanged.
+The remaining analysis and plotting cells execute in a clean kernel. These tests
+require no gateway, hardware, private credentials or prior campaign capture and
+remain in ordinary CI; live capture tests belong to the separate capability-gated
+laboratory layers. A bounded loopback server test checks authenticated access;
+a wrapper test checks the localhost-only Docker port mapping. Real-data replay
+was also exercised on `a1-ready-metrics-2-20260928-210728`: two inventoried
+runs (one completed, one infrastructure failure), with one contributing run for
+each of eight metrics. The starter withheld inference and made no matched
+comparison with this inspection-only specification. This verifies offline
+consumption of an existing A1 dataset, not a fresh raw capture audit or new
+hardware success. A2 does not add memory,
+energy, TLS phase attribution, firmware changes or new experiment measurements.
 
 ### Offline packet-capture analysis (Implementation Request 7)
 
