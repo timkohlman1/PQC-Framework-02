@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 for directory in (ROOT / "scripts", ROOT / "tests"):
     sys.path.insert(0, str(directory))
 from timing_dataset_support import make_run
+from timing_notebook_support import isolated_notebook
 from framework.timing_dataset import export_dataset
 
 pytestmark = pytest.mark.integration
@@ -35,9 +36,12 @@ def invoke(dataset, spec, output, *args):
 
 def test_batch_and_clean_kernel_agree_and_preserve_inputs(tmp_path):
     dataset, spec = prepare(tmp_path)
+    source = ROOT / "notebooks/timing_comparison.ipynb"
+    original = source.read_bytes()
+    test_notebook = isolated_notebook(source, tmp_path / "analysis.ipynb")
     before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in tmp_path.rglob("*") if p.is_file()}
     batch, notebook = tmp_path / "batch", tmp_path / "notebook"
-    for output, args in ((batch, []), (notebook, ["--execute-notebook"])):
+    for output, args in ((batch, []), (notebook, ["--execute-notebook", "--notebook", test_notebook])):
         result = invoke(dataset, spec, output, *args)
         assert result.returncode == 0, result.stderr
         assert (output / "timing-distributions.png").stat().st_size > 1000
@@ -46,6 +50,7 @@ def test_batch_and_clean_kernel_agree_and_preserve_inputs(tmp_path):
     for name in ("completeness", "distributions", "differences", "inventory", "observations"):
         assert (batch / (name+".csv")).read_bytes() == (notebook / (name+".csv")).read_bytes()
     assert all(hashlib.sha256(p.read_bytes()).hexdigest() == v for p,v in before.items())
+    assert source.read_bytes() == original
     assert invoke(dataset, spec, batch).returncode != 0
 
 

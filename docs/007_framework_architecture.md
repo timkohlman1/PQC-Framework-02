@@ -1467,7 +1467,15 @@ Known-answer fixtures cover arithmetic, denominators, zero references, unknown
 controls, mixed capture classes, explicit exclusions, retries and repeated
 observations. Local-process tests compare batch and clean-kernel scientific
 CSVs, verify raw input immutability, refuse tampering and prove deliberate cell
-failure propagates. A bounded loopback server test checks authenticated access;
+failure propagates. Notebook integration tests generate their own synthetic raw
+runs and A1 datasets under pytest temporary directories. They execute temporary
+copies of the real notebooks with only the first configuration cell replaced by
+test-owned dataset/specification/output paths; saved interactive campaign settings
+and outputs are not CI prerequisites, and the source notebooks remain unchanged.
+The remaining analysis and plotting cells execute in a clean kernel. These tests
+require no gateway, hardware, private credentials or prior campaign capture and
+remain in ordinary CI; live capture tests belong to the separate capability-gated
+laboratory layers. A bounded loopback server test checks authenticated access;
 a wrapper test checks the localhost-only Docker port mapping. Real-data replay
 was also exercised on `a1-ready-metrics-2-20260928-210728`: two inventoried
 runs (one completed, one infrastructure failure), with one contributing run for

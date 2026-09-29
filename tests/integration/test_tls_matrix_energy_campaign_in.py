@@ -18,6 +18,7 @@ from framework.run_evidence import build_resolved_case_snapshot
 from framework.timing_dataset import export_dataset
 from framework.timing_dataset_loader import load_dataset
 from timing_dataset_support import make_run, reseal, rm2_records
+from timing_notebook_support import isolated_notebook
 
 pytestmark = pytest.mark.integration
 
@@ -86,10 +87,13 @@ def test_synthetic_matrix_reaches_a1_and_clean_kernel_notebook(tmp_path):
     export_dataset(run_dirs=runs, output=dataset)
     loaded=load_dataset(dataset, verify_inputs=True)
     assert sum(t['validity']=='valid' for t in loaded.timings) == 12*8
+    source = ROOT/'notebooks/tls_matrix_energy.ipynb'
+    original = source.read_bytes()
+    test_notebook = isolated_notebook(source, tmp_path/'analysis.ipynb')
     output=tmp_path/'summary'
     result=subprocess.run([sys.executable, str(ROOT/'scripts/summarise_timing_dataset.py'),
         '--dataset', str(dataset), '--spec', str(ROOT/'notebooks/tls_matrix_energy.example.json'),
-        '--output', str(output), '--execute-notebook', '--notebook', str(ROOT/'notebooks/tls_matrix_energy.ipynb')], cwd=ROOT, text=True, capture_output=True, timeout=240)
+        '--output', str(output), '--execute-notebook', '--notebook', str(test_notebook)], cwd=ROOT, text=True, capture_output=True, timeout=240)
     assert result.returncode == 0, result.stderr
     with (output/'completeness.csv').open() as handle:
         rows=list(csv.DictReader(handle))
@@ -98,6 +102,7 @@ def test_synthetic_matrix_reaches_a1_and_clean_kernel_notebook(tmp_path):
     baseline=[r for r in rows if r['condition']=='secp256r1__rsa3072__server']
     assert all(r['completed_runs']=='1' and r['failed_runs']=='1' for r in baseline)
     assert (output/'executed.ipynb').exists()
+    assert source.read_bytes() == original
     with (output/'differences.csv').open() as handle:
         differences=list(csv.DictReader(handle))
     # Cross-evidence-family matching must remain refused, not silently relabelled.
