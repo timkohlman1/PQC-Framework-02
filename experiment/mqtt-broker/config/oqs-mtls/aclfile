@@ -1,3 +1,6 @@
 user stm32-mqtt-client
 topic readwrite pqc/#
 topic read $SYS/#
+
+user pqc-mqtt-server-healthcheck
+topic write pqc/framework/health

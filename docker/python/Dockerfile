@@ -51,6 +51,16 @@ COPY requirements-dev.txt /tmp/pqc-framework-requirements-dev.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /tmp/pqc-framework-requirements-dev.txt
 
+# nbconvert's PDF exporter requires Pandoc plus XeLaTeX and its template/fonts.
+# Resolve transitive packages from the same immutable Debian snapshot above.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        pandoc=3.1.11.1+ds-2 \
+        texlive-xetex=2024.20250309-1 \
+        texlive-fonts-recommended=2024.20250309-1 \
+        texlive-plain-generic=2024.20250309-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Bootstrap is image-owned and runs with isolated Python before any workspace
 # code. It requires runtime host IDs and drops root before the workload starts.
 COPY scripts/container_runtime.py /usr/local/libexec/pqc-container-runtime.py

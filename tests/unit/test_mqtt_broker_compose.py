@@ -838,3 +838,17 @@ def test_oqs_mtls_healthcheck_uses_staged_dedicated_credentials():
     assert "--insecure" in service
     assert "--cert /mosquitto/config/certs/client.crt" not in service
     assert "--key /mosquitto/config/certs/client.key" not in service
+
+
+def test_oqs_mtls_stages_ca_chain_and_authorizes_only_health_topic():
+    compose = _read(BROKER_ROOT / "compose.yaml")
+    service = _service_block(compose, "mqtt-oqs-mtls")
+    config = _read(BROKER_ROOT / "config/oqs-mtls/mosquitto.conf")
+    assert "cafile /tmp/mosquitto-certs/ca-chain.crt" in config
+    assert "cafile /mosquitto/config/certs/" not in config
+    assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in service
+    assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt" in service
+    assert "-q 1 -t pqc/framework/health" in service
+    acl = _read(BROKER_ROOT / "config/oqs-mtls/aclfile")
+    health_acl = acl.split("user pqc-mqtt-server-healthcheck", 1)[1].strip()
+    assert health_acl == "topic write pqc/framework/health"

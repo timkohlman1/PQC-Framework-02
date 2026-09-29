@@ -491,14 +491,29 @@ When ready to run the hardware experiment:
 ```
 
 This command performs preparation/build/signing/flash and the requested runtime
-repetitions through the framework. It may retain failed attempts or stop on an
-infrastructure/preparation error; 120 is the planned count, not proof of 120
+repetitions through the framework. Failed runtime repetitions are recorded and
+execution continues with the remaining repetitions and conditions. After all
+attempts, `completed_with_failures` and exit code 1 distinguish a finished matrix
+with failures from all-success (`completed`, exit code 0). Preparation and broker
+setup failures mark the affected firmware group's remaining repetitions `blocked`
+(no runtime measurement), clean up, and continue to the next firmware group.
+The summary separates completed, failed and blocked repetitions. Condition
+verification and cleanup errors still stop execution; 120 is the planned count, not proof of 120
 completed captures. The two selected certificate profiles and compatible brokers
 are handled by the maintained preparation/orchestration path. Existing Wi-Fi,
 gateway and instrument prerequisites apply. Do not run a second campaign against
 the same laboratory resources. Let an occupied gateway lock wait; Ctrl-C cancels.
 Use the exact resulting campaign directory in subsequent commands. Resume an
-interrupted campaign using its recorded manifest, without changing the source:
+interrupted campaign using its recorded manifest, without changing the source.
+Resume skips validated successes and retries failed or missing repetitions; prior
+run evidence and retry logs remain available. Before any pending repetitions in
+an existing firmware group, resume runs normal preparation/build/sign/flash again,
+restoring both wolfBoot and the signed application. A preparation or flash failure
+blocks that group's measurements; after successful cleanup the next group is tried. Fully validated completed groups perform no
+hardware work. This restores firmware rather than reading back its identity;
+preparation may rebuild/re-sign, and changed firmware hashes invalidate old
+successes in that group so they are measured again:
+
 
 ```bash
 ./scripts/dev.sh campaign-gateway --resume "results/campaigns/tls_matrix_energy_<timestamp>/campaign-manifest.json"
@@ -548,6 +563,20 @@ DATASET = ROOT / "results/analysis/tls_matrix_energy_dataset_01"
 SPEC_FILE = ROOT / "notebooks/tls_matrix_energy.example.json"
 OUTPUT = ROOT / "results/analysis/tls_matrix_energy_interactive_01"
 SPEC = json.loads(SPEC_FILE.read_text())
+```
+
+For PDF export, save the executed notebook, then use JupyterLab's File → Save
+and Export Notebook As → PDF. The development image includes snapshot-pinned
+Pandoc and TeX Live/XeLaTeX dependencies; no Jupyter plugin is needed. After an
+image update, save your notebook, stop the existing server with Ctrl-C, rebuild
+with `./scripts/dev.sh build-image`, and start `./scripts/dev.sh notebook` again.
+Restarting only the kernel keeps the old container and will not load new tools.
+A terminal export of saved outputs (without re-executing cells) is also available:
+
+```bash
+./scripts/dev.sh run python -m jupyter nbconvert --to pdf \
+    notebooks/tls_matrix_energy.ipynb \
+    --output-dir results/analysis/tls_matrix_energy_pdf
 ```
 
 The normal configuration cell imports `json` and `Path` and adds `ROOT / "scripts"`

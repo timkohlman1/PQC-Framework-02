@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -29,7 +30,6 @@ def main(argv: list[str] | None = None) -> int:
     campaign = args.campaign
     if args.resume is not None and campaign is None:
         try:
-            import json
             state = json.loads(args.resume.read_text(encoding="utf-8"))
             source = state.get("source")
             campaign = (SCRIPT_DIR.parent / source).resolve() if isinstance(source, str) and source else source
@@ -43,7 +43,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"campaign execution failed: {exc}", file=sys.stderr)
         return 1
     print(manifest)
-    return 0
+    state = json.loads(manifest.read_text(encoding="utf-8"))
+    summary = state.get("summary", {})
+    print(f"Campaign {state['state']}: {summary.get('completed', 0)} completed, "
+          f"{summary.get('failed', 0)} failed, {summary.get('blocked', 0)} blocked / "
+          f"{summary.get('planned', 0)} planned")
+    return 1 if state["state"] == "completed_with_failures" else 0
 
 
 if __name__ == "__main__":
