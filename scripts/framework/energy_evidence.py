@@ -174,70 +174,12 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
         complete = selected["complete"]
         chunks = selected["chunks"]
         _require(isinstance(complete, dict), "selected energy completion missing")
-        count = complete.get("chunk_count")
-        _require(type(count) is int and count >= 1 and set(chunks) == set(range(count)),
-                 "energy chunk count/sequence mismatch")
-        logical = b"".join(chunks[i] for i in range(count))
-        _require(hashlib.sha256(logical).hexdigest() == complete.get("logical_sha256"),
-                 "energy logical hash mismatch")
-        _require(len(logical) == complete.get("logical_bytes"), "energy logical byte count mismatch")
-
-        contract = {
-            "clock_hz": 1000000,
-            "sample_record_bytes": SAMPLE_STRUCT.size,
-            "sample_encoding": "little_endian_ieee754_v1",
-            "sample_fields": list(SAMPLE_FIELDS),
-            "sync_gpio": 11,
-            "alert_gpio": 12,
-            "calibration_id": "empirical_dmm_reference_loads_2026-09-25",
-            "calibration_status": "empirical_two_load_current_scaling",
-            "nominal_shunt_ohms": 0.015,
-            "effective_shunt_ohms": 0.029,
-            "acquisition_mode": "alert_triggered_bus_shunt",
-            "bus_conversion_us": 50,
-            "shunt_conversion_us": 50,
-            "averaging": 1,
-            "i2c_hz": 400000,
-            "gap_limit_us": 10000,
-        }
-        _require(all(complete.get(key) == value for key, value in contract.items()),
-                 "energy capture configuration/calibration mismatch")
-        _require(re.fullmatch(r"[0-9a-f]{64}", str(complete.get("firmware_sha256", ""))) is not None,
-                 "missing ESP32 firmware identity")
-        _require(type(complete.get("pretrigger_complete")) is bool, "invalid pre-trigger status")
-        _require(all(type(complete.get(key)) is int and complete.get(key) == 0 for key in COUNTERS),
-                 "energy acquisition/sync fault counter increment")
-
-        sample_count = complete.get("sample_count")
-        _require(type(sample_count) is int and sample_count >= 2, "invalid energy sample count")
-        _require(len(logical) == sample_count * SAMPLE_STRUCT.size, "sample byte/count mismatch")
-        e0 = complete.get("e0_us")
-        e1 = complete.get("e1_us")
-        pretrigger = complete.get("pretrigger_us")
-        _require(all(type(v) is int for v in (e0, e1, pretrigger)) and 0 <= e0 < e1 and 0 < pretrigger <= 1_000_000,
-                 "invalid ESP32 GPIO timestamps/pre-trigger")
-
-        samples = [SAMPLE_STRUCT.unpack_from(logical, offset)
-                   for offset in range(0, len(logical), SAMPLE_STRUCT.size)]
+        samples = decode_acquisition(complete, chunks)
+        logical = b"".join(chunks[i] for i in range(complete["chunk_count"]))
+        sample_count = complete["sample_count"]
         timestamps = [sample[0] for sample in samples]
-        _require(all(all(math.isfinite(float(v)) for v in sample[1:]) for sample in samples),
-                 "non-finite electrical sample")
-        _require(all(timestamps[i] < timestamps[i + 1] for i in range(len(timestamps) - 1)),
-                 "non-monotonic sample timestamps")
-        gap_limit = int(complete["gap_limit_us"])
-        # Pre-edge history is best effort. Only the part of a gap inside the
-        # measured GPIO interval contributes to the continuity requirement.
-        _require(all(timestamps[i + 1] - max(timestamps[i], e0) <= gap_limit
-                     for i in range(len(timestamps) - 1) if timestamps[i + 1] >= e0),
-                 "sample timestamp gap exceeds limit in measured interval")
-        _require(e0 - pretrigger <= timestamps[0] <= e0 + gap_limit
-                 and e0 <= timestamps[-1] <= e1,
-                 "capture exceeds pre-trigger limit or does not span measured interval")
-        _require(e1 - timestamps[-1] <= gap_limit,
-                 "final energy sample is too far before falling GPIO edge")
-        _require(complete.get("first_timestamp_us") == timestamps[0]
-                 and complete.get("last_timestamp_us") == timestamps[-1],
-                 "energy completion sample bounds mismatch")
+        e0, e1 = complete["e0_us"], complete["e1_us"]
+        pretrigger = complete["pretrigger_us"]
 
         _require(abs((e1 - e0) - stm32_duration) <= duration_tolerance,
                  "selected energy capture duration no longer matches STM32 window")
@@ -273,3 +215,76 @@ def validate_energy_evidence(path: Path, run_id: str) -> dict:
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, struct.error) as exc:
         result["failure_reasons"].append(str(exc))
     return result
+
+
+def decode_acquisition(complete: dict, chunks: dict[int, bytes]) -> list[tuple]:
+    """Validate one instrument-local acquisition without requiring STM32 pairs.
+
+    Shared with capture acceptance; does not associate intervals or integrate.
+    """
+    count = complete.get("chunk_count")
+    _require(type(count) is int and count >= 1 and set(chunks) == set(range(count)),
+             "energy chunk count/sequence mismatch")
+    logical = b"".join(chunks[i] for i in range(count))
+    _require(hashlib.sha256(logical).hexdigest() == complete.get("logical_sha256"),
+             "energy logical hash mismatch")
+    _require(len(logical) == complete.get("logical_bytes"), "energy logical byte count mismatch")
+
+    contract = {
+        "clock_hz": 1000000,
+        "sample_record_bytes": SAMPLE_STRUCT.size,
+        "sample_encoding": "little_endian_ieee754_v1",
+        "sample_fields": list(SAMPLE_FIELDS),
+        "sync_gpio": 11,
+        "alert_gpio": 12,
+        "calibration_id": "empirical_dmm_reference_loads_2026-09-25",
+        "calibration_status": "empirical_two_load_current_scaling",
+        "nominal_shunt_ohms": 0.015,
+        "effective_shunt_ohms": 0.029,
+        "acquisition_mode": "alert_triggered_bus_shunt",
+        "bus_conversion_us": 50,
+        "shunt_conversion_us": 50,
+        "averaging": 1,
+        "i2c_hz": 400000,
+        "gap_limit_us": 10000,
+    }
+    _require(all(complete.get(key) == value for key, value in contract.items()),
+             "energy capture configuration/calibration mismatch")
+    _require(re.fullmatch(r"[0-9a-f]{64}", str(complete.get("firmware_sha256", ""))) is not None,
+             "missing ESP32 firmware identity")
+    _require(type(complete.get("pretrigger_complete")) is bool, "invalid pre-trigger status")
+    _require(all(type(complete.get(key)) is int and complete.get(key) == 0 for key in COUNTERS),
+             "energy acquisition/sync fault counter increment")
+
+    sample_count = complete.get("sample_count")
+    _require(type(sample_count) is int and sample_count >= 2, "invalid energy sample count")
+    _require(len(logical) == sample_count * SAMPLE_STRUCT.size, "sample byte/count mismatch")
+    e0 = complete.get("e0_us")
+    e1 = complete.get("e1_us")
+    pretrigger = complete.get("pretrigger_us")
+    _require(all(type(v) is int for v in (e0, e1, pretrigger)) and 0 <= e0 < e1 and 0 < pretrigger <= 1_000_000,
+             "invalid ESP32 GPIO timestamps/pre-trigger")
+
+    samples = [SAMPLE_STRUCT.unpack_from(logical, offset)
+               for offset in range(0, len(logical), SAMPLE_STRUCT.size)]
+    timestamps = [sample[0] for sample in samples]
+    _require(all(all(math.isfinite(float(v)) for v in sample[1:]) for sample in samples),
+             "non-finite electrical sample")
+    _require(all(timestamps[i] < timestamps[i + 1] for i in range(len(timestamps) - 1)),
+             "non-monotonic sample timestamps")
+    gap_limit = int(complete["gap_limit_us"])
+    # Pre-edge history is best effort. Only the part of a gap inside the
+    # measured GPIO interval contributes to the continuity requirement.
+    _require(all(timestamps[i + 1] - max(timestamps[i], e0) <= gap_limit
+                 for i in range(len(timestamps) - 1) if timestamps[i + 1] >= e0),
+             "sample timestamp gap exceeds limit in measured interval")
+    _require(e0 - pretrigger <= timestamps[0] <= e0 + gap_limit
+             and e0 <= timestamps[-1] <= e1,
+             "capture exceeds pre-trigger limit or does not span measured interval")
+    _require(e1 - timestamps[-1] <= gap_limit,
+             "final energy sample is too far before falling GPIO edge")
+    _require(complete.get("first_timestamp_us") == timestamps[0]
+             and complete.get("last_timestamp_us") == timestamps[-1],
+             "energy completion sample bounds mismatch")
+
+    return samples
