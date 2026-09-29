@@ -638,6 +638,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
 | DTR-A5-TRIAL | Network impairment pilot campaign and notebook presets | Gateway/STM32 execution of 15 planned attempts | Current request creates a campaign for the operator to run; offline tests do not establish impairment or runtime success | Available gateway, STM32/ST67, experiment/reporting brokers and configured credentials | `tests/integration/test_network_trial_in.py` (offline); retained campaign runtime evidence | `./scripts/dev.sh campaign-gateway network_trial` then the export/notebook commands in `docs/005_remote_flash_workflow.md` | pending operator trial; offline resolver and report pipeline tested separately |
+| DTR-A6-EVIDENCE | A6 energy totals and bounded-phase reports | Real whole-window and matched-configuration acceptance; physical acquisition qualification | Retained trace supports internal phases but ends before closing edge; electrical boundary absent from schema and parser math cannot establish instrument accuracy | Retained bracketed intervals, lab electrical-boundary references, comparable controls and independently qualified acquisition; no new experiment authorized by A6 | `tests/integration/test_energy_analysis_in.py` (extend retained acceptance); existing `tests/hardware/test_energy_capture_hw.py` for separately authorized instrument work | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/timing-comparison.json --energy-spec results/analysis/energy-selection.json --output results/analysis/NEW_ENERGY_SUMMARY` | partially verified 2026-09-29: real 6,677-sample phase trace imported; whole-window/matched/physical qualification deferred |
 | DTR-A5-EVIDENCE | A5 retained packet and impairment reports | Real baseline/impaired matched acceptance | Baseline PCAPs are retained, but no impaired-condition capture with attributable client identity was identified; synthetic analysis cannot establish RQ3 results | Explicit retained baseline/impaired captures, device-flow association and comparable controls; offline only | `tests/integration/test_network_analysis_in.py` (extend with retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_SUMMARY` | partially verified 2026-09-29: real baseline import and synthetic checks passed; real impaired/matched evidence unavailable |
 | DTR-A4-EVIDENCE | A4 TLS attribution and equal-run repeated-handshake inference | Real retained repeated-handshake and matched-profile acceptance | Existing TLS matrix parses, but missing source/QoS controls prevent matched deltas; unequal-repeat inference is verified with synthetic captures only | Explicitly selected retained repeated-workload captures and comparable profile controls; offline analysis only | `tests/integration/test_tls_analysis_in.py` (extend with suitable retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_TLS_SUMMARY --tls` | partially verified 2026-09-29: retained attribution import passed; real repeated/matched acceptance deferred |
 | DTR-A3-MATCHED | A3 application resource comparisons | Real-evidence matched profile delta acceptance | Retained TLS matrix has unknown source revision and QoS controls; some pairs also differ in evidence class. Absolute resource import succeeds but controls cannot be silently waived | Retained runs with known comparable controls and explicit analysis specification; no new instrumentation | `tests/integration/test_resource_analysis_in.py` (extend retained-evidence coverage when suitable records exist) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_RESOURCE_SUMMARY --resources` | partially verified 2026-09-29: 12 unique retained ELF builds imported; synthetic matched deltas and CLI/notebook equivalence pass; real matched deltas deferred for provenance gaps |
@@ -656,7 +657,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-010 | ML-DSA-65 certificate authentication with hybrid ML-KEM MQTT/TLS | End-to-end STM32/server-auth and mTLS hardware verification | Unit coverage and a Docker broker integration test exercise profile selection, PKI generation, and broker-side ML-DSA TLS, but the supplied implementation context cannot execute the STM32/wolfSSL hardware handshake | Reachable gateway, STM32/ST67 hardware, ML-DSA-capable target wolfSSL build, provisioned `mldsa65` certificate profile, and hybrid broker | `tests/hardware/test_stm32_pqc_hybrid_mqtt_tls_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/tls_key_exchange/cases/<case>.yaml` followed by the mutual-auth profile | deferred: implementation requires repository/hardware verification |
 | DTR-011 | Extended application MSP high-water and derived RAM requirement | Gateway-mediated firmware-runtime verification | Unit coverage can validate marker/parser contracts, but only a real STM32 run can confirm that the extended sentinel window reports an MSP peak beyond `_Min_Stack_Size` without saturation or `_sbrk` interference and that the derived required/headroom values reconcile | Gateway, STM32/ST67 hardware, ready-metrics application, UART capture, and a completed representative MQTT/TLS workload | `tests/hardware/test_stm32_mqtt_tls_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/tls_key_exchange/cases/<case>.yaml` | deferred: rerun required after extended MSP watermark implementation |
 | DTR-012 | Ready Metrics 2 paper-aligned MQTT application TTFB/TTLB with deferred reporting | Gateway-mediated end-to-end timing/evidence validation | A 2026-09-18 gateway/STM32 run completed the ML-KEM-768/ML-DSA-65 Ready Metrics 2 workload and produced a hash-valid reporting stream plus experiment PCAP, but inspection showed that the canonical RM2 checkpoint/metric snapshot had not been appended to the common deferred result buffer. The buffer-integration fix now appends `rm2_timebase`, `rm2_checkpoints`, `rm2_metrics`, and `rm2_complete` records after the measured workload; a repeat hardware run is still required to confirm those records and reconcile them with packet timing. | Gateway, STM32/ST67 hardware, experiment and reporting brokers, gateway transfer responder, packet capture, and the Ready Metrics 2 campaign case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/ready_metrics_2/cases/<case>.yaml` then inspect `mqtt-reporting-raw.ndjson` and capture integrity | in progress: workload/collector succeeded; RM2 deferred-buffer integration fixed; repeat hardware evidence required |
-| DTR-013 | Passive STM32/ESP32 energy acquisition acceptance | Gateway/hardware | The 2026-09-27 ready-metrics runs validated the superseded command/session energy protocol only. The current design replaces association tokens, the UART start gate and per-handshake intervals with one experiment-wide PF12 GPIO window, fixed publish-only ESP32 topics, 20-byte packed samples, up to 1 s of optional pre-trigger history and two-edge TIM2/ESP32 alignment. The 2026-09-28 06:53 UTC campaign received 6,507 samples with matching transfer hash but failed the former strict pre-trigger rule. Optional history capped at 1 s and measured-only gap acceptance have source/native tests; fresh hardware acceptance of the updated ESP32 firmware remains pending, as do stale-capture supersession, transfer timeout and repeated-TLS one-window behaviour. | Gateway, STM32/ST67 and manually provisioned/flashed ESP32/INA228 running the matching simplified firmware | `tests/hardware/test_energy_capture_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware` | deferred: fresh hardware acceptance required for the simplified passive protocol |
+| DTR-013 | Passive STM32/ESP32 energy acquisition acceptance | Gateway/hardware | The 2026-09-27 ready-metrics runs validated the superseded command/session energy protocol only. The current design replaces association tokens, the UART start gate and per-handshake intervals with one experiment-wide PF12 GPIO window, fixed publish-only ESP32 topics, 20-byte packed samples, up to 1 s of optional pre-trigger history and two-edge TIM2/ESP32 alignment. The 2026-09-28 06:53 UTC campaign received 6,507 samples with matching transfer hash but failed the former strict pre-trigger rule. Optional history capped at 1 s and measured-only gap acceptance have source/native tests; fresh hardware acceptance of the updated ESP32 firmware remains pending, as do stale-capture supersession, transfer timeout and repeated-TLS one-window behaviour. | Gateway, STM32/ST67 and manually provisioned/flashed ESP32/INA228 running the matching simplified firmware | `tests/hardware/test_energy_capture_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware` | deferred: fresh hardware acceptance required for the simplified passive protocol; A6 replay of a retained current-format trace on 2026-09-29 validates offline decoding only and does not close this live/physical qualification gate |
 
 | DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Gateway/network/hardware execution previously produced all four configured veth impairments, successful cleanup transcripts and complete STM32 reporting streams, but the old hardware test failed on transient manifest fields. The revised persistent-evidence assertions and network-boundary check require a fresh hardware rerun. These checks do not measure realised packet loss, achieved throughput or observed RTT. | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | in progress: previous gateway and reporting evidence inspected; revised hardware-test assertions not yet executed on device |
 | DTR-015 | Request-13 1 MHz application timing timebase and reset-origin handoff | Representative gateway/hardware timing validation across plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | The dedicated hardware delay test is now self-contained and has produced hardware evidence confirming the selected timer derives 1 MHz (`120000000 / (119 + 1)`), a 10 ms requested delay measured 10985 us, HAL tick advanced 11 ms, wolfBoot verification succeeded, and the secure-boot application started. The remaining deferred work is the representative workload/profile matrix needed to confirm reset-origin validity, DWT preservation, and complete structured timing records across the required experiment families. | Reachable gateway, STM32/ST67 hardware, reporting/experiment brokers as required by the selected cases, and the maintained representative workload/profile matrix | `tests/hardware/test_application_timebase_hw.py` plus the maintained workload hardware tests | `./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware`, then run the maintained self-contained hardware/profile tests for plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | partially complete: 1 MHz hardware self-test passed; representative profile-matrix evidence still required |
@@ -1822,6 +1823,139 @@ Build-only execution uses a build-only capture contract even when the resolved f
 Preparation reuse is explicit. Runtime-only/repeated executions record the referenced preparation/build manifest, build number where applicable and exact firmware SHA-256. Flash code re-hashes the selected artefact before target access and refuses a mismatch against the referenced build record. Secure-boot capture separately binds wolfBoot and signed-application identities. Legacy schema-v1 manifests remain readable as historical records but are not silently upgraded or treated as satisfying schema-v3 capture contracts.
 
 Source provenance records the parent commit, branch when available, dirty state and a SHA-256 fingerprint of the tracked diff plus untracked file content without retaining source text in the manifest. Recursive submodule revision/checkout/dirty state and effective compiler, CMake, Ninja, Python and OpenSSL versions remain recorded. Digest-qualified external container images remain canonical source configuration; execution-time image/version evidence is retained where the owning workflow can obtain it.
+
+
+## Offline workload and bounded-phase energy (analysis request A6)
+
+`scripts/framework/energy_analysis.py` extends the A2 report command and typed A1
+loader; `notebooks/energy_comparison.ipynb` is the interactive/clean-kernel view.
+Only existing retained evidence is consumed. No capture, gateway operation,
+firmware build or measurement is initiated. A1–A5 interfaces remain compatible.
+
+**Format and validity.** The current ESP32 schema 1 stores packed little-endian
+`<qfff` timestamp microseconds, bus V, current A and power W, not cumulative
+energy. A6 reuses `energy_evidence.decode_acquisition`, extracted without changing
+capture acceptance, for chunk/hash/sample/configuration/calibration/counter checks.
+All encountered capture IDs remain separate, including invalid or incomplete
+captures. Instrument validity is independent of clock-pair availability and of
+unrelated timing validity. Missing evidence remains unavailable, never zero.
+Known interval durations are retained even when energy coverage is unavailable.
+
+**Math and boundaries.** Integrate recorded W exactly once with trapezoids:
+`J[i+1] = J[i] + (P[i]+P[i+1]) * (t[i+1]-t[i]) / 2000000`.
+Cumulative J resets into a new segment at a gap above the recorded limit; no
+metric may bridge segments. At a boundary within a valid bracket, interpolate
+cumulative J linearly. This policy treats each trapezoid's average power as
+constant inside that bracket; it does not claim sub-sample waveform resolution.
+No extrapolation is permitted. Energy is the cumulative difference; average W
+is J divided by ESP32 interval seconds. Zero measured power remains zero.
+
+A6 exports four separate scopes: `recorded_interval` (ESP32 GPIO e0–e1),
+`whole_workload` (the paired STM32 experiment window), `tls_handshake` (recorded
+outer handshake), and `application_transfer` (first requested payload byte to
+last, not request-to-last-byte). Instrument-local totals can remain usable with
+missing/malformed STM32 pairs. For device phases use
+`e = e0 + (s-s0)*(e1-e0)/(s1-s0)` with exact rational microseconds before energy
+interpolation. Only validated A1 TIM2 1 MHz application-origin observations in
+the same run participate; epoch, iteration and handshake identities are retained.
+
+The current capture contract has one STM32 experiment pair per run. A6 requires
+exactly one such pair and exactly one duration-compatible ESP32 candidate using
+the existing duration tolerance. Multiple pairs or competing captures produce an
+explicit unavailable alignment; no Cartesian pairing or newest-capture guess is
+made. All instrument-local captures remain visible. Phases outside the pair or
+sample coverage remain unavailable. Reporting time is never trimmed by appearance:
+the recorded edges define the whole window and explicit markers define phases.
+
+**Products and comparison policy.** `energy_intervals.csv` includes source hashes,
+capture/interval identities, source line references, phase source references,
+rational mapped endpoints, bracket indices, sample counts/coverage/gaps, acquisition
+counters, firmware identity, calibration, validity/reasons, seconds, J and W.
+`energy_availability.csv` retains absent and unreadable runs. A selected run alone
+produces `energy_trace.csv` (integer timestamps, power, segment-local cumulative J)
+and `energy-trace.png` with supported phase annotations. No campaign-wide sample
+table is built. The energy distribution/completeness/observation/difference CSVs
+reuse A2 controls, outcome and exclusion rules. Energy observation scalars use
+`value` with explicit `unit` J or W and retain capture/interval identity. Plots show medians and IQR for J
+and W. Failures remain in inventory; summaries are explicitly success-conditional.
+Repeated intervals suppress independent-sample inference. No outlier removal,
+idle subtraction or battery-life prediction is performed.
+
+Physical electrical boundaries are not present in the current capture schema.
+Optional `--energy-spec` JSON supplies researcher assertions with evidence refs:
+
+```json
+{
+  "trace_run": "EXACT_A1_RUN_KEY",
+  "boundaries": {
+    "EXACT_A1_RUN_KEY": {
+      "electrical_boundary": "Supply boundary documented by the selected lab record",
+      "evidence_reference": "Reference to that run's wiring/measurement record"
+    }
+  }
+}
+```
+
+Use actual A1 run keys and evidence, not these example values. Unknown boundaries
+do not invalidate absolute instrument readings, but exclude comparison samples.
+Scope, electrical boundary, instrument firmware identity and calibration/acquisition
+policy form separate metric strata, preventing pooling incompatible values. A2 still rejects unknown
+or conflicting experimental controls. `summary.json` retains this selection,
+method/version definitions, source fingerprints, direct input hashes, package
+versions and output hashes. CSV null/escaping conventions are inherited from A2;
+nullable identities use object dtype to preserve integers. Raw captures and sealed
+manifests are unchanged. These exports are local analysis, not a raw-data release.
+
+Batch and clean-kernel commands (choose new output destinations):
+
+```bash
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+  --dataset results/analysis/SELECTED_DATASET \
+  --spec results/analysis/timing-comparison.json \
+  --energy-spec results/analysis/energy-selection.json \
+  --output results/analysis/NEW_ENERGY_SUMMARY
+./scripts/dev.sh python scripts/summarise_timing_dataset.py \
+  --dataset results/analysis/SELECTED_DATASET \
+  --spec results/analysis/timing-comparison.json \
+  --energy-spec results/analysis/energy-selection.json \
+  --output results/analysis/NEW_ENERGY_NOTEBOOK --execute-notebook
+./scripts/dev.sh notebook
+```
+
+`--energy` alone needs no selection file and exports totals/availability with
+unknown-boundary comparison exclusions. Interactive users open
+`notebooks/energy_comparison.ipynb`, set DATASET/SPEC/OUTPUT and ENERGY, restart the
+kernel and run all cells. Optional A3/A4/A5 arguments also work in this notebook.
+Exit 0 establishes report execution, not availability of every metric or physical
+acquisition qualification. Scientific CSVs must agree between batch and notebook;
+render metadata is not promised bit-for-bit deterministic.
+
+Verification is offline and synthetic unless explicitly described as retained:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_energy_analysis.py tests/unit/test_energy_capture.py
+./scripts/dev.sh pytest tests/integration/test_energy_analysis_in.py -m integration
+./scripts/dev.sh pytest tests/unit
+```
+
+Known-answer tests cover constant power, zero, drift/offset, rational boundary
+mapping, cumulative interpolation, missing/malformed/ambiguous pairs, multiple
+capture identities, gaps, calibration/hash rejection, absent/failed runs and
+incompatible policy strata. The integration test exercises the real report CLI
+and clean notebook, compares CSVs and verifies raw-byte preservation.
+
+Retained smoke evidence on 2026-09-29: the A5-selected baseline run
+`2026-09-28_001_ready_metrics_2_energy-0001-9b19c46f6160` has capture
+`8f858f4c371e7e76` with 6,677 samples. Offline phase integration yielded about
+0.223574 J over 0.360127 s for the outer TLS handshake (brackets 4716–4717 and
+4975–4976), and 1.165587 J over 1.877877 s for application transfer (brackets
+5326–5327 and 6673–6674), using zero-based sample indices. These are derived
+instrument readings, not calibrated accuracy claims or matched research results.
+The trace ends before e1: whole-window J/W remain unavailable with
+`outside_sample_coverage`, despite acquisition acceptance. No physical boundary
+assertion was invented. Missing whole-window coverage, physical boundary evidence,
+matched controls and instrument qualification remain in DTR-A6-EVIDENCE.
+
 
 ## Canonical versioned configuration resolver (Implementation Request 10)
 

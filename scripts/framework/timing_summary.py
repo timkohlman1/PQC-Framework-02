@@ -245,7 +245,7 @@ def summarise(dataset, spec, *, metrics=None):
     return frames, spec
 
 
-def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None):
+def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None, energy=None):
     """New output directory only; record direct inputs, selections and output hashes."""
     dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
     dataset = load_dataset(dataset_path)
@@ -272,6 +272,11 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
         from framework.network_analysis import summarise_network
         network_frames, network_provenance = summarise_network(dataset, spec, network)
         frames.update(network_frames)
+    energy_provenance = None
+    if energy is not None:
+        from framework.energy_analysis import summarise_energy
+        energy_frames, energy_provenance = summarise_energy(dataset, spec, energy)
+        frames.update(energy_frames)
     output.mkdir(parents=True, exist_ok=False)
     for name, frame in frames.items():
         exported = frame.copy()
@@ -283,6 +288,9 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
     if network is not None:
         from framework.network_analysis import plot_network
         plot_network(frames, output)
+    if energy is not None:
+        from framework.energy_analysis import plot_energy
+        plot_energy(frames, output)
     lineage = dict(schema="pqc-timing-summary", version=VERSION, specification=spec,
         estimands={"latency": "success-conditional observation median; repeated samples descriptive only",
                    "completion": "completed / (completed + failed); unknown and explicit exclusions reported separately",
@@ -297,6 +305,8 @@ def export_summary(dataset_path, spec, output, *, resources=False, tls=False, ne
                  Path(__file__).with_name("timing_dataset_schema.py"))},
         environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
         outputs={p.name: digest(p) for p in sorted(output.iterdir())})
+    if energy_provenance is not None:
+        lineage["energy"] = energy_provenance
     if network_provenance is not None:
         lineage['network'] = network_provenance
     if tls_provenance is not None:

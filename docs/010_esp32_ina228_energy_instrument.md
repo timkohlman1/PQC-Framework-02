@@ -264,3 +264,15 @@ wire format, passive lifecycle, one-window repeated-TLS behaviour, or new host
 matching logic. Fresh hardware evidence is required before those behaviours are
 claimed successful. The corresponding deferred-test entry is DTR-013 in
 `docs/007_framework_architecture.md`.
+
+## Offline A6 energy reports
+
+The [architecture's A6 section](007_framework_architecture.md#offline-workload-and-bounded-phase-energy-analysis-request-a6)
+owns energy definitions, interpolation/pairing policy, output lineage and batch/
+notebook commands. `--energy` on `scripts/summarise_timing_dataset.py` analyses
+existing captures only. It reuses instrument acceptance checks, but requires valid
+sample brackets for joule integration: a capture may pass acquisition checks and
+still lack a whole-window energy result when its last sample precedes e1. No tail
+extrapolation or inferred reporting-time trimming is permitted. Physical electrical
+boundary assertions require a lab evidence reference before comparison inclusion.
+Mathematical parser tests do not replace the physical qualification limits above.
