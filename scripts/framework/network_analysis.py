@@ -315,7 +315,19 @@ def matched_comparisons(inventory, differences, spec, selections):
         allowed = {'network_condition', 'controls.profile_hashes.network_condition',
                    'controls.network_configured.'+str(axis)}
         allowed |= {'controls.profile_hashes.network_condition:' + r['network_condition']
-                    for r in reference+treatment if isinstance(r.get('network_condition'), str)}
+                    for r in inventory if isinstance(r.get('network_condition'), str)}
+        if spec.get('evidence_policy') == 'stm32_st67_transport':
+            # This comparison changes transport security under an identical
+            # network condition; it is not a network dose-response comparison.
+            axis = None
+            configs = [field(r, 'controls.network_configured') for r in reference+treatment]
+            reason = (None if reference and treatment and all(isinstance(c, dict) and c for c in configs)
+                      and len({json.dumps(c, sort_keys=True) for c in configs}) == 1
+                      else 'transport_comparison_requires_identical_network_conditions')
+            allowed = {'tls_kex', 'tls_auth', 'auth_mode'} | {
+                k for k in spec.get('treatment', [])
+                if k.startswith(('controls.tls.', 'controls.profile_hashes.tls_kex:',
+                                 'controls.profile_hashes.tls_auth:'))}
         if set(spec.get('treatment', [])) - allowed:
             reason = reason or 'non_network_treatment'
         if any(k.startswith(('controls.network_configured', 'controls.tls', 'controls.mqtt')) or k in ('tls_kex','tls_auth','auth_mode','application','payload_bytes','chunk_bytes') for k in spec.get('not_applicable', {})):

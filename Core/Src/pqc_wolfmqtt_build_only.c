@@ -823,6 +823,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_CTX_use_certificate_buffer(socket_context->tls_ctx,
             (const unsigned char *)PQC_MQTT_TLS_CLIENT_CERT_PEM,
             (long)strlen(PQC_MQTT_TLS_CLIENT_CERT_PEM), WOLFSSL_FILETYPE_PEM);
+        socket_context->client_certificate_loaded = (result == WOLFSSL_SUCCESS);
         if (result != WOLFSSL_SUCCESS) {
             PQC_WolfMQTT_DiagnosticCode("client_certificate_load", result, 0);
             PQC_WolfMQTT_DiagnosticMemory("client_certificate_load");
@@ -832,6 +833,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
         result = wolfSSL_CTX_use_PrivateKey_buffer(socket_context->tls_ctx,
             (const unsigned char *)PQC_MQTT_TLS_CLIENT_KEY_PEM,
             (long)strlen(PQC_MQTT_TLS_CLIENT_KEY_PEM), WOLFSSL_FILETYPE_PEM);
+        socket_context->client_private_key_loaded = (result == WOLFSSL_SUCCESS);
         if (result != WOLFSSL_SUCCESS) {
             PQC_WolfMQTT_DiagnosticCode("client_private_key_load", result, 0);
             PQC_WolfMQTT_DiagnosticMemory("client_private_key_load");

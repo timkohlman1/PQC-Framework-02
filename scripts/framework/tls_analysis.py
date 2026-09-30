@@ -303,19 +303,23 @@ def summarise_tls(dataset, spec):
     # Compare each operation/representation independently. Never combine levels or
     # combine aggregate and invocation evidence for the same operation.
     op_samples, definitions = [], {}
+    operation_groups = {}
+    for row in observations:
+        key = (row["run_key"], row["representation"], row["operation"])
+        operation_groups.setdefault(key, {}).setdefault(
+            (row["epoch_index"], row["iteration_id"]), []).append(row)
+    valid_handshakes = {(row["run_key"], row["epoch_index"], row["iteration_id"])
+                        for row in handshakes if row["validity"] == "valid"}
     for representation, operation in sorted({(r["representation"], r["operation"]) for r in observations if r["operation"]}):
         for measure, unit in (("elapsed", "us"), ("count", "count")):
             metric = representation + ":" + operation + ":" + measure
             definitions[metric] = {"unit": unit}
             for run in dataset.runs:
-                groups = {}
-                for r in observations:
-                    if r["run_key"] == run["run_key"] and r["representation"] == representation and r["operation"] == operation:
-                        groups.setdefault((r["epoch_index"], r["iteration_id"]), []).append(r)
+                groups = operation_groups.get((run["run_key"], representation, operation), {})
                 values = []
                 refs = []
                 for identity, rows in groups.items():
-                    successful = any(t["run_key"] == run["run_key"] and (t["epoch_index"],t["iteration_id"]) == identity and t["validity"] == "valid" for t in handshakes)
+                    successful = (run["run_key"], *identity) in valid_handshakes
                     if not successful or any(r["validity"] != "valid" for r in rows):
                         continue
                     ordered = sorted(rows, key=lambda r: r["start_us"])

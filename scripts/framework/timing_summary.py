@@ -43,14 +43,24 @@ def field(run, key):
 def comparison_field(run, key, spec):
     """Opt-in equivalence of protocol labels at the SAME device/transport boundary.
 
-    Preserve original labels in inventory. Never map host, fake, plaintext or
-    unknown classes, and still require matching capture class and controls.
+    Preserve original labels in inventory. Only the explicit transport policy
+    admits plaintext. Never map host, fake or unknown classes; controls still match.
     """
     value = field(run, key)
+    if key == "capture_class" and spec.get("evidence_policy") == "stm32_st67_transport":
+        evidence = field(run, "evidence_class")
+        if ((value == "mqtt_plaintext_runtime" and evidence == "stm32_st67_plaintext_e2e")
+                or (value == "tls_runtime" and evidence in {
+                    "stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"})):
+            return "stm32_st67_transport_runtime"
     if (key == "evidence_class" and spec.get("evidence_policy") == "stm32_st67_tls"
             and value in {"stm32_st67_classical_tls_e2e", "stm32_st67_pqc_hybrid_tls_e2e",
                           "stm32_st67_pqc_tls_e2e"}):
         return "stm32_st67_tls_e2e"
+    if (key == "evidence_class" and spec.get("evidence_policy") == "stm32_st67_transport"
+            and value in {"stm32_st67_plaintext_e2e", "stm32_st67_classical_tls_e2e",
+                          "stm32_st67_pqc_hybrid_tls_e2e", "stm32_st67_pqc_tls_e2e"}):
+        return "stm32_st67_transport_e2e"
     return value
 
 
@@ -65,7 +75,7 @@ def validate_spec(spec, dataset):
                "exclude_runs", "percentiles", "seed", "resamples", "confidence", "independent_runs", "evidence_policy"}
     if set(spec) - allowed:
         raise ValueError("unknown analysis specification keys")
-    if spec.get("evidence_policy", "exact") not in ("exact", "stm32_st67_tls"):
+    if spec.get("evidence_policy", "exact") not in ("exact", "stm32_st67_tls", "stm32_st67_transport"):
         raise ValueError("unsupported evidence_policy")
     conditions = spec.get("conditions", {})
     if not conditions or spec.get("baseline") not in conditions:
@@ -213,7 +223,8 @@ def summarise(dataset, spec, *, metrics=None):
                 reason = reason or "fewer_than_two_contributing_runs"
             low, high = (None, None) if reason else bootstrap_median(values, seed=spec["seed"], resamples=spec["resamples"], confidence=spec["confidence"])
             stats.update(median_ci_low=low, median_ci_high=high, median_ci_reason=reason)
-            distributions.append(stats)
+            if included:
+                distributions.append(stats)
     # A condition must describe one fixed set of controls, not a mixture hidden by its label.
     by_label = {label: [r for (name, _, _), members in groups.items() if name == label for r, reason in members if reason is None]
                 for label in spec["conditions"]}

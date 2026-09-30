@@ -18,6 +18,12 @@ The OQS profile is for protocol evaluation only. It must not be treated as produ
 
 Both profiles override the image entrypoint with an explicit shell script, copy the source ACL file to `/tmp/mosquitto-aclfile` inside the container, set container-local ownership and mode there, and run Mosquitto against that copy. This avoids changing bind-mounted repository files and avoids image startup attempts to change ownership of read-only config/certificate mounts.
 
+All experiment broker profiles use `max_queued_messages 8192`, matching the
+reporting broker. The prior default dropped two messages in a 1,600-message
+Ready Metrics 2 burst on six retained runs. This bounded queue supports the
+existing burst without changing payloads, chunk sizes, QoS or application pacing.
+Queue overflow still constitutes failed workload evidence.
+
 ## Files
 
 ```text

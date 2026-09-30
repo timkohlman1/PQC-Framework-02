@@ -206,3 +206,16 @@ def test_configured_profile_must_match_observed_profile(tmp_path):
     data=extract_secure_boot(dataset)
     assert data['outcomes'][0]['reason']=='configured_observed_profile_mismatch'
     assert all(r['elapsed_ms'] is None for r in data['observations'])
+
+
+def test_identity_only_boot_image_uses_only_sealed_matching_retained_bytes(tmp_path):
+    from framework.secure_boot_analysis import _retained
+    data = b'synthetic ELF bytes'; path = tmp_path/'boot.elf'; path.write_bytes(data)
+    sha = hashlib.sha256(data).hexdigest()
+    manifest = {'artifacts':[{'role':'wolfboot_image','path':None,'sha256':sha,'acquisition':{'status':'available'}}],
+        'retained_files':[{'path':'boot.elf','sha256':sha,'size_bytes':len(data)}]}
+    inputs=[]
+    assert _retained(tmp_path,manifest,'wolfboot_image',inputs)[0] == data
+    assert inputs
+    path.write_bytes(b'changed')
+    with pytest.raises(ValueError): _retained(tmp_path,manifest,'wolfboot_image',[])

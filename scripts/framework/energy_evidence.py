@@ -279,8 +279,10 @@ def decode_acquisition(complete: dict, chunks: dict[int, bytes]) -> list[tuple]:
                  for i in range(len(timestamps) - 1) if timestamps[i + 1] >= e0),
              "sample timestamp gap exceeds limit in measured interval")
     _require(e0 - pretrigger <= timestamps[0] <= e0 + gap_limit
-             and e0 <= timestamps[-1] <= e1,
+             and e0 <= timestamps[-1] <= e1 + gap_limit,
              "capture exceeds pre-trigger limit or does not span measured interval")
+    _require(sum(t > e1 for t in timestamps) <= 1,
+             "capture contains more than one post-edge bracket sample")
     _require(e1 - timestamps[-1] <= gap_limit,
              "final energy sample is too far before falling GPIO edge")
     _require(complete.get("first_timestamp_us") == timestamps[0]

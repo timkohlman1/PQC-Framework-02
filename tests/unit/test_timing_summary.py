@@ -164,3 +164,40 @@ def test_export_keeps_large_nullable_integers_and_escapes_null_strings(tmp_path,
         assert next(csv.DictReader(stream))["run_id"] == r"\\N"
     assert json.loads((output / "summary.json").read_text())["null_encoding"]["token"] == r"\N"
     assert (output / "matched-differences.png").stat().st_size > 1000
+
+
+def test_transport_policy_requires_opt_in_and_matching_device_capture():
+    from framework.timing_summary import comparison_field
+    plain = {'capture_class': 'mqtt_plaintext_runtime', 'evidence_class': 'stm32_st67_plaintext_e2e'}
+    secure = {'capture_class': 'tls_runtime', 'evidence_class': 'stm32_st67_classical_tls_e2e'}
+    for key in plain:
+        assert comparison_field(plain, key, {'evidence_policy': 'stm32_st67_tls'}) != comparison_field(secure, key, {'evidence_policy': 'stm32_st67_tls'})
+        assert comparison_field(plain, key, {'evidence_policy': 'stm32_st67_transport'}) == comparison_field(secure, key, {'evidence_policy': 'stm32_st67_transport'})
+    assert comparison_field({'capture_class': 'build_only', **{'evidence_class': plain['evidence_class']}}, 'capture_class', {'evidence_policy': 'stm32_st67_transport'}) == 'build_only'
+    assert comparison_field({'evidence_class': 'host_plaintext'}, 'evidence_class', {'evidence_policy': 'stm32_st67_transport'}) == 'host_plaintext'
+
+
+def test_transport_comparison_preserves_non_security_controls():
+    d = data((10, 20, 30, 40))
+    for i, run in enumerate(d.runs):
+        run.update(capture_class='mqtt_plaintext_runtime' if i < 2 else 'tls_runtime',
+            evidence_class='stm32_st67_plaintext_e2e' if i < 2 else 'stm32_st67_pqc_tls_e2e',
+            controls={'mqtt': {'qos': 0}})
+    s = spec(); s['evidence_policy'] = 'stm32_st67_transport'
+    f, _ = summarise(d, s)
+    assert row(f, 'differences', 'treatment')['delta_median'] == 20
+    d.runs[2]['controls']['mqtt']['qos'] = 1
+    f, _ = summarise(d, s)
+    assert 'conflicting_control:controls.mqtt.qos' in row(f, 'differences', 'treatment')['reason']
+
+
+def test_excluded_evidence_groups_do_not_block_eligible_comparisons():
+    d = data((10, 20, 30, 40))
+    extra = copy.deepcopy(d.runs[0]); extra.update(run_key='excluded', target='other', evidence_class='other')
+    from dataclasses import replace
+    d = replace(d, runs=(*d.runs, extra))
+    s = spec(); s['filters'] = {'target': 'fixed'}
+    frames, _ = summarise(d, s)
+    assert len(frames['inventory']) == 5
+    assert row(frames, 'differences', 'treatment')['delta_median'] == 20
+    assert set(frames['distributions']['evidence_class']) == {'fixed'}

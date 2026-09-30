@@ -7,12 +7,13 @@ import sys
 import pytest
 import yaml
 from framework.hardware_test_support import HardwareFileRun, session_result_dir
+from framework.energy_analysis import acquisitions, Integral, workload_bounds, map_boundary
 
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = [pytest.mark.hardware, pytest.mark.long]
 
 
-@pytest.mark.parametrize("workload", ["ready_metrics", "tls_handshake_repeat"])
+@pytest.mark.parametrize("workload", ["ready_metrics", "tls_handshake_repeat", "baremetal_benchmark"])
 def test_energy_campaign(workload, pytestconfig, pqc_require_capabilities):
     pqc_require_capabilities("local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware")
     context = HardwareFileRun.create(repo_root=ROOT, session_result_dir=session_result_dir(pytestconfig), module_name="test_energy_capture_hw")
@@ -21,6 +22,8 @@ def test_energy_campaign(workload, pytestconfig, pqc_require_capabilities):
     campaign["execution"]["repetitions"] = 2
     if workload == "tls_handshake_repeat":
         campaign["matrix"] = {"workload.iterations.handshakes_per_run": [2]}
+    elif workload == "baremetal_benchmark":
+        campaign["matrix"] = {"tls_kex": ["ML_KEM_768"], "workload.iterations.operations_per_run": [2]}
     source = context.generated_root/"campaign.yaml"
     source.write_text(yaml.safe_dump(campaign))
     results = context.evidence_root/"campaign-runs"
@@ -49,6 +52,16 @@ def test_energy_campaign(workload, pytestconfig, pqc_require_capabilities):
         roles = {a["role"]: a for a in final["artifacts"]}
         for role in ("stm32_result_stream", "energy_result_stream"):
             assert roles[role]["acquisition"]["status"] == "available"
+        # A valid transfer alone does not prove coverage of the workload interval.
+        trace = acquisitions(path.parent/roles["energy_result_stream"]["path"])[acceptance["capture_id"]]
+        assert trace["reason"] is None
+        complete = trace["complete"]
+        a = acceptance["alignment"]
+        pair = (a["stm32_start_us"], a["stm32_end_us"])
+        bounds = workload_bounds(path.parent/roles["stm32_result_stream"]["path"], path.parent.name, pair)
+        mapped = [map_boundary(t, *pair, complete["e0_us"], complete["e1_us"]) for t in bounds]
+        integrated = Integral(trace["samples"], complete["gap_limit_us"]).interval(*mapped)
+        assert integrated["duration_s"] > 0
     assert len(captures) == 2
     for group in manifest["firmware_groups"]:
         preparation = manifest_path.parent/group["preparation_manifest"]

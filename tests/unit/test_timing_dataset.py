@@ -381,3 +381,23 @@ def test_negative_validation_capture_class_remains_distinct(tmp_path):
     assert data.timing_view()[0]["capture_class"] == "secure_boot_negative_validation"
     assert data.timing_view()[0]["execution_outcome"] == "failed"
     assert not any(t["value_us"] is not None for t in data.timings)
+
+
+@pytest.mark.parametrize('conflict',[False,True])
+def test_signed_deployment_is_distinct_from_linked_build_hash(tmp_path, conflict):
+    from framework.run_evidence import register_artifact
+    run = make_run(tmp_path/'run')
+    image = run/'signed.bin'; image.write_bytes(b'synthetic signed application')
+    fw_hash = sha256_file(image)
+    path = run/'manifest.json'; manifest = json.loads(path.read_text())
+    register_artifact(manifest,result_dir=run,role='signed_application',path=image,stage='synthetic',tool=__name__)
+    path.write_text(json.dumps(manifest))
+    path = run/'run-provenance.json'; value = json.loads(path.read_text())
+    value['records'].update(firmware={'sha256':fw_hash,'evidence_role':'signed_application'},
+        preparation={'manifest':'results/builds/42/manifest.json','firmware_sha256':'a'*64},
+        build_reference={'record_manifest':'results/builds/42/manifest.json','artifact_sha256':('b' if conflict else 'a')*64})
+    path.write_text(json.dumps(value)); reseal(run)
+    result = exported(tmp_path,run)
+    assert (result.runs[0]['selected_input_status']=='verified') is (not conflict)
+    if not conflict:
+        assert result.runs[0]['firmware_sha256'] == fw_hash

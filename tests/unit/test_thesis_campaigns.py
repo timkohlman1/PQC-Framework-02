@@ -43,3 +43,19 @@ def test_resolved_snapshot_records_actual_experiment_qos():
         bundle=resolver.to_legacy_bundle(case,resolve_secrets=False)
         assert bundle['experiment']['mqtt']['qos']==0
         assert build_resolved_case_snapshot(bundle)['effective_non_secret_parameters']['mqtt']['qos']==0
+
+
+@pytest.mark.parametrize('name', ['ready_metrics_plaintext', 'ready_metrics_2_plaintext',
+    *[n for n in CATALOG if n.endswith('_plaintext')]])
+def test_plaintext_uses_same_application_without_tls(name):
+    resolver = ConfigResolver(ROOT)
+    for case in resolver.expand_campaign(name):
+        bundle = resolver.to_legacy_bundle(case, resolve_secrets=False)
+        mqtt = bundle['experiment']['mqtt']
+        assert mqtt['tls'] == {'mode': 'plaintext', 'authentication': 'server'}
+        assert mqtt['broker']['port'] == 1883
+        assert mqtt['qos'] == 0
+        assert bundle['experiment']['firmware']['application'] in ('mqtt_ready_metrics', 'mqtt_ready_metrics_2')
+        from framework.tls_algorithms import resolve_tls_algorithm_set
+        algorithms = resolve_tls_algorithm_set(bundle)
+        assert algorithms['mode'] == 'plaintext'

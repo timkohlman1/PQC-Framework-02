@@ -128,3 +128,35 @@ def test_tcp_sequence_spaces_are_independent_between_directions():
     c=packet(3,seq=2**32-10)
     rows,_=flow_observations([a,b,c],selection())
     assert rows[0]['overlap_bytes'] is None
+
+
+def test_three_condition_hash_selection_does_not_invalidate_pairwise_axis():
+    from framework.network_analysis import matched_comparisons
+    rows = []
+    for i, (name, rate) in enumerate([('base',100000),('slow',1024),('slower',256)]):
+        r = config(); r.update(run_key=str(i), condition=name, network_condition=name, exclusion_reason=None)
+        r['controls']['network_configured']['rate_kbit'] = rate
+        rows.append(r)
+    spec = {'baseline':'base', 'treatment':['network_condition','controls.network_configured.rate_kbit',
+        *['controls.profile_hashes.network_condition:'+r['condition'] for r in rows]]}
+    diff = dict(condition='slow',metric='bytes',reason=None,delta_median=5,percent_difference=10)
+    answer = matched_comparisons(rows,[diff],spec,{r['run_key']:selection() for r in rows})[0]
+    assert answer['reason'] is None and answer['delta_median'] == 5
+    spec['treatment'].append('tls_auth')
+    assert matched_comparisons(rows,[diff],spec,{r['run_key']:selection() for r in rows})[0]['reason'] == 'non_network_treatment'
+
+
+def test_transport_comparison_requires_identical_network_and_keeps_a2_controls():
+    from framework.network_analysis import matched_comparisons
+    a = {**config(), 'run_key': 'a', 'condition': 'base', 'exclusion_reason': None}
+    b = deepcopy(a); b.update(run_key='b', condition='tls')
+    spec = {'baseline': 'base', 'evidence_policy': 'stm32_st67_transport',
+            'treatment': ['tls_kex', 'controls.tls.mode']}
+    diff = {'condition': 'tls', 'reason': None, 'delta_median': 2, 'percent_difference': 10}
+    selections = {'a': selection(), 'b': selection()}
+    assert matched_comparisons([a,b], [diff], spec, selections)[0]['reason'] is None
+    diff['reason'] = 'unmatched_controls'
+    assert matched_comparisons([a,b], [diff], spec, selections)[0]['reason'] == 'unmatched_controls'
+    diff['reason'] = None
+    b['controls']['network_configured']['rtt_ms'] = 20
+    assert matched_comparisons([a,b], [diff], spec, selections)[0]['delta_median'] is None

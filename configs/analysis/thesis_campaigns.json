@@ -61,6 +61,42 @@
       "repetitions": 10,
       "workload": "ready_metrics_2",
       "energy": false
+    },
+    "thesis_application_plaintext": {
+      "conditions": 4,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_rate_plaintext": {
+      "conditions": 3,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_rtt_plaintext": {
+      "conditions": 3,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_loss_plaintext": {
+      "conditions": 3,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_mtu_plaintext": {
+      "conditions": 3,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_energy_plaintext": {
+      "conditions": 1,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": true
     }
   },
   "existing_campaigns": {

@@ -285,3 +285,13 @@ def test_optional_history_preserves_measured_coverage_and_one_second_cap(tmp_pat
         timestamps=timestamps, mutations={"pretrigger_complete": False}))
     result = validate_energy_evidence(path, "run")
     assert result["passed"] is passed, result["failure_reasons"]
+
+
+@pytest.mark.parametrize("tail,passed", [([5_000_500], True), ([5_010_001], False),
+                                          ([5_000_500, 5_001_000], False)])
+def test_single_post_edge_sample_is_allowed_for_interpolation(tmp_path, tail, passed):
+    timestamps = list(range(3_000_000, 5_000_000, 1_000)) + tail
+    log = tmp_path / "subscriber.log"
+    log.write_text("".join(_stm32_epoch("test") + _energy_capture(timestamps=timestamps)))
+    result = validate_energy_evidence(log, "test")
+    assert result["passed"] is passed

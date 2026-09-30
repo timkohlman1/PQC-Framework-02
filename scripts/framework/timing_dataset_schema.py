@@ -3,7 +3,7 @@ from __future__ import annotations
 
 SCHEMA_NAME = "pqc-timing-dataset"
 SCHEMA_VERSION = 1
-PARSER_VERSION = "1.1.0"
+PARSER_VERSION = "1.3.0"
 METRIC_VERSION = "1"
 NULL = r"\N"
 

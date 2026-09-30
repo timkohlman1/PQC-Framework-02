@@ -203,13 +203,13 @@ def test_plaintext_mqtt_rejects_incompatible_transport_choices():
             )
 
 
-def test_plaintext_mqtt_rejects_non_validation_workload():
+def test_plaintext_mqtt_rejects_tls_only_workload():
     resolver = ConfigResolver(ROOT)
     case = resolver.expand_campaign("mqtt_plaintext_validation")[0]
-    with __import__("pytest").raises(ResolutionError, match="mqtt_validation workload"):
+    with __import__("pytest").raises(ResolutionError, match="supported MQTT application"):
         resolver.resolve_case(
             campaign_id="invalid-workload", case_index=1,
-            selections={**case["selections"], "workload": "ready_metrics"},
+            selections={**case["selections"], "workload": "tls_handshake_repeat"},
             choices=case["choices"], workload_overrides={}, execution=case["execution"],
         )
 

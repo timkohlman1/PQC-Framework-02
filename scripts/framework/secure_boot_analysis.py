@@ -171,7 +171,16 @@ def _retained(root, manifest, role, inputs):
     found = [a for a in manifest['artifacts'] if a.get('role') == role and a.get('acquisition', {}).get('status') == 'available']
     if len(found) != 1:
         raise ValueError('retained_artifact_missing_or_ambiguous:' + role)
-    a = found[0]; p = Path(a.get('path') or '')
+    a = found[0]
+    if not a.get('path'):
+        matches = [f for f in manifest.get('retained_files', [])
+            if f.get('sha256') == a.get('sha256') and f.get('path')
+            and Path(f['path']).suffix in ({'.elf'} if role == 'wolfboot_image' else {'.bin'})
+            and not any(part in Path(f['path']).parts for part in ('cryptographic-material', 'keys'))]
+        # Multiple retained copies of the exact same bytes are not ambiguous.
+        if matches:
+            a = {**a, **sorted(matches, key=lambda f: f['path'])[0]}
+    p = Path(a.get('path') or '')
     if p.is_absolute() or '..' in p.parts or not p.parts or any(x in p.parts for x in ('cryptographic-material', 'keys')):
         raise ValueError('unsafe_artifact_path')
     suffixes = {'wolfboot_image': {'.elf', '.bin'}, 'signed_application': {'.bin'}}
@@ -223,6 +232,11 @@ def extract_secure_boot(dataset):
         values, reasons, build_id, image_id = {}, {}, None, None
         try:
             build_root = _build_root(run)
+            # Direct-flash runs retain signing and boot artifacts alongside their
+            # capture; their build reference is the application ELF-only record.
+            own = read_json(_read(root/'manifest.json', inputs, run['manifest_sha256']))
+            if any(a.get('role') == 'wolfboot_image' and a.get('sha256') for a in own.get('artifacts', [])):
+                build_root = root if any(a.get('role') == 'run_provenance' for a in own['artifacts']) and not run.get('preparation_run_id') else build_root
             bm = read_json(_read(build_root/'manifest.json', inputs,
                                 run['manifest_sha256'] if build_root == root else None))
             _verify_header(bm)

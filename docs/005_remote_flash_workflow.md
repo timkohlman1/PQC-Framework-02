@@ -769,10 +769,10 @@ python3 scripts/collect_thesis_evidence.py plan --output results/thesis/collecti
 python3 scripts/collect_thesis_evidence.py status --output results/thesis/collection-01
 ```
 
-The default plan resolves all thirteen campaign families: the ten thesis pilots,
-normal secure boot, instrumented boot stack and bare-metal reference. It assigns
+The default plan resolves nineteen campaign families: the ten TLS/boot thesis pilots,
+six matched plaintext pilots, normal secure boot, instrumented boot stack and bare-metal reference. It assigns
 ten outer reset attempts to every condition, including stack and bare-metal
-campaigns: 93 conditions and 930 campaign attempts. The existing bare-metal and
+campaigns: 110 conditions and 1,100 campaign attempts. The existing bare-metal and
 repeated-TLS inner repetitions remain unchanged. Eight normal-build OTA scenario
 tests additionally cover application update, rollback, bootloader migration,
 invalid candidates and recovery. Their setup/recovery boots are separate retained
@@ -866,6 +866,18 @@ partial collection or revised local attribution without hardware:
 python3 scripts/collect_thesis_evidence.py report --output results/thesis/collection-01
 ```
 
+After upgrading analysis code, use `report --reanalyze --output <existing-collection>`
+to produce a new numbered report from retained inputs. This records both the
+original collection source identity and current analysis identity in
+`analysis-source.json`. Plan integrity and frozen profile hashes are still
+checked. This option never permits running or resuming hardware under changed
+source: create a fresh collection plan for the next complete acquisition.
+
+Reports hide excluded-only groups from comparisons, retain them in inventory,
+and distinguish OTA signed-image identity from its unsigned build reference.
+Notebook tables show explicitly labelled previews; full CSV files remain the
+complete result tables.
+
 `latest-report.json` names the verified A8 snapshot. The numbered report directory
 also includes `collection-gaps.json`, the annotation snapshot, explicit analysis
 selection and individual datasets. Use A8 `--verify` on that snapshot. Exit 0
@@ -879,3 +891,207 @@ timing, final candidate-to-image binding, simultaneous system RAM, disjoint
 Total Crypto or handshake-only byte measurements. These remain explicit gaps
 until their measurement contracts exist or the corresponding thesis columns
 are revised as documented in the A8 architecture section.
+
+
+### Matched no-TLS application baselines
+
+`ready_metrics_plaintext` and `ready_metrics_2_plaintext` run the existing Ready
+Metrics applications using plaintext MQTT on port 1883. Set `mqtt_transport:
+plaintext` in a campaign's `fixed` choices to select this build mode. The resolver
+requires the inert compatibility choices `tls_kex: secp256r1`, `tls_auth: rsa3072`,
+`auth_mode: server`; these do not enable TLS, certificates or transport authentication.
+The application build excludes wolfSSL/wolfCrypt sources and linkage. wolfMQTT
+remains for the MQTT protocol. Framework instrumentation and secure-boot verification
+remain; this is a no-TLS application baseline, not a claim that the bootloader,
+Wi-Fi link or entire device has no cryptography.
+
+The same workload code, transfer sizes/chunks, QoS, reporting, boot settings and
+network conditions are retained. New default collection families are:
+
+| Campaign | Conditions | Attempts at 10 repetitions | Matched workload |
+| --- | ---: | ---: | --- |
+| `thesis_application_plaintext` | 4 | 40 | 4 KiB/200 KiB, 128/400-byte chunks |
+| `thesis_network_rate_plaintext` | 3 | 30 | Reference and two rate limits |
+| `thesis_network_rtt_plaintext` | 3 | 30 | Reference and two delays |
+| `thesis_network_loss_plaintext` | 3 | 30 | Reference and two loss levels |
+| `thesis_network_mtu_plaintext` | 3 | 30 | Reference and two MTUs |
+| `thesis_energy_plaintext` | 1 | 10 | 200 KiB, 400-byte chunks, E5V energy |
+
+The extra 170 attempts bring the default to 1,100 plus eight OTA scenario tests.
+Standalone Ready Metrics profiles each perform one attempt and are not extra
+default collection steps. There is no plaintext TLS-handshake or primitive-crypto
+benchmark: those operations do not exist without TLS.
+
+Transport report strata compare the no-TLS baseline with classical, hybrid or
+pure PQ TLS conditions where the collected TLS design includes them. The KEX and
+authentication studies reuse the matching 200 KiB/400-byte plaintext application
+condition; all selections stay within the current collection. These comparisons
+measure the whole transition, including authentication, rather than isolating
+only key exchange. Existing TLS-only analyses retain their original baselines.
+TLS handshake measurements absent on plaintext are unavailable, never zero-cost
+handshakes. Original evidence labels remain in the exported inventory.
+
+Create a fresh plan after transferring these source changes to the collection PC.
+Do not update the checkout of an active frozen collection. An old plan will not
+automatically acquire new profiles, and its source seal refuses revision mixing.
+A selected subset needs both its TLS family and corresponding plaintext family
+for transition comparisons. For example:
+
+```bash
+python3 scripts/collect_thesis_evidence.py plan --output results/thesis/transport-baselines-01 --only thesis_kex thesis_application thesis_application_plaintext --skip-ota
+python3 scripts/collect_thesis_evidence.py run --output results/thesis/transport-baselines-01
+python3 scripts/collect_thesis_evidence.py report --output results/thesis/transport-baselines-01
+```
+
+Before laboratory collection, qualify both application paths on the gateway:
+
+```bash
+./scripts/dev.sh pytest-hardware tests/hardware/test_plaintext_application_baselines_hw.py --pqc-require-hardware
+```
+
+### Flat experiment archive
+
+Collection reports now also write `reports/<number>/archive/runs.csv`, with its
+column dictionary and integrity metadata in `archive.json`. `latest-report.json`
+names both the report snapshot and the archive directory. The flat archive is a
+local analysis artifact, not the sanitized public report. It contains experiment
+identifiers and evidence paths, but no payloads, key logs or credential material.
+
+Every experiment run has one row, including bare-metal benchmarks. The only
+exception is repeated TLS, with one row per recorded handshake attempt.
+`run_key` identifies the retained capture; `row_id` identifies the particular row.
+Run IDs can repeat in different result roots: never join on `run_id` alone.
+Identical copied captures are deduplicated. Campaign attempts blocked before a
+capture exists remain rows with null measurements. No missing handshakes are
+invented from configured counts.
+
+The table combines recorded numeric firmware fields with derived timings,
+resources, TLS operation totals, packet observations, energy intervals and OTA
+status. Repeated TLS handshakes are not replaced with medians. Bare-metal
+repetitions within one run use explicitly named median-cycle columns; every raw
+primitive record remains in the original evidence and specialist export. Static build facts
+may repeat as context, but run-wide energy, packet totals and end-to-end timings
+are not copied onto handshake rows. Unavailable, conflicting or unreliable values
+are null. Row-level `run_success`, `capture_valid`, `selected_inputs_valid`,
+`data_status`, `analysis_errors` and failure-stage columns keep diagnostics compact;
+there are no validity/reason columns for every measurement. A reliable timing can
+remain available in an otherwise failed run (for example, failed energy capture);
+`timing_policy_exclusion` preserves the specialist comparison restriction. Detailed per-value
+analysis can be regenerated from the original evidence.
+
+Schema version 2 puts treatment choices in row fields and equivalent measurements
+in shared columns. It does not make different measurement boundaries equivalent:
+
+| Thesis comparison | Row fields / controls | Shared value columns (examples) |
+| --- | --- | --- |
+| Application performance: plaintext, classical, hybrid or PQ TLS (RQ1/RQ4) | `transport_mode`, `tls_kex`, `tls_auth`, `auth_mode`, payload/chunk, network and boot configuration | `timing__rtfb_us`, `timing__rtlb_us`, `timing__ttfb_us`, `timing__ttlb_us`, `timing__req_tfb_us`, `timing__req_tlb_us`, `timing__mqtt_readiness_us`, `application__payload_throughput_bytes_s` |
+| Handshake / authentication (RQ2) | TLS profiles and authentication mode; repeated handshake ID | `timing__tls_handshake_us`, `tls__aggregate__signature_verify__elapsed_us`, `tls__aggregate__signature_sign__elapsed_us` |
+| KEX components (RQ2) | `tls_kex` and recorded implementation fields | `tls__aggregate__kex_classical_keygen__elapsed_us`, `tls__aggregate__kex_kem_keygen__elapsed_us` |
+| Memory / firmware (RQ1/RQ2) | Same workload/build controls and TLS choices | `resource__flash_section_bytes`, `resource__ram_static_base_bytes`, `resource__freertos_heap_peak_used_bytes` |
+| Network (RQ3) | Network condition, transfer size, transport/TLS choices | `packet__client_to_server__wire_bytes`, `packet__server_to_client__overlap_bytes` |
+| Application energy (RQ4) | Same workload, electrical boundary, capture/instrument configuration | `energy__whole_workload__energy_j`, `energy__whole_workload__average_power_w` |
+| Secure boot / OTA (RQ5/RQ6) | `secure_boot`, `firmware_mode`, OTA state | `boot__image_verification_ms`, `boot__bootloader_flash_bytes`, `boot__image_signature_used_bytes`, `ota__*` outcomes |
+| Bare-metal reference only | `primitive_signature_algorithm`, `primitive_signature_parameter`, `primitive_kem_algorithm`, `primitive_kem_parameter`, `primitive_repetitions`, `primitive__hclk_hz` | `primitive__signature_verify_median_cycles`, `primitive__kem_keygen_median_cycles`, other operation-specific median-cycle columns |
+
+`transport_mode` distinguishes `plaintext` and `tls`; `kex_class` describes key
+establishment only. Certificate authentication remains a separate axis in
+`tls_auth`: a classical KEX may still use a PQ certificate. Plaintext has no TLS
+handshake duration; that field is null, while its measured application timings
+occupy the same columns as TLS. Inert resolver crypto selections do not label the
+plaintext row as encrypted.
+
+TLS primitive columns use functional roles, with observed implementations in
+`tls_<role>_implementation`. Hybrid KEX retains separate classical and KEM
+components in the same run row. A role containing multiple implementations is
+labelled `mixed` and its value is null rather than combining unlike operations.
+Aggregate and invocation representations remain separate and cannot be added to
+protocol phases or each other to infer Total Crypto. Bare-metal cycle counts are
+never mixed with application or TLS elapsed-time columns. Bare-metal parameters
+are taken from measured records, not uncompiled alternatives; currently the
+benchmark measures ML-DSA-65 and selected ML-KEM variants, not every algorithm
+that can be used by TLS.
+
+Schema-1 exports remain loadable in their original layout. Regenerate from the
+retained evidence to obtain schema 2; do not edit sealed CSVs. Format changes or
+new derivations from existing evidence do not require new experiments. Missing
+measurements, incomplete captures or unsupported acquisition boundaries cannot
+be recovered by changing the export.
+
+Export a selected collection independently, or use `--results-root results` to
+query the complete retained archive:
+
+```bash
+./scripts/dev.sh python scripts/export_archive_table.py \
+  --results-root results/thesis/collection-01 \
+  --output results/analysis/flat-archive-01 \
+  --annotations configs/analysis/thesis_collection_annotations.json
+./scripts/dev.sh python scripts/export_archive_table.py \
+  --check results/analysis/flat-archive-01 --verify-sources
+```
+
+Use a new output directory for every export. Electrical-boundary and client-IP
+annotations must apply to the selected captures; omit `--annotations` if that
+attribution is unknown. Missing attribution leaves corresponding derived metrics
+null instead of guessing a client or measurement rail. Unsupported historical
+formats remain visible as unavailable captures. Existing specialized exports and
+original logs remain the route to detailed diagnostics.
+
+Load from a Python session started at the repository root:
+
+```python
+import sys
+sys.path.insert(0, "scripts")
+from framework.archive_table import load_archive
+
+df = load_archive("results/analysis/flat-archive-01")
+handshakes = df.loc[
+    df["row_kind"].eq("handshake") & df["handshake_outcome"].eq("success"),
+    ["source_commit", "campaign_execution_id", "run_key", "iteration_id",
+     "tls_kex", "tls_auth", "timing__tls_handshake_us"],
+]
+energy = df.loc[df["energy__whole_workload__energy_j"].notna()]
+
+# Select one matched application stratum, then compare all transport choices.
+app = df.loc[
+    df["row_kind"].eq("retained_capture")
+    & df["application"].eq("mqtt_ready_metrics_2")
+    & df["network_condition"].eq("baseline")
+    & df["payload_bytes"].eq(4096) & df["chunk_bytes"].eq(400)
+    & df["secure_boot"].eq("integrity_sha256")
+    & df["run_success"] & df["selected_inputs_valid"] & df["capture_valid"]
+    & df["timing_policy_exclusion"].isna()
+]
+# Choose a single source/build environment and energy mode before plotting.
+# Preserve those strata here instead of silently pooling different revisions.
+controls = ["target", "source_commit", "git_state_identity", "firmware_mode",
+            "energy_enabled", "energy_profile"]
+treatments = ["transport_mode", "tls_kex", "tls_auth", "auth_mode"]
+summary = app.groupby(controls + treatments, dropna=False)[
+    ["timing__ttlb_us", "timing__rtlb_us"]
+].agg(["count", "median"])
+# For a selected single control stratum:
+# app.groupby(treatments)["timing__ttlb_us"].median().div(1000).plot.bar(ylabel="TTLB (ms)")
+```
+
+These are summaries of measured outcomes, not automatic causal estimates or
+independence claims. Match QoS, actual network settings, platform/build environment,
+boot and instrumentation controls before calculating deltas against a baseline.
+Use the specialist matched-comparison reports for strict eligibility checks.
+Count unique `run_key` values for independent experiment-run counts; repeated TLS
+rows share a capture and must not be counted as additional boots.
+
+The loader verifies output hashes and returns pandas nullable numeric, boolean and
+string columns (`pd.NA` for missing values). It preserves identifier strings such
+as leading-zero build numbers and literal `NA`. The CSV's explicit null token is
+`\N`; use the loader instead of pandas' default NA/type guessing. The dictionary
+records each measurement's origin, unit and any within-handshake operation total.
+
+New collection plans enable the existing ESP32/INA228 instrument for every
+supported deferred-reporting workload, including plaintext and the post-boot
+application portions of secure-boot/OTA-overhead campaigns. This does not measure
+bootloader or multi-reset OTA energy. The separate OTA lifecycle tests remain
+outside that energy contract. Energy adds publication/storage cost and can reject
+a capture with an acquisition fault; it does not change MQTT payloads, chunk sizes
+or QoS. All matched new collection conditions use the same instrument selection.
+The STM32's 20 ms tail guard is excluded from whole-workload energy using the
+recorded workload-end timestamp. No ESP32 firmware update is required.
