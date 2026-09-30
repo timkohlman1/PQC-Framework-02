@@ -223,8 +223,19 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         row[key] = _text(config.get(key))
         if historical.get(key) is not None and config.get(key) != historical[key]:
             mismatches.append(key + "_mismatch")
+    fw = _map(records.get("firmware"))
+    # Historical build reuse populated preparation with the unsigned ELF hash.
+    # Recognize only the exact recorded build linkage; deployment/preparation
+    # mismatches remain errors. Signed application and build are distinct objects.
+    build_preparation = (prep.get("manifest") == build.get("record_manifest")
+        and bool(prep.get("manifest"))
+        and prep.get("firmware_sha256") == build.get("artifact_sha256")
+        and bool(build.get("artifact_sha256"))
+        and fw.get("evidence_role") == "signed_application"
+        and any(a.get("role") == "signed_application" and a.get("sha256") == fw.get("sha256")
+                and a.get("acquisition", {}).get("status") == "available" for a in manifest.get("artifacts", [])))
     firmware_hashes = {value for value in (
-        _map(records.get("firmware")).get("sha256"), prep.get("firmware_sha256"), campaign.get("firmware_sha256")
+        fw.get("sha256"), None if build_preparation else prep.get("firmware_sha256"), campaign.get("firmware_sha256")
     ) if isinstance(value, str) and value}
     if len(firmware_hashes) > 1:
         mismatches.append("firmware_hash_mismatch")
@@ -246,7 +257,16 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         chunk_bytes=_int(_map(mqtt.get("transfer")).get("chunk_bytes")),
         boot_stack_profiling=_bool(choices.get("boot_stack_profiling")),
         boot_uart_diagnostics=_bool(choices.get("boot_uart_diagnostics")))
-    if choices.get("tls_kex") is not None and tls.get("key_exchange_group") != choices["tls_kex"]:
+    plaintext = (tls.get("mode") == "plaintext"
+                 and mqtt.get("evidence_class") == "stm32_st67_plaintext_e2e"
+                 and choices.get("mqtt_transport") == "plaintext"
+                 and choices.get("tls_kex") == "secp256r1"
+                 and choices.get("tls_auth") == "rsa3072"
+                 and choices.get("auth_mode") == "server")
+    if plaintext:
+        # Compatibility selections are not actual transport authentication/crypto.
+        row.update(tls_kex="not_applicable", tls_auth="not_applicable", auth_mode="not_applicable")
+    if not plaintext and choices.get("tls_kex") is not None and tls.get("key_exchange_group") != choices["tls_kex"]:
         mismatches.append("tls_selection_mismatch")
     if choices.get("auth_mode") is not None and tls.get("authentication") != choices["auth_mode"]:
         mismatches.append("authentication_selection_mismatch")

@@ -178,3 +178,32 @@ def test_a6_documentation_routes_to_canonical_methods():
                   'outside_sample_coverage','2000000','physical acquisition qualification'):
         assert token in architecture
     assert '#offline-workload-and-bounded-phase-energy-analysis-request-a6' in (ROOT/'README.md').read_text()
+
+
+@pytest.mark.parametrize('end,expected_reason', [(9000, None), (31000, 'invalid_workload_tail_guard'),
+                                                (20000, 'invalid_workload_tail_guard')])
+def test_tail_guard_excludes_pause_and_requires_real_sample_brackets(tmp_path, end, expected_reason):
+    from framework.energy_analysis import analyse_run
+    records = rm2_records() + [logical(
+        'PQC_ENERGY_BOUNDARY scope=experiment s0_us=0 s1_us=30000 '
+        f'workload_end_us={end} tail_guard_ms=20 valid=1 clock=TIM2 counter_hz=1000000 '
+        'timestamp_convention=before_gpio_write', context='energy_boundary')]
+    run = make_run(tmp_path/'run', records=records)
+    path = run/'mqtt-reporting-raw.ndjson'
+    with path.open('a') as f:
+        f.write(''.join(_energy_capture(e0=4_000_000, e1=4_030_000,
+            timestamps=list(range(4_000_000, 4_029_001, 1000)))))
+    reseal(run)
+    export_dataset(run_dirs=[run], output=tmp_path/'dataset')
+    ds = load_dataset(tmp_path/'dataset')
+    rows, _ = analyse_run(path, ds.runs[0], [], {})
+    whole = next(row for row in rows if row['scope'] == 'whole_workload')
+    assert whole['reason'] == expected_reason
+    if expected_reason is None:
+        assert whole['validity'] == 'valid'
+        assert whole['duration_s'] == pytest.approx(.009)
+        assert whole['energy_j'] == pytest.approx(.0045)
+    else:
+        assert whole['energy_j'] is None
+    recorded = next(row for row in rows if row['scope'] == 'recorded_interval')
+    assert recorded['reason'] == 'outside_sample_coverage'

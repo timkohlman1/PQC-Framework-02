@@ -22,7 +22,7 @@ from framework.timing_dataset import verify_source_inputs
 from framework.timing_metrics import decode_epochs
 from framework.timing_summary import digest, summarise
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 SCOPES = ('recorded_interval', 'whole_workload', 'tls_handshake', 'application_transfer')
 
 
@@ -154,6 +154,26 @@ def alignment(path, run_id, states):
         return None, None, str(exc), []
 
 
+def workload_bounds(path, run_id, pair):
+    """Separate the measured workload from an explicitly recorded tail guard."""
+    epochs, errors = decode_epochs(path, run_id)
+    records = [record for epoch in epochs for record in epoch.records
+               if record['marker'] == 'PQC_ENERGY_BOUNDARY' and record['context'] == 'energy_boundary']
+    if errors or any(epoch.errors for epoch in epochs) or len(records) != 1:
+        raise ValueError('invalid_workload_boundary')
+    fields = records[0]['fields']
+    if 'workload_end_us' not in fields and 'tail_guard_ms' not in fields:
+        return pair  # Legacy captures used the GPIO interval itself.
+    try:
+        end = int(fields['workload_end_us'])
+        guard = int(fields['tail_guard_ms'])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('invalid_workload_tail_guard') from None
+    if guard != 20 or not pair[0] < end <= pair[1] or pair[1] - end < guard * 1000:
+        raise ValueError('invalid_workload_tail_guard')
+    return pair[0], end
+
+
 def phase_bounds(timings):
     phases = []
     for t in timings:
@@ -204,7 +224,15 @@ def analyse_run(path, run, timings, boundary):
             base['sample_coverage_us'] = [integral.t[0],integral.t[-1]]
             traces[cid] = (integral, e0, e1)
         intervals = [('recorded_interval', e0, e1, {}, None)]
-        intervals.append(('whole_workload', e0, e1, {}, base['alignment_reason']))
+        workload_start, workload_end = e0, e1
+        workload_reason = base['alignment_reason']
+        if selected == cid and not workload_reason:
+            try:
+                bounds = workload_bounds(path, run['run_id'], pair)
+                workload_start, workload_end = (map_boundary(t, *pair, e0, e1) for t in bounds)
+            except ValueError as exc:
+                workload_reason = str(exc)
+        intervals.append(('whole_workload', workload_start, workload_end, {}, workload_reason))
         if selected == cid:
             for scope, start, end, timing, reason in phase_bounds(timings):
                 try:
@@ -305,6 +333,7 @@ def summarise_energy(dataset, spec, selection):
             pairing='one STM32 experiment boundary and exactly one duration-compatible acquisition; no cross-run or multi-interval guessing',
             application_transfer='first requested payload byte to final payload byte, not request-to-last-byte',
             recorded_interval='ESP32 e0 to e1; remains distinct from device whole_workload',
+            whole_workload='STM32 s0 to explicit workload_end_us when recorded; excludes the 20 ms tail guard; legacy captures use s1',
             comparison='A2 success-conditional summaries; unknown electrical boundary excluded; policy/scope strata separate; repeated intervals descriptive only',
             qualification='parser validity is not instrument accuracy or calibration qualification; physical boundary is operator-asserted with evidence reference'))
 

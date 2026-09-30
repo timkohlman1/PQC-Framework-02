@@ -31,6 +31,7 @@ uint32_t __get_PRIMASK(void);
 void __disable_irq(void);
 void __set_PRIMASK(uint32_t);
 void HAL_GPIO_Init(GPIO_TypeDef*, GPIO_InitTypeDef*);
+void HAL_Delay(uint32_t);
 """)
     (tmp_path / "pqc_timebase.h").write_text(r"""
 #pragma once
@@ -65,6 +66,7 @@ uint64_t PQC_TimebaseNowUs(void) { assert(mask==1); return now; }
 uint32_t __get_PRIMASK(void) { return mask; }
 void __disable_irq(void) { mask=1; }
 void __set_PRIMASK(uint32_t m) { mask=m; }
+void HAL_Delay(uint32_t ms) { assert(mask==0); assert(ms==20); assert(gpio.BSRR==GPIO_PIN_12); now += ms*1000; }
 void HAL_GPIO_Init(GPIO_TypeDef *g, GPIO_InitTypeDef *p) { (void)g; assert(p->Pin==GPIO_PIN_12); }
 bool PQC_ResultBufferAppendText(uint32_t i, const char *context, const char *text) {
     assert(i==0); assert(strcmp(context,"energy_boundary")==0); strcpy(captured,text); return true;
@@ -82,7 +84,9 @@ int main(void) {
     assert(strstr(captured,"counter_hz=1000000"));
     assert(strstr(captured,"timestamp_convention=before_gpio_write"));
     assert(strstr(captured,"s0_us=4294967400"));
-    assert(strstr(captured,"s1_us=4294968400"));
+    assert(strstr(captured,"s1_us=4294988400"));
+    assert(strstr(captured,"workload_end_us=4294968400"));
+    assert(strstr(captured,"tail_guard_ms=20"));
     return 0;
 }
 """)

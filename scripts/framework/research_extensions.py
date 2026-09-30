@@ -111,6 +111,8 @@ def summarise_ota(dataset, spec):
     base, _ = summarise(dataset, spec)
     stages, outcomes, inputs, images = [], [], [], []
     for run in base['inventory'].to_dict('records'):
+        if run.get('exclusion_reason'):
+            continue
         root = Path(run['input_path'])
         if run['selected_input_status'] != 'verified':
             if run.get('firmware_mode') == 'dual_bank_ota':

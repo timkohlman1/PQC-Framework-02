@@ -38,10 +38,15 @@ def manifest(output,name,state='completed',cleanup='passed'):
 
 def test_full_plan_resolves_all_profiles_without_hardware(workspace):
     plan=collection.plan(workspace)
-    assert plan['planned_campaign_attempts']==930
-    assert len(plan['steps'])==14
-    assert sum(s.get('conditions',0) for s in plan['steps'])==93
+    assert plan['planned_campaign_attempts']==1100
+    assert len(plan['steps'])==20
+    assert sum(s.get('conditions',0) for s in plan['steps'])==110
     assert plan['steps'][-1]['scenario_tests']==8
+    resolver=collection.ConfigResolver(collection.ROOT)
+    for step in plan['steps'][:-1]:
+        assert step['energy_requested']
+        for case in resolver.expand_campaign(collection.ROOT/step['source']):
+            assert case['selections']['instruments']=={'energy':'esp32_ina228'}
     assert collection.check(workspace)==plan
     assert not (workspace/'campaigns').exists()
     with pytest.raises(ValueError,match='new collection'):
@@ -170,8 +175,28 @@ def test_one_factor_designs_do_not_pool_authentication_or_network_axes():
             if name=='thesis_authentication':
                 assert d['filters']['tls_kex']=='secp256r1'
                 assert ('auth_mode' in d['filters']) != ('tls_auth' in d['filters'])
-            if name.startswith('thesis_network_'):
+            if name.startswith('thesis_network_') and not name.endswith('_plaintext'):
                 assert d['filters']['tls_kex'] in ('secp256r1','SecP256r1MLKEM768')
                 data=SimpleNamespace(runs=[{'controls':{'network_configured':dict(rate_kbit=1,rtt_ms=0,loss_percent=0,mtu=1500)}}])
                 treatment=collection.make_spec(d,data)['treatment']
                 assert len([v for v in treatment if v.startswith('controls.network_configured.')])==1
+
+
+def test_reanalysis_keeps_plan_hash_checks_and_run_source_guard(workspace, monkeypatch):
+    collection.plan(workspace, only=['thesis_repeated_tls'], include_ota=False)
+    monkeypatch.setattr(collection, 'source_identity', lambda: {'new': 'analysis_revision'})
+    with pytest.raises(ValueError, match='source/submodule'):
+        collection.check(workspace)
+    assert collection.check(workspace, verify_source=False)['steps'][0]['id'] == 'thesis_repeated_tls'
+    with (workspace/'profiles/thesis_repeated_tls.yaml').open('a') as f:
+        f.write('\n# tampered\n')
+    with pytest.raises(ValueError, match='profile changed'):
+        collection.check(workspace, verify_source=False)
+
+
+def test_repeated_tls_payload_controls_are_inapplicable():
+    from types import SimpleNamespace
+    design = {'id':'thesis_repeated_tls_cert_secp256r1_server', 'field':'tls_auth',
+        'values':['rsa3072','mldsa65'], 'baseline':'rsa3072', 'filters':{}}
+    result = collection.make_spec(design, SimpleNamespace(runs=[]))
+    assert set(result['not_applicable']) == {'payload_bytes', 'chunk_bytes'}

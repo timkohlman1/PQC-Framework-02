@@ -21,6 +21,9 @@ CAMPAIGNS = (
     'thesis_kex', 'thesis_authentication', 'thesis_repeated_tls',
     'thesis_application', 'thesis_network_rate', 'thesis_network_rtt',
     'thesis_network_loss', 'thesis_network_mtu', 'thesis_energy',
+    'thesis_application_plaintext', 'thesis_network_rate_plaintext',
+    'thesis_network_rtt_plaintext', 'thesis_network_loss_plaintext',
+    'thesis_network_mtu_plaintext', 'thesis_energy_plaintext',
     'secure_boot', 'secure_boot_stack', 'baremetal_benchmark', 'thesis_ota_overhead',
 )
 GAPS = [
@@ -104,6 +107,15 @@ def plan(output, repetitions=10, only=None, include_ota=True):
     for name in names:
         original, data = resolver.load_campaign(name)
         data['execution']['repetitions'] = repetitions
+        # Instrument every supported single-window workload in this collection.
+        # Unsupported boot-only and multi-reset OTA workflows remain explicit gaps.
+        workload = resolver.load_profile('workload', data['workload']).data
+        energy_supported = (workload.get('firmware_application') in {
+            'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',
+            'tls_handshake_repeat', 'baremetal_benchmark'}
+            and workload.get('evidence', {}).get('deferred_reporting') is True)
+        if energy_supported:
+            data.setdefault('instruments', {})['energy'] = 'esp32_ina228'
         # Explicitly preserve instrumented stack runs separately from normal timing.
         source = output / 'profiles' / (name + '.yaml')
         source.write_text(yaml.safe_dump(data, sort_keys=False))
@@ -115,7 +127,8 @@ def plan(output, repetitions=10, only=None, include_ota=True):
         hashes[relative] = sha(source)
         steps.append({'id': name, 'kind': 'campaign', 'source': relative,
                       'conditions': len(cases), 'repetitions': repetitions,
-                      'attempts': len(cases) * repetitions})
+                      'attempts': len(cases) * repetitions,
+                      'energy_requested': bool(energy_supported)})
     if include_ota:
         steps.append({'id': 'ota_lifecycle', 'kind': 'ota', 'scenario_tests': 8,
                       'scope': 'application update, rollback, migration and negative/recovery checks; diagnostic build excluded'})
@@ -131,7 +144,7 @@ def plan(output, repetitions=10, only=None, include_ota=True):
     return value
 
 
-def check(output):
+def check(output, *, verify_source=True):
     output = collection_path(output)
     annotations(read(output / 'annotations.json'))
     if (output / 'plan.sha256').read_text().strip() != sha(output / 'plan.json'):
@@ -143,7 +156,7 @@ def check(output):
         path = ROOT / name
         if not path.is_relative_to(output / 'profiles') or _has_symlink(path) or sha(path) != digest:
             raise ValueError('frozen campaign profile changed')
-    if source_identity() != value['source']:
+    if verify_source and source_identity() != value['source']:
         raise ValueError('source/submodule state changed; keep the collection checkout unchanged or start a new collection')
     return value
 
@@ -158,7 +171,25 @@ def analysis_specs(name, profile):
     def add(label, field, values, baseline, filters, domains, sections, security='key_establishment'):
         result.append(dict(id=label, field=field, values=values, baseline=baseline, filters=filters,
                            domains=domains, sections=sections, security_domain=security))
-    if name == 'thesis_kex':
+    if name.endswith('_plaintext'):
+        domains = ['timing', 'resources']
+        sections = ['ready-metrics2']
+        if name.startswith('thesis_network_'):
+            domains += ['network']
+            sections = ['network-impairment-summary', 'packet-analysis']
+        if name == 'thesis_energy_plaintext':
+            domains += ['energy']
+            sections = ['energy-tls-mqtt']
+        # Separate absolute-value inventories by application/network condition.
+        import itertools
+        transfer = ConfigResolver(ROOT).load_profile('workload', profile['workload']).data['transfer']
+        for index, (network, payload, chunk) in enumerate(itertools.product(
+                matrix.get('network_condition', [profile['fixed'].get('network_condition', 'baseline')]),
+                matrix.get('workload.transfer.payload_bytes', [transfer['payload_bytes']]),
+                matrix.get('workload.transfer.chunk_bytes', [transfer['chunk_bytes']])), 1):
+            add(name + '_' + str(index), 'tls_kex', ['not_applicable'], 'not_applicable',
+                {'network_condition': network, 'payload_bytes': payload, 'chunk_bytes': chunk}, domains, sections)
+    elif name == 'thesis_kex':
         add(name, 'tls_kex', kex, 'secp256r1', {}, ['timing','resources','tls'],
             ['dataset-summary','classical-tls-baseline','kex-timing','kex-resources','kex-network-application'])
     elif name in ('thesis_authentication', 'thesis_repeated_tls', 'thesis_energy'):
@@ -223,12 +254,82 @@ def make_spec(design, dataset):
         treatment = [v for v in treatment if not v.startswith('controls.network_configured.') or v.endswith('.'+key)]
     # Boot-only and primitive reference workloads have no payload transfer.
     not_applicable = {}
-    if design['id'].startswith(('secure_boot','baremetal_benchmark','thesis_ota_overhead')):
+    if design['id'].startswith(('secure_boot','baremetal_benchmark','thesis_ota_overhead','thesis_repeated_tls')):
         not_applicable = {k:'This workload has no application payload-transfer measurement.' for k in ('payload_bytes','chunk_bytes')}
     return {'conditions': {str(v):{field:v} for v in design['values']}, 'baseline':str(design['baseline']),
             'filters':design['filters'], 'treatment':treatment, 'not_applicable':not_applicable,
             'independent_runs':False, 'seed':20260930, 'resamples':2000,
             'evidence_policy':'stm32_st67_tls'}
+
+
+def transport_specs(name, profile, resolver):
+    """Predeclare matched strata from the frozen TLS design, never observed outcomes."""
+    import itertools
+    matrix, fixed = profile.get('matrix', {}), profile['fixed']
+    def values(key, default):
+        return matrix.get(key, [fixed.get(key, default)])
+    transfer = resolver.load_profile('workload', profile['workload']).data['transfer']
+    strata = itertools.product(values('network_condition', 'baseline'),
+        values('workload.transfer.payload_bytes', transfer['payload_bytes']),
+        values('workload.transfer.chunk_bytes', transfer['chunk_bytes']))
+    for index, (network, payload, chunk) in enumerate(strata, 1):
+        conditions = {'plaintext_no_tls': {'controls.tls.mode': 'plaintext'}}
+        for kex, auth, mode in itertools.product(values('tls_kex', 'secp256r1'),
+                values('tls_auth', 'rsa3072'), values('auth_mode', 'server')):
+            conditions[f'{kex}_{auth}_{mode}'] = {'tls_kex': kex, 'tls_auth': auth, 'auth_mode': mode}
+        yield {'id': f'{name}_transport_{index}', 'conditions': conditions,
+            'filters': {'network_condition': network, 'payload_bytes': payload, 'chunk_bytes': chunk},
+            'domains': ['timing', 'resources'] + (['network'] if name.startswith('thesis_network_') else [])
+                + (['energy'] if name == 'thesis_energy' else []),
+            'sections': ['energy-tls-mqtt'] if name == 'thesis_energy' else
+                ['network-impairment-summary', 'packet-analysis'] if name.startswith('thesis_network_') else ['ready-metrics2'],
+            'security_domain': 'key_establishment'}
+
+
+def transport_spec(design, dataset):
+    known = set().union(*(leaves(r.get('controls', {})) for r in dataset.runs))
+    treatment = ['tls_kex', 'tls_auth', 'auth_mode'] + sorted(k for k in known
+        if k.startswith(('controls.tls.', 'controls.profile_hashes.tls_kex:', 'controls.profile_hashes.tls_auth:')))
+    return {'conditions': design['conditions'], 'baseline': 'plaintext_no_tls',
+        'filters': design['filters'], 'treatment': treatment,
+        'independent_runs': False, 'seed': 20260930, 'resamples': 2000,
+        'evidence_policy': 'stm32_st67_transport'}
+
+
+def transport_reports(output, destination, value, notes, specification, gaps):
+    steps = {s['id']: s for s in value['steps'] if s['kind'] == 'campaign'}
+    pairs = {name: name + '_plaintext' for name in (
+        'thesis_application', 'thesis_energy', 'thesis_network_rate', 'thesis_network_rtt',
+        'thesis_network_loss', 'thesis_network_mtu')}
+    pairs.update(thesis_kex='thesis_application_plaintext', thesis_authentication='thesis_application_plaintext')
+    for name, baseline in pairs.items():
+        if name not in steps:
+            continue
+        if baseline not in steps:
+            gaps.append(name + ': no plaintext baseline selected in this plan')
+            continue
+        paths = []
+        for member in (name, baseline):
+            raw = output / 'campaigns' / member
+            try:
+                found, _ = discover_inputs(results_root=raw)
+                paths.extend(found)
+            except (ValueError, OSError):
+                pass
+        if not paths:
+            continue
+        dataset_path = destination / 'datasets' / (name + '_transport')
+        export_dataset(output=dataset_path, run_dirs=paths)
+        data = load_dataset(dataset_path, verify_inputs=True)
+        profile = yaml.safe_load((ROOT / steps[name]['source']).read_text())
+        for design in transport_specs(name, profile, ConfigResolver(ROOT)):
+            item = {k: design[k] for k in ('id', 'domains', 'sections', 'security_domain')}
+            item.update(dataset=str(dataset_path), spec=transport_spec(design, data))
+            if 'network' in design['domains']:
+                item['network'] = network_selection(data, notes.get('network'))
+            if 'energy' in design['domains']:
+                item['energy'] = {'boundaries': {r['run_key']: notes['energy'] for r in data.runs}} if notes.get('energy') else {}
+            specification['analyses'].append(item)
 
 
 def network_selection(dataset, annotation):
@@ -251,9 +352,9 @@ def network_selection(dataset, annotation):
     return selected
 
 
-def report(output):
+def report(output, *, reanalyze=False):
     output = collection_path(output)
-    value = check(output)
+    value = check(output, verify_source=not reanalyze)
     notes = annotations(read(output / 'annotations.json'))
     reports = output / 'reports'
     reports.mkdir(exist_ok=True)
@@ -264,6 +365,8 @@ def report(output):
     destination.mkdir(mode=0o700)
     (destination / 'datasets').mkdir()
     write(destination / 'annotations.json', notes)
+    write(destination / 'analysis-source.json', {'reanalysis': reanalyze,
+        'collection_source': value['source'], 'analysis_source': source_identity()})
     specification = {'version':1, 'analyses':[]}
     gaps = list(GAPS)
     if not notes.get('energy'):
@@ -308,6 +411,7 @@ def report(output):
             if 'energy' in design['domains']:
                 item['energy'] = {'boundaries':{r['run_key']:notes['energy'] for r in data.runs}} if notes.get('energy') else {}
             specification['analyses'].append(item)
+    transport_reports(output, destination, value, notes, specification, gaps)
     write(destination / 'collection-gaps.json', {'limitations':gaps, 'collection_state':read(output/'state.json') if (output/'state.json').exists() else None})
     if not specification['analyses']:
         raise ValueError('no captured runs to report; see '+str(destination/'collection-gaps.json'))
@@ -315,9 +419,14 @@ def report(output):
     write(selection_path, specification)
     from framework.research_report import specification as parse, build, verify
     selected, sources = parse(selection_path)
-    snapshot = build(selected, [*sources, destination/'annotations.json', output/'plan.json', destination/'collection-gaps.json'], destination/'snapshot')
+    snapshot = build(selected, [*sources, destination/'annotations.json', output/'plan.json', destination/'collection-gaps.json', destination/'analysis-source.json'], destination/'snapshot')
     verify(snapshot)
-    write(output/'latest-report.json', {'snapshot':str(snapshot), 'limitations':gaps})
+    from framework.archive_table import export_archive
+    owned = [output/('campaigns' if step['kind']=='campaign' else 'ota')/step['id']
+             for step in value['steps']]
+    archive = destination/'archive'
+    export_archive(results_root=output,source_roots=owned,output=archive,annotations=notes)
+    write(output/'latest-report.json', {'snapshot':str(snapshot), 'archive':str(archive), 'limitations':gaps})
     print('Verified report: '+str(snapshot/'report/notebook.html'))
 
 
@@ -328,7 +437,10 @@ def main(argv=None):
     parser.add_argument('--repetitions', type=int, default=10)
     parser.add_argument('--only', nargs='+', choices=CAMPAIGNS)
     parser.add_argument('--skip-ota', action='store_true')
+    parser.add_argument('--reanalyze', action='store_true', help='report only: new analysis revision; never resume hardware with changed source')
     args = parser.parse_args(argv)
+    if args.reanalyze and args.action != 'report':
+        parser.error('--reanalyze requires report')
     try:
         if args.action == 'plan':
             plan(args.output, args.repetitions, args.only, not args.skip_ota)
@@ -336,7 +448,7 @@ def main(argv=None):
             check(args.output)
             print('Frozen collection plan and source verified.')
         else:
-            report(args.output)
+            report(args.output, reanalyze=args.reanalyze)
         return 0
     except (ValueError, OSError, KeyError) as exc:
         print('Thesis collection: '+str(exc))

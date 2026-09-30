@@ -209,3 +209,24 @@ def test_debug_and_relocated_cmake_presets_build_with_freertos(
             f"stdout:\n{build.stdout}\n"
             f"stderr:\n{build.stderr}"
         )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('campaign', ['ready_metrics_plaintext', 'ready_metrics_2_plaintext'])
+def test_plaintext_application_links_without_wolfssl(campaign, tmp_path, pqc_require_capabilities):
+    pqc_require_capabilities('local_toolchain', strict_mode='local_build')
+    from framework.config_resolver import ConfigResolver
+    root = _repo_root()
+    generated = ConfigResolver(root).materialize_campaign(campaign, root / '.pqc-generated-state/campaigns' / campaign)
+    case = next((generated / 'cases').glob('*.yaml'))
+    completed = subprocess.run([sys.executable, 'scripts/experiment.py', 'build', '--experiment', str(case),
+        '--results-dir', str(tmp_path / 'results'), '--force'], cwd=root, text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    commands = json.loads((root / 'build/Release/compile_commands.json').read_text())
+    assert not any('/wolfSSL/' in c['file'] or '/wolfssl/' in c['file'] for c in commands)
+    assert any('pqc_wolfmqtt_build_only.c' in c['file'] for c in commands)
+    symbols = subprocess.check_output(['arm-none-eabi-nm', str(root / 'build/Release/stm32_basic_hal1.elf')], text=True)
+    assert not any(line.split()[-1].startswith(('wolfSSL_', 'wc_')) for line in symbols.splitlines() if line.split())
+    expected = 'PQC_WolfMQTT_RunReadyMetrics2Application' if campaign == 'ready_metrics_2_plaintext' else 'PQC_WolfMQTT_RunReadyMetricsApplication'
+    assert expected in symbols
+    assert 'MqttClient_Connect' in symbols

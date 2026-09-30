@@ -213,7 +213,10 @@ def main(argv=None):
     parser.add_argument('--only', nargs='+', help='plan only; selected campaign IDs (OTA also included unless --skip-ota)')
     parser.add_argument('--skip-ota', action='store_true', help='plan only; omit lifecycle scenarios explicitly')
     parser.add_argument('--retry-failed', action='store_true', help='run only; append attempts for failed terminal steps')
+    parser.add_argument('--reanalyze', action='store_true', help='report only; preserve captures and record a new analysis source revision')
     args = parser.parse_args(args_list)
+    if args.reanalyze and args.action != 'report':
+        parser.error('--reanalyze requires report')
     output = Path(os.path.abspath(ROOT/args.output))
     if not output.is_relative_to(ROOT/'results') or output == ROOT/'results' or any(p.is_symlink() for p in [output,*output.parents]):
         parser.error('output must be a non-symlink directory below results/')
@@ -244,7 +247,7 @@ def main(argv=None):
             except BlockingIOError:
                 raise ValueError('this collection is already in use')
             if args.action == 'report':
-                return run_command(helper('report',output))
+                return run_command(helper('report',output,['--reanalyze'] if args.reanalyze else []))
             return execute(output,args.retry_failed)
     except KeyboardInterrupt:
         print('Interrupted; evidence retained. Repeat run to resume.',file=sys.stderr)

@@ -638,7 +638,8 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
 | DTR-A5-TRIAL | Network impairment pilot campaign and notebook presets | Gateway/STM32 execution of 15 planned attempts | Current request creates a campaign for the operator to run; offline tests do not establish impairment or runtime success | Available gateway, STM32/ST67, experiment/reporting brokers and configured credentials | `tests/integration/test_network_trial_in.py` (offline); retained campaign runtime evidence | `./scripts/dev.sh campaign-gateway network_trial` then the export/notebook commands in `docs/005_remote_flash_workflow.md` | pending operator trial; offline resolver and report pipeline tested separately |
-| DTR-THESIS-COLLECT | Resumable thesis collection coordinator | Live multi-campaign interruption/resume, compact terminal feedback on the collection PC, INA228 attribution and OTA end-to-end acceptance | This change supplies a collection script; no laboratory collection was executed during offline implementation; the user is collecting on a separate PC, so console changes were exercised with offline child processes and Docker only | Provisioned gateway/STM32/ST67, brokers and persistent energy recorder | `tests/integration/test_run_console_in.py`; `tests/integration/test_thesis_collection_in.py`; existing campaign/energy/OTA hardware tests; collection manifests | `python3 scripts/collect_thesis_evidence.py run --output results/thesis/collection-01` after the documented plan command | pending live qualification; offline process and synthetic evidence tests only |
+| DTR-NO-TLS-APPS | Matched plaintext Ready Metrics 1/2 and thesis baselines | Live application, packet and E5V energy acceptance | Both plaintext Ready Metrics applications passed live acceptance on 2026-09-30; five plaintext burst repetitions passed, and a fresh two-run plaintext energy campaign passed after an earlier one-sample-gap rejection. Full matched impaired-network and transport-comparison acquisition remains pending | Provisioned gateway/STM32/ST67, brokers; INA228 for energy campaigns | `tests/hardware/test_plaintext_application_baselines_hw.py`, collection campaign manifests | `./scripts/dev.sh pytest-hardware tests/hardware/test_plaintext_application_baselines_hw.py --pqc-require-hardware`, then matched collection profiles | partial: application and baseline energy accepted; full matched matrix pending |
+| DTR-THESIS-COLLECT | Resumable thesis collection coordinator | Live multi-campaign interruption/resume, compact terminal feedback on the collection PC, INA228 attribution and OTA end-to-end acceptance | The retained 2026-09-30 collection contains 930 campaign attempts (921 completed, nine failed) and eight passing OTA tests; the revised full matrix and live interruption/resume still require qualification | Provisioned gateway/STM32/ST67, brokers and persistent energy recorder | `tests/integration/test_run_console_in.py`; `tests/integration/test_thesis_collection_in.py`; existing campaign/energy/OTA hardware tests; collection manifests | `python3 scripts/collect_thesis_evidence.py run --output results/thesis/collection-01` after the documented plan command | partial: original collection completed; revised full-matrix and interruption/resume qualification pending |
 | DTR-A8-THESIS | Frozen reports and thesis pilot profiles | Live qualification of the new campaign combinations; full matched RQ coverage; bare-metal and OTA retained importer acceptance | Offline fixtures and resolver execution do not prove new experiment outcomes; current records lack some controls and measurement boundaries | STM32/ST67, gateway, appropriate broker profiles, instrument where selected, sealed comparable captures | `tests/integration/test_research_report_in.py`; existing `tests/hardware/test_baremetal_benchmark_hw.py`, `tests/hardware/test_ota_dualbank_hw.py`, `tests/hardware/test_energy_capture_hw.py`; campaign manifests | `./scripts/dev.sh campaign-gateway thesis_kex`; other profile commands in `docs/005_remote_flash_workflow.md`; `./scripts/dev.sh pytest-hardware tests/hardware/test_ota_dualbank_hw.py` | offline report/profile validation only; new hardware campaign qualification and unsupported draft metrics remain outstanding |
 | DTR-A7-EVIDENCE | A7 normal secure-boot reports | Retained matched profile differences, boot RAM and boot energy acceptance | Retained evidence may lack matched source/image controls, bootloader ELF retention and boot-aligned energy intervals; synthetic tests prove parser behavior only | Comparable retained records with known provenance and matching boot intervals; no new flashing or acquisition in A7 | `tests/integration/test_secure_boot_analysis_in.py` (extend retained acceptance) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/boot-selection.json --secure-boot --output results/analysis/NEW_BOOT_SUMMARY` | partially verified 2026-09-29: 120 retained boot reports and signed-image layouts imported; matched differences, bootloader static/RAM and boot energy remain unavailable |
 | DTR-A6-EVIDENCE | A6 energy totals and bounded-phase reports | Real whole-window and matched-configuration acceptance; physical acquisition qualification | Retained trace supports internal phases but ends before closing edge; electrical boundary absent from schema and parser math cannot establish instrument accuracy | Retained bracketed intervals, lab electrical-boundary references, comparable controls and independently qualified acquisition; no new experiment authorized by A6 | `tests/integration/test_energy_analysis_in.py` (extend retained acceptance); existing `tests/hardware/test_energy_capture_hw.py` for separately authorized instrument work | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/timing-comparison.json --energy-spec results/analysis/energy-selection.json --output results/analysis/NEW_ENERGY_SUMMARY` | partially verified 2026-09-29: real 6,677-sample phase trace imported; whole-window/matched/physical qualification deferred |
@@ -660,7 +661,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-010 | ML-DSA-65 certificate authentication with hybrid ML-KEM MQTT/TLS | End-to-end STM32/server-auth and mTLS hardware verification | Unit coverage and a Docker broker integration test exercise profile selection, PKI generation, and broker-side ML-DSA TLS, but the supplied implementation context cannot execute the STM32/wolfSSL hardware handshake | Reachable gateway, STM32/ST67 hardware, ML-DSA-capable target wolfSSL build, provisioned `mldsa65` certificate profile, and hybrid broker | `tests/hardware/test_stm32_pqc_hybrid_mqtt_tls_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/tls_key_exchange/cases/<case>.yaml` followed by the mutual-auth profile | deferred: implementation requires repository/hardware verification |
 | DTR-011 | Extended application MSP high-water and derived RAM requirement | Gateway-mediated firmware-runtime verification | Unit coverage can validate marker/parser contracts, but only a real STM32 run can confirm that the extended sentinel window reports an MSP peak beyond `_Min_Stack_Size` without saturation or `_sbrk` interference and that the derived required/headroom values reconcile | Gateway, STM32/ST67 hardware, ready-metrics application, UART capture, and a completed representative MQTT/TLS workload | `tests/hardware/test_stm32_mqtt_tls_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/tls_key_exchange/cases/<case>.yaml` | deferred: rerun required after extended MSP watermark implementation |
 | DTR-012 | Ready Metrics 2 paper-aligned MQTT application TTFB/TTLB with deferred reporting | Gateway-mediated end-to-end timing/evidence validation | A 2026-09-18 gateway/STM32 run completed the ML-KEM-768/ML-DSA-65 Ready Metrics 2 workload and produced a hash-valid reporting stream plus experiment PCAP, but inspection showed that the canonical RM2 checkpoint/metric snapshot had not been appended to the common deferred result buffer. The buffer-integration fix now appends `rm2_timebase`, `rm2_checkpoints`, `rm2_metrics`, and `rm2_complete` records after the measured workload; a repeat hardware run is still required to confirm those records and reconcile them with packet timing. | Gateway, STM32/ST67 hardware, experiment and reporting brokers, gateway transfer responder, packet capture, and the Ready Metrics 2 campaign case | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh experiment-gateway run --experiment .pqc-generated-state/campaigns/ready_metrics_2/cases/<case>.yaml` then inspect `mqtt-reporting-raw.ndjson` and capture integrity | in progress: workload/collector succeeded; RM2 deferred-buffer integration fixed; repeat hardware evidence required |
-| DTR-013 | Passive STM32/ESP32 energy acquisition acceptance | Gateway/hardware | The 2026-09-27 ready-metrics runs validated the superseded command/session energy protocol only. The current design replaces association tokens, the UART start gate and per-handshake intervals with one experiment-wide PF12 GPIO window, fixed publish-only ESP32 topics, 20-byte packed samples, up to 1 s of optional pre-trigger history and two-edge TIM2/ESP32 alignment. The 2026-09-28 06:53 UTC campaign received 6,507 samples with matching transfer hash but failed the former strict pre-trigger rule. Optional history capped at 1 s and measured-only gap acceptance have source/native tests; fresh hardware acceptance of the updated ESP32 firmware remains pending, as do stale-capture supersession, transfer timeout and repeated-TLS one-window behaviour. | Gateway, STM32/ST67 and manually provisioned/flashed ESP32/INA228 running the matching simplified firmware | `tests/hardware/test_energy_capture_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware` | deferred: fresh hardware acceptance required for the simplified passive protocol; A6 replay of a retained current-format trace on 2026-09-29 validates offline decoding only and does not close this live/physical qualification gate |
+| DTR-013 | Passive STM32/ESP32 energy acquisition acceptance | Gateway/hardware robustness | Fresh 2026-09-30 application, repeated-TLS and bare-metal tests each passed two runs with the existing ESP32 and STM32 20 ms tail guard; tests integrate through the explicit workload endpoint. Stale-capture supersession and publication-timeout recovery still require dedicated live fault injection. | Gateway, STM32/ST67 and provisioned ESP32/INA228 | `tests/hardware/test_energy_capture_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py --pqc-require-hardware` | partial: normal current-protocol acquisition and endpoint integration accepted; fault-injection recovery pending |
 
 | DTR-014 | Request-15 impairment-exempt reporting plane under rate, RTT, loss and MTU | Live gateway/network/hardware validation | Gateway/network/hardware execution previously produced all four configured veth impairments, successful cleanup transcripts and complete STM32 reporting streams, but the old hardware test failed on transient manifest fields. The revised persistent-evidence assertions and network-boundary check require a fresh hardware rerun. These checks do not measure realised packet loss, achieved throughput or observed RTT. | Reachable gateway with non-interactive `tc`/`ip`/`modprobe`/`nsenter`, running experiment/reporting brokers, STM32/ST67 and four resolver-generated impairment cases | `tests/hardware/test_reporting_plane_isolation_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware` | in progress: previous gateway and reporting evidence inspected; revised hardware-test assertions not yet executed on device |
 | DTR-015 | Request-13 1 MHz application timing timebase and reset-origin handoff | Representative gateway/hardware timing validation across plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | The dedicated hardware delay test is now self-contained and has produced hardware evidence confirming the selected timer derives 1 MHz (`120000000 / (119 + 1)`), a 10 ms requested delay measured 10985 us, HAL tick advanced 11 ms, wolfBoot verification succeeded, and the secure-boot application started. The remaining deferred work is the representative workload/profile matrix needed to confirm reset-origin validity, DWT preservation, and complete structured timing records across the required experiment families. | Reachable gateway, STM32/ST67 hardware, reporting/experiment brokers as required by the selected cases, and the maintained representative workload/profile matrix | `tests/hardware/test_application_timebase_hw.py` plus the maintained workload hardware tests | `./scripts/dev.sh pytest-hardware tests/hardware/test_application_timebase_hw.py -m hardware --pqc-require-hardware`, then run the maintained self-contained hardware/profile tests for plaintext, classical/hybrid TLS, server/mutual auth, Ready Metrics and Ready Metrics 2 | partially complete: 1 MHz hardware self-test passed; representative profile-matrix evidence still required |
@@ -2491,3 +2492,88 @@ uncaptured metric, successful-sample replacement, or completed-RQ claim follows
 from a process exit code. The lab recorder's provisioning and calibration remain
 external prerequisites. Detailed commands belong to the collection section in
 `docs/005_remote_flash_workflow.md`.
+
+
+### No-TLS application comparison boundary
+
+Plaintext transport supports `mqtt_validation`, `ready_metrics` and
+`ready_metrics_2`; TLS-only repeated-handshake and bare-metal crypto workloads
+remain rejected. Existing `PQC_TLS_COMPILED=0` CMake selection excludes application
+wolfSSL/wolfCrypt while retaining wolfMQTT and the same application function.
+Integration tests compile both Ready Metrics applications and inspect source lists
+and ELF symbols for library exclusion. This is application-build evidence only.
+
+Timing dataset parser 1.3.0 validates the plaintext snapshot's inert compatibility
+choices and exports TLS KEX/authentication as `not_applicable`. The explicit
+`stm32_st67_transport` analysis policy admits known ST67 plaintext/TLS evidence
+classes and their corresponding runtime capture classes for transport transitions.
+It preserves original labels, rejects host/build/fake equivalence and leaves every
+non-security control enforced. The older `stm32_st67_tls` policy still excludes
+plaintext. Frozen transport selections declare all TLS choices as treatment and
+retain application, payload/chunk, source, boot, network and QoS controls. Missing
+or conflicting controls continue to suppress relative comparisons.
+
+Six additional plaintext collection profiles cover 17 conditions / 170 pilot
+attempts. Transport reports select both sides from owned collection roots and
+predeclare strata from frozen profiles; absent baselines remain unavailable.
+No TLS cost is inferred as zero. Hardware qualification is tracked in
+DTR-NO-TLS-APPS; operational commands and counts are in document 005.
+
+
+### Collection repair evidence boundaries (2026-09-30)
+
+The retained first collection exposed broker queue overflow in the 204800-byte /
+128-byte Ready Metrics 2 condition. All TLS broker profiles now use a bounded
+8192-message queue, matching the reporting broker without changing workload QoS
+or pacing. Classical mutual-TLS loading now records certificate/key success flags
+in the same way as the ML-DSA path.
+
+Analysis excludes empty, filtered-out evidence groups from relative comparisons,
+marks repeated-TLS payload/chunk controls inapplicable, and accepts all declared
+network-condition profile hashes while retaining non-network control checks.
+Explicit plaintext/TLS transport comparisons require identical network conditions.
+OTA analysis distinguishes a sealed unsigned build reference from the signed
+application identity, preserves unexplained hash mismatches as errors, and
+resolves bootloader ELF copies only through matching retained SHA-256 identities.
+OTA outcome rows respect the selected analysis stratum. Original reports and raw
+captures are preserved; revised reports record collection and analysis identities.
+
+The ESP32 firmware remains unchanged. STM32 records `workload_end_us`, then
+waits 20 ms before dropping the capture edge. Analysis 1.1.0 uses both GPIO edges
+for clock alignment but ends whole-workload integration at the explicit workload
+endpoint, excluding the tail guard. Legacy captures retain their original
+GPIO-window meaning and are never extrapolated. The hardware energy gate now
+checks actual integration of the recorded workload interval. Fresh qualification
+of this guarded STM32 path extends DTR-013. Host decoding also permits at most
+one post-edge sample within the existing gap limit for compatible captures.
+
+TLS operation aggregation indexes observations by run/representation/operation
+and valid handshakes by epoch/iteration, avoiding repeated full-table scans while
+preserving the same attribution and success rules.
+
+### Flat archive analysis
+
+`scripts/export_archive_table.py` and `framework.archive_table` export a single
+nullable CSV suitable for pandas/NumPy selection. It reuses A1 provenance and
+current resource, TLS, PCAP, energy, boot and OTA decoders. The schema retains
+capture identity separately from repeated-handshake row identity. Every other
+experiment, including bare-metal benchmarks, remains one row per run. Schema 2
+uses functional-role measurement columns and algorithm/parameter row fields.
+Bare-metal operation columns contain within-run raw-cycle medians with repetition
+count and recorded HCLK context; raw samples remain in the retained evidence. It
+never pools repeated handshakes into one median or attributes run-wide values
+to each handshake. A sealed campaign index contributes blocked attempts without
+capture directories. Duplicate manifest identities are merged, while reused run
+IDs remain separate. Input integrity, typed output hashes, source revisions and
+metric definitions are retained alongside the table. Row diagnostics remain
+compact; specialist exports provide detailed per-value validity. Schema-1 archives
+remain loadable; a new export regenerates the new layout without hardware runs.
+TLS functional roles retain separate classical/KEM components for hybrid KEX,
+separate aggregate/invocation representations, and null ambiguous implementations.
+Application timing, resource, packet, energy and boot value columns are shared
+across treatment profiles; plaintext has null TLS timings, never synthetic zeros.
+
+New collection plans freeze energy into every supported workload before case
+resolution. This includes post-boot application energy in boot-profile campaigns,
+not bootloader or multi-reset OTA energy. Annotation scope, operating commands and
+pandas examples belong to document 005's flat-archive section.

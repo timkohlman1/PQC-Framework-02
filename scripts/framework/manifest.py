@@ -1186,6 +1186,7 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
             "mode": "reused",
             "manifest": str(build_reference.get("record_manifest")),
             "firmware_sha256": build_reference.get("artifact_sha256"),
+            "identity_kind": "application_build_artifact",
             "build_number": build_reference.get("build_number"),
             "verified": build_reference.get("status") in {None, "verified", "verified_build_match", "verified_build_record"},
         }

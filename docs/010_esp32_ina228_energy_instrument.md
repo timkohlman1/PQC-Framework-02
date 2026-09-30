@@ -64,6 +64,14 @@ interval, and then requests the INA228 acquisition task to pause. The pause wait
 for any in-flight sample to finish; samples later than `e1_us` are excluded when
 the capture range is selected.
 
+The STM32 records `workload_end_us` when application work finishes, then waits
+20 ms before recording `s1_us` and lowering PF12. The GPIO timestamps still define
+the two-edge clock mapping. Whole-workload energy ends at `workload_end_us`,
+excluding this tail guard; the existing ESP32 therefore records samples after
+the workload endpoint without requiring a firmware update. Acquisition gaps and
+missing brackets still invalidate the affected energy metric. Older captures
+without this marker retain the old GPIO-window definition.
+
 While acquisition is paused, the selected pre-trigger history plus all usable
 samples through `e1_us` are immutable in PSRAM and are published over MQTT. There
 is no concurrent ring writer and therefore no ring-overwrite tracking during
@@ -78,7 +86,10 @@ history does not invalidate the measured interval. `pretrigger_complete` is
 informational. The validator records `available_pretrigger_us` and
 `pretrigger_max_gap_us`; gaps wholly before the rising edge are informational.
 Measured coverage must begin within 10 ms after the rising edge and end within
-10 ms before the falling edge, with no measured-interval gap exceeding 10 ms.
+10 ms before the falling edge for legacy captures, or at most one bracket sample
+within 10 ms after it, with no measured-interval gap exceeding 10 ms. Energy
+integration requires samples bracketing the selected interval; legacy captures
+ending before `e1_us` remain unavailable for full GPIO-window energy.
 Hash, ordering, sample format, calibration and acquisition-fault checks remain
 mandatory. A gap crossing the rising edge is checked only for its measured part.
 Existing local pre-trigger settings above 1000 ms are capped in firmware, so the

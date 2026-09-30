@@ -225,8 +225,8 @@ class ConfigResolver:
         if mqtt_transport not in {"tls", "plaintext"}:
             raise ResolutionError("mqtt_transport must be tls or plaintext")
         if mqtt_transport == "plaintext":
-            if workload.profile_id != "mqtt_validation":
-                raise ResolutionError("plaintext MQTT transport requires mqtt_validation workload")
+            if workload.profile_id not in {"mqtt_validation", "ready_metrics", "ready_metrics_2"}:
+                raise ResolutionError("plaintext MQTT transport requires a supported MQTT application workload")
             if auth_mode != "server":
                 raise ResolutionError("plaintext MQTT transport cannot request mutual TLS authentication")
             if tls_kex.profile_id != "secp256r1" or tls_auth.profile_id != "rsa3072":

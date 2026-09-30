@@ -742,7 +742,7 @@ def test_all_broker_profiles_use_pinned_mosquitto_212_image_and_tls_keylog():
 
 
 
-def test_reporting_broker_queue_capacity_covers_maximum_retained_ota_burst_without_changing_workload_brokers():
+def test_broker_queue_capacity_covers_ota_and_experiment_bursts():
     reporting_config = _read(BROKER_ROOT / "config" / "reporting" / "mosquitto.conf")
     compose = _read(BROKER_ROOT / "compose.yaml")
 
@@ -754,7 +754,7 @@ def test_reporting_broker_queue_capacity_covers_maximum_retained_ota_burst_witho
 
     for profile in ("classical", "classical-server-auth", "oqs", "oqs-mtls"):
         workload_config = _read(BROKER_ROOT / "config" / profile / "mosquitto.conf")
-        assert "max_queued_messages 8192" not in workload_config
+        assert "max_queued_messages 8192" in workload_config
 
     reporting = _service_block(compose, "mqtt-reporting")
     assert "./config/reporting/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" in reporting

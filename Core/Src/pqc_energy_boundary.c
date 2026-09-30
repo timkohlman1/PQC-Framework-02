@@ -6,7 +6,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-static uint64_t start_us, end_us;
+static uint64_t start_us, end_us, workload_end_us;
 static uint8_t active, valid;
 
 /* newlib-nano does not supply 64-bit printf conversion in this target. */
@@ -30,6 +30,7 @@ void PQC_EnergyBoundaryInitialize(void)
     HAL_GPIO_Init(GPIOF, &pin);
     start_us = 0U;
     end_us = 0U;
+    workload_end_us = 0U;
     active = 0U;
     valid = 0U;
 }
@@ -50,10 +51,16 @@ void PQC_EnergyBoundaryEnd(void)
 {
     uint32_t mask = __get_PRIMASK();
     __disable_irq();
+    workload_end_us = PQC_TimebaseNowUs();
+    __set_PRIMASK(mask);
+    /* Keep the passive recorder sampling beyond the last workload event.
+     * This guard is excluded from workload energy by workload_end_us. */
+    HAL_Delay(20U);
+    __disable_irq();
     end_us = PQC_TimebaseNowUs();
     GPIOF->BSRR = (uint32_t)GPIO_PIN_12 << 16U;
     __DSB();
-    valid = (valid && active && end_us > start_us) ? 1U : 0U;
+    valid = (valid && active && workload_end_us > start_us && end_us >= workload_end_us) ? 1U : 0U;
     active = 0U;
     __set_PRIMASK(mask);
 }
@@ -61,11 +68,13 @@ void PQC_EnergyBoundaryEnd(void)
 void PQC_EnergyBoundaryAppend(uint32_t result_iteration)
 {
     char line[256];
-    char s0[21], s1[21];
+    char s0[21], s1[21], workload_end[21];
     (void)snprintf(line, sizeof(line),
         "PQC_ENERGY_BOUNDARY scope=experiment s0_us=%s s1_us=%s "
+        "workload_end_us=%s tail_guard_ms=20 "
         "valid=%u clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write",
-        decimal(start_us, s0), decimal(end_us, s1), (unsigned)(valid && !active));
+        decimal(start_us, s0), decimal(end_us, s1), decimal(workload_end_us, workload_end),
+        (unsigned)(valid && !active));
     (void)PQC_ResultBufferAppendText(result_iteration, "energy_boundary", line);
     valid = 0U;
 }
