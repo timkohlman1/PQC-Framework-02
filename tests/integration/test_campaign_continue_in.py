@@ -38,7 +38,7 @@ def campaign(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["exit", "rejected", "missing", "malformed", "all"])
-def test_failed_attempts_continue_across_groups_and_resume_preserves_evidence(campaign, failure):
+def test_failed_attempts_continue_across_groups_and_resume_preserves_evidence(campaign, failure, capsys):
     executor, cases, cleanups = campaign
     attempts = []
     retry = False
@@ -75,6 +75,9 @@ sys.exit(int(sys.argv[4]))
 
     executor.runner = runner
     assert run_campaign.main(["tls_matrix_energy"]) == 1
+    console = capsys.readouterr().out
+    assert "[Failed]" in console and "4/4" in console
+    assert "disposable runtime child" not in console
     manifest = next(executor.results_root.glob("*/campaign-manifest.json"))
     state = json.loads(manifest.read_text())
     failed_count = 4 if failure == "all" else 1
@@ -89,6 +92,10 @@ sys.exit(int(sys.argv[4]))
     original_text = original_log.read_text()
     retry = True
     assert run_campaign.main(["--resume", str(manifest)]) == 0
+    console = capsys.readouterr().out
+    assert "4/4" in console
+    if failure != "all":
+        assert "[Skipped]" in console
     resumed = json.loads(manifest.read_text())
     assert len(attempts) == 4 + failed_count
     assert resumed["state"] == "completed"

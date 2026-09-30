@@ -336,3 +336,13 @@ def test_generic_run_without_arguments_keeps_default_unit_command(wrapper):
     result, record = wrapper(['run'])
     assert result.returncode == 0
     assert record['argv'][-4:] == ['python', '-m', 'pytest', 'tests/unit']
+
+
+def test_terminal_capabilities_cross_docker_without_allocating_a_tty(wrapper):
+    result, record = wrapper(['campaign', 'baseline'], {'PQC_PROGRESS_TTY': '1', 'PQC_PROGRESS_COLUMNS': '120'})
+    assert result.returncode == 0
+    assert record['env']['PQC_PROGRESS_TTY'] == '1'
+    assert record['env']['PQC_PROGRESS_COLUMNS'] == '120'
+    assert 'PQC_PROGRESS_TTY' in record['argv']
+    assert 'PQC_PROGRESS_COLUMNS' in record['argv']
+    assert '-t' not in record['argv'] and '-it' not in record['argv']

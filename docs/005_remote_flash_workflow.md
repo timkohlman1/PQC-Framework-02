@@ -813,6 +813,40 @@ isolated build/generated-state volumes, strict capability checks, JUnit verdict
 and suite-owned persistent result root. The script does not provision or flash
 the energy recorder, alter gateway OS settings, or copy authentication material.
 
+Experiment `run` and campaign commands show one compact row per preparation or
+measurement run. On a terminal the current row changes in place from yellow
+`[Running]` to green `[Success]`, red `[Failed]`, cyan `[Skipped]`, magenta
+`[Blocked]`, or yellow `[Interrupted]`; only the final row advances to the next
+line. For example:
+
+```text
+2026-09-30 11:20:00 2026-09-30_001_thesis_kex-0001-69594607494c [Success] 1/100
+```
+
+The counter is finished batch entries / planned entries for the current campaign,
+including failures, blocked entries, and validated entries skipped on resume. It
+is not a count of successful samples. Preparation rows carry `prep` and do not
+advance this counter; standalone runs use `1/1`. Entries blocked before a run
+folder exists show the case ID and repetition number. Long IDs are shortened in
+the middle for display only. Rows use at most 119 visible columns on a 120-column
+terminal. Redirected output contains one plain final row per entry; `NO_COLOR`
+disables color while retaining terminal updates.
+
+Detailed run stdout/stderr is flushed to `console.log` inside each run folder,
+including preparation folders nested under the collection's campaign directory.
+The transcript is closed before evidence sealing and retained in the hashed file
+inventory. Existing build, flash, UART and prerequisite logs remain available.
+Campaign-level explanations, including preparation errors, are in `campaign.log`
+in the campaign folder; individual child logs remain under its `logs/` directory.
+Errors before a run folder can be allocated, or during evidence sealing, remain
+visible on stderr/stdout because there is no writable unsealed run transcript.
+Gateway lease notices and collection/report summaries remain separate operational
+messages. `PQC_PROGRESS_TIMEZONE` still controls timestamps (Melbourne by default).
+
+This output change is source code: copy it to the collection PC between
+collections and create a new plan there. An existing frozen plan will reject
+changed source; do not bypass that check to adopt a display update mid-collection.
+
 Repeat the same `run` command after interruption. Valid terminal steps are skipped.
 Interrupted campaigns use their exact owned campaign manifest with `--resume`.
 An interrupted OTA module runs again with a new attempt directory; previous

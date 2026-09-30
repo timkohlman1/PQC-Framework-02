@@ -93,6 +93,14 @@ run_container() (
     workspace_overlay_args="--mount type=volume,target=/workspace/.pqc-generated-state,volume-nocopy --mount type=volume,target=/workspace/build,volume-nocopy"
   fi
 
+  if [ -z "${PQC_PROGRESS_TTY+x}" ]; then
+    if [ -t 1 ]; then PQC_PROGRESS_TTY=1; else PQC_PROGRESS_TTY=0; fi
+  fi
+  if [ -z "${PQC_PROGRESS_COLUMNS+x}" ]; then
+    PQC_PROGRESS_COLUMNS=$(tput cols 2>/dev/null || printf '120')
+  fi
+  export PQC_PROGRESS_TTY PQC_PROGRESS_COLUMNS
+
   campaign_env_args=""
   if [ -n "${PQC_CAMPAIGN_HW:-}" ]; then
     campaign_env_args="$campaign_env_args -e PQC_CAMPAIGN_HW"
@@ -147,6 +155,7 @@ run_container() (
     fi
     set -- -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v "$ssh_source:/host-ssh:ro" "$@"
   fi
+  set -- -e PQC_PROGRESS_TTY -e PQC_PROGRESS_COLUMNS -e PQC_PROGRESS_TIMEZONE -e NO_COLOR "$@"
   # Secret values are inherited by NAME, never interpolated into arguments.
   if [ -n "${PQC_WIFI_SSID:-}" ]; then set -- -e PQC_WIFI_SSID "$@"; fi
   if [ -n "${PQC_WIFI_PSK:-}" ]; then set -- -e PQC_WIFI_PSK "$@"; fi

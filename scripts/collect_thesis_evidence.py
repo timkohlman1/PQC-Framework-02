@@ -7,6 +7,7 @@ Run again to resume. Reports never assert that all research questions are comple
 from __future__ import annotations
 
 import argparse
+import codecs
 import fcntl
 import hashlib
 import json
@@ -18,7 +19,10 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
+from framework.run_console import terminal_environment
+
 ROOT = Path(__file__).resolve().parents[1]
+
 TERMINAL = {'completed', 'completed_with_failures'}
 
 
@@ -46,19 +50,33 @@ def run_command(command, log=None):
     if log is None:
         return subprocess.call(command, cwd=ROOT)
     Path(log).parent.mkdir(parents=True, exist_ok=True)
-    with Path(log).open('x') as stream:
+    with Path(log).open('xb') as stream:
         process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True, errors='replace')
+                                   stderr=subprocess.STDOUT,
+                                   env={**os.environ, **terminal_environment()})
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         try:
-            for line in process.stdout:
-                print(line, end='', flush=True)
-                stream.write(line)
+            while chunk := process.stdout.read1(4096):
+                sys.stdout.write(decoder.decode(chunk))
+                sys.stdout.flush()
+                stream.write(chunk)
                 stream.flush()
+            sys.stdout.write(decoder.decode(b'', final=True))
+            sys.stdout.flush()
             return process.wait()
         except KeyboardInterrupt:
             # The child retains the gateway lease until framework cleanup finishes.
             if process.poll() is None:
                 process.send_signal(signal.SIGINT)
+            # Keep draining the pipe while the child releases its lease and
+            # records cleanup; waiting first can block on a full output pipe.
+            while chunk := process.stdout.read1(4096):
+                sys.stdout.write(decoder.decode(chunk))
+                sys.stdout.flush()
+                stream.write(chunk)
+                stream.flush()
+            sys.stdout.write(decoder.decode(b'', final=True))
+            sys.stdout.flush()
             process.wait()
             raise
 
