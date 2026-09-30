@@ -1290,7 +1290,10 @@ def register_derived_output(
 def finalize_run_evidence(path: Path | str, *, timestamp: datetime | None = None) -> dict[str, Any]:
     """Evaluate the class contract and seal the immutable raw-evidence index."""
 
+    from framework.run_console import seal_run_output
+
     manifest_path = Path(path)
+    seal_run_output(manifest_path.parent)
     manifest = read_manifest(manifest_path)
     compatible, reason = validate_manifest_schema(manifest)
     if not compatible:
@@ -1360,4 +1363,6 @@ def create_result_folder(
         encoding="utf-8",
     )
 
+    from framework.run_console import attach_run_output
+    attach_run_output(result_dir, run_id)
     return result_dir, manifest

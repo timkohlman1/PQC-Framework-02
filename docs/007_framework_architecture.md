@@ -638,6 +638,9 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
 | DTR-TLS-MATRIX-ENERGY | Ready Metrics 2 TLS matrix with energy on every condition | Live 12-condition TLS/energy campaign acceptance | Newly created matrix has not been run; resolver, broker dry-runs and synthetic notebook execution cannot establish target/broker interoperability or captured timing/energy validity | STM32/ST67, gateway, experiment/reporting brokers, configured Wi-Fi and persistent ESP32/INA228 | `tests/integration/test_tls_matrix_energy_campaign_in.py` (offline); existing `tests/hardware/test_energy_capture_hw.py` (instrument boundary); retained campaign manifests for the complete matrix | `./scripts/dev.sh campaign-gateway tls_matrix_energy`; export the exact resulting campaign with `scripts/export_timing_dataset.py` and verify consumed inputs | pending first live matrix run; energy enabled in all 12 conditions, 120 planned runtime attempts |
 | DTR-A5-TRIAL | Network impairment pilot campaign and notebook presets | Gateway/STM32 execution of 15 planned attempts | Current request creates a campaign for the operator to run; offline tests do not establish impairment or runtime success | Available gateway, STM32/ST67, experiment/reporting brokers and configured credentials | `tests/integration/test_network_trial_in.py` (offline); retained campaign runtime evidence | `./scripts/dev.sh campaign-gateway network_trial` then the export/notebook commands in `docs/005_remote_flash_workflow.md` | pending operator trial; offline resolver and report pipeline tested separately |
+| DTR-THESIS-COLLECT | Resumable thesis collection coordinator | Live multi-campaign interruption/resume, compact terminal feedback on the collection PC, INA228 attribution and OTA end-to-end acceptance | This change supplies a collection script; no laboratory collection was executed during offline implementation; the user is collecting on a separate PC, so console changes were exercised with offline child processes and Docker only | Provisioned gateway/STM32/ST67, brokers and persistent energy recorder | `tests/integration/test_run_console_in.py`; `tests/integration/test_thesis_collection_in.py`; existing campaign/energy/OTA hardware tests; collection manifests | `python3 scripts/collect_thesis_evidence.py run --output results/thesis/collection-01` after the documented plan command | pending live qualification; offline process and synthetic evidence tests only |
+| DTR-A8-THESIS | Frozen reports and thesis pilot profiles | Live qualification of the new campaign combinations; full matched RQ coverage; bare-metal and OTA retained importer acceptance | Offline fixtures and resolver execution do not prove new experiment outcomes; current records lack some controls and measurement boundaries | STM32/ST67, gateway, appropriate broker profiles, instrument where selected, sealed comparable captures | `tests/integration/test_research_report_in.py`; existing `tests/hardware/test_baremetal_benchmark_hw.py`, `tests/hardware/test_ota_dualbank_hw.py`, `tests/hardware/test_energy_capture_hw.py`; campaign manifests | `./scripts/dev.sh campaign-gateway thesis_kex`; other profile commands in `docs/005_remote_flash_workflow.md`; `./scripts/dev.sh pytest-hardware tests/hardware/test_ota_dualbank_hw.py` | offline report/profile validation only; new hardware campaign qualification and unsupported draft metrics remain outstanding |
+| DTR-A7-EVIDENCE | A7 normal secure-boot reports | Retained matched profile differences, boot RAM and boot energy acceptance | Retained evidence may lack matched source/image controls, bootloader ELF retention and boot-aligned energy intervals; synthetic tests prove parser behavior only | Comparable retained records with known provenance and matching boot intervals; no new flashing or acquisition in A7 | `tests/integration/test_secure_boot_analysis_in.py` (extend retained acceptance) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/boot-selection.json --secure-boot --output results/analysis/NEW_BOOT_SUMMARY` | partially verified 2026-09-29: 120 retained boot reports and signed-image layouts imported; matched differences, bootloader static/RAM and boot energy remain unavailable |
 | DTR-A6-EVIDENCE | A6 energy totals and bounded-phase reports | Real whole-window and matched-configuration acceptance; physical acquisition qualification | Retained trace supports internal phases but ends before closing edge; electrical boundary absent from schema and parser math cannot establish instrument accuracy | Retained bracketed intervals, lab electrical-boundary references, comparable controls and independently qualified acquisition; no new experiment authorized by A6 | `tests/integration/test_energy_analysis_in.py` (extend retained acceptance); existing `tests/hardware/test_energy_capture_hw.py` for separately authorized instrument work | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec results/analysis/timing-comparison.json --energy-spec results/analysis/energy-selection.json --output results/analysis/NEW_ENERGY_SUMMARY` | partially verified 2026-09-29: real 6,677-sample phase trace imported; whole-window/matched/physical qualification deferred |
 | DTR-A5-EVIDENCE | A5 retained packet and impairment reports | Real baseline/impaired matched acceptance | Baseline PCAPs are retained, but no impaired-condition capture with attributable client identity was identified; synthetic analysis cannot establish RQ3 results | Explicit retained baseline/impaired captures, device-flow association and comparable controls; offline only | `tests/integration/test_network_analysis_in.py` (extend with retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --network-spec results/analysis/network-selection.json --output results/analysis/NEW_NETWORK_SUMMARY` | partially verified 2026-09-29: real baseline import and synthetic checks passed; real impaired/matched evidence unavailable |
 | DTR-A4-EVIDENCE | A4 TLS attribution and equal-run repeated-handshake inference | Real retained repeated-handshake and matched-profile acceptance | Existing TLS matrix parses, but missing source/QoS controls prevent matched deltas; unequal-repeat inference is verified with synthetic captures only | Explicitly selected retained repeated-workload captures and comparable profile controls; offline analysis only | `tests/integration/test_tls_analysis_in.py` (extend with suitable retained evidence) | `./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/SELECTED_DATASET --spec notebooks/SELECTED_SPEC.json --output results/analysis/NEW_TLS_SUMMARY --tls` | partially verified 2026-09-29: retained attribution import passed; real repeated/matched acceptance deferred |
@@ -868,8 +871,12 @@ The resolved algorithm set drives generated CMake and compile definitions. Becau
 ## Human-facing experiment progress reporting
 
 The experiment CLI has a shared timestamped progress reporter for major workflow
-boundaries. Orchestration code emits progress at stage transitions rather than
-echoing complete subprocess logs. Relevant events include profile and crypto
+boundaries. For `experiment run`, detailed stdout/stderr is retained in the run's
+`console.log`, closed before capture sealing and included in the retained-file
+hash inventory. A compact status renderer owns the console instead. Campaigns
+render the child run ID and decide the final status after process and retained
+evidence validation; they keep setup failures in `campaign.log`. Orchestration
+code still emits detailed progress at stage transitions into these transcripts. Relevant events include profile and crypto
 resolution, prerequisite preparation, build execution, compiler warning
 counts when captured output is available, gateway-facing flash and UART work,
 secure-boot stages, and managed MQTT broker lifecycle work.
@@ -884,7 +891,19 @@ that claim.
 
 ### Human-facing experiment progress output
 
-The experiment CLI emits concise timestamped operational progress for profile resolution, cryptographic selection, prerequisites, configuration, build execution, gateway use, flashing, UART capture, managed broker lifecycle, MQTT command/response validation, cleanup, and final result recording. TLS cryptographic progress reports both the canonical authentication profile (for example `rsa3072`) and the derived TLS signature scheme (for example `rsa_pss_rsae_sha256`) so selected profiles remain distinct from implementation settings. The progress timezone defaults to `Australia/Melbourne` and may be overridden with the `PQC_PROGRESS_TIMEZONE` environment variable using an IANA timezone identifier. The timestamp includes its timezone abbreviation.
+The experiment CLI records timestamped operational progress for profile resolution, cryptographic selection, prerequisites, configuration, build execution, gateway use, flashing, UART capture, managed broker lifecycle, MQTT command/response validation, cleanup, and final result recording. TLS cryptographic progress reports both the canonical authentication profile (for example `rsa3072`) and the derived TLS signature scheme (for example `rsa_pss_rsae_sha256`) so selected profiles remain distinct from implementation settings. The progress timezone defaults to `Australia/Melbourne` and may be overridden with the `PQC_PROGRESS_TIMEZONE` environment variable using an IANA timezone identifier. Detailed transcript timestamps include the timezone abbreviation. Compact rows use the same timezone and omit the abbreviation to leave room for the run ID and counter.
+
+Terminal status rows update in place, use status colors (or `NO_COLOR`), and are
+bounded to 119 visible columns at a 120-column terminal width. Long IDs are
+shortened only for display. Redirected output emits final rows without ANSI or
+carriage returns. Docker receives the host terminal capabilities explicitly, and
+the thesis collector forwards raw child bytes so in-place updates survive its
+pipe. The campaign counter counts finished planned entries, including failed,
+blocked and skipped entries, once each; preparation rows do not advance it.
+Standalone experiment runs use a denominator of one. Console state is operational
+feedback, never scientific evidence. See the collection instructions in
+`docs/005_remote_flash_workflow.md` for transcript locations and source-freeze
+requirements when adopting this change on a separate collection host.
 
 CMake configuration and build execution are separate progress stages. The framework always invokes both commands; Ninja decides whether individual object files require recompilation.
 
@@ -2187,3 +2206,288 @@ diagnostic-enabled valid/rejected images and restoration while the existing diag
 negative test remains the Request-14 control. Representative dual-bank decisions are
 emitted by the hardware-swap path; success is claimed only after the corresponding
 capability-gated hardware/OTA evidence is supplied.
+
+## Offline normal secure-boot analysis (analysis request A7)
+
+`--secure-boot` extends the existing A1/A2 offline report command and includes A3
+application resource accounting. It reads retained inputs only; it does not build,
+sign, flash, run OTA, or read signing material. The standalone notebook is
+`notebooks/secure_boot_comparison.ipynb`. Existing A1–A6 options remain compatible.
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py --results-root results/campaigns/secure_boot_20260928_051009/runs --output results/analysis/NEW_BOOT_DATASET
+./scripts/dev.sh python scripts/summarise_timing_dataset.py --dataset results/analysis/NEW_BOOT_DATASET --spec results/analysis/boot-selection.json --secure-boot --output results/analysis/NEW_BOOT_SUMMARY
+# Add --execute-notebook to run the notebook in a clean kernel.
+```
+
+Use an explicit A2 specification with disjoint conditions selected by `secure_boot`,
+an explicit baseline, and treatment paths `secure_boot` and
+`controls.choices.secure_boot`. Other changing profile-hash controls must be
+explicitly declared as treatments when scientifically appropriate. Unknown
+source, workload, TLS, capture, and image controls suppress matched differences.
+Recorded image payload lengths and bootloader HCLK must agree; equal lengths alone do not establish
+identical application content. Inspect the retained image identities and build
+references alongside application/source/configuration controls. Integrity-only is
+an integrity reference, never equivalent signature authentication.
+
+Outputs are `secure_boot_observations.csv`, `secure_boot_outcomes.csv`,
+`secure_boot_outcome_counts.csv`, `secure_boot_resources.csv`,
+`secure_boot_distributions.csv`, `secure_boot_differences.csv`, and timing/resource
+PNG plots. `summary.json` records parser identity, consumed file hashes, boundaries,
+and policy. A1 source verification and manifest-registered artifact hashes are
+checked before use; mismatched artifacts become unavailable. Inputs are rechecked
+before export. No arbitrary credential paths or raw payloads are exported.
+
+The current supported mailbox is v8/schema 1. Integrity-call cycles,
+authenticity-call cycles, selected-image verification cycles, and
+`hal_init_entry_to_hal_prepare_boot` elapsed time remain distinct. Conversion
+uses each recorded bootloader HCLK, never the application frequency. The total
+requires a consistent 1 MHz, 16-bit handoff bridge and explicit origin/status.
+Application-start timing is unavailable in the current records. Inclusive
+boundaries must not be summed. Duplicate records, invalid flags/clocks, unsupported
+mailboxes, contradictory configured/observed profiles or mailbox clocks, and invalid reporting epochs cannot produce usable timing. Structural
+mailbox validity does not prove freshness against stale retained SRAM.
+
+Normal handoff requires successful recorded verification, selected image identity,
+and valid handoff timing in the application's deferred report. The content digest
+is wolfBoot's verified-image-content identity, not a packaged-file hash. Both are
+retained separately. An expected negative-validation result is a validation pass,
+not normal boot success; missing MQTT workload evidence has the negative capture
+class interpretation. Unexpected handoff in a negative case is visible. Timing
+summaries exclude negative, stack-profiled, UART-diagnostic and ambiguous multi-epoch
+runs. Normal boot observations do not require subsequent MQTT workload success.
+
+Static bootloader metrics reuse the maintained ELF section decoder: allocated
+file-backed sections for Flash and `.data + .bss` for static RAM, explicitly
+excluding stack and other reservations. ELF file size is not Flash usage. A3
+application regional/lifetime accounting remains separate. Runtime boot stack
+watermarks require the instrumented selected-image verification boundary and
+are never added to application RAM as concurrent demand. Static samples are
+deduplicated by artifact SHA-256; runtime samples are per run. Missing retained
+bootloader images remain unavailable rather than resolved from mutable build paths.
+
+Image layout uses the retained WOLF firmware-length prefix and TLV header. Header
+capacity, metadata bytes actually occupied, signature TLV bytes, and firmware
+payload are separate; signature bytes are a subset of header use. No thesis header
+or bank constants are copied. No bank capacity or public-key size is inferred.
+
+A6 remains independently usable with `--energy`/`--energy-spec`. Its currently
+supported intervals have application-origin boundaries, not a matching boot
+interval; A7 boot energy is unavailable and cannot be inferred from those phases.
+Missing energy never blocks timing, outcome, or resource reports. Distributions
+are descriptive medians across unique builds/images or individual boot runs, not
+new confidence intervals or a claim of independent experiments.
+
+Offline verification:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_secure_boot_analysis.py
+./scripts/dev.sh pytest tests/integration/test_secure_boot_analysis_in.py -m integration
+./scripts/dev.sh pytest tests/unit
+```
+
+Fixtures cover known cycle conversions, separate boundaries, invalid mailbox and
+bridge fields, successful handoff, expected rejection, header capacity/use,
+artifact identity, and control mismatches. CLI/clean-kernel equivalence tests
+exercise the report boundary. Real comparison limitations remain in DTR-A7-EVIDENCE.
+
+Retained smoke comparison on 2026-09-29: the explicit 120-run
+`secure_boot_20260928_051009/runs` inventory produced 120 application-reported normal
+handoffs across 12 profiles (10 per profile). The clean-kernel A7 notebook exported
+600 boundary rows: 470 valid, 10 signature-not-applicable, and 120 unavailable
+application-start observations. Selected descriptive medians follow; these are
+retained observations, **not matched causal differences**:
+
+| Profile | Integrity call (ms) | Authenticity call (ms) | HAL entry to prepare-boot (ms) | Actual signature TLV bytes |
+|---|---:|---:|---:|---:|
+| integrity_sha256 | 301.062525 | not applicable | 301.196 | not applicable |
+| ecdsa_p256 | 301.0884875 | 40.7158 | 341.95 | 64 |
+| mldsa44 | 301.165925 | 50.0528375 | 351.364 | 2420 |
+| mldsa65 | 301.165925 | 84.039575 | 385.351 | 3309 |
+| mldsa87 | 301.165925 | 144.212 | 445.523 | 4627 |
+
+All selected payload lengths were 264,968 bytes. Missing source revision, MQTT
+controls and per-profile hash controls suppress matched deltas; controls were not
+waived to manufacture results. Retained bootloader ELF roles were unavailable, so
+bootloader static sizes remain unavailable. Normal timing runs contain no boot
+stack watermark. No matching boot-energy interval is supported by A6. The report
+is under `results/analysis/a7-secure-boot-20260929-verified`, with its explicit A2
+specification and frozen A1 dataset in the same `results/analysis` parent. Raw
+captures remain unchanged. This offline inspection does not claim new hardware,
+flashing, energy-acquisition or end-to-end success.
+
+
+## Frozen research reports (Analysis Request A8)
+
+`scripts/build_research_report.py` consumes explicit A1 datasets and A2 analysis
+specifications. It reuses A2–A7 summary functions, plus bounded bare-metal (S1)
+and OTA stage/identity (S2) importers. It does not discover new runs, execute
+experiments, modify captures, or write thesis results/discussion prose.
+
+Start with `configs/analysis/thesis_report.example.json`. Paths in this JSON are
+relative to that file. Each analysis declares a unique safe `id`, `dataset`,
+`spec` (inline A2 object or JSON file), `domains`, `security_domain` and `sections`.
+Domains are `timing`, `resources`, `tls`, `network`, `energy`, `secure_boot`,
+`baremetal` and `ota`. Timing inventory/outcomes are always included. Network
+requires an explicit A5 `network` selection object/file. Optional `energy`
+accepts the A6 boundary assertion object/file; unknown physical boundaries remain
+unavailable for comparisons. The example's single condition is an inspection
+selection: replace it with controlled named conditions before interpreting deltas.
+
+`security_domain` is one of `key_establishment`, `endpoint_authentication` and
+`firmware_authentication`. It labels a selected comparison; it cannot establish
+that only one factor changed. Certificate-family analyses must hold KEX and auth
+mode fixed; auth-mode analyses must hold KEX and certificate family fixed.
+Payload/chunk and network comparisons likewise isolate the declared factor.
+Do not waive unknown source, firmware, network or measurement controls to obtain
+a matched result. Recorded failures, unknown outcomes and exclusions stay visible.
+
+```bash
+./scripts/dev.sh python scripts/build_research_report.py --spec configs/analysis/thesis_report.example.json --output results/analysis/NEW_THESIS_SNAPSHOT
+./scripts/dev.sh python scripts/build_research_report.py --verify results/analysis/NEW_THESIS_SNAPSHOT
+./scripts/dev.sh python scripts/build_research_report.py --rebuild results/analysis/NEW_THESIS_SNAPSHOT --output results/analysis/REBUILT_THESIS_SNAPSHOT
+```
+
+The first command requires the explicitly selected dataset to exist. It executes
+`notebooks/research_report.ipynb` in a clean kernel and emits static HTML. This
+notebook renders the selected scalar tables rather than independently parsing raw
+records. The existing timing, TLS, network, energy and secure-boot notebooks and
+`--execute-notebook` commands remain supported. Arbitrary notebook paths are not
+accepted by the frozen export command: their code/output cannot be presumed safe
+to release. Interactive viewing still uses `./scripts/dev.sh notebook`, with the
+existing authenticated localhost binding.
+
+A snapshot contains two distinct directories:
+
+- `local/lock.json` and its SHA-256 seal retain the exact selection, source paths,
+  source-code hashes, dataset hashes, all consumed domain dependencies, software
+  versions and output hashes. These files stay local. No raw inputs are copied.
+- `report/` contains allowlisted scalar `summaries.csv`, `differences.csv`,
+  `run-inventory.csv`, `outcomes.csv`, `coverage.csv`, `cross-domain.csv`,
+  `cross-domain-status.csv`, `budgets.csv`, S1/S2 and repeated-TLS scalar tables,
+  per-analysis and `results-<section>.tex` long-form fragments, `dataset-counts.csv`, `figure-data.csv`, PNGs, `report.json`, an
+  executed scalar notebook and `notebook.html`. Nested manifest/provenance,
+  credentials, addresses, raw packet/energy traces and key logs are not exported.
+
+CSV null is `\N`; literal leading backslashes are doubled. Counts distinguish
+runs, observations and per-build quantities. TLS run/operation summaries use the
+existing per-run estimands. Raw repeated observations remain descriptive. Static
+resource medians are across unique builds, not repeated runtime measurements.
+Figures and LaTeX use exactly the same summary rows. The generated longtable
+fragments require the thesis's `longtable` package; units and counts are in each
+row. They are generated artifacts, not replacements for the thesis source.
+
+Coverage lists all twenty table labels in the supplied Chapter 5 draft and maps
+them to RQ1–RQ6. `implemented_analysis`, `available_summary_rows` and
+`supported_comparison_rows` are separate. `available_partial` is not a completed
+RQ, a power calculation or proof that all required measurements exist. The RQ6
+view retains actual costs, approved deltas, separate outcomes, and missing domains;
+it produces no security-strength estimate, aggregate migration score or ranking.
+
+Optional budgets require exactly `analysis`, `condition`, `table`, `metric`,
+`unit` and a finite nonnegative `limit`. They check one unambiguous observed
+summary statistic, reporting headroom or `not_assessed`. A median under budget
+is not a worst-case guarantee. Resource categories and independently measured
+builds are never added to fabricate simultaneous feasibility.
+
+The snapshot root is created privately (`0700`); raw paths and full specifications
+stay in `local/`. Only `report/` is the scalar export boundary, and it remains a
+research artifact rather than a public raw-data release. This is integrity
+checking, not a digital signature. Verification checks the exact input and output
+inventory. Changed files, missing files, newly supplied previously missing inputs,
+symlinks and modified outputs fail verification. Rebuild checks the frozen
+software environment and source files, then requires identical CSV and LaTeX
+content. Notebook execution timestamps/IDs and HTML rendering metadata are not
+promised bit-identical. Unrelated newly collected runs cannot enter the selection.
+
+### Comparison and provenance corrections for thesis use
+
+A2's default evidence policy remains exact matching. An explicit
+`"evidence_policy": "stm32_st67_tls"` allows the three existing classical,
+hybrid and pure-PQC STM32/ST67 TLS labels to share one comparison boundary.
+Original labels remain in every inventory. Host, fake, plaintext, build-only and
+unknown evidence do not map to this boundary. Capture class, hardware, source,
+workload and all applicable controls still have to match. The policy is shared
+by timing, resource, TLS, network, energy and secure-boot comparison functions.
+
+A1 parser version `1.1.0` reads the recorded current `source.git_commit` as well
+as the legacy `source.commit`. Current dirty-source records retain their recorded
+state hash as an additional matching control; a commit alone cannot match two
+different dirty working trees. Conflicting aliases invalidate the selected input.
+Runtime-only runs may obtain missing source controls from their sealed preparation
+provenance only after its firmware identity matches the run; those consumed
+files become dataset dependencies. Invalid or absent linked source metadata
+blocks comparisons without invalidating unrelated timing. The original recorded
+`preparation_verified` flag is preserved; linked-source import independently
+requires a completed, sealed preparation and matching firmware. Future runtime
+references read the compact manifest's `execution_outcome.result` rather than
+the removed top-level result. The resolver now
+records the firmware's existing experiment MQTT QoS 0; reporting
+and OTA control QoS are separate. These fixes never populate historical missing
+values from today's checkout or configuration. Re-export selected historical runs
+to a new A1 dataset when using the corrected parser; existing snapshots remain
+immutable and loadable.
+
+### Supported additional scalar boundaries and draft-table changes
+
+- Ready Metrics 2 payload throughput is payload bytes divided by the interval
+  from first to last payload byte in the same valid run/epoch/iteration. It uses
+  validated TTFB/TTLB timestamps, excludes failed execution, and leaves zero or
+  missing intervals unavailable. It is not request-to-last-byte throughput.
+- S1 imports the existing benchmark stream with integrity/identity checks,
+  explicit operation/parameter/repetition rows and recorded raw DWT cycles.
+  Across-run statistics use one operation median per boot. Unsupported operations
+  remain null, not zero. No unmeasured primitive peak RAM or clock-normalized
+  cycle equivalent is generated.
+- S2 imports sealed OTA delivery outcomes, sealed UART stage observations and
+  epoch-scoped verified-image identities from the deferred STM32 stream. Transport
+  completion, observed authentication, bank selection and confirmation are separate.
+  Normal updates and rollback validation are distinct. Existing external plan
+  paths are not immutable candidate identity evidence: final candidate-to-image
+  transitions remain unconfirmed. Stages without clocks have null duration;
+  application, gateway and wolfBoot clocks are not subtracted across resets.
+  Hardware bank activation has no invented software-copy/swap time.
+
+The draft's `Total Crypto` should use separate inclusive operation/phase rows,
+which overlap and must not be summed. `Peak RAM`/`Primary RAM Requirement` should
+use named region/accounting boundaries when a simultaneous system peak is absent.
+A5 exports whole selected TCP-flow traffic, not handshake-only bytes; label those
+columns accordingly. Bootloader handoff is not application-start time. Boot/OTA
+energy and cross-reset transition times require unavailable aligned evidence and
+remain explicitly incomplete. These are measurement limitations, not successful
+zero-cost outcomes. The thesis files are not edited by the report builder.
+
+Validation commands:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_research_report.py tests/unit/test_thesis_campaigns.py
+./scripts/dev.sh pytest tests/integration/test_research_report_in.py -m integration
+./scripts/dev.sh pytest tests/unit
+```
+
+Synthetic tests cover known arithmetic/counts, privacy projections, dependency
+changes, unrelated new runs, notebook failures, table/figure identity, source
+controls and campaign resolution. Retained-data validation is reported separately;
+new campaign/hardware acceptance and incomplete research boundaries are tracked
+in DTR-A8-THESIS alongside DTR-A3 through DTR-A7.
+
+
+### Thesis collection coordinator
+
+`scripts/collect_thesis_evidence.py` coordinates the existing Docker wrappers
+from Linux; `scripts/framework/thesis_collection.py` owns offline plan validation,
+source/profile drift checks, one-factor analysis selections, bounded dataset
+export and A8 report construction. `configs/analysis/thesis_collection_annotations.json`
+records the supplied E5V electrical boundary and optional device-address
+attribution. Local annotations are copied into each frozen report selection.
+
+The driver checkpoints every subprocess attempt, resumes only its own campaign
+manifest, preserves failed attempts, and requires a finalized campaign index
+with successful cleanup before advancing. Existing campaign resume checks
+validate reusable completed captures. Terminal failed steps require explicit
+retry selection. OTA subprocesses use isolated `pytest-hardware`, keep all
+scenario attempts, and treat skipped/missing test cases as incomplete. No
+uncaptured metric, successful-sample replacement, or completed-RQ claim follows
+from a process exit code. The lab recorder's provisioning and calibration remain
+external prerequisites. Detailed commands belong to the collection section in
+`docs/005_remote_flash_workflow.md`.

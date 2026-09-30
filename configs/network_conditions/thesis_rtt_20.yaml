@@ -1,0 +1,12 @@
+schema_version: 1
+profile_type: network_condition
+id: thesis_rtt_20
+description: 'Thesis pilot: vary rtt_ms only from trial_reference.'
+impairment:
+  enabled: true
+  interface: enp0s31f6
+  management_safe: true
+  rate_kbit: 100000
+  rtt_ms: 20
+  loss_percent: 0
+  mtu: 1500

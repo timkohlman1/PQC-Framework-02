@@ -12,6 +12,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from framework.campaign_executor import CampaignError, CampaignExecutor
 from framework.config_resolver import ResolutionError
+from framework.run_console import RunStatus
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,12 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     except (CampaignError, ResolutionError) as exc:
         print(f"campaign execution failed: {exc}", file=sys.stderr)
         return 1
-    print(manifest)
     state = json.loads(manifest.read_text(encoding="utf-8"))
     summary = state.get("summary", {})
-    print(f"Campaign {state['state']}: {summary.get('completed', 0)} completed, "
-          f"{summary.get('failed', 0)} failed, {summary.get('blocked', 0)} blocked / "
-          f"{summary.get('planned', 0)} planned")
+    executor._diagnostic(manifest.parent, f"Manifest: {manifest}; summary: {summary}")
+    progress = RunStatus()
+    finished = sum(summary.get(key, 0) for key in ("completed", "failed", "blocked"))
+    progress.start(state["campaign_id"], finished, summary.get("planned", 0), label="campaign")
+    progress.finish("Success" if state["state"] == "completed" else "Failed")
     return 1 if state["state"] == "completed_with_failures" else 0
 
 

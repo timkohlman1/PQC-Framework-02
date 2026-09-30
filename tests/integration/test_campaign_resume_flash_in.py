@@ -112,7 +112,7 @@ def test_resume_restores_pending_group_before_runtime_and_skips_completed_group(
     assert events == []  # A fully validated finished campaign never touches the board.
 
 
-def test_resume_flash_failure_blocks_runtime(campaign, monkeypatch):
+def test_resume_flash_failure_blocks_runtime(campaign, monkeypatch, capsys):
     executor, _, _ = campaign
     def fail(**kwargs):
         assert kwargs["force_reflash"] is False
@@ -129,3 +129,5 @@ def test_resume_flash_failure_blocks_runtime(campaign, monkeypatch):
     state = json.loads(manifest.read_text())
     assert state["state"] == "completed_with_failures"
     assert state["summary"]["blocked"] == 4
+    console = capsys.readouterr().out
+    assert "[Blocked] 4/4" in console

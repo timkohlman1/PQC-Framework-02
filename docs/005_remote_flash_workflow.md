@@ -684,3 +684,198 @@ Offline verification:
 The integration tests use real resolver/CLI processes, broker command dry-runs
 and explicitly synthetic timing records through A1 and the clean-kernel notebook.
 They do not establish hardware TLS compatibility or live energy acceptance.
+
+
+## Thesis pilot campaigns and frozen reports
+
+The A8 suite extends existing profiles without changing firmware measurement
+boundaries. `configs/analysis/thesis_campaigns.json` is the machine-readable
+inventory. All new campaigns use ten reset-separated pilot attempts per condition,
+uninstrumented normal boot timing, and the established gateway/capture lifecycle.
+Choose final repetition counts from pilot variability before final collection.
+These profile definitions do not establish hardware success.
+
+| Campaign | Conditions | Varied dimensions and controls |
+|---|---:|---|
+| `thesis_kex` | 10 | KEX; RSA-3072/server auth and baseline network fixed |
+| `thesis_authentication` | 8 | Four certificate families × server/mutual; P-256 KEX fixed; analyse each factor within the other factor's fixed stratum |
+| `thesis_repeated_tls` | 8 | Classical/hybrid × RSA/ML-DSA × auth mode; ten fresh full handshakes per boot, ten outer attempts |
+| `thesis_application` | 8 | Classical/hybrid × 4 KiB/200 KiB payload × 128/400-byte chunks; analyse payload and chunk effects separately |
+| `thesis_network_rate` | 6 | Classical/hybrid × 100000/1024/256 kbit/s; other network variables fixed |
+| `thesis_network_rtt` | 6 | Classical/hybrid × 0/20/100 ms configured RTT; other network variables fixed |
+| `thesis_network_loss` | 6 | Classical/hybrid × 0/1/3 percent configured loss; other variables fixed |
+| `thesis_network_mtu` | 6 | Classical/hybrid × 1500/1280/1000-byte MTU; other variables fixed |
+| `thesis_energy` | 4 | Representative classical/hybrid and RSA/ML-DSA server-auth configurations with the existing instrument |
+| `thesis_ota_overhead` | 4 | ECDSA-P256/ML-DSA65 × dual-bank OTA disabled/enabled, holding bank layout fixed |
+
+All network sweeps use `trial_reference`, which keeps impairment enabled at the
+reference. Analyse each TLS profile separately for one-factor network responses;
+then compare responses between the profiles. The configured values are pilot
+choices, not measured applied conditions. A5 still requires observed impairment
+and an explicitly attributed device TCP flow.
+
+Use the existing `secure_boot` campaign for normal authentication timings,
+`secure_boot_stack` for separate stack profiling, and `baremetal_benchmark` for
+the supporting primitive reference. `thesis_ota_overhead` measures capability
+cost during normal boot, not an OTA transition. Actual application update,
+rollback and bootloader migration use the existing self-contained dual-bank OTA
+hardware tests and their retained evidence. Multi-boot OTA energy remains
+unsupported. An application-bracketed energy interval is not bootloader energy.
+
+Resolve a pilot without hardware access:
+
+```bash
+./scripts/dev.sh python scripts/resolve_campaign.py thesis_kex
+```
+
+After selecting the required pilot and provisioning its laboratory prerequisites,
+execute through the maintained gateway wrapper:
+
+```bash
+./scripts/dev.sh campaign-gateway thesis_kex
+```
+
+Substitute a campaign from the table for other families; do not launch the whole
+suite as a generic smoke test. Retain failed attempts. Use recorded evidence to
+choose sample counts and verify broker/target interoperability per configuration.
+
+Export an explicitly selected completed campaign into a new A1 dataset, set the
+A8 JSON's dataset path, named conditions, baseline and fixed controls, then build:
+
+```bash
+./scripts/dev.sh python scripts/export_timing_dataset.py --results-root results/campaigns/SELECTED_CAMPAIGN/runs --output results/analysis/SELECTED_DATASET
+./scripts/dev.sh python scripts/build_research_report.py --spec configs/analysis/thesis_report.example.json --output results/analysis/NEW_THESIS_SNAPSHOT
+./scripts/dev.sh python scripts/build_research_report.py --verify results/analysis/NEW_THESIS_SNAPSHOT
+```
+
+See [the A8 architecture contract](007_framework_architecture.md#frozen-research-reports-analysis-request-a8)
+for the selection schema, offline rebuild command, metric boundaries, LaTeX
+fragments, clean-kernel HTML and incomplete Chapter 5/RQ coverage. Opening
+`report/notebook.html` does not run a measurement or edit the thesis.
+
+
+## Resumable thesis evidence collection
+
+`scripts/collect_thesis_evidence.py` is a Linux host coordinator using only the
+Python standard library. It invokes `scripts/dev.sh` for every resolver, campaign,
+analysis and hardware-test operation. Do not run the host coordinator inside
+`dev.sh python`: that would require nested Docker. No direct SSH or independent
+flashing commands are used.
+
+Create and inspect a plan without hardware access:
+
+```bash
+python3 scripts/collect_thesis_evidence.py plan --output results/thesis/collection-01
+python3 scripts/collect_thesis_evidence.py status --output results/thesis/collection-01
+```
+
+The default plan resolves all thirteen campaign families: the ten thesis pilots,
+normal secure boot, instrumented boot stack and bare-metal reference. It assigns
+ten outer reset attempts to every condition, including stack and bare-metal
+campaigns: 93 conditions and 930 campaign attempts. The existing bare-metal and
+repeated-TLS inner repetitions remain unchanged. Eight normal-build OTA scenario
+tests additionally cover application update, rollback, bootloader migration,
+invalid candidates and recovery. Their setup/recovery boots are separate retained
+records; these tests are not ten independent performance samples. The diagnostic
+Request 17 OTA build is excluded from this collection.
+
+Use `--repetitions N` when creating a plan to choose an outer attempt count. Ten
+is a pilot default, not statistical sufficiency. `--only thesis_kex ...` limits
+campaign families; OTA remains included unless `--skip-ota` is explicitly supplied.
+Plan choices are immutable after creation. Existing source edits need not be
+committed, but the source, dirty submodule contents and copied profiles must stay
+unchanged during collection. Resume refuses drift instead of mixing revisions.
+
+The plan copies `configs/analysis/thesis_collection_annotations.json` to its local
+`annotations.json`. The recorded electrical boundary is the operator-confirmed
+E5V rail supplying STM32 plus Wi-Fi, excluding ST-Link's separate USB supply.
+This wiring statement does not establish calibration accuracy. The supplied
+device attribution is `10.1.7.126`, DHCP-reserved on the UniFi UDM-Pro for the
+dedicated-AP PQC wireless network. If that reservation changes, set `network` in
+the collection's annotations to
+`{"client_ip": "<device IPv4>", "evidence_reference": "<reservation/lease evidence>"}`.
+This assertion must apply to every selected capture; if addresses vary, use the
+A8 per-run flow selections instead. The broker endpoint comes from each sealed
+resolved snapshot. Without attribution, packets remain retained but packet
+comparisons are unavailable. Missing energy attribution likewise stays unknown.
+
+With the lab's existing board, gateway, brokers, Wi-Fi credentials, flash/UART
+capabilities and calibrated persistent INA228 recorder provisioned, start:
+
+```bash
+python3 scripts/collect_thesis_evidence.py run --output results/thesis/collection-01
+```
+
+The driver executes sequentially; each hardware command obtains the existing
+gateway lease with normal waiting and Ctrl-C cancellation. Campaigns own their
+preparation, repeated captures and cleanup. OTA uses `pytest-hardware` and its
+isolated build/generated-state volumes, strict capability checks, JUnit verdict
+and suite-owned persistent result root. The script does not provision or flash
+the energy recorder, alter gateway OS settings, or copy authentication material.
+
+Experiment `run` and campaign commands show one compact row per preparation or
+measurement run. On a terminal the current row changes in place from yellow
+`[Running]` to green `[Success]`, red `[Failed]`, cyan `[Skipped]`, magenta
+`[Blocked]`, or yellow `[Interrupted]`; only the final row advances to the next
+line. For example:
+
+```text
+2026-09-30 11:20:00 2026-09-30_001_thesis_kex-0001-69594607494c [Success] 1/100
+```
+
+The counter is finished batch entries / planned entries for the current campaign,
+including failures, blocked entries, and validated entries skipped on resume. It
+is not a count of successful samples. Preparation rows carry `prep` and do not
+advance this counter; standalone runs use `1/1`. Entries blocked before a run
+folder exists show the case ID and repetition number. Long IDs are shortened in
+the middle for display only. Rows use at most 119 visible columns on a 120-column
+terminal. Redirected output contains one plain final row per entry; `NO_COLOR`
+disables color while retaining terminal updates.
+
+Detailed run stdout/stderr is flushed to `console.log` inside each run folder,
+including preparation folders nested under the collection's campaign directory.
+The transcript is closed before evidence sealing and retained in the hashed file
+inventory. Existing build, flash, UART and prerequisite logs remain available.
+Campaign-level explanations, including preparation errors, are in `campaign.log`
+in the campaign folder; individual child logs remain under its `logs/` directory.
+Errors before a run folder can be allocated, or during evidence sealing, remain
+visible on stderr/stdout because there is no writable unsealed run transcript.
+Gateway lease notices and collection/report summaries remain separate operational
+messages. `PQC_PROGRESS_TIMEZONE` still controls timestamps (Melbourne by default).
+
+This output change is source code: copy it to the collection PC between
+collections and create a new plan there. An existing frozen plan will reject
+changed source; do not bypass that check to adopt a display update mid-collection.
+
+Repeat the same `run` command after interruption. Valid terminal steps are skipped.
+Interrupted campaigns use their exact owned campaign manifest with `--resume`.
+An interrupted OTA module runs again with a new attempt directory; previous
+records remain. Failed/blocked attempts stay in campaign evidence and denominators;
+the driver does not retry them merely to fill a successful-sample quota. Use
+`run --retry-failed` explicitly to append retries of terminal failed steps after
+reviewing their cause. Cleanup failure stops the suite. No lock is force-released.
+
+At the end, datasets and an A8 report are generated automatically from only this
+collection's bounded roots. One-factor analysis strata hold the other KEX,
+certificate, authentication-mode, payload/chunk or network factors fixed.
+Independent-run inference is off by default. Each report gets a new numbered
+directory, preserving previous selections and all raw evidence. To report a
+partial collection or revised local attribution without hardware:
+
+```bash
+python3 scripts/collect_thesis_evidence.py report --output results/thesis/collection-01
+```
+
+`latest-report.json` names the verified A8 snapshot. The numbered report directory
+also includes `collection-gaps.json`, the annotation snapshot, explicit analysis
+selection and individual datasets. Use A8 `--verify` on that snapshot. Exit 0
+means all scheduled workflow steps completed and a report verified; it does not
+mean all measurements or RQs are complete. Exit 1 retains attempted/blocked
+workflow failures, 2 indicates planning/source/report errors, and 130 interruption.
+Skipped OTA tests or an unexpected test count cannot produce a successful verdict.
+
+Collection cannot manufacture unsupported boot/OTA energy, cross-reset stage
+timing, final candidate-to-image binding, simultaneous system RAM, disjoint
+Total Crypto or handshake-only byte measurements. These remain explicit gaps
+until their measurement contracts exist or the corresponding thesis columns
+are revised as documented in the A8 architecture section.

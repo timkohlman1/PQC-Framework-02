@@ -1,0 +1,10 @@
+{
+  "energy": {
+    "electrical_boundary": "E5V rail: STM32 plus Wi-Fi module; excludes ST-Link powered separately from USB",
+    "evidence_reference": "Operator wiring statement supplied 2026-09-30 for the thesis evidence collection"
+  },
+  "network": {
+    "client_ip": "10.1.7.126",
+    "evidence_reference": "Operator statement 2026-09-30: STM32 DHCP reservation on UniFi UDM-Pro; PQC wireless network uses a dedicated AP"
+  }
+}

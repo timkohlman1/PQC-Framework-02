@@ -234,7 +234,8 @@ def test_runtime_repetition_passes_campaign_condition_log(tmp_path: Path, monkey
 
     captured = {}
 
-    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path):
+    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path, progress):
+        assert progress is executor.progress
         captured["command"] = command
         return 0, produced, ""
 
@@ -304,7 +305,8 @@ def test_runtime_repetition_omits_campaign_condition_log_for_baseline(tmp_path: 
 
     captured = {}
 
-    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path):
+    def fake_run_experiment(*, repo_root, command, results_dir, runner, log_path, progress):
+        assert progress is executor.progress
         captured["command"] = command
         return 0, produced, ""
 

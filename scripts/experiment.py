@@ -5149,7 +5149,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
             "profile_preparation_reference": {
                 "manifest": str(reference_path),
                 "run_id": preparation_run_id,
-                "result": preparation_manifest.get("result"),
+                "result": preparation_manifest.get("execution_outcome", {}).get("result") or preparation_manifest.get("result"),
                 "firmware_sha256": firmware_sha256,
                 "reused_artifact_identities": reused_artifact_identities,
                 "build_and_flash_reused": True,
@@ -7417,6 +7417,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "run":
+        from framework.run_console import RunOutput
+        output = RunOutput(Path(args.experiment).stem)
+        def execute_run():
+            try:
+                return args.func(args)
+            except ConfigError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 2
+        try:
+            return output.execute(execute_run)
+        except KeyboardInterrupt:
+            return 130
+        except Exception:
+            return 1  # The transcript already contains the traceback.
     try:
         return args.func(args)
     except ConfigError as exc:

@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ from typing import Any, Callable, Iterable
 import yaml
 
 from framework.config_resolver import ConfigResolver, ResolutionError
+from framework.run_console import RunStatus
 
 CAMPAIGN_SCHEMA_NAME = "pqc-campaign-execution"
 CAMPAIGN_SCHEMA_VERSION = 1
@@ -294,14 +297,13 @@ def _default_runner(command: list[str], cwd: Path) -> subprocess.CompletedProces
 
 
 def _stream_command_to_log(
-    command: list[str], cwd: Path, log_path: Path
+    command: list[str], cwd: Path, log_path: Path, progress: RunStatus | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run a long-lived experiment command with live, durable output.
 
-    Output is appended to ``log_path`` as it is produced and mirrored to this
-    process' stdout so gateway/hardware validation remains observable. The
-    returned ``CompletedProcess.stdout`` still contains the complete combined
-    stream for compatibility with existing error handling.
+    Detailed output is appended to ``log_path``; only the current run identity
+    updates the compact console. The child also retains its own console.log.
+    The returned stdout contains the full combined stream for error handling.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     captured: list[str] = []
@@ -317,15 +319,30 @@ def _stream_command_to_log(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
+            env={**os.environ, "PQC_RUN_VERBOSE": "1"},
         )
         assert process.stdout is not None
-        for line in process.stdout:
-            captured.append(line)
-            log_handle.write(line)
-            log_handle.flush()
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        return_code = process.wait()
+        try:
+            for line in process.stdout:
+                captured.append(line)
+                log_handle.write(line)
+                log_handle.flush()
+                match = re.match(r"\s*Run ID: ([A-Za-z0-9_.-]+)\s*$", line)
+                if match and progress is not None:
+                    progress.identify(match.group(1))
+            return_code = process.wait()
+        except KeyboardInterrupt:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+            # Drain cleanup output before waiting, including a child's traceback;
+            # otherwise a full pipe can deadlock interrupted collection.
+            for line in process.stdout:
+                captured.append(line)
+                log_handle.write(line)
+                log_handle.flush()
+            process.wait()
+            log_handle.write(f"\n[{_now()}] interrupted; return_code={process.returncode}\n")
+            raise
         log_handle.write(f"\n[{_now()}] return_code={return_code}\n")
         log_handle.flush()
     return subprocess.CompletedProcess(
@@ -353,11 +370,12 @@ def _run_experiment(
     results_dir: Path,
     runner: CommandRunner,
     log_path: Path,
+    progress: RunStatus | None = None,
 ) -> tuple[int, Path | None, str]:
     results_dir.mkdir(parents=True, exist_ok=True)
     before = {path.resolve() for path in results_dir.glob("*/manifest.json") if path.is_file()}
     if runner is _default_runner:
-        completed = _stream_command_to_log(command, repo_root, log_path)
+        completed = _stream_command_to_log(command, repo_root, log_path, progress)
     else:
         completed = runner(command, repo_root)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,6 +470,29 @@ class CampaignExecutor:
         self.runner = runner
         self._broker_active_identity: str | None = None
         self._broker_bundle: dict[str, dict[str, Any]] | None = None
+        self.progress = RunStatus()
+        self._finished_slots: set[tuple[str, int]] = set()
+        self._total = 1
+
+    def _case_finished(self, case, repetition, status, run_manifest=None):
+        key = (str(case["id"]), repetition)
+        if key in self._finished_slots:
+            return
+        if run_manifest is not None:
+            identifier = Path(run_manifest).parent.name
+        else:
+            identifier = f"{case['id']}-rep-{repetition:04d}"
+        if self.progress.run_id is None:
+            self.progress.start(identifier, len(self._finished_slots), self._total)
+        else:
+            self.progress.identify(identifier)
+        self._finished_slots.add(key)
+        self.progress.finish(status, done=len(self._finished_slots))
+
+    @staticmethod
+    def _diagnostic(campaign_root, message):
+        with (campaign_root / "campaign.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"[{_now()}] {message}\n")
 
     def execute(self, campaign: Path | str, *, resume_manifest: Path | None = None) -> Path:
         from framework.network_degradation import (
@@ -471,6 +512,8 @@ class CampaignExecutor:
         for case in cases:
             validate_policy_against_case(policy=policy, case=case, resolver=self.resolver)
         groups = group_cases_by_firmware_identity(cases)
+        self._total = len(cases) * policy.repetitions
+        self._finished_slots = set()
 
         source_identity = canonical_sha256({
             "source": source_path.read_text(encoding="utf-8"),
@@ -515,8 +558,13 @@ class CampaignExecutor:
                         campaign_root=campaign_root, campaign_id=str(campaign_data["id"]),
                         repetitions=policy.repetitions,
                     ):
+                        for skipped_case in group["cases"]:
+                            for rep in range(1, policy.repetitions + 1):
+                                saved = next(r for r in state["runs"] if r["case_id"] == skipped_case["id"] and r["repetition_index"] == rep)
+                                self._case_finished(skipped_case, rep, "Skipped", saved.get("manifest"))
                         _write_json_atomic(manifest_path, state)
                         continue
+                    self.progress.start(f"{representative['id']}-preparation", len(self._finished_slots), self._total, label="prep")
                     preparation_manifest, firmware_sha256 = _setup_step("preparation", self._ensure_preparation,
                         campaign_root=campaign_root,
                         generated_root=generated_root,
@@ -527,6 +575,8 @@ class CampaignExecutor:
                         firmware_identity=group["firmware_identity"],
                         force_reflash=resume_manifest is not None,
                     )
+                    self.progress.identify(preparation_manifest.parent.name)
+                    self.progress.finish("Success")
                     group_state = state["firmware_groups"][group_index - 1]
                     group_state["validated_firmware_sha256"] = firmware_sha256
                     _write_json_atomic(manifest_path, state)
@@ -588,6 +638,8 @@ class CampaignExecutor:
                                     repetition=repetition,
                                     firmware_sha256=firmware_sha256,
                                 ):
+                                    saved = next(r for r in state["runs"] if r["case_id"] == case["id"] and r["repetition_index"] == repetition)
+                                    self._case_finished(case, repetition, "Skipped", saved.get("manifest"))
                                     continue
                                 _setup_step("broker_setup", self._ensure_broker,
                                     bundle=self.resolver.to_legacy_bundle(case),
@@ -605,6 +657,7 @@ class CampaignExecutor:
                                             "retained network condition failed effective-state/counter verification before repetition "
                                             f"{repetition}; inspect {active_condition.log_path}"
                                         )
+                                self.progress.start(f"{case['id']}-rep-{repetition:04d}", len(self._finished_slots), self._total)
                                 try:
                                     run_manifest = self._run_repetition(
                                         campaign_root=campaign_root,
@@ -629,7 +682,8 @@ class CampaignExecutor:
                                                  "log": str(exc.log)},
                                     )
                                     _write_json_atomic(manifest_path, state)
-                                    print(f"Campaign repetition failed; continuing: {exc}", file=sys.stderr, flush=True)
+                                    self._diagnostic(campaign_root, f"Campaign repetition failed; continuing: {exc}")
+                                    self._case_finished(case, repetition, "Failed", exc.manifest)
                                     continue
                                 if active_condition is not None:
                                     observed_after = verify_gateway_network_degradation(
@@ -660,6 +714,7 @@ class CampaignExecutor:
                                     firmware_sha256=firmware_sha256,
                                 )
                                 _write_json_atomic(manifest_path, state)
+                                self._case_finished(case, repetition, "Success", run_manifest)
 
                     if active_condition is not None:
                         cleanup = remove_gateway_network_degradation(
@@ -679,6 +734,7 @@ class CampaignExecutor:
                     group_state.pop("failure", None)
                     _write_json_atomic(manifest_path, state)
                 except GroupSetupError as exc:
+                    self.progress.finish("Failed")
                     group_state = state["firmware_groups"][group_index - 1]
                     group_state["state"] = "blocked"
                     group_state["failure"] = {"stage": exc.stage, "message": str(exc), "at": _now()}
@@ -688,15 +744,18 @@ class CampaignExecutor:
                                              if run["case_id"] == blocked_case["id"]
                                              and run["repetition_index"] == blocked_rep), None)
                             if existing and existing.get("state") == "failed":
+                                self._case_finished(blocked_case, blocked_rep, "Failed", existing.get("manifest"))
                                 continue
                             if firmware_sha256 is not None and self._resume_completed(
                                 state=state, campaign_id=str(campaign_data["id"]), case=blocked_case,
                                 cid=condition_identity(blocked_case), repetition=blocked_rep,
                                 firmware_sha256=firmware_sha256,
                             ):
+                                self._case_finished(blocked_case, blocked_rep, "Skipped", existing.get("manifest") if existing else None)
                                 continue
                             # A preparation failure must not erase previously completed evidence.
                             if firmware_sha256 is None and existing and existing.get("state") == "completed":
+                                self._case_finished(blocked_case, blocked_rep, "Skipped", existing.get("manifest"))
                                 continue
                             self._record_run(
                                 state=state, case=blocked_case, cid=condition_identity(blocked_case),
@@ -706,6 +765,7 @@ class CampaignExecutor:
                                          "runtime_started": False, "control_logs": str(campaign_root / "control")},
                                 blocked=True,
                             )
+                            self._case_finished(blocked_case, blocked_rep, "Blocked")
                     _write_json_atomic(manifest_path, state)
                     # Shared infrastructure must be removed before trying another group.
                     if active_condition is not None:
@@ -720,8 +780,7 @@ class CampaignExecutor:
                     if cleanup_error:
                         cleanup_errors.append(cleanup_error)
                         raise CampaignError(cleanup_error)
-                    print(f"Campaign firmware group {group_index} blocked during {exc.stage}; "
-                          f"continuing to next group: {exc}", file=sys.stderr, flush=True)
+                    self._diagnostic(campaign_root, f"Campaign firmware group {group_index} blocked during {exc.stage}; continuing to next group: {exc}")
                     continue
 
             failed = sum(run.get("state") == "failed" for run in state["runs"])
@@ -732,6 +791,8 @@ class CampaignExecutor:
             state["state"] = "completed_with_failures" if failed or blocked else "completed"
             state["completed_at"] = _now()
         except BaseException as exc:
+            self.progress.finish("Interrupted" if isinstance(exc, KeyboardInterrupt) else "Failed")
+            self._diagnostic(campaign_root, f"{type(exc).__name__}: {exc}")
             state["state"] = "failed"
             state["failure"] = {"type": type(exc).__name__, "message": str(exc), "at": _now()}
             raise
@@ -899,8 +960,7 @@ class CampaignExecutor:
             group_state["preparation_manifest"] = None
             group_state["validated_firmware_sha256"] = None
             _write_json_atomic(manifest_path, state)
-            print(f"Restoring firmware for resumed group {group_index} via preparation/build/sign/flash",
-                  flush=True)
+            self._diagnostic(campaign_root, f"Restoring firmware for resumed group {group_index} via preparation/build/sign/flash")
 
         prep_case_path = generated_root / "preparation-cases" / f"firmware-{group_index:04d}.yaml"
         _materialize_preparation_case(
@@ -930,6 +990,7 @@ class CampaignExecutor:
             results_dir=preparation_results,
             runner=self.runner,
             log_path=log_path,
+            progress=self.progress,
         )
         if rc != 0 or produced_manifest is None:
             raise CampaignError(f"firmware preparation failed for {firmware_identity}; see {log_path}")
@@ -1075,6 +1136,7 @@ class CampaignExecutor:
                 results_dir=results_dir,
                 runner=self.runner,
                 log_path=log_path,
+                progress=self.progress,
             )
         except CampaignError as exc:
             raise RepetitionError(str(exc), manifest=None, return_code=0, log=log_path) from exc

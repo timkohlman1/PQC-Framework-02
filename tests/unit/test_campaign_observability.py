@@ -9,9 +9,10 @@ def test_campaign_executor_streams_long_running_experiment_output_to_durable_log
     source = (REPO_ROOT / "scripts/framework/campaign_executor.py").read_text(encoding="utf-8")
     assert "def _stream_command_to_log(" in source
     assert 'log_handle.write(line)' in source
-    assert 'sys.stdout.write(line)' in source
+    assert 'progress.identify(match.group(1))' in source
+    assert 'sys.stdout.write(line)' not in source
     assert 'if runner is _default_runner:' in source
-    assert '_stream_command_to_log(command, repo_root, log_path)' in source
+    assert '_stream_command_to_log(command, repo_root, log_path, progress)' in source
 
 
 def test_hardware_campaign_validation_owns_persistent_results_and_retains_subprocess_output():
