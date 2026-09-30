@@ -280,14 +280,14 @@ def extract_secure_boot(dataset):
 
 
 def control_problems(runs, spec, outcomes):
-    from framework.timing_summary import CORE_CONTROLS, OBSERVED_CONTROLS, leaves, field
+    from framework.timing_summary import CORE_CONTROLS, OBSERVED_CONTROLS, leaves, field, comparison_field
     controls = set(CORE_CONTROLS) | set(spec['controls'])
     for run in runs:
         controls |= leaves(run.get('controls', {}))
     controls -= OBSERVED_CONTROLS | set(spec['treatment']) | set(spec['not_applicable'])
     problems = []
     for name in sorted(controls):
-        values = [field(r,name) for r in runs]
+        values = [comparison_field(r,name,spec) for r in runs]
         if any(v is None or v == '' or v == {} for v in values):
             problems.append('unknown_control:' + name)
         elif len({json.dumps(v, sort_keys=True) for v in values}) != 1:

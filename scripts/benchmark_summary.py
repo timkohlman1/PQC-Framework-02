@@ -114,7 +114,7 @@ def summarize(records: list[dict], *, expected_repetitions: int = 10) -> dict:
                         "median_cycles": statistics.median(cycles),
                         "mean_cycles": statistics.mean(cycles),
                         "max_cycles": max(cycles),
-                        "stdev_cycles": statistics.stdev(cycles)})
+                        "stdev_cycles": statistics.stdev(cycles) if len(cycles) > 1 else None})
     return {"hclk_hz": provenance[0]["hclk_hz"], "cycle_counter": "DWT_CYCCNT",
             "statistics": summary}
 

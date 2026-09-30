@@ -360,7 +360,7 @@ def extract_resources(dataset):
 def summarise_resources(dataset, spec):
     """Descriptive build/run medians with A2's matching rules; no pooled peaks."""
     import pandas as pd
-    from framework.timing_summary import (summarise, CORE_CONTROLS, OBSERVED_CONTROLS, leaves, field)
+    from framework.timing_summary import (summarise, CORE_CONTROLS, OBSERVED_CONTROLS, leaves, field, comparison_field)
     timing_frames, normalized = summarise(dataset, spec)
     extracted = extract_resources(dataset)
     inventory = timing_frames["inventory"].to_dict("records")
@@ -407,7 +407,7 @@ def summarise_resources(dataset, spec):
         controls -= OBSERVED_CONTROLS | set(normalized["treatment"]) | set(normalized["not_applicable"])
         problems = [] if runs and reference else ["empty_condition_or_baseline"]
         for key in sorted(controls):
-            values = [field(r,key) for r in runs + reference]
+            values = [comparison_field(r,key,normalized) for r in runs + reference]
             if any(v is None or v == {} or v == "" for v in values):
                 problems.append("unknown_control:" + key)
             elif len({json.dumps(v,sort_keys=True) for v in values}) > 1:

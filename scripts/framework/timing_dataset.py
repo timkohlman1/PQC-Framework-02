@@ -230,7 +230,7 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         mismatches.append("firmware_hash_mismatch")
     row.update(firmware_sha256=next(iter(firmware_hashes)) if len(firmware_hashes) == 1 else None,
         build_number=_text(records.get("build_number") if records.get("build_number") is not None else build.get("build_number")),
-        source_commit=_text(_map(records.get("source")).get("commit")),
+        source_commit=_text(_map(records.get("source")).get("git_commit") or _map(records.get("source")).get("commit")),
         preparation_run_id=_text(prep.get("run_id") or campaign.get("preparation_run_id")),
         preparation_verified=_bool(prep.get("verified")),
         campaign_id=_text(campaign.get("campaign_id")), case_id=_text(campaign.get("case_id") or effective.get("experiment_id")),
@@ -266,6 +266,16 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         "selected_profiles": {key: selected.get(key) for key in ("target", "gateway", "workload")},
         "services": {key: _map(selected.get("services")).get(key) for key in ("experiment_broker", "reporting_broker")},
     }
+    # Current framework source records use git_commit, not the legacy commit key.
+    # Equal HEADs do not establish equal dirty trees. Keep recorded source-state
+    # controls, and never manufacture them from today's working tree.
+    source = _map(records.get("source"))
+    if "git_commit" in source:
+        state = source.get("source_state_sha256") if source.get("git_dirty") is True else source.get("git_commit") if source.get("git_dirty") is False else None
+        row["controls"]["source"] = {"git_dirty": _bool(source.get("git_dirty")),
+                                       "state_identity": _text(state)}
+    if source.get("commit") and source.get("git_commit") and source["commit"] != source["git_commit"]:
+        mismatches.append("source_commit_conflict")
     row["build_references"] = {
         "preparation_manifest": _text(prep.get("manifest")), "preparation_verified": _bool(prep.get("verified")),
         "build_manifest": _text(build.get("manifest")),
@@ -275,6 +285,60 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
     row["inventory_reasons"] = [key + "_not_recorded" for key in (
         "build_number", "source_commit", "attempt_index", "retry_of_run_id") if row[key] is None]
     return mismatches
+
+
+def _linked_preparation_source(row: dict, inputs: list[dict]) -> None:
+    """Read missing source controls from a sealed, matching preparation only.
+
+    Runtime-only repetitions do not duplicate the build's source object. Failure
+    here leaves comparisons unsupported without invalidating unrelated timings.
+    """
+    if row["source_commit"] is not None:
+        return
+    ref = row["build_references"].get("preparation_manifest")
+    if not ref:
+        return
+    try:
+        root = Path(row["input_path"])
+        results = next((p for p in root.parents if p.name == "results"), None)
+        if results is None:
+            raise DatasetError("preparation_reference_outside_results")
+        path = Path(ref)
+        if path.is_relative_to("/workspace/results"):
+            path = results / path.relative_to("/workspace/results")
+        elif not path.is_absolute():
+            path = results.parent / path
+        if ".." in path.parts or not path.is_relative_to(results) or path.name != "manifest.json" or _has_symlink(path):
+            raise DatasetError("unsafe_preparation_reference")
+        raw = path.read_bytes()
+        inputs.append(dict(role="preparation_manifest", path=str(path), consumed=True,
+                           sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw), status="consumed"))
+        manifest = read_json(raw)
+        _verify_header(manifest)
+        if manifest.get("run", {}).get("return_code") != 0 or manifest.get("execution_outcome", {}).get("status") != "completed":
+            raise DatasetError("preparation_not_completed")
+        data, status = _artifact(path.parent, manifest, "run_provenance", inputs)
+        if data is None:
+            raise DatasetError(status)
+        provenance = read_json(data)
+        if provenance.get("schema") != SUPPORTED_INPUTS["provenance"]:
+            raise DatasetError("unsupported_preparation_provenance")
+        records = _map(provenance.get("records"))
+        if not row.get("firmware_sha256") or _map(records.get("firmware")).get("sha256") != row["firmware_sha256"]:
+            raise DatasetError("preparation_firmware_identity_mismatch")
+        source = _map(records.get("source"))
+        if source.get("commit") and source.get("git_commit") and source["commit"] != source["git_commit"]:
+            raise DatasetError("conflicting_preparation_source_identity")
+        commit = _text(source.get("git_commit") or source.get("commit"))
+        if commit is None:
+            raise DatasetError("preparation_source_unavailable")
+        row["source_commit"] = commit
+        state = source.get("source_state_sha256") if source.get("git_dirty") is True else commit if source.get("git_dirty") is False else None
+        row["controls"]["source"] = {"git_dirty": _bool(source.get("git_dirty")), "state_identity": _text(state)}
+        row["inventory_reasons"] = [v for v in row["inventory_reasons"] if v != "source_commit_not_recorded"]
+        row["inventory_reasons"].append("source_from_verified_matching_preparation")
+    except (OSError, ValueError, KeyError, TypeError):
+        row["inventory_reasons"].append("linked_preparation_source_unavailable_or_invalid")
 
 
 def inspect_run(root: Path) -> tuple[dict, list[dict], list[dict], list[dict]]:
@@ -322,6 +386,8 @@ def inspect_run(root: Path) -> tuple[dict, list[dict], list[dict], list[dict]]:
                 snapshots[role] = {}
         snapshot = snapshots["resolved_case_snapshot"]
         blockers.extend(_inventory_fields(row, manifest, snapshot, snapshots["run_provenance"]))
+        if not blockers:
+            _linked_preparation_source(row, inputs)
         raw, state = _artifact(root, manifest, "stm32_result_stream", inputs)
         epochs, decode_errors = [], []
         if raw is None:

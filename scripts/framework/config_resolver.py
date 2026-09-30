@@ -459,7 +459,9 @@ class ConfigResolver:
             "client_id": f"pqc-stm32-{kex['id']}-{auth_mode}",
             "topics": {"command": topics_prefix + "/command", "response": topics_prefix + "/response"},
             "command_payload": "run", "correlation_payload": f"pqc-stm32-{kex['id']}-{auth_mode}-ok",
-            "reconnect_attempts": 1,
+            # Experiment MQTT publications/subscriptions use MQTT_QOS_0 in firmware.
+            # Reporting and OTA control QoS are separate measurement boundaries.
+            "qos": 0, "reconnect_attempts": 1,
             "orchestration": {"host": gateway["network"]["address"], "completion_grace_seconds": 3,
                               "hard_limit_seconds": runtime_hard_limit_seconds,
                               "expected_stm32_result_epochs": handshakes_per_run},

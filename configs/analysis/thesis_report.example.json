@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "notebooks": [
+    "research_report"
+  ],
+  "analyses": [
+    {
+      "id": "selected_tls",
+      "dataset": "../../results/analysis/SELECTED_DATASET",
+      "spec": {
+        "conditions": {
+          "selected": {}
+        },
+        "baseline": "selected",
+        "independent_runs": false,
+        "evidence_policy": "stm32_st67_tls"
+      },
+      "domains": [
+        "timing",
+        "resources",
+        "tls",
+        "energy"
+      ],
+      "security_domain": "key_establishment",
+      "sections": [
+        "dataset-summary",
+        "classical-tls-baseline",
+        "kex-timing",
+        "kex-resources",
+        "kex-network-application",
+        "ready-metrics2",
+        "energy-tls-mqtt"
+      ]
+    }
+  ],
+  "budgets": []
+}

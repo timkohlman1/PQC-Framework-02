@@ -98,7 +98,7 @@ def decode_epochs(path: Path, run_id: str) -> tuple[list[Epoch], list[str]]:
                     }.get(marker)
                     if expected_context and obj["context"] != expected_context:
                         raise ValueError("logical_context_mismatch")
-                    epoch.records.append({"marker": marker, "fields": fields,
+                    epoch.records.append({"marker": marker, "fields": fields, "text": text,
                         "iteration": obj["iteration"], "context": obj["context"],
                         "ref": {"epoch": epoch.index, "record": number,
                                 "text_line": text_line, "context": obj["context"]}})

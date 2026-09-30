@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "sample_count_policy": "pilot_only_choose_final_counts_from_variability",
+  "campaigns": {
+    "thesis_kex": {
+      "conditions": 10,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_authentication": {
+      "conditions": 8,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_repeated_tls": {
+      "conditions": 8,
+      "repetitions": 10,
+      "workload": "tls_handshake_repeat",
+      "energy": false
+    },
+    "thesis_application": {
+      "conditions": 8,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_energy": {
+      "conditions": 4,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": true
+    },
+    "thesis_ota_overhead": {
+      "conditions": 4,
+      "repetitions": 10,
+      "workload": "mqtt_validation",
+      "energy": false
+    },
+    "thesis_network_rate": {
+      "conditions": 6,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_rtt": {
+      "conditions": 6,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_loss": {
+      "conditions": 6,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    },
+    "thesis_network_mtu": {
+      "conditions": 6,
+      "repetitions": 10,
+      "workload": "ready_metrics_2",
+      "energy": false
+    }
+  },
+  "existing_campaigns": {
+    "secure_boot": "normal uninstrumented authentication timing",
+    "secure_boot_stack": "separate instrumented stack runs",
+    "baremetal_benchmark": "raw-cycle reference"
+  },
+  "ota_scenarios": "existing self-contained tests/hardware/test_ota_dualbank_hw.py; no campaign treats boot as an update"
+}

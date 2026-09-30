@@ -5149,7 +5149,7 @@ def _run_runtime_only_measurement(args: argparse.Namespace) -> int:
             "profile_preparation_reference": {
                 "manifest": str(reference_path),
                 "run_id": preparation_run_id,
-                "result": preparation_manifest.get("result"),
+                "result": preparation_manifest.get("execution_outcome", {}).get("result") or preparation_manifest.get("result"),
                 "firmware_sha256": firmware_sha256,
                 "reused_artifact_identities": reused_artifact_identities,
                 "build_and_flash_reused": True,
