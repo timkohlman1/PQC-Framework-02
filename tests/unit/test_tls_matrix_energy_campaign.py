@@ -15,7 +15,7 @@ from framework.timing_summary import matches
 def test_matrix_has_twelve_distinct_firmware_conditions_and_120_attempts():
     cases = ConfigResolver(ROOT).expand_campaign('tls_matrix_energy')
     assert len(cases) == 12
-    expected = set(itertools.product(['secp256r1', 'SecP256r1MLKEM768', 'ML_KEM_768'], ['rsa3072', 'mldsa65'], ['server','mutual']))
+    expected = set(itertools.product(['secp256r1', 'SecP256r1MLKEM768', 'ML_KEM_768'], ['ecdsa-p256', 'mldsa65'], ['server','mutual']))
     assert {tuple(c['choices'][k] for k in ('tls_kex','tls_auth','auth_mode')) for c in cases} == expected
     assert len({c['provenance']['firmware_identity'] for c in cases}) == 12
     assert sum(ExecutionPolicy.from_mapping(c['execution']).repetitions for c in cases) == 120
@@ -51,7 +51,7 @@ def test_analysis_preset_covers_each_condition_once_without_waiving_controls():
     spec = json.loads((ROOT/'notebooks/tls_matrix_energy.example.json').read_text())
     assert spec['independent_runs'] is False
     assert spec['not_applicable'] == {} and spec['exclude_runs'] == {}
-    assert spec['baseline'] == 'secp256r1__rsa3072__server'
+    assert spec['baseline'] == 'secp256r1__ecdsa-p256__server'
     resolver = ConfigResolver(ROOT)
     for case in resolver.expand_campaign('tls_matrix_energy'):
         run = {**case['choices'], 'workload': 'ready_metrics_2'}

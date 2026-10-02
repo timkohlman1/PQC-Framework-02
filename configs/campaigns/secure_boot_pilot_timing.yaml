@@ -17,10 +17,6 @@ services:
 workload: mqtt_validation
 fixed:
   mqtt_transport: plaintext
-  # Required inert compatibility selections for plaintext MQTT resolution.
-  tls_kex: secp256r1
-  tls_auth: rsa3072
-  auth_mode: server
   network_condition: baseline
   firmware_mode: dual_bank_no_ota
   standby_signing_keys: 0

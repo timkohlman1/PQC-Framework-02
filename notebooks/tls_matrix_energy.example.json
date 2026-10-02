@@ -1,13 +1,13 @@
 {
   "conditions": {
-    "secp256r1__rsa3072__server": {
+    "secp256r1__ecdsa-p256__server": {
       "tls_kex": "secp256r1",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "server"
     },
-    "secp256r1__rsa3072__mutual": {
+    "secp256r1__ecdsa-p256__mutual": {
       "tls_kex": "secp256r1",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "mutual"
     },
     "secp256r1__mldsa65__server": {
@@ -20,14 +20,14 @@
       "tls_auth": "mldsa65",
       "auth_mode": "mutual"
     },
-    "SecP256r1MLKEM768__rsa3072__server": {
+    "SecP256r1MLKEM768__ecdsa-p256__server": {
       "tls_kex": "SecP256r1MLKEM768",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "server"
     },
-    "SecP256r1MLKEM768__rsa3072__mutual": {
+    "SecP256r1MLKEM768__ecdsa-p256__mutual": {
       "tls_kex": "SecP256r1MLKEM768",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "mutual"
     },
     "SecP256r1MLKEM768__mldsa65__server": {
@@ -40,14 +40,14 @@
       "tls_auth": "mldsa65",
       "auth_mode": "mutual"
     },
-    "ML_KEM_768__rsa3072__server": {
+    "ML_KEM_768__ecdsa-p256__server": {
       "tls_kex": "ML_KEM_768",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "server"
     },
-    "ML_KEM_768__rsa3072__mutual": {
+    "ML_KEM_768__ecdsa-p256__mutual": {
       "tls_kex": "ML_KEM_768",
-      "tls_auth": "rsa3072",
+      "tls_auth": "ecdsa-p256",
       "auth_mode": "mutual"
     },
     "ML_KEM_768__mldsa65__server": {
@@ -61,7 +61,7 @@
       "auth_mode": "mutual"
     }
   },
-  "baseline": "secp256r1__rsa3072__server",
+  "baseline": "secp256r1__ecdsa-p256__server",
   "filters": {
     "workload": "ready_metrics_2",
     "secure_boot": "integrity_sha256",
@@ -87,7 +87,7 @@
     "controls.profile_hashes.tls_kex:secp256r1",
     "controls.profile_hashes.tls_kex:SecP256r1MLKEM768",
     "controls.profile_hashes.tls_kex:ML_KEM_768",
-    "controls.profile_hashes.tls_auth:rsa3072",
+    "controls.profile_hashes.tls_auth:ecdsa-p256",
     "controls.profile_hashes.tls_auth:mldsa65"
   ],
   "not_applicable": {},

@@ -38,12 +38,13 @@ def manifest(output,name,state='completed',cleanup='passed'):
 
 def test_full_plan_resolves_all_profiles_without_hardware(workspace):
     plan=collection.plan(workspace)
-    assert plan['planned_campaign_attempts']==1100
-    assert len(plan['steps'])==20
-    assert sum(s.get('conditions',0) for s in plan['steps'])==110
-    assert plan['steps'][-1]['scenario_tests']==8
+    assert plan['planned_campaign_attempts']==430
+    assert len(plan['steps'])==5
+    assert sum(s.get('conditions',0) for s in plan['steps'])==43
+    assert [s['id'] for s in plan['steps']] == list(collection.DEFAULT_CAMPAIGNS)
+    assert all(s['kind'] == 'campaign' for s in plan['steps'])
     resolver=collection.ConfigResolver(collection.ROOT)
-    for step in plan['steps'][:-1]:
+    for step in plan['steps']:
         assert step['energy_requested']
         for case in resolver.expand_campaign(collection.ROOT/step['source']):
             assert case['selections']['instruments']=={'energy':'esp32_ina228'}
@@ -200,3 +201,45 @@ def test_repeated_tls_payload_controls_are_inapplicable():
         'values':['rsa3072','mldsa65'], 'baseline':'rsa3072', 'filters':{}}
     result = collection.make_spec(design, SimpleNamespace(runs=[]))
     assert set(result['not_applicable']) == {'payload_bytes', 'chunk_bytes'}
+
+
+def test_ota_lifecycle_requires_explicit_opt_in(workspace):
+    plan = collection.plan(workspace, only=['thesis_kex'], include_ota=True)
+    assert plan['steps'][-1]['id'] == 'ota_lifecycle'
+    assert plan['steps'][-1]['scenario_tests'] == 8
+
+
+def test_comparison_workloads_and_tls_reference_are_matched(workspace):
+    collection.plan(workspace)
+    resolver = collection.ConfigResolver(collection.ROOT)
+    for name in ('thesis_kex', 'thesis_authentication', 'thesis_application_plaintext'):
+        cases = resolver.expand_campaign(workspace/'profiles'/f'{name}.yaml')
+        assert all(c['selections']['instruments'] == {'energy': 'esp32_ina228'} for c in resolver.expand_campaign(name))
+        for case in cases:
+            mqtt = resolver.to_legacy_bundle(case, resolve_secrets=False)['experiment']['mqtt']
+            assert mqtt['transfer']['payload_bytes'] == 204800
+            assert mqtt['transfer']['chunk_bytes'] == 400
+            if name == 'thesis_application_plaintext':
+                assert mqtt['tls'] == {'mode':'plaintext', 'authentication':'server'}
+            else:
+                assert mqtt['tls']['tls_version'] == 'tls1.3'
+        if name == 'thesis_kex':
+            assert all(c['choices']['tls_auth'] == 'ecdsa-p256' and c['choices']['auth_mode'] == 'server' for c in cases)
+            assert any(c['choices']['tls_kex'] == 'secp256r1' for c in cases)
+        elif name == 'thesis_authentication':
+            assert all(c['choices']['tls_kex'] == 'secp256r1' for c in cases)
+            assert {c['choices']['auth_mode'] for c in cases if c['choices']['tls_auth'] == 'ecdsa-p256'} == {'server', 'mutual'}
+        else:
+            assert len(cases) == 1
+
+
+def test_certificate_report_reference_follows_frozen_design():
+    import yaml
+    profile = yaml.safe_load((ROOT/'configs/campaigns/thesis_authentication.yaml').read_text())
+    specs = collection.analysis_specs('thesis_authentication', profile)
+    assert all(s['baseline'] == 'ecdsa-p256' for s in specs if s['field'] == 'tls_auth')
+    profile.pop('analysis_baselines')
+    # Historical authentication matrices also contained ECDSA but used RSA as reference.
+    assert 'ecdsa-p256' in profile['matrix']['tls_auth']
+    specs = collection.analysis_specs('thesis_authentication', profile)
+    assert all(s['baseline'] == 'rsa3072' for s in specs if s['field'] == 'tls_auth')

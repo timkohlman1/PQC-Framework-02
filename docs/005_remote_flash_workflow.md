@@ -445,7 +445,7 @@ those simulated results do not establish Docker purge/rebuild or hardware succes
 
 `configs/campaigns/network_trial.yaml` runs five fixed-TLS conditions with three
 hardware-reset repetitions each: **15 planned runtime attempts**. It uses
-Ready Metrics 2 (200 KiB, 400-byte chunks), `SecP256r1MLKEM768`, RSA-3072 server
+Ready Metrics 2 (200 KiB, 400-byte chunks), `SecP256r1MLKEM768`, ECDSA-P256 server
 authentication, integrity-only secure boot and single-bank firmware. Energy is
 not selected. The existing reporting path remains impairment-exempt.
 
@@ -533,7 +533,7 @@ runs means there is no analysis dataset to export.
 | Dimension | Values |
 |---|---|
 | Key exchange | `secp256r1`, `SecP256r1MLKEM768`, `ML_KEM_768` |
-| Certificate authentication | `rsa3072`, `mldsa65` |
+| Certificate authentication | `ecdsa-p256`, `mldsa65` |
 | Authentication mode | `server`, `mutual` |
 
 Each condition requests ten framework runs with a hardware reset between runs:
@@ -621,7 +621,7 @@ identifier; do not select a scientific baseline by directory name):
 ```
 
 The companion analysis preset names each of the twelve combinations explicitly,
-using `secp256r1__rsa3072__server` as the reference. It retains failures, makes no
+using `secp256r1__ecdsa-p256__server` as the reference. It retains failures, makes no
 exclusions or unknown-control waivers, and leaves `independent_runs: false`.
 The declared treatment includes only the selected TLS KEX, certificate and
 authentication-mode properties and their profile identities. Absolute per-condition
@@ -668,7 +668,7 @@ The normal configuration cell imports `json` and `Path` and adds `ROOT / "script
 to `sys.path`. Use a new output path on every run. For clearer plots or a bounded
 within-family question, filter to one KEX (for example add
 `"tls_kex": "ML_KEM_768"` to `SPEC["filters"]`) and set
-`SPEC["baseline"] = "ML_KEM_768__rsa3072__server"`. Conditions outside that filter
+`SPEC["baseline"] = "ML_KEM_768__ecdsa-p256__server"`. Conditions outside that filter
 remain in inventory with exclusion reasons; their comparison rows are unsupported.
 Keep the chosen baseline within the filter. The four retained conditions then
 show certificate and mutual-auth differences within that KEX family, subject to
@@ -697,15 +697,15 @@ These profile definitions do not establish hardware success.
 
 | Campaign | Conditions | Varied dimensions and controls |
 |---|---:|---|
-| `thesis_kex` | 10 | KEX; RSA-3072/server auth and baseline network fixed |
+| `thesis_kex` | 10 | KEX; ECDSA-P256/server auth and baseline network fixed |
 | `thesis_authentication` | 8 | Four certificate families × server/mutual; P-256 KEX fixed; analyse each factor within the other factor's fixed stratum |
-| `thesis_repeated_tls` | 8 | Classical/hybrid × RSA/ML-DSA × auth mode; ten fresh full handshakes per boot, ten outer attempts |
+| `thesis_repeated_tls` | 8 | Classical/hybrid × ECDSA/ML-DSA × auth mode; ten fresh full handshakes per boot, ten outer attempts |
 | `thesis_application` | 8 | Classical/hybrid × 4 KiB/200 KiB payload × 128/400-byte chunks; analyse payload and chunk effects separately |
 | `thesis_network_rate` | 6 | Classical/hybrid × 100000/1024/256 kbit/s; other network variables fixed |
 | `thesis_network_rtt` | 6 | Classical/hybrid × 0/20/100 ms configured RTT; other network variables fixed |
 | `thesis_network_loss` | 6 | Classical/hybrid × 0/1/3 percent configured loss; other variables fixed |
 | `thesis_network_mtu` | 6 | Classical/hybrid × 1500/1280/1000-byte MTU; other variables fixed |
-| `thesis_energy` | 4 | Representative classical/hybrid and RSA/ML-DSA server-auth configurations with the existing instrument |
+| `thesis_energy` | 4 | Representative classical/hybrid and ECDSA/ML-DSA server-auth configurations with the existing instrument |
 | `thesis_ota_overhead` | 4 | ECDSA-P256/ML-DSA65 × dual-bank OTA disabled/enabled, holding bank layout fixed |
 
 All network sweeps use `trial_reference`, which keeps impairment enabled at the
@@ -769,19 +769,34 @@ python3 scripts/collect_thesis_evidence.py plan --output results/thesis/collecti
 python3 scripts/collect_thesis_evidence.py status --output results/thesis/collection-01
 ```
 
-The default plan resolves nineteen campaign families: the ten TLS/boot thesis pilots,
-six matched plaintext pilots, normal secure boot, instrumented boot stack and bare-metal reference. It assigns
-ten outer reset attempts to every condition, including stack and bare-metal
-campaigns: 110 conditions and 1,100 campaign attempts. The existing bare-metal and
-repeated-TLS inner repetitions remain unchanged. Eight normal-build OTA scenario
-tests additionally cover application update, rollback, bootloader migration,
-invalid candidates and recovery. Their setup/recovery boots are separate retained
-records; these tests are not ten independent performance samples. The diagnostic
-Request 17 OTA build is excluded from this collection.
+The default plan contains five campaigns with ten reset attempts per condition:
 
-Use `--repetitions N` when creating a plan to choose an outer attempt count. Ten
-is a pilot default, not statistical sufficiency. `--only thesis_kex ...` limits
-campaign families; OTA remains included unless `--skip-ota` is explicitly supplied.
+| Campaign | Conditions | Attempts | Purpose |
+| --- | ---: | ---: | --- |
+| `secure_boot` | 12 | 120 | Normal boot timing |
+| `secure_boot_stack` | 12 | 120 | Separate bootloader stack profiling |
+| `thesis_kex` | 10 | 100 | Key exchange with ECDSA-P256 server authentication |
+| `thesis_authentication` | 8 | 80 | Four certificate schemes, each with server and mutual authentication |
+| `thesis_application_plaintext` | 1 | 10 | Matched application without TLS |
+
+This is 43 conditions and 430 attempts. All three application comparison campaigns
+use Ready Metrics 2 with a fixed 204800-byte payload and 400-byte chunks. The TLS
+reference is TLS 1.3, ECDHE-secp256r1 and ECDSA-P256/SHA-256 server authentication.
+The authentication study holds P-256 KEX fixed and compares certificate schemes
+within each authentication mode, with separate server-versus-mutual contrasts.
+All five source profiles explicitly select `instruments: {energy: esp32_ina228}`;
+energy is captured alongside each run, without a separate energy campaign.
+The existing PF12 trigger begins after bootloader handoff: secure-boot campaigns
+retain the application energy trace, but bootloader verification energy remains
+unavailable. Raw traces and supported derived values remain in the archive.
+Normal boot timing and instrumented stack runs stay separate.
+
+Network sweeps, repeated TLS, workload-size sweeps, energy-only, bare-metal and OTA
+overhead campaigns remain available via explicit `--only` selections, but are not
+default collection steps. Eight OTA lifecycle tests require `--include-ota`.
+`--skip-ota` remains accepted for older commands and now matches the default.
+Use `--repetitions N` at plan creation to override the ten-attempt pilot count;
+ten attempts do not establish statistical sufficiency.
 Plan choices are immutable after creation. Existing source edits need not be
 committed, but the source, dirty submodule contents and copied profiles must stay
 unchanged during collection. Resume refuses drift instead of mixing revisions.
@@ -898,26 +913,28 @@ are revised as documented in the A8 architecture section.
 `ready_metrics_plaintext` and `ready_metrics_2_plaintext` run the existing Ready
 Metrics applications using plaintext MQTT on port 1883. Set `mqtt_transport:
 plaintext` in a campaign's `fixed` choices to select this build mode. The resolver
-requires the inert compatibility choices `tls_kex: secp256r1`, `tls_auth: rsa3072`,
-`auth_mode: server`; these do not enable TLS, certificates or transport authentication.
+allows TLS choices to be omitted; canonical plaintext campaigns omit them. Older
+explicit `secp256r1`/`rsa3072`/`server` compatibility choices are still accepted
+internally, but do not enable TLS, certificates or transport authentication.
+Conflicting explicit TLS choices are rejected rather than silently ignored.
 The application build excludes wolfSSL/wolfCrypt sources and linkage. wolfMQTT
 remains for the MQTT protocol. Framework instrumentation and secure-boot verification
 remain; this is a no-TLS application baseline, not a claim that the bootloader,
 Wi-Fi link or entire device has no cryptography.
 
 The same workload code, transfer sizes/chunks, QoS, reporting, boot settings and
-network conditions are retained. New default collection families are:
+network conditions are retained. Available plaintext families are listed below;
+only `thesis_application_plaintext` belongs to the focused default collection:
 
 | Campaign | Conditions | Attempts at 10 repetitions | Matched workload |
 | --- | ---: | ---: | --- |
-| `thesis_application_plaintext` | 4 | 40 | 4 KiB/200 KiB, 128/400-byte chunks |
+| `thesis_application_plaintext` | 1 | 10 | 200 KiB, 400-byte chunks |
 | `thesis_network_rate_plaintext` | 3 | 30 | Reference and two rate limits |
 | `thesis_network_rtt_plaintext` | 3 | 30 | Reference and two delays |
 | `thesis_network_loss_plaintext` | 3 | 30 | Reference and two loss levels |
 | `thesis_network_mtu_plaintext` | 3 | 30 | Reference and two MTUs |
 | `thesis_energy_plaintext` | 1 | 10 | 200 KiB, 400-byte chunks, E5V energy |
 
-The extra 170 attempts bring the default to 1,100 plus eight OTA scenario tests.
 Standalone Ready Metrics profiles each perform one attempt and are not extra
 default collection steps. There is no plaintext TLS-handshake or primitive-crypto
 benchmark: those operations do not exist without TLS.
@@ -927,7 +944,10 @@ pure PQ TLS conditions where the collected TLS design includes them. The KEX and
 authentication studies reuse the matching 200 KiB/400-byte plaintext application
 condition; all selections stay within the current collection. These comparisons
 measure the whole transition, including authentication, rather than isolating
-only key exchange. Existing TLS-only analyses retain their original baselines.
+only key exchange. New certificate comparisons use ECDSA-P256 as the baseline.
+Archived collections
+retain their frozen profiles; historical designs without `analysis_baselines`
+retain their RSA reference, even when ECDSA was a comparison condition.
 TLS handshake measurements absent on plaintext are unavailable, never zero-cost
 handshakes. Original evidence labels remain in the exported inventory.
 

@@ -59,3 +59,23 @@ def test_plaintext_uses_same_application_without_tls(name):
         from framework.tls_algorithms import resolve_tls_algorithm_set
         algorithms = resolve_tls_algorithm_set(bundle)
         assert algorithms['mode'] == 'plaintext'
+
+
+def test_tls_matrices_include_the_classical_reference():
+    import yaml
+    for path in (ROOT/'configs/campaigns').glob('*.yaml'):
+        profile = yaml.safe_load(path.read_text())
+        if profile['workload'] == 'baremetal_benchmark':
+            continue  # Its legacy tls_kex selector denotes primitive benchmarks.
+        matrix = profile.get('matrix', {})
+        if 'tls_kex' in matrix:
+            assert 'secp256r1' in matrix['tls_kex'], path.name
+        if 'tls_auth' in matrix:
+            assert 'ecdsa-p256' in matrix['tls_auth'], path.name
+
+
+def test_focused_source_profiles_enable_concurrent_energy():
+    for name in ('secure_boot', 'secure_boot_stack', 'thesis_kex',
+                 'thesis_authentication', 'thesis_application_plaintext'):
+        cases = ConfigResolver(ROOT).expand_campaign(name)
+        assert all(c['selections']['instruments'] == {'energy': 'esp32_ina228'} for c in cases)

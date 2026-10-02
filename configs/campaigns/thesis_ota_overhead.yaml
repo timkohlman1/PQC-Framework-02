@@ -15,7 +15,7 @@ fixed:
   boot_uart_diagnostics: false
   network_condition: baseline
   tls_kex: secp256r1
-  tls_auth: rsa3072
+  tls_auth: ecdsa-p256
   auth_mode: server
 execution:
   repetitions: 10

@@ -8,7 +8,7 @@ services:
 workload: ready_metrics
 fixed:
   tls_kex: secp256r1
-  tls_auth: rsa3072
+  tls_auth: ecdsa-p256
   auth_mode: server
   secure_boot: integrity_sha256
   network_condition: baseline

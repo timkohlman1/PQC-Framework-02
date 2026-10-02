@@ -9,6 +9,8 @@ services:
   experiment_broker: experiment_gateway1
   reporting_broker: reporting_gateway1
 workload: ready_metrics_2
+instruments:
+  energy: esp32_ina228
 fixed:
   secure_boot: integrity_sha256
   firmware_mode: single_bank
@@ -16,7 +18,7 @@ fixed:
   boot_stack_profiling: false
   boot_uart_diagnostics: false
   network_condition: baseline
-  tls_auth: rsa3072
+  tls_auth: ecdsa-p256
   auth_mode: server
 execution:
   repetitions: 10
@@ -28,6 +30,8 @@ execution:
   condition: retain_within_condition
   evidence: per_run
 matrix:
+  workload.transfer.payload_bytes: [204800]
+  workload.transfer.chunk_bytes: [400]
   tls_kex:
   - x25519
   - secp256r1

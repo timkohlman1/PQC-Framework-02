@@ -9,9 +9,6 @@ services:
 workload: mqtt_validation
 fixed:
   mqtt_transport: plaintext
-  tls_kex: secp256r1
-  tls_auth: rsa3072
-  auth_mode: server
   secure_boot: integrity_sha256
   network_condition: baseline
   firmware_mode: single_bank

@@ -35,7 +35,7 @@ matrix:
     - SecP256r1MLKEM768
     - ML_KEM_768
   tls_auth:
-    - rsa3072
+    - ecdsa-p256
     - mldsa65
   auth_mode:
     - server
