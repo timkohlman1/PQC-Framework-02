@@ -95,6 +95,18 @@ def annotations(value):
     return value
 
 
+def instrument_campaign(resolver, data):
+    """Apply the thesis collector energy policy to a copied campaign."""
+    workload = resolver.load_profile('workload', data['workload']).data
+    energy_supported = (workload.get('firmware_application') in {
+        'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',
+        'tls_handshake_repeat', 'baremetal_benchmark'}
+        and workload.get('evidence', {}).get('deferred_reporting') is True)
+    if energy_supported:
+        data.setdefault('instruments', {})['energy'] = 'esp32_ina228'
+    return energy_supported
+
+
 def plan(output, repetitions=10, only=None, include_ota=False):
     if type(repetitions) is not int or not 1 <= repetitions <= 1000:
         raise ValueError('repetitions must be 1..1000')
@@ -114,13 +126,7 @@ def plan(output, repetitions=10, only=None, include_ota=False):
         data['execution']['repetitions'] = repetitions
         # Instrument every supported single-window workload in this collection.
         # Unsupported boot-only and multi-reset OTA workflows remain explicit gaps.
-        workload = resolver.load_profile('workload', data['workload']).data
-        energy_supported = (workload.get('firmware_application') in {
-            'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',
-            'tls_handshake_repeat', 'baremetal_benchmark'}
-            and workload.get('evidence', {}).get('deferred_reporting') is True)
-        if energy_supported:
-            data.setdefault('instruments', {})['energy'] = 'esp32_ina228'
+        energy_supported = instrument_campaign(resolver, data)
         # Explicitly preserve instrumented stack runs separately from normal timing.
         source = output / 'profiles' / (name + '.yaml')
         source.write_text(yaml.safe_dump(data, sort_keys=False))

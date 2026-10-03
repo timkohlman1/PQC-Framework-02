@@ -35,6 +35,14 @@ class CampaignCleanupError(CampaignError):
     """Shared infrastructure could not be removed safely."""
 
 
+class CampaignPaused(Exception):
+    """Cooperative stop after an operation, followed by normal cleanup."""
+
+    def __init__(self, reason="requested"):
+        self.reason = reason
+        super().__init__(reason)
+
+
 class GroupSetupError(CampaignError):
     """Preparation or broker setup prevents this firmware group from running."""
 
@@ -461,6 +469,11 @@ class CampaignExecutor:
         *,
         results_root: Path | str = "results/campaigns",
         runner: CommandRunner = _default_runner,
+        pause_file: Path | None = None,
+        stop_on_error: bool = False,
+        accept_failed: bool = False,
+        retry_failed: bool = False,
+        preserve_completed: bool = False,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.results_root = Path(results_root)
@@ -473,6 +486,16 @@ class CampaignExecutor:
         self.progress = RunStatus()
         self._finished_slots: set[tuple[str, int]] = set()
         self._total = 1
+        self.pause_file = pause_file
+        self.stop_on_error = stop_on_error
+        self.accept_failed = accept_failed
+        self.retry_failed = retry_failed
+        self.preserve_completed = preserve_completed
+        self._retained_firmware: set[tuple[str, str]] = set()
+
+    def _checkpoint(self):
+        if self.pause_file is not None and self.pause_file.exists():
+            raise CampaignPaused()
 
     def _case_finished(self, case, repetition, status, run_manifest=None):
         key = (str(case["id"]), repetition)
@@ -528,9 +551,14 @@ class CampaignExecutor:
             campaign_root = manifest_path.parent
             state.pop("final_index", None)
             state.pop("failure", None)
+            state.pop("pause", None)
+            for record in state.get("runs", []):
+                if self.accept_failed and record.get("state") in {"failed", "blocked"}:
+                    record["accepted_failure"] = {"at": _now(), "decision": "operator_accept"}
             state.pop("completed_at", None)
             state["resumed_at"] = _now()
             state["state"] = "running"
+            state["cleanup"] = {"status": "pending", "errors": []}
         else:
             timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             campaign_root = self.results_root / f"{_safe_component(str(campaign_data['id']))}_{timestamp}"
@@ -544,6 +572,22 @@ class CampaignExecutor:
                 cases=cases,
                 groups=groups,
             )
+        # Freeze historical preparation validation before a resumed build changes
+        # the board image. Old captures retain their own image identity.
+        self._retained_firmware = set()
+        if self.preserve_completed:
+            for group_state in state["firmware_groups"]:
+                refs = [group_state.get("preparation_manifest")]
+                refs.extend(p.get("manifest") for p in group_state.get("previous_preparations", []))
+                for ref in filter(None, refs):
+                    path = Path(ref)
+                    if not path.is_absolute():
+                        path = campaign_root / path
+                    try:
+                        sha = validate_preparation_manifest(path, expected_firmware_identity=group_state["firmware_identity"])
+                        self._retained_firmware.add((group_state["firmware_identity"], sha))
+                    except CampaignError:
+                        continue
         _write_json_atomic(manifest_path, state)
 
         cleanup_errors: list[str] = []
@@ -552,6 +596,7 @@ class CampaignExecutor:
             for group_index, group in enumerate(groups, start=1):
                 firmware_sha256 = None
                 try:
+                    self._checkpoint()
                     representative = group["cases"][0]
                     if resume_manifest is not None and self._resume_group_completed(
                         state=state, group=group, group_index=group_index,
@@ -581,12 +626,14 @@ class CampaignExecutor:
                     group_state["validated_firmware_sha256"] = firmware_sha256
                     _write_json_atomic(manifest_path, state)
 
+                    self._checkpoint()
                     bundle = self.resolver.to_legacy_bundle(representative)
                     wanted_broker_identity = broker_identity(bundle, representative)
                     _setup_step("broker_setup", self._ensure_broker, bundle=bundle, identity=wanted_broker_identity, campaign_root=campaign_root)
                     group_state["broker_identity"] = wanted_broker_identity
                     _write_json_atomic(manifest_path, state)
 
+                    self._checkpoint()
                     condition_groups: dict[str, list[dict[str, Any]]] = {}
                     condition_order: list[str] = []
                     for case in group["cases"]:
@@ -597,6 +644,7 @@ class CampaignExecutor:
                         condition_groups[cid].append(case)
 
                     for cid in condition_order:
+                        self._checkpoint()
                         if active_condition is not None:
                             cleanup = remove_gateway_network_degradation(
                                 degradation=active_condition, repo_root=self.repo_root
@@ -630,6 +678,7 @@ class CampaignExecutor:
                         for case in condition_cases:
                             case_path = self._case_path(generated_root, case)
                             for repetition in range(1, policy.repetitions + 1):
+                                self._checkpoint()
                                 if self._resume_completed(
                                     state=state,
                                     campaign_id=str(campaign_data["id"]),
@@ -646,6 +695,7 @@ class CampaignExecutor:
                                     identity=broker_identity(self.resolver.to_legacy_bundle(case), case),
                                     campaign_root=campaign_root,
                                 )
+                                self._checkpoint()
                                 before_packets = None
                                 if active_condition is not None:
                                     observed_before = verify_gateway_network_degradation(
@@ -682,8 +732,10 @@ class CampaignExecutor:
                                                  "log": str(exc.log)},
                                     )
                                     _write_json_atomic(manifest_path, state)
-                                    self._diagnostic(campaign_root, f"Campaign repetition failed; continuing: {exc}")
+                                    self._diagnostic(campaign_root, f"Campaign repetition failed; {'pausing' if self.stop_on_error else 'continuing'}: {exc}")
                                     self._case_finished(case, repetition, "Failed", exc.manifest)
+                                    if self.stop_on_error:
+                                        raise CampaignPaused("error")
                                     continue
                                 if active_condition is not None:
                                     observed_after = verify_gateway_network_degradation(
@@ -743,7 +795,10 @@ class CampaignExecutor:
                             existing = next((run for run in state["runs"]
                                              if run["case_id"] == blocked_case["id"]
                                              and run["repetition_index"] == blocked_rep), None)
-                            if existing and existing.get("state") == "failed":
+                            if existing and existing.get("accepted_failure") and not self.retry_failed and existing.get("state") in {"failed", "blocked"}:
+                                self._case_finished(blocked_case, blocked_rep, "Skipped", existing.get("manifest"))
+                                continue
+                            if existing and existing.get("state") == "failed" and not self.stop_on_error:
                                 self._case_finished(blocked_case, blocked_rep, "Failed", existing.get("manifest"))
                                 continue
                             if firmware_sha256 is not None and self._resume_completed(
@@ -766,6 +821,8 @@ class CampaignExecutor:
                                 blocked=True,
                             )
                             self._case_finished(blocked_case, blocked_rep, "Blocked")
+                            if self.stop_on_error:
+                                raise CampaignPaused("error")
                     _write_json_atomic(manifest_path, state)
                     # Shared infrastructure must be removed before trying another group.
                     if active_condition is not None:
@@ -790,6 +847,10 @@ class CampaignExecutor:
                                 "failed": failed, "blocked": blocked}
             state["state"] = "completed_with_failures" if failed or blocked else "completed"
             state["completed_at"] = _now()
+        except CampaignPaused as exc:
+            state["state"] = "paused"
+            state["pause"] = {"reason": exc.reason, "at": _now()}
+            self._diagnostic(campaign_root, "Campaign paused: " + exc.reason)
         except BaseException as exc:
             self.progress.finish("Interrupted" if isinstance(exc, KeyboardInterrupt) else "Failed")
             self._diagnostic(campaign_root, f"{type(exc).__name__}: {exc}")
@@ -797,6 +858,12 @@ class CampaignExecutor:
             state["failure"] = {"type": type(exc).__name__, "message": str(exc), "at": _now()}
             raise
         finally:
+            if state.get("state") == "paused":
+                state["summary"] = {
+                    "planned": len(cases) * policy.repetitions,
+                    **{name: sum(r.get("state") == name for r in state["runs"])
+                       for name in ("completed", "failed", "blocked")},
+                }
             if active_condition is not None:
                 cleanup = remove_gateway_network_degradation(
                     degradation=active_condition, repo_root=self.repo_root
@@ -811,7 +878,7 @@ class CampaignExecutor:
                 "errors": cleanup_errors,
                 "completed_at": _now(),
             }
-            if cleanup_errors and state.get("state") in {"completed", "completed_with_failures"}:
+            if cleanup_errors and state.get("state") in {"completed", "completed_with_failures", "paused"}:
                 state["state"] = "failed"
                 state["failure"] = {"type": "CleanupError", "message": "; ".join(cleanup_errors), "at": _now()}
             if state.get("state") in {"completed", "completed_with_failures"} and state.get("cleanup", {}).get("status") == "passed":
@@ -894,6 +961,11 @@ class CampaignExecutor:
         campaign_root: Path, campaign_id: str, repetitions: int,
     ) -> bool:
         """Skip hardware work only when every saved repetition still validates."""
+        slots = {(r["case_id"], r["repetition_index"]): r for r in state.get("runs", [])}
+        if not self.retry_failed and all(slots.get((case["id"], rep), {}).get("accepted_failure")
+               and slots[(case["id"], rep)].get("state") in {"failed", "blocked"}
+               for case in group["cases"] for rep in range(1, repetitions + 1)):
+            return True
         recorded = state["firmware_groups"][group_index - 1].get("preparation_manifest")
         if not recorded:
             return False
@@ -1211,8 +1283,17 @@ class CampaignExecutor:
             ),
             None,
         )
+        if isinstance(record, dict) and record.get("state") in {"failed", "blocked"} and record.get("accepted_failure") and not self.retry_failed:
+            return True
         if not isinstance(record, dict) or record.get("state") != "completed":
             return False
+        if self.preserve_completed:
+            original_sha = record.get("firmware_sha256")
+            identity = case["provenance"]["firmware_identity"]
+            if (record.get("configuration_identity") == case["provenance"]["configuration_identity"]
+                    and record.get("firmware_identity") == identity
+                    and (identity, original_sha) in self._retained_firmware):
+                firmware_sha256 = original_sha
         manifest_path = Path(str(record.get("manifest", "")))
         if not manifest_path.is_absolute():
             manifest_path = self.repo_root / manifest_path

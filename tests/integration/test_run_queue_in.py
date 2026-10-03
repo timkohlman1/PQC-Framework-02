@@ -1,0 +1,245 @@
+"""Real host processes and generated-notebook execution with synthetic evidence."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+import pytest
+
+from framework.run_queue import Queue
+from framework.campaign_executor import canonical_sha256
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tests'))
+pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize('stop_kind', ['entry_pause', 'worker_signal', 'queue_quit'])
+def test_worker_observes_cross_process_pause_and_starts_next_unpaused_entry(tmp_path, stop_kind):
+    scripts = tmp_path / 'scripts'
+    (scripts / 'framework').mkdir(parents=True)
+    for name in ('run_queue.py', 'collect_thesis_evidence.py'):
+        shutil.copy2(ROOT / 'scripts' / name, scripts / name)
+    for name in ('run_queue.py', 'run_console.py', 'progress.py'):
+        shutil.copy2(ROOT / 'scripts/framework' / name, scripts / 'framework' / name)
+    # The shim owns no hardware; it simulates a completed command with a sealed verdict.
+    shim = scripts / 'dev.sh'
+    shim.write_text('''#!/usr/bin/env python3
+import hashlib, json, pathlib, sys, time
+root=pathlib.Path(__file__).resolve().parents[1]
+a=sys.argv[1:]
+if a[0]=='python':
+    raise SystemExit(0)
+pause=root/pathlib.Path(a[a.index('--pause-file')+1]).relative_to('/workspace')
+output=root/pathlib.Path(a[a.index('--results-root')+1]).relative_to('/workspace')
+folder=output/'owned'; folder.mkdir(parents=True)
+(root/'command-started').touch()
+if (root/'wait-for-pause').exists():
+    deadline=time.monotonic()+15
+    while not pause.exists():
+        if time.monotonic()>deadline: raise SystemExit(3)
+        time.sleep(.02)
+paused=pause.exists()
+if paused: time.sleep(.3)
+(root/'cleanup-complete').touch()
+data={'state':'paused' if paused else 'completed', 'cleanup':{'status':'passed'},
+      'pause':{'reason':'requested'}, 'runs':[],
+      'summary':{'planned':1, 'completed':0 if paused else 1, 'failed':0, 'blocked':0}}
+if not paused:
+    data['final_index']={'status':'finalized','sha256':hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+(folder/'campaign-manifest.json').write_text(json.dumps(data))
+raise SystemExit(75 if paused else 0)
+''')
+    shim.chmod(0o755)
+    queue = Queue(tmp_path)
+    ids = ['a' * 12, 'b' * 12]
+    for position, identifier in enumerate(ids):
+        (queue.folder(identifier) / 'profiles').mkdir(parents=True)
+        (queue.folder(identifier) / 'profiles/campaign.yaml').write_text('synthetic')
+        with queue.connect() as db:
+            db.execute('''INSERT INTO jobs(id,position,profile,repetitions,conditions,attempts,status,created)
+                          VALUES (?,?,?,1,1,1,'queued',?)''', (identifier, position, 'fixture', time.time()))
+    with queue.connect() as db:
+        db.execute("UPDATE settings SET value='running' WHERE key='dispatch'")
+    environment = dict(os.environ)
+    environment.pop('PQC_CONTAINER', None)
+    command = [sys.executable, str(scripts / 'run_queue.py')]
+    (tmp_path / 'wait-for-pause').touch()
+    worker = subprocess.Popen(command + ['worker', '--once'], env=environment,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        deadline = time.monotonic()+15
+        while not (tmp_path / 'command-started').exists():
+            assert time.monotonic() < deadline
+            time.sleep(.03)
+        if stop_kind == 'worker_signal':
+            import signal
+            worker.send_signal(signal.SIGTERM)
+        elif stop_kind == 'queue_quit':
+            stopped = subprocess.run(command + ['quit'], env=environment, capture_output=True, text=True, timeout=15)
+            assert stopped.returncode == 0, stopped.stderr
+            assert (tmp_path / 'cleanup-complete').exists()
+            assert not queue.worker_alive()
+        else:
+            stopped = subprocess.run(command + ['pause', ids[0]], env=environment, capture_output=True, text=True, timeout=10)
+            assert stopped.returncode == 0, stopped.stderr
+        stdout, _ = worker.communicate(timeout=15)
+        assert worker.returncode == 0, stdout
+        assert queue.job(ids[0])['status'] == 'paused'
+        assert queue.job(ids[1])['status'] == 'queued'
+        (tmp_path / 'wait-for-pause').unlink()
+        with queue.connect() as db:
+            db.execute("UPDATE settings SET value='running' WHERE key='dispatch'")
+        second = subprocess.run(command + ['worker', '--once'], env=environment, capture_output=True, text=True, timeout=15)
+        assert second.returncode == 0, second.stderr
+        assert queue.job(ids[1])['status'] == 'completed', queue.job(ids[1])
+        assert queue.job(ids[0])['status'] == 'paused'
+    finally:
+        if worker.poll() is None:
+            worker.terminate()
+            worker.communicate(timeout=20)
+
+
+@pytest.mark.parametrize('without_captures', [False, True])
+def test_selected_export_and_notebook_execute_without_unrelated_rows(tmp_path, monkeypatch, without_captures):
+    import nbformat
+    from nbclient import NotebookClient
+    import queue_workspace as workspace
+    from framework import thesis_collection as collection
+    from framework.archive_table import load_archive
+    from timing_dataset_support import make_run
+    monkeypatch.setattr(workspace, 'ROOT', tmp_path)
+    monkeypatch.setattr(collection, 'ROOT', tmp_path)
+    monkeypatch.setattr(collection, 'source_identity', lambda: {'fixture': 'synthetic'})
+    # Notebook root discovery locates the maintained framework without copying dependencies.
+    (tmp_path / 'scripts').symlink_to(ROOT / 'scripts', target_is_directory=True)
+    selection = []
+    for index in range(3):
+        folder = tmp_path / 'results/queue/jobs' / str(index)
+        campaign = folder / 'campaigns' / ('fixture-' + str(index))
+        campaign.mkdir(parents=True)
+        if not without_captures:
+            make_run(campaign / 'runs' / 'capture', run_id='run-' + str(index))
+        manifest = {'state': 'completed', 'cleanup': {'status': 'passed'},
+                    'campaign_id': 'fixture', 'runs': [],
+                    'summary': {'planned': 1, 'completed': 1, 'failed': 0, 'blocked': 0}}
+        if without_captures:
+            manifest.update(state='completed_with_failures',
+                summary={'planned': 1, 'completed': 0, 'failed': 1, 'blocked': 0},
+                runs=[{'case_id': str(index), 'repetition_index': 1, 'state': 'failed',
+                       'manifest': None, 'accepted_failure': {'decision': 'operator_accept'}}])
+        manifest['final_index'] = {'status': 'finalized', 'sha256': canonical_sha256(manifest)}
+        path = campaign / 'campaign-manifest.json'
+        path.write_text(json.dumps(manifest))
+        (folder / 'annotations.json').write_text('{}')
+        from framework.run_queue import digest
+        selection.append({'id': str(index), 'root': campaign.relative_to(tmp_path).as_posix(),
+                          'job_root': folder.relative_to(tmp_path).as_posix(), 'status': manifest['state'],
+                          'manifest_sha': digest(path), 'attempts': 1})
+    request = tmp_path / 'results/selection.json'
+    request.write_text(json.dumps({'jobs': selection[:2]}))
+    result = workspace.export_selection('results/selection.json', 'results/exports/combined')
+    output = tmp_path / result['output']
+    frame = load_archive(output, verify_sources=True)
+    if without_captures:
+        assert len(frame) == 2 and frame.run_id.isna().all() and not frame.run_success.any()
+    else:
+        assert set(frame.run_id) == {'run-0', 'run-1'}
+    notebook = nbformat.read(output / 'analysis.ipynb', as_version=4)
+    NotebookClient(notebook, timeout=60, kernel_name='python3', resources={'metadata': {'path': str(output)}}).execute()
+    text = '\n'.join(o.get('text', '') for c in notebook.cells if c.cell_type == 'code' for o in c.outputs)
+    assert 'original values, missingness, nullable types, row identity and timestamps preserved' in text
+    # Generated notebooks have no frozen results or executed cells until the user runs them.
+    fresh = nbformat.read(output / 'analysis.ipynb', as_version=4)
+    assert all(not c.get('outputs') for c in fresh.cells)
+    for name in ('runs.csv', 'analysis.ipynb', 'queue-selection.json', 'archive.json'):
+        assert (output / name).is_file()
+
+
+@pytest.mark.parametrize('exit_key', [b'q', b'Q'])
+def test_terminal_renders_and_detaches_in_a_real_pty(tmp_path, exit_key):
+    import pty
+    import select
+    script = '''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from framework.run_queue import Queue
+from framework.queue_tui import run
+q=Queue(Path(sys.argv[2]))
+q.gateway_statuses=lambda: [{'gateway':'fixture-gateway','status':'READY','hostname':''}]
+q.catalogue=lambda: [{'profile':'baseline.yaml','repetitions':1,'conditions':1,'attempts':1,'workload':'ready_metrics','error':None}]
+run(q)
+'''
+    master, slave = pty.openpty()
+    import fcntl, struct, termios
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 120, 0, 0))
+    child = subprocess.Popen([sys.executable, '-c', script, str(ROOT / 'scripts'), str(tmp_path)],
+                             stdin=slave, stdout=slave, stderr=slave, env={**os.environ, 'TERM': 'xterm-256color'})
+    os.close(slave)
+    data = b''
+    try:
+        deadline = time.monotonic()+10
+        while b'baseline.yaml' not in data or b'fixture-gateway: READY' not in data:
+            assert time.monotonic() < deadline, data.decode(errors='replace')
+            if select.select([master], [], [], .1)[0]:
+                data += os.read(master, 8192)
+        os.write(master, exit_key)
+        child.wait(timeout=10)
+        assert child.returncode == 0
+        assert b'EXPERIMENT QUEUE' in data
+        assert b'fixture-gateway: READY' in data
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        os.close(master)
+
+
+def test_remove_discover_and_purge_through_separate_cli_processes(tmp_path):
+    scripts = tmp_path / 'scripts'
+    (scripts / 'framework').mkdir(parents=True)
+    shutil.copy2(ROOT / 'scripts/run_queue.py', scripts / 'run_queue.py')
+    shutil.copy2(ROOT / 'scripts/framework/run_queue.py', scripts / 'framework/run_queue.py')
+    queue = Queue(tmp_path)
+    identifier = 'c' * 12
+    folder = queue.folder(identifier)
+    folder.mkdir(parents=True)
+    (folder / 'evidence.log').write_text('retained')
+    with queue.connect() as db:
+        db.execute("INSERT INTO jobs(id,position,profile,repetitions,conditions,attempts,status,created) VALUES (?,1,'fixture',1,1,1,'queued',0)", (identifier,))
+    env = dict(os.environ)
+    env.pop('PQC_CONTAINER', None)
+    def cli(*args):
+        result = subprocess.run([sys.executable, str(scripts / 'run_queue.py'), *args],
+                                env=env, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+    cli('remove', identifier)
+    assert (folder / 'evidence.log').read_text() == 'retained'
+    assert cli('list')['jobs'][0]['status'] == 'removed'
+    with queue.connect() as db:
+        db.execute('DELETE FROM jobs WHERE id=?', (identifier,))
+    assert cli('list')['jobs'][0]['status'] == 'retained'
+    cli('purge', identifier, '--confirm', identifier)
+    assert cli('list')['jobs'] == [] and not folder.exists()
+
+
+def test_current_framework_version_tracks_git_commit_and_dirty_files(tmp_path):
+    from framework.run_queue import framework_version
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git('init')
+    git('config', 'user.email', 'fixture@example.invalid')
+    git('config', 'user.name', 'Queue test')
+    (tmp_path / 'source.txt').write_text('initial')
+    git('add', 'source.txt')
+    git('commit', '-m', 'fixture')
+    short, date = git('show', '-s', '--format=%h %cs', 'HEAD').split()
+    assert framework_version(tmp_path) == {'label': short, 'date': date}
+    (tmp_path / 'untracked.txt').write_text('dirty')
+    assert framework_version(tmp_path)['label'] == short + '*'

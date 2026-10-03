@@ -633,6 +633,7 @@ This is the canonical register required by the deferred-test rules in `AI_BUILD_
 |---|---|---|---|---|---|---|---|
 | DTR-HOST-USER | Host-user runtime identity and private output ownership | Remaining local firmware/wolfBoot build regression | Docker ownership and certificate provisioning are now verified on the development host; those gates do not establish firmware build/runtime success | Non-root Linux user, local non-remapped Docker daemon, development image and complete checkout | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_certificate_ownership_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py` | `./scripts/dev.sh check-host-user`; `python3 scripts/check_certificate_ownership.py`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build` | partially verified 2026-09-29: host-user Docker gate passed, disposable RSA-3072/ML-DSA-65 provisioning passed at UID/GID 1000:1000, and 1137 unit tests passed; firmware build gates remain pending |
 | DTR-HOST-USER-GATEWAY | Non-root gateway wrapper and isolated hardware outputs | Live SSH/gateway and representative hardware regression after identity change | Dummy SSH/volume tests do not establish real SSH credentials, remote helper permissions or hardware lifecycle | Rebuilt development image, runtime SSH credentials, gateway and STM32 where required | Existing `tests/integration/test_gateway_flash_helper_in.py` and `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway`; `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred; these commands can build/flash hardware and require retained evidence |
+| DTR-RUN-QUEUE | Persistent terminal queue, cooperative pause/failure decisions and selected CSV/notebook export | Live different-configuration interleaving, abrupt worker interruption and injected error recovery | The self-contained baseline pause/intervening-campaign/resume test passed on 2026-10-03 (Australia/Melbourne), retaining the first capture unchanged and running only the remaining repetition; it does not exercise different campaign configurations or live fault injection | Gateway, STM32/ST67, brokers and energy recorder for selected profiles | `tests/hardware/test_run_queue_hw.py`; existing `tests/hardware/test_campaign_executor_hw.py` for different-firmware restoration extension | `./scripts/dev.sh pytest-hardware tests/hardware/test_run_queue_hw.py --pqc-require-hardware`, then controlled queue/fault scenarios with retained manifests | partial: baseline live test passed; different-configuration and injected-failure qualification pending |
 | DTR-CAMPAIGN-RESUME-FLASH | Restore expected firmware on campaign resume | Live resume after an intervening different firmware flash | Prepared offline while a user campaign owns the board; subprocess tests cannot prove physical flash | Gateway, STM32/ST67, build/sign prerequisites and brokers | `tests/hardware/test_campaign_executor_hw.py` (extend with intervening flash and resume) | `./scripts/dev.sh pytest-hardware tests/hardware/test_campaign_executor_hw.py -m hardware --pqc-require-hardware` after extending the live resume scenario | pending live intervening-flash/resume validation |
 | DTR-OQS-MTLS-CHAIN | Container-local CA chain and dedicated health-topic ACL | Gateway deployment and blocked campaign retry | Local Docker verifies broker behavior but not gateway deployment or STM32 mutual TLS | Gateway and STM32/ST67 laboratory | `tests/integration/test_oqs_mtls_permissions_in.py`; `scripts/check_oqs_mtls_broker.py` local gate; retained campaign manifests | `python3 scripts/check_oqs_mtls_broker.py`; `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | local Docker passed 2026-09-29 for RSA-3072 and ML-DSA-65: healthy startup, staged-file access, authenticated publish and rejection without client certificate; live campaign retry pending |
 | DTR-CAMPAIGN-CONTINUE | Continue after runtime failures and blocked preparation/broker setup | Live failure followed by successful reset/repetition | Offline subprocess tests cannot establish device/network recovery | Gateway, STM32/ST67 and brokers | `tests/hardware/test_campaign_executor_hw.py` | `./scripts/dev.sh campaign-gateway --resume results/campaigns/tls_matrix_energy_20260928_222043/campaign-manifest.json` | offline runtime and broker/setup continuation tested; live recovery validation pending |
@@ -2472,6 +2473,61 @@ controls and campaign resolution. Retained-data validation is reported separatel
 new campaign/hardware acceptance and incomplete research boundaries are tracked
 in DTR-A8-THESIS alongside DTR-A3 through DTR-A7.
 
+
+### Persistent terminal campaign queue
+
+`scripts/run_queue.py` is the Linux host entry point. `framework.run_queue` owns
+SQLite queue state, atomic ordering/claims, explicit operator decisions, local
+worker exclusion and completed-selection locks. `framework.queue_tui` provides
+Profiles/Queue/Completed tabs, responsive background planning/export and command
+feedback using standard-library curses. The display reads current manifest outcomes
+and attempt history for progress, queue completion events for local finish times,
+and manifest-specific export records (including legacy selection metadata) for
+export status. Advisory gateway rows use bounded background
+`gateway-lock status-all` probes across configured gateway profiles; these do not
+replace the execution lease or establish hardware readiness beyond reachability
+and lock availability. `scripts/queue_workspace.py` runs in the
+existing Docker image and resolves every campaign under `configs/campaigns`,
+freezes individual collection-compatible plans, checks source identity and exports
+explicit completed campaign roots. The queue and thesis collector share the same
+energy instrumentation policy and campaign verdict checks. Queue state and all
+exports live below ignored `results/`; no new dependency or firmware path is added.
+
+The terminal reserves eight log lines between rules and presents both the current
+Git version/date and each entry's frozen source SHA/dirty marker. Removing a waiting
+entry records `removed` without erasing its files. The Completed view also discovers
+unregistered job folders as `retained`; neither state is dispatchable or treated
+as a finalized campaign. Permanent deletion is bounded to one queue-owned job tree,
+requires the exact ID, serializes against planning/claims/export locks and leaves
+combined exports independent. Symlink-safe deletion never follows child links.
+The pause-and-quit control persists the normal cooperative stop and waits for
+worker-lock release before exiting; detach remains a separate action.
+Cross-process fixture tests cover cooperative quit and removal/discovery/purge and real temporary Git
+repositories cover current version labels; no hardware execution changes are made.
+
+Campaign queue mode cooperatively pauses after operations, cleans up shared
+conditions/brokers and records `state=paused` without a terminal final index.
+It pauses on the first repetition/setup failure while ordinary campaign calls
+retain their previous continuation semantics. Operator acceptance is recorded
+on failed/blocked slots; it does not relabel outcomes. Resume retries incomplete
+work and revalidates completed evidence against each slot's original retained
+preparation/image SHA; a new resume build does not invalidate an intact completed
+slot. Newly captured slots keep their actual new image SHA. Explicit retry overrides acceptance for
+failed slots while preserving previous attempt history and acceptance decisions. Cleanup/process ambiguity
+halts dispatch. A lost worker never establishes hardware cleanup or releases a
+gateway lock by force. Existing DTR-CAMPAIGN-RESUME-FLASH and
+DTR-CAMPAIGN-CONTINUE remain relevant to physical restoration/recovery; queue
+process simulations do not close those live-evidence gaps.
+
+`framework.archive_table` includes current and historical no-capture attempts
+with attempt order/current/accepted flags. Selected exports retain the normal
+archive manifest and source verification; queue-selection metadata records entry
+IDs and decisions. `framework.archive_notebook` generates the reviewed Untitled
+notebook's general nullable-type/UTC/diagnostic normalisation with preservation
+assertions and an editable analysis cell. It never pools thesis-specific controls
+or runs unselected campaigns. Generated `analysis.ipynb`, `runs.csv` and selection
+artifacts share one new export directory. Notebook execution is offline only.
+Operational controls and recovery belong to `docs/005_remote_flash_workflow.md`.
 
 ### Thesis collection coordinator
 

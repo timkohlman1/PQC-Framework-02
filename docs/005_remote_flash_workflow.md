@@ -754,6 +754,191 @@ fragments, clean-kernel HTML and incomplete Chapter 5/RQ coverage. Opening
 `report/notebook.html` does not run a measurement or edit the thesis.
 
 
+## Terminal campaign queue
+
+Run `python3 scripts/run_queue.py` from the Linux host at the repository root.
+The full-screen interface uses the Python standard library (`curses` and SQLite);
+its resolver, execution and analysis operations use the maintained Docker image
+through `scripts/dev.sh`. It must not be launched inside `dev.sh python`.
+A terminal of at least 120 columns by 28 rows is required (one additional row
+per additional gateway). No new Python package
+or image rebuild is needed when the existing development image is current.
+
+The title shows the current framework's short Git SHA, commit date and today's
+local date. `*` after a SHA means the checkout was dirty (including submodules).
+Queue and Completed rows show the source identity frozen in that entry's plan;
+they do not change to the current version when the checkout changes. Unknown
+provenance is labelled `unknown`. These display labels do not replace full source
+verification. The selected entry's last eight dispatch-log lines appear between
+horizontal rules; short logs leave the remaining lines blank.
+
+Below the queue summary, each configured gateway has an advisory status refreshed
+in the background every five seconds: **READY** (lock free), **IN USE - hostname**
+(lock held), **CONNECTION ERROR** (SSH/authentication/status query failed), or
+**OFFLINE** (SSH transport unreachable and no ICMP reply). A firewall dropping both
+SSH and ICMP can look offline; this is a reachability indication, not proof of
+power state. Checks use `./scripts/dev.sh gateway-lock status-all` and never release
+an occupied lease. The execution wrapper still checks/acquires the actual lock.
+
+Queue rows show successful repetitions as `5/10` across all expanded conditions,
+plus **OK/ERR/TOTAL** run counts. Errors include failed and blocked slots; accepting
+an error does not increment successes. Completed rows show the local completion
+date/time, **OK/ERR/REPEAT** counts and **EXPORTED** status. Repeat counts are retained
+previous attempts, not worker restarts. Export status applies to the current
+completed manifest version; retrying results requires a new export. Existing
+exports remain recorded. Counts refresh once a second from the campaign manifest;
+unreadable evidence shows `?` rather than claiming zero progress.
+
+The three tabs are **Profiles**, **Queue**, and **Completed**. `Tab` or `1`/`2`/`3`
+switches tabs; arrow keys move the cursor. On Profiles, Space selects multiple
+profiles, `/` filters names, `R` reloads the catalogue, and `a` appends selected
+profiles (or the highlighted profile). Enter an override between 1 and 1000, or
+leave it blank to retain each profile's `execution.repetitions`. Counts are per
+expanded condition: the UI shows both the number of conditions and total planned
+attempts. Invalid profiles remain visible with their resolver error and cannot
+be enqueued. Each entry freezes a copied profile and source/submodule identity;
+canonical campaign YAML is never rewritten. As with the thesis collector, the
+existing ESP32/INA228 instrument is enabled for supported deferred-reporting
+workloads. Its provisioning, calibration and wiring remain external prerequisites.
+
+On Queue, `K`/`J` moves waiting entries up/down; `p` pauses the highlighted entry.
+`r` resumes incomplete work with no unresolved failures, `t` retries recorded
+failures plus remaining work, and `f` accepts existing failed/blocked outcomes
+and continues remaining work. Acceptance never turns a failed measurement into
+a success. Runtime failures pause at the first failed attempt; preparation errors
+record a blocked slot, retaining the remaining slots as incomplete. Earlier
+attempts stay in the campaign history, logs and archive, including attempts that
+never produced a capture. Verified successful captures are reused on resume.
+Previously accepted failures can be explicitly retried from Completed after
+unmarking the entry.
+
+`d` removes a waiting Queue entry from scheduling while preserving its job folder.
+Pause an active entry and wait for cleanup before removing it. Removed entries
+appear on Completed as `removed`; directories beneath this queue's `jobs/` with
+no database record appear as `retained`, including partial folders. Discovery does
+not schedule work or claim the evidence completed successfully. Removed/retained
+incomplete entries cannot be marked for export or resumed automatically.
+
+On Completed, `D` permanently deletes the highlighted entry's job folder and its
+database record after you type its exact entry ID. This includes copied profiles,
+logs, captures and job-local materials. Active runs, selected/in-progress exports
+and unresolved cleanup halts are protected. Stop the queue worker before deleting
+an unregistered retained folder. Combined CSV/notebook exports remain independent
+and are retained; source-verification of such exports can no longer read a deleted
+job's original files. Other jobs and shared framework state are preserved. Removal
+and purge are recorded in the queue event history. Discovery is limited to the
+selected queue directory, not arbitrary campaign result folders elsewhere.
+
+`s` starts the queue worker. Only one entry runs at a time, in queue order;
+paused/attention entries are skipped. Entries added while dispatch is running
+are appended and are eligible automatically. `x` stops dispatch and requests a
+cooperative pause of the active entry. `q` detaches the UI; it does not terminate
+the worker. **`Q` pauses and quits**: it requests a safe pause, keeps the waiting
+status visible while the active operation and cleanup finish, then waits for the
+worker to exit before closing the UI. Background planning/export operations also
+finish before the UI process exits. No resident queue worker remains after a
+successful `Q`; queued work stays on disk for the next `s`. The CLI equivalent is
+`python3 scripts/run_queue.py quit`. An active entry with a missing worker is
+reported as unverified cleanup rather than silently treated as a clean shutdown.
+Reopen the interface to reattach. Queues do not start at particular
+wall-clock times. `--directory results/<name>` selects another persistent queue;
+the normal gateway lease still serializes hardware across workers/checkouts.
+
+A pause finishes the current framework operation and then performs condition and
+broker cleanup. Breakpoints occur after preparation, broker setup and runtime
+repetitions; no build/sign/flash/runtime command is killed to pause it. Preparation
+may contain several related commands and completes as a unit. Resume restores
+expected firmware through the existing validated preparation path because another
+entry may have used the board. Queue mode validates each retained successful slot
+against its original preparation and firmware SHA, so a rebuilt image does not
+cause successful measurements to be repeated. New captures retain the new image
+SHA; exports never relabel older images as byte-identical. Only after successful cleanup can the next eligible
+entry start. Gateway-lock contention keeps its normal unbounded wait; a queued
+pause is observed when that wrapper reaches campaign execution. Use the existing
+gateway-lock controls for inspecting ownership, without force-releasing another
+owner. Worker SIGINT/SIGTERM requests cooperative stop; abrupt process loss does
+not establish cleanup and is recovered conservatively.
+
+If cleanup, command completion or a worker restart cannot be verified, dispatch
+halts and the entry needs attention. Inspect its logs and gateway ownership,
+resolve the cause, explicitly resume/retry that entry, then press `s` again.
+The worker never force-releases a gateway lease or changes authentication.
+Source/profile drift pauses execution before hardware dispatch: restore the
+matching source or enqueue a fresh entry from the new revision. Do not bypass
+source checks or edit queue/campaign manifests to manufacture completion.
+
+On Completed, Space marks/unmarks entries; `e` exports the marked selection.
+Export locks the selected completed entries while remaining queue operations stay
+available. Each new `results/queue/exports/<timestamp>-<id>/` contains `runs.csv`,
+its typed/hash-checked archive metadata, a selection/provenance record and
+`analysis.ipynb`. Only the explicitly selected campaign roots are discovered.
+A changed completion manifest, unresolved failures, incomplete entries, or mixed
+electrical/network annotations are refused. Every frozen entry initially copies
+`configs/analysis/thesis_collection_annotations.json`; review its operator
+assertions for the current lab. Local entry annotations can be corrected before
+export, as in thesis collections. Select compatible annotations together.
+
+The generated notebook adapts the general processing from the supplied Untitled
+notebook: schema-driven nullable types, archive/hash validation, preserved raw
+values and missingness, UTC timestamps, per-diagnostic indicators/counts,
+preservation assertions and a column profile. `raw_df` retains the typed export;
+`df` is the editable analysis view. Normalised timing metrics are provided by the
+maintained archive exporter. Missing measurements stay missing; failed attempts
+remain available for reliability work. The notebook includes a starting campaign/
+outcome summary. Thesis-specific boot/TLS tables require their explicit control
+and treatment selections and are not automatically applied to arbitrary campaigns.
+Generated notebooks have no executed outputs; run their cells in the framework
+Jupyter environment (`./scripts/dev.sh notebook`). Open the notebook beside its
+CSV; a repository-root kernel is also supported. User notebook edits are local.
+
+Queue databases, copied profiles, logs, captures, CSVs and notebooks remain under
+ignored `results/` paths. Creating or using them does not add Git changes; the
+implementation and notebook generator are maintained source. Exported results
+remain sensitive under the existing results policy.
+
+The same actions are available without the full-screen UI:
+
+```bash
+python3 scripts/run_queue.py profiles
+python3 scripts/run_queue.py add baseline thesis_kex
+python3 scripts/run_queue.py add thesis_authentication --repetitions 5
+python3 scripts/run_queue.py list
+python3 scripts/run_queue.py start
+python3 scripts/run_queue.py pause <entry-id>
+python3 scripts/run_queue.py move <entry-id> up
+python3 scripts/run_queue.py resume <entry-id>
+python3 scripts/run_queue.py retry <entry-id>
+python3 scripts/run_queue.py accept <entry-id>
+python3 scripts/run_queue.py mark <completed-entry-id>
+python3 scripts/run_queue.py export
+python3 scripts/run_queue.py stop
+python3 scripts/run_queue.py quit
+python3 scripts/run_queue.py remove <waiting-entry-id>
+python3 scripts/run_queue.py purge <retained-entry-id> --confirm <retained-entry-id>
+```
+
+Entry IDs come from `list` or the UI. For logs, open
+`results/queue/jobs/<entry-id>/logs/dispatch-*.log`; worker diagnostics are in
+`results/queue/worker.log`. The underlying campaign CLI additionally accepts
+`--pause-file`, `--stop-on-error`, `--preserve-completed`, and resume-only `--accept-failed` or
+`--retry-failed`. Exit code 75 denotes a cooperative pause after cleanup; it is
+not a completed campaign verdict. Existing campaign invocations retain their
+continue-after-failure behavior unless `--stop-on-error` is selected.
+
+Offline validation and the self-contained live breakpoint check:
+
+```bash
+./scripts/dev.sh pytest tests/unit/test_run_queue.py tests/unit/test_queue_workspace.py tests/unit/test_archive_table.py
+./scripts/dev.sh pytest tests/integration/test_run_queue_in.py tests/integration/test_campaign_continue_in.py -m integration
+./scripts/dev.sh pytest-hardware tests/hardware/test_run_queue_hw.py --pqc-require-hardware
+```
+
+The live baseline pause/intervening-campaign/resume test passed on 2026-10-03
+(Australia/Melbourne): the first capture stayed unchanged, the remaining repetition
+completed, and cleanup passed. Synthetic process/notebook tests separately cover
+queue control and offline exports. Different-configuration interleaving and live
+fault injection remain tracked by DTR-RUN-QUEUE in the architecture.
+
 ## Resumable thesis evidence collection
 
 `scripts/collect_thesis_evidence.py` is a Linux host coordinator using only the
