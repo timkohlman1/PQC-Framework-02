@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import copy
 import fcntl
 import hashlib
 import math
@@ -25,14 +24,19 @@ FACTOR_CHOICES = {
     'boot_uart_diagnostics': [False, True],
 }
 
-def path_for(root, name):
-    base = Path(root) / 'configs/campaigns'
+PROFILE_DIRECTORY = 'results/profiles'
+TEMPLATE_DIRECTORY = 'configs/campaigns'
+
+
+def path_for(root, name, *, template=False):
+    directory = TEMPLATE_DIRECTORY if template else PROFILE_DIRECTORY
+    base = Path(root) / directory
     relative = Path(name)
     if not relative.suffix:
         relative = relative.with_suffix('.yaml')
     if relative.is_absolute() or relative.suffix not in {'.yaml', '.yml'} or any(
             not NAME.fullmatch(part) for part in (*relative.parts[:-1], relative.stem)):
-        raise ValueError('use a campaign filename within configs/campaigns (letters, numbers, _ or -)')
+        raise ValueError(f'use a profile filename within {directory} (letters, numbers, _ or -)')
     path = base / relative
     if any(p.is_symlink() for p in [path, *path.parents]):
         raise ValueError('symlink campaign paths are not supported')
@@ -83,14 +87,36 @@ def options(root):
     return {**result, **FACTOR_CHOICES}
 
 
-def load(root, profile=None):
+def templates(root):
+    result = []
+    for path in sorted((Path(root) / TEMPLATE_DIRECTORY).rglob('*')):
+        if path.suffix not in {'.yaml', '.yml'} or not path.is_file():
+            continue
+        name = path.relative_to(Path(root) / TEMPLATE_DIRECTORY).as_posix()
+        try:
+            path_for(root, name, template=True)
+            _, data = ConfigResolver(root).load_campaign(path)
+            result.append({'template': name, 'description': data.get('description', '')})
+        except (ValueError, OSError, yaml.YAMLError):
+            continue
+    return {'templates': result}
+
+
+def load(root, profile=None, *, template=None, name=None):
     available = options(root)
-    path = path_for(root, profile or 'baseline.yaml')
-    if profile is None and not path.exists():
+    if profile and template:
+        raise ValueError('choose a profile or a template, not both')
+    if profile or template:
+        path = path_for(root, profile or template, template=bool(template))
+        text = path.read_bytes().decode('utf-8')
+        data = yaml.safe_load(text)
+    else:
+        # A blank profile has the required execution scaffold and one case;
+        # it never inherits a campaign template or its matrix/analysis settings.
         def choose(key, preferred):
             return preferred if preferred in available[key] else next(iter(available[key]), '')
         data = {
-            'schema_version': 1, 'profile_type': 'campaign', 'id': 'new_campaign',
+            'schema_version': 1, 'profile_type': 'campaign', 'id': 'new_profile',
             'target': choose('target', 'stm32l4r5_st67'), 'gateway': choose('gateway', 'pqc_gateway1'),
             'workload': choose('workload', 'ready_metrics'),
             'services': {'experiment_broker': choose('broker', 'experiment_gateway1'),
@@ -104,18 +130,16 @@ def load(root, profile=None):
                 'condition': 'retain_within_condition', 'evidence': 'per_run'},
         }
         text = yaml.safe_dump(data, sort_keys=False)
-    else:
-        text = path.read_text()
-        data = yaml.safe_load(text)
     if not isinstance(data, dict) or data.get('profile_type') != 'campaign':
         raise ValueError('the selected file is not a campaign mapping')
-    for section in ('fixed', 'matrix', 'execution', 'services', 'instruments', 'analysis_baselines'):
+    for section in ('fixed', 'matrix', 'execution', 'services', 'instruments', 'analysis_baselines', 'queue_profile'):
         if section in data and not isinstance(data[section], dict):
             raise ValueError(f'campaign {section} must be a mapping')
     if profile is None:
-        data = copy.deepcopy(data)
-        data['id'] = 'new_campaign'
-        data['description'] = ''
+        if name is not None and (not isinstance(name, str) or not NAME.fullmatch(name)):
+            raise ValueError('profile name must use letters, numbers, _ or -')
+        data['id'] = name or 'new_profile'
+        data['queue_profile'] = {'template': template, 'template_sha256': sha(text) if template else None}
     return {'profile': profile, 'data': data, 'sha256': sha(text) if profile else None,
             'yaml': text if profile else yaml.safe_dump(data, sort_keys=False), 'options': available}
 
@@ -184,35 +208,37 @@ def operate(root, request):
     action = request['action']
     if action == 'preview':
         return {'yaml': yaml.safe_dump(request['data'], sort_keys=False)}
+    if action == 'templates':
+        return templates(root)
     if action == 'load':
-        return load(root, request.get('profile'))
+        return load(root, request.get('profile'), template=request.get('template'), name=request.get('name'))
     with editor_lock(root) as directory:
         if action == 'validate':
             return validate(root, request['data'], directory)
         path = path_for(root, request['profile'])
         expected = request.get('sha256')
-        original = path.read_text() if path.exists() else None
+        original = path.read_bytes().decode('utf-8') if path.exists() else None
         if expected is None:
             if original is not None:
-                raise ValueError('campaign already exists; choose another filename')
+                raise ValueError('profile already exists; choose another filename')
         elif original is None or sha(original) != expected:
-            raise ValueError('campaign changed on disk; reopen it before editing or deleting')
+            raise ValueError('profile changed on disk; reopen it before editing or deleting')
         if action == 'delete':
             if expected is None or request.get('confirm') != request['profile']:
-                raise ValueError('campaign deletion requires its exact filename')
+                raise ValueError('profile deletion requires its exact filename')
             path.unlink()
             return {'profile': request['profile'], 'deleted': True}
         if action != 'save':
             raise ValueError('unknown campaign editor action')
         data = request['data']
         result = validate(root, data, directory)
-        for other in (Path(root) / 'configs/campaigns').rglob('*'):
+        for other in (Path(root) / PROFILE_DIRECTORY).rglob('*'):
             if other == path or other.suffix not in {'.yaml', '.yml'} or not other.is_file() or other.is_symlink():
                 continue
             try:
                 existing = yaml.safe_load(other.read_text())
                 if isinstance(existing, dict) and existing.get('id') == data['id']:
-                    raise ValueError('campaign ID already belongs to ' + other.name)
+                    raise ValueError('profile ID already belongs to ' + other.name)
             except yaml.YAMLError:
                 continue
         text = render_changes(original, yaml.safe_load(original), data) if original else yaml.safe_dump(data, sort_keys=False)
@@ -224,9 +250,9 @@ def operate(root, request):
                 stream.flush()
                 os.fsync(stream.fileno())
             os.chmod(temporary, path.stat().st_mode & 0o777 if original is not None else 0o644)
-            current = path.read_text() if path.exists() else None
+            current = path.read_bytes().decode('utf-8') if path.exists() else None
             if (expected is None and current is not None) or (expected is not None and (current is None or sha(current) != expected)):
-                raise ValueError('campaign changed during validation; reopen it before saving')
+                raise ValueError('profile changed during validation; reopen it before saving')
             os.replace(temporary, path)
         finally:
             Path(temporary).unlink(missing_ok=True)

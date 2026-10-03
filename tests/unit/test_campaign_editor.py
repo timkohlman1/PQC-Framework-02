@@ -16,11 +16,15 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def repository(tmp_path):
     shutil.copytree(ROOT / 'configs', tmp_path / 'configs')
+    profiles = tmp_path / 'results/profiles'
+    profiles.mkdir(parents=True)
+    for name in ('baseline.yaml', 'thesis_authentication.yaml'):
+        shutil.copy2(tmp_path / 'configs/campaigns' / name, profiles / name)
     return tmp_path
 
 
 def test_read_view_and_noop_save_preserve_original_bytes(repository):
-    path = repository / 'configs/campaigns/thesis_authentication.yaml'
+    path = repository / 'results/profiles/thesis_authentication.yaml'
     before = path.read_bytes()
     loaded = editor.operate(repository, {'action': 'load', 'profile': path.name})
     assert path.read_bytes() == before
@@ -38,7 +42,7 @@ def test_create_edit_validate_and_delete_without_editing_components(repository):
     data['id'] = 'custom_campaign'
     data['matrix'] = {'tls_auth': ['ecdsa-p256', 'rsa3072']}
     result = editor.operate(repository, {'action': 'save', 'profile': 'custom_campaign.yaml', 'data': data})
-    path = repository / 'configs/campaigns/custom_campaign.yaml'
+    path = repository / 'results/profiles/custom_campaign.yaml'
     assert result['conditions'] == 2
     old = path.read_bytes()
     data['execution']['repetitions'] = 3
@@ -53,7 +57,7 @@ def test_create_edit_validate_and_delete_without_editing_components(repository):
 
 def test_invalid_save_and_conflicting_edit_do_not_change_campaign(repository):
     loaded = editor.load(repository, 'baseline.yaml')
-    path = repository / 'configs/campaigns/baseline.yaml'
+    path = repository / 'results/profiles/baseline.yaml'
     before = path.read_text()
     loaded['data']['execution']['repetitions'] = 0
     with pytest.raises(ValueError, match='repetitions'):
@@ -67,7 +71,7 @@ def test_invalid_save_and_conflicting_edit_do_not_change_campaign(repository):
 
 
 def test_save_preserves_unedited_sections_and_unknown_metadata(repository):
-    path = repository / 'configs/campaigns/baseline.yaml'
+    path = repository / 'results/profiles/baseline.yaml'
     path.write_text('# retained heading\n' + path.read_text() + 'notes:\n  custom: keep  # inline note\n')
     loaded = editor.load(repository, path.name)
     loaded['data']['execution']['repetitions'] = 2
@@ -84,7 +88,7 @@ def test_profiles_paths_duplicate_ids_and_incompatible_combinations(repository):
     for name in ('../targets/evil.yaml', '/tmp/evil.yaml'):
         with pytest.raises(ValueError, match='filename'):
             editor.operate(repository, {'action': 'save', 'profile': name, 'data': data})
-    (repository / 'configs/campaigns/link.yaml').symlink_to(repository / 'configs/campaigns/baseline.yaml')
+    (repository / 'results/profiles/link.yaml').symlink_to(repository / 'results/profiles/baseline.yaml')
     with pytest.raises(ValueError, match='symlink'):
         editor.load(repository, 'link.yaml')
     data['id'] = 'baseline'
@@ -94,7 +98,7 @@ def test_profiles_paths_duplicate_ids_and_incompatible_combinations(repository):
     data['fixed'].update(mqtt_transport='plaintext', auth_mode='mutual')
     with pytest.raises(ValueError, match='plaintext'):
         editor.operate(repository, {'action': 'save', 'profile': 'bad.yaml', 'data': data})
-    assert not (repository / 'configs/campaigns/bad.yaml').exists()
+    assert not (repository / 'results/profiles/bad.yaml').exists()
 
 
 def test_editor_factor_checkbox_single_matrix_and_default(repository):
@@ -112,12 +116,12 @@ def test_editor_factor_checkbox_single_matrix_and_default(repository):
 
 def test_all_existing_campaigns_validate_without_writes(repository):
     for path in (repository / 'configs/campaigns').glob('*.yaml'):
-        data = editor.load(repository, path.name)['data']
+        data = editor.load(repository, template=path.name)['data']
         result = editor.operate(repository, {'action': 'validate', 'data': data})
         assert result['conditions'] > 0
 
 
-def test_new_campaign_still_works_after_all_campaign_files_deleted(repository):
+def test_blank_profile_does_not_require_templates(repository):
     for path in (repository / 'configs/campaigns').glob('*.yaml'):
         path.unlink()
     loaded = editor.load(repository)
@@ -127,7 +131,7 @@ def test_new_campaign_still_works_after_all_campaign_files_deleted(repository):
 
 def test_readonly_preview_cannot_write_campaign(repository):
     loaded = editor.load(repository, 'baseline.yaml')
-    path = repository / 'configs/campaigns/baseline.yaml'
+    path = repository / 'results/profiles/baseline.yaml'
     original = path.read_bytes()
     result = editor.operate(repository, {'action': 'preview', 'data': loaded['data']})
     assert yaml.safe_load(result['yaml']) == loaded['data']
@@ -136,7 +140,7 @@ def test_readonly_preview_cannot_write_campaign(repository):
 
 def test_external_change_during_validation_is_not_overwritten(repository, monkeypatch):
     loaded = editor.load(repository, 'baseline.yaml')
-    path = repository / 'configs/campaigns/baseline.yaml'
+    path = repository / 'results/profiles/baseline.yaml'
     loaded['data']['execution']['repetitions'] = 2
     original_validate = editor.validate
     def changed(root, data, directory):
@@ -148,3 +152,40 @@ def test_external_change_during_validation_is_not_overwritten(repository, monkey
         editor.operate(repository, {**loaded, 'action': 'save'})
     assert path.read_text().endswith('# concurrent external editor\n')
     assert yaml.safe_load(path.read_text())['execution']['repetitions'] == 1
+
+
+def test_template_copy_and_profile_crud_never_modify_templates(repository):
+    templates = repository / 'configs/campaigns'
+    before = {p.name: p.read_bytes() for p in templates.glob('*.yaml')}
+    listed = editor.operate(repository, {'action': 'templates'})['templates']
+    assert {t['template'] for t in listed} == set(before)
+    loaded = editor.operate(repository, {'action': 'load', 'template': 'thesis_authentication.yaml', 'name': 'my_auth'})
+    assert loaded['data']['id'] == 'my_auth' and loaded['profile'] is None
+    assert loaded['data']['queue_profile'] == {'template': 'thesis_authentication.yaml',
+        'template_sha256': hashlib.sha256(before['thesis_authentication.yaml']).hexdigest()}
+    result = editor.operate(repository, {**loaded, 'action': 'save', 'profile': 'my_auth.yaml'})
+    assert result['attempts'] == 80
+    edited = editor.load(repository, 'my_auth.yaml')
+    edited['data']['execution']['repetitions'] = 2
+    result = editor.operate(repository, {**edited, 'action': 'save'})
+    assert result['attempts'] == 16
+    editor.operate(repository, {'action': 'delete', 'profile': 'my_auth.yaml', 'sha256': result['sha256'], 'confirm': 'my_auth.yaml'})
+    assert before == {p.name: p.read_bytes() for p in templates.glob('*.yaml')}
+
+
+def test_blank_is_independent_of_baseline_and_template_names_do_not_conflict(repository):
+    template = repository / 'configs/campaigns/baseline.yaml'
+    template.write_text('this is not a valid campaign')
+    # Removing the local fixture allows using the same name as a tracked template.
+    (repository / 'results/profiles/baseline.yaml').unlink()
+    loaded = editor.load(repository, name='baseline')
+    assert loaded['data']['queue_profile']['template'] is None
+    assert loaded['data']['matrix'] == {} and loaded['data']['execution']['repetitions'] == 1
+    editor.operate(repository, {**loaded, 'action': 'save', 'profile': 'baseline.yaml'})
+    assert template.read_text() == 'this is not a valid campaign'
+
+
+@pytest.mark.parametrize('name', ['', '../escaped', 'name with spaces', '/tmp/escaped'])
+def test_creation_requires_valid_personal_name(repository, name):
+    with pytest.raises(ValueError, match='profile name'):
+        editor.load(repository, name=name)

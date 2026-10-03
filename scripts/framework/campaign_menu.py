@@ -24,8 +24,8 @@ def put(data, path, value):
 
 
 def fields(options):
-    result = [('Campaign', 'ID', ['id'], 'text', None),
-              ('Campaign', 'Description', ['description'], 'text', None)]
+    result = [('Profile', 'Name / campaign ID', ['id'], 'text', None),
+              ('Profile', 'Description', ['description'], 'text', None)]
     for name in ('target', 'gateway', 'workload'):
         result.append(('Components', name.replace('_', ' ').title(), [name], 'single', options[name]))
     for name in ('experiment_broker', 'reporting_broker'):
@@ -41,7 +41,7 @@ def fields(options):
         result.append(('Workload parameters', label, ['matrix', 'workload.' + key], 'integers', None))
     result.append(('Workload parameters', 'UART output', ['matrix', 'workload.uart_output_mode'],
                    'multi', [None, 'disabled', 'minimal', 'full']))
-    result.extend([('Execution', 'Repetitions per condition', ['execution', 'repetitions'], 'integer', None),
+    result.extend([('Execution', 'Repetitions per case', ['execution', 'repetitions'], 'integer', None),
                    ('Execution', 'Reset between runs', ['execution', 'reset_between_runs'], 'single', ['hardware_reset', 'none'])])
     for key, value in {'build': 'once_per_firmware_identity', 'flash': 'once_per_firmware_identity',
                        'experiment_broker': 'reuse_if_compatible', 'reporting_broker': 'always_available',
@@ -86,12 +86,12 @@ def label(value):
 
 
 class CampaignMenu:
-    def __init__(self, terminal, loaded, *, readonly=False):
+    def __init__(self, terminal, loaded=None, *, readonly=False):
         self.ui = terminal
         self.loaded = loaded
-        self.data = copy.deepcopy(loaded['data'])
+        self.data = copy.deepcopy(loaded['data']) if loaded else {}
         self.readonly = readonly
-        self.fields = fields(loaded['options'])
+        self.fields = fields(loaded['options']) if loaded else []
         self.sections = list(dict.fromkeys(f[0] for f in self.fields))
         self.section = None
         self.cursor = 0
@@ -113,7 +113,7 @@ class CampaignMenu:
     def call(self, request):
         future = self.ui.pool.submit(self.ui.queue.campaign_editor, request)
         while not future.done():
-            self.draw_list('Campaign: ' + request['action'], ['Working…'], 0, 'Please wait')
+            self.draw_list('Profile: ' + request['action'], ['Working…'], 0, 'Please wait')
             self.ui.screen.getch()
         return future.result()
 
@@ -144,6 +144,8 @@ class CampaignMenu:
                 else:
                     selected = [v for v in selected if v is not None] + [value]
             elif key in (10, 13):
+                if not multiple:
+                    return True, choices[cursor]
                 if not selected:
                     self.message = 'Select at least one option, or choose default/omit.'
                     continue
@@ -177,7 +179,7 @@ class CampaignMenu:
         lines = text.splitlines()
         cursor = 0
         while True:
-            self.draw_list('Campaign YAML', lines, cursor, '↑/↓ scroll  Esc return')
+            self.draw_list('Profile YAML', lines, cursor, '↑/↓ scroll  Esc return')
             key = self.ui.screen.getch()
             if key == 27:
                 return
@@ -191,7 +193,7 @@ class CampaignMenu:
             entries = self.sections if self.section is None else [f for f in self.fields if f[0] == self.section]
             rows = [f'{s}  →' for s in entries] if self.section is None else [
                 f'{f[1]:<32} {label(value_for(self.data, f))}' for f in entries]
-            title = ('VIEW' if self.readonly else 'EDIT') + ' CAMPAIGN / ' + (self.loaded['profile'] or 'new campaign')
+            title = ('VIEW' if self.readonly else 'EDIT') + ' PROFILE / ' + (self.loaded['profile'] or self.data.get('id', 'new profile'))
             if self.section:
                 title += ' / ' + self.section
             hint = 'Enter open  Esc back  P contents  e edit' if self.readonly else 'Enter/Space edit  Esc back  P contents  V validate  S save'
@@ -223,17 +225,37 @@ class CampaignMenu:
                     self.preview()
                 elif key in (ord('v'), ord('V')):
                     result = self.call({'action': 'validate', 'data': self.data})
-                    self.message = f"Valid: {result['conditions']} conditions × {result['repetitions']} repetitions = {result['attempts']} runs"
+                    self.message = f"Valid: {result['conditions']} cases × {result['repetitions']} repetitions = {result['attempts']} runs"
                 elif key in (ord('s'), ord('S')) and not self.readonly:
                     profile = self.loaded['profile']
                     if not profile:
-                        proposed = self.data.get('id', 'new_campaign') + '.yaml'
-                        answer = self.ui.prompt(f'Campaign filename [{proposed}]: ')
+                        proposed = self.data.get('id', 'new_profile') + '.yaml'
+                        answer = self.ui.prompt(f'Profile filename [{proposed}]: ')
                         if answer is None:
                             continue
                         profile = answer.strip() or proposed
                     result = self.call({'action': 'save', 'profile': profile, 'sha256': self.loaded['sha256'], 'data': self.data})
-                    self.ui.message = f"Saved {result['profile']}: {result['conditions']} conditions, {result['attempts']} runs"
+                    self.ui.message = f"Saved {result['profile']}: {result['conditions']} cases, {result['attempts']} runs"
                     return True
             except (ValueError, OSError, KeyError, TypeError) as exc:
                 self.message = str(exc)
+
+
+def new_profile_request(terminal, templates):
+    menu = CampaignMenu(terminal)
+    menu.message = 'Profiles are saved under results/profiles; templates remain unchanged.'
+    accepted, kind = menu.choose('NEW PROFILE / starting point', ['Blank', 'Use a template'], 'Blank', False)
+    if not accepted:
+        return None
+    template = None
+    if kind == 'Use a template':
+        names = [item['template'] for item in templates]
+        if not names:
+            raise ValueError('No campaign templates are available in configs/campaigns')
+        accepted, template = menu.choose('NEW PROFILE / choose template', names, names[0], False)
+        if not accepted:
+            return None
+    name = terminal.prompt('Profile name (letters, numbers, _ or -): ')
+    if name is None:
+        return None
+    return {'action': 'load', 'template': template, 'name': name.strip()}

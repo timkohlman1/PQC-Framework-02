@@ -82,14 +82,17 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     assert 'dirty checkout' not in lines[1, 2]
     assert lines[2, 2] == 'first: IN USE - lab'
     assert lines[3, 2] == 'second: READY'
-    assert '5/10' in lines[7, 2] and '5/1/10' in lines[7, 2]
+    assert 'REPS' in lines[6, 2] and 'TOTAL RUNS' in lines[6, 2]
+    assert 'RUNS OK/ERROR/TOTAL' in lines[7, 2]
+    assert '5/1/10' in lines[9, 2]
     terminal.tab = 2
     terminal.draw()
-    assert '5/1/2' in lines[7, 2] and 'YES' in lines[7, 2]
-    assert '2023-' in lines[7, 2]
-    assert 'abcdef123456' in lines[7, 2]
-    assert '2026-10-01' in lines[7, 2]
-    assert 'abcdef0*' in lines[0, 2] and 'abcdef0*' in lines[7, 2]
+    assert '5/1/10' in lines[9, 2] and 'YES' in lines[9, 2]
+    assert '2' in lines[9, 2]
+    assert '2023-' in lines[9, 2]
+    assert 'abcdef123456' in lines[9, 2]
+    assert '2026-10-01' in lines[9, 2]
+    assert 'abcdef0*' in lines[0, 2] and 'abcdef0*' in lines[9, 2]
     assert lines[13, 2].startswith('─ Log')
     assert [lines[y, 2] for y in range(14, 22)] == [f'log {i}' for i in range(8)]
     assert lines[22, 2].startswith('──')
@@ -120,3 +123,30 @@ def test_tab_change_clears_marks_and_requires_explicit_row_navigation(key):
     assert terminal.cursor[terminal.tab] == -1
     terminal.key(ord('j'))
     assert terminal.cursor[terminal.tab] == 0
+
+
+def test_profiles_headings_and_hints_are_consistent(monkeypatch):
+    from framework import queue_tui
+    monkeypatch.setattr(queue_tui.curses, 'has_colors', lambda: False)
+    terminal = queue_tui.Terminal.__new__(queue_tui.Terminal)
+    terminal.screen = SimpleNamespace(erase=lambda: None, getmaxyx=lambda: (28, 120), refresh=lambda: None)
+    terminal.queue = SimpleNamespace(dispatch=lambda: 'stopped')
+    terminal.gateways = []
+    terminal.gateway_error = ''
+    terminal.message = 'a to enqueue'
+    terminal.shutdown_future = None
+    terminal.version = {'label': 'abcdef0', 'date': '2026-10-03'}
+    terminal.cursor = [0, 0, 0]
+    terminal.jobs = []
+    terminal.rows = [dict(profile='my_auth.yaml', profile_name='my_auth', template='thesis_authentication.yaml',
+        repetitions=10, conditions=8, attempts=80, workload='ready_metrics')]
+    terminal.tab = 0
+    terminal.picked = set()
+    terminal.filter = ''
+    lines = {}
+    terminal.put = lambda y, x, text, style=0: lines.__setitem__((y,x), text)
+    terminal.draw()
+    assert lines[5, 2].split() == ['PROFILE', 'NAME', 'TEMPLATE', 'REPS', 'CASES', 'TOTAL', 'RUNS']
+    assert lines[6, 2].split()[1:] == ['my_auth', 'thesis_authentication.yaml', '10', '8', '80']
+    assert 'D delete profile' in lines[24, 2] and 'a add' not in lines[24, 2]
+    assert all('ATTEMPTS' not in text for text in lines.values())

@@ -30,7 +30,7 @@ class Terminal:
         self.profiles = []
         self.picked = set()
         self.filter = ''
-        self.message = 'Loading campaign catalogue…'
+        self.message = 'Loading profile catalogue…'
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.future = self.pool.submit(queue.catalogue)
         self.operation = 'catalogue'
@@ -111,6 +111,15 @@ class Terminal:
         if self.future is not None and self.future.done():
             try:
                 result = self.future.result()
+                if self.operation == 'campaign-new-options':
+                    from framework.campaign_menu import new_profile_request
+                    self.future = None
+                    request = new_profile_request(self, result['templates'])
+                    if request:
+                        self.background('campaign-new', self.queue.campaign_editor, request)
+                    else:
+                        self.message = 'New profile cancelled.'
+                    return
                 if self.operation in {'campaign-view', 'campaign-edit', 'campaign-new'}:
                     from framework.campaign_menu import CampaignMenu
                     readonly = self.operation == 'campaign-view'
@@ -122,11 +131,11 @@ class Terminal:
                 elif self.operation == 'campaign-delete-load':
                     self.future = None
                     profile = result['profile']
-                    confirmation = self.prompt(f'Permanently delete campaign YAML. Type {profile}: ')
+                    confirmation = self.prompt(f'Permanently delete profile. Type {profile}: ')
                     if confirmation == profile:
                         self.background('campaign-delete', self.queue.campaign_editor, {'action': 'delete', 'profile': profile, 'sha256': result['sha256'], 'confirm': confirmation})
                     else:
-                        self.message = 'Campaign deletion cancelled.'
+                        self.message = 'Profile deletion cancelled.'
                     return
                 elif self.operation == 'campaign-delete':
                     self.future = None
@@ -134,7 +143,7 @@ class Terminal:
                     return
                 elif self.operation == 'catalogue':
                     self.profiles = result
-                    self.message = f'{len(result)} campaign profiles. Space to select; a to enqueue.'
+                    self.message = f'{len(result)} profiles. Space to select; a to enqueue.'
                 elif self.operation == 'purge':
                     self.message = 'Entry and job files permanently deleted; combined exports retained.'
                 elif self.operation == 'export':
@@ -166,7 +175,7 @@ class Terminal:
             self.jobs = self.queue.display_jobs()
             self.next_jobs_check = now + 1
         if self.tab == 0:
-            self.rows = [r for r in self.profiles if self.filter.lower() in r['profile'].lower()]
+            self.rows = [r for r in self.profiles if self.filter.lower() in (str(r.get('profile_name', '')) + ' ' + r['profile']).lower()]
         elif self.tab == 1:
             self.rows = [r for r in self.jobs if r['status'] not in HISTORY]
         else:
@@ -197,40 +206,47 @@ class Terminal:
             self.put(3+extra, x, ' ' + label + ' ', curses.A_REVERSE | curses.A_BOLD if i == self.tab else self.ink(1))
             x += 19
         self.put(4+extra, 2, '─' * (width-4), self.ink(1))
-        self.put(5+extra, 2, '   CAMPAIGN                                      REPS   CASES  ATTEMPTS' if self.tab == 0
-                 else '   ID            CAMPAIGN             VERSION / DATE              REPS  OK/ERR/TOTAL  STATE' if self.tab == 1
-                 else '   ID            CAMPAIGN        VERSION / DATE        FINISHED (LOCAL)      OK/ERR/REPEAT EXP  STATE')
-        usable = max(1, height-25-extra)
+        heading = f"   {'PROFILE NAME':<30} {'TEMPLATE':<27} {'REPS':>5} {'CASES':>6} {'TOTAL RUNS':>10}"
+        self.put(5+extra, 2, heading + ('  STATE' if self.tab else ''))
+        if self.tab:
+            self.put(6+extra, 2, f"   {'JOB ID':<12}  {'VERSION / DATE':<21} {'RUNS OK/ERROR/TOTAL':>20}   {'REPEATS':>7}  {'FINISHED (LOCAL)':<19}  EXPORTED")
+        row_height = 2 if self.tab else 1
+        table_start = (7 if self.tab else 6) + extra
+        usable = max(1, (height-19-table_start)//row_height)
         cursor = self.cursor[self.tab]
         offset = max(0, cursor-usable+1)
         for i, row in enumerate(self.rows[offset:offset+usable], start=offset):
+            mark = '●' if (row['profile'] in self.picked if self.tab == 0 else row['selected']) else '○'
+            name = str(row.get('profile_name') or row['profile'].rsplit('.', 1)[0])
+            template = str(row.get('template') or 'Blank')
+            line = f"{mark}  {name:<30.30} {template:<27.27} {row.get('repetitions',0):>5} {row.get('conditions',0):>6} {row.get('attempts',0):>10}"
+            second = None
             if self.tab == 0:
-                mark = '●' if row['profile'] in self.picked else '○'
-                line = f"{mark}  {row['profile']:<44.44} {row.get('repetitions',0):>5} {row.get('conditions',0):>7} {row.get('attempts',0):>9}"
                 colour = 4 if row.get('error') else 5
             else:
-                mark = '●' if row['selected'] else '○'
-                progress = f"{row['success']}/{row['attempts']}" if row['progress_available'] else '?'
-                if self.tab == 1:
-                    counts = f"{row['success']}/{row['errors']}/{row['attempts']}" if row['progress_available'] else '?'
-                    line = f"{mark}  {row['id']}  {row['profile']:<20.20} {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {progress:>9}  {counts:>12}  {row['status']}"
-                else:
-                    finished = datetime.fromtimestamp(row['completed_at']).strftime('%Y-%m-%d %H:%M:%S') if row['completed_at'] else 'unknown'
-                    counts = f"{row['success']}/{row['errors']}/{row['repeats']}" if row['progress_available'] else '?'
-                    line = f"{mark}  {row['id']}  {row['profile']:<15.15} {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {finished}  {counts:>13} {'YES' if row['exported'] else 'NO':<3}  {row['status']}"
+                line += '  ' + row['status']
+                counts = f"{row['success']}/{row['errors']}/{row['attempts']}" if row['progress_available'] else '?'
+                repeats = str(row['repeats']) if row['progress_available'] else '?'
+                finished = datetime.fromtimestamp(row['completed_at']).strftime('%Y-%m-%d %H:%M:%S') if row['completed_at'] else '—'
+                second = f"   {row['id']}  {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {counts:>20}   {repeats:>7}  {finished:<19}  {'YES' if row['exported'] else 'NO'}"
                 colour = 4 if row['status'] == 'attention' else 3 if row['status'] in {'paused','pausing'} else 2
-            self.put(6+extra+i-offset, 2, line, self.ink(colour) | (curses.A_REVERSE if i == cursor else 0))
+            style = self.ink(colour) | (curses.A_REVERSE if i == cursor else 0)
+            y = table_start + (i-offset)*row_height
+            self.put(y, 2, line, style)
+            if second:
+                self.put(y+1, 2, second, style)
         if not self.rows:
-            self.put(7+extra, 4, 'No entries. Add campaign profiles from the Profiles tab.', self.ink(3))
+            message = 'No profiles. Press n to create a blank profile or use a template.' if self.tab == 0 else 'No entries. Enqueue profiles from the Profiles tab.'
+            self.put(table_start, 4, message, self.ink(3))
         y = height-19
         if self.rows and cursor >= 0:
             row = self.rows[cursor]
             if self.tab == 0:
-                self.put(y, 2, row.get('error') or f"{row.get('workload')} · repetitions per condition; thesis energy policy")
+                self.put(y, 2, row.get('error') or f"{row['profile']} · {row.get('workload')} · reps per case; template: {row.get('template') or 'Blank'}")
                 self.put(y+1, 2, f'Filter: {self.filter or "all profiles"} · {len(self.picked)} selected')
             else:
-                self.put(y, 2, row['detail'] or f"{row['conditions']} conditions × {row['repetitions']} repetitions = {row['attempts']} attempts")
-                stats = f"Success {row['success']} / Errors {row['errors']} / Total {row['attempts']} / Repeats {row['repeats']}" if row['progress_available'] else 'Progress unavailable: inspect campaign evidence'
+                self.put(y, 2, row['detail'] or f"{row['conditions']} cases × {row['repetitions']} reps per case = {row['attempts']} total runs")
+                stats = f"Runs OK {row['success']} / Errors {row['errors']} / Total {row['attempts']} / Repeats {row['repeats']}" if row['progress_available'] else 'Progress unavailable: inspect campaign evidence'
                 self.put(y+1, 2, f"{row['id']}  {row['profile']} · {stats}")
         self.put(y+2, 2, '─ Log ' + '─' * (width-10), self.ink(1))
         if self.rows and cursor >= 0 and self.tab != 0:
@@ -239,7 +255,7 @@ class Terminal:
         self.put(y+11, 2, '─' * (width-4), self.ink(1))
         message = 'Pausing and quitting: waiting for the current operation, cleanup and worker exit…' if self.shutdown_future is not None else self.message
         self.put(height-6, 2, message, self.ink(3))
-        hints = ('Space select  a add  n new  v view  e edit  D delete YAML  / filter  R refresh' if self.tab == 0 else
+        hints = ('Space select  n new profile  v view  e edit  D delete profile  / filter  R refresh' if self.tab == 0 else
                  'Space mark  e export  t retry  N re-queue current version  D permanently delete job files' if self.tab == 2 else
                  'p pause  r resume  t retry  f accept  K/J move  Del remove  N re-queue current version')
         self.put(height-4, 2, hints, self.ink(1))
@@ -302,12 +318,12 @@ class Terminal:
             if not names and row:
                 names = [row['profile']]
             if not names:
-                raise ValueError('select a campaign first')
-            value = self.prompt('Repetitions per condition (Enter = each profile default): ')
+                raise ValueError('select a profile first')
+            value = self.prompt('Repetitions per case (Enter = each profile default): ')
             if value is not None:
                 self.background('add', self.queue.add, names, int(value) if value.strip() else None)
         elif key == ord('n') and self.tab == 0:
-            self.background('campaign-new', self.queue.campaign_editor, {'action': 'load'})
+            self.background('campaign-new-options', self.queue.campaign_editor, {'action': 'templates'})
         elif key in (ord('v'), ord('e'), ord('D')) and row and self.tab == 0:
             operation = {ord('v'): 'campaign-view', ord('e'): 'campaign-edit', ord('D'): 'campaign-delete-load'}[key]
             self.background(operation, self.queue.campaign_editor, {'action': 'load', 'profile': row['profile']})

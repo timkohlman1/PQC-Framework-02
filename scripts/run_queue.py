@@ -15,8 +15,8 @@ def main(argv=None):
     for action in ('ui', 'profiles', 'list', 'start', 'stop', 'quit', 'export'):
         sub.add_parser(action)
     add = sub.add_parser('add')
-    add.add_argument('profiles', nargs='+', help='campaign IDs or paths relative to configs/campaigns')
-    add.add_argument('--repetitions', type=int, help='override repetitions per condition for each selected profile')
+    add.add_argument('profiles', nargs='+', help='profile filenames relative to results/profiles')
+    add.add_argument('--repetitions', type=int, help='override repetitions per case for each selected profile')
     for action in ('pause', 'resume', 'retry', 'accept', 'mark', 'remove'):
         cmd = sub.add_parser(action)
         cmd.add_argument('id')

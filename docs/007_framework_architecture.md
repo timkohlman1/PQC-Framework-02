@@ -2487,26 +2487,43 @@ export status. Advisory gateway rows use bounded background
 `gateway-lock status-all` probes across configured gateway profiles; these do not
 replace the execution lease or establish hardware readiness beyond reachability
 and lock availability. `scripts/queue_workspace.py` runs in the
-existing Docker image and resolves every campaign under `configs/campaigns`,
+existing Docker image and resolves local profiles under ignored `results/profiles/`,
 freezes individual collection-compatible plans, checks source identity and exports
 explicit completed campaign roots. The queue and thesis collector share the same
 energy instrumentation policy and campaign verdict checks. Queue state and all
 exports live below ignored `results/`; no new dependency or firmware path is added.
 
 `framework.campaign_menu` provides a menu-based viewer/editor on Profiles;
-`framework.campaign_editor` is the Docker-side owner of campaign-only writes.
+`framework.campaign_editor` is the Docker-side owner of local-profile writes.
+Tracked `configs/campaigns/` files are read-only templates in this UI; the resolver
+and thesis collector may still use them directly. Profiles start empty and are
+shared across this checkout's queues. New-profile creation explicitly selects a
+blank scaffold or a named template, records template name/SHA-256, asks for a
+personal name, and opens the menu before saving into `results/profiles/`.
 It enumerates existing components, validates expanded cases and execution policy,
 rejects stale document hashes and writes atomically under a shared editor lock.
-Read-only views/previews and validation do not alter source files. Editing changes
-ordinary campaign source and therefore participates in source verification.
+Profile CRUD, read-only views/previews and validation do not alter tracked source
+or the Git source identity. Enqueueing snapshots the exact original bytes into
+`profiles/input.yaml`, resolves from that copy, and writes the effective
+`profiles/campaign.yaml` after repetition/energy policy adjustments. Both hashes
+are sealed into the plan and checked before execution/resume. Plan origin metadata
+records the source path, input hash and template provenance. Editing/deleting the
+local profile affects future jobs only; frozen copies remain authoritative.
+Legacy plans without the input copy remain supported.
 Re-queueing validates retained plan/profile hashes, then prepares a new entry from
 the frozen definition against current source/components without relabelling old
 evidence. Display metadata retains the commit date; older plans use local Git.
-Temporary-config CRUD tests, helper-process tests and a real PTY campaign-creation
-flow cover this host/Docker boundary without making new hardware claims.
+Temporary-config CRUD tests, helper-process tests and real PTY campaign-creation
+flows for blank/template profiles cover this host/Docker boundary. Temporary Git
+repositories verify that profile CRUD leaves source identity unchanged; frozen
+copy tampering and edits between enqueue operations are covered separately.
+These checks make no new hardware claims.
 
 The terminal reserves eight log lines between rules and presents both the current
-Git version/date and each entry's frozen source SHA/dirty marker. Removing a waiting
+Git version/date and each entry's frozen source SHA/dirty marker. All tabs use
+PROFILE NAME / TEMPLATE / REPS / CASES / TOTAL RUNS; reps is per case and total
+runs is cases times reps. Two-line Queue/Completed rows retain job/version metadata,
+run outcome counts, repeat history, finish time and export status. Removing a waiting
 entry records `removed` without erasing its files. The Completed view also discovers
 unregistered job folders as `retained`; neither state is dispatchable or treated
 as a finalized campaign. Permanent deletion is bounded to one queue-owned job tree,

@@ -460,3 +460,14 @@ def test_requeue_registers_fresh_entry_preserves_old_evidence(queue, monkeypatch
     new = queue.requeue(identifier)[0]
     assert new != identifier and queue.job(new)['status'] == 'queued'
     assert queue.job(identifier)['status'] == 'attention' and path.read_bytes() == original
+
+
+def test_display_uses_frozen_profile_name_and_template(queue):
+    identifier = queue.add(['file_name'])[0]
+    plan = {'source': {}, 'steps': [{'profile_name': 'personal_name', 'template': 'thesis_authentication.yaml'}]}
+    (queue.folder(identifier) / 'plan.json').write_text(json.dumps(plan))
+    row = queue.display_jobs()[0]
+    assert row['profile_name'] == 'personal_name' and row['template'] == 'thesis_authentication.yaml'
+    plan['steps'][0]['template'] = None
+    (queue.folder(identifier) / 'plan.json').write_text(json.dumps(plan))
+    assert queue.display_jobs()[0]['template'] is None

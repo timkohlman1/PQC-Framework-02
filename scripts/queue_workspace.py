@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 from framework import thesis_collection as collection
 from framework.campaign_executor import ExecutionPolicy, validate_policy_against_case
-from framework.config_resolver import ConfigResolver, ResolutionError
+from framework.config_resolver import ConfigResolver
 from framework.run_queue import DONE, owned_path, digest, read
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,21 +17,22 @@ ROOT = Path(__file__).resolve().parents[1]
 def catalogue():
     resolver = ConfigResolver(ROOT)
     values = []
-    for path in sorted((ROOT / 'configs/campaigns').rglob('*')):
+    from framework.campaign_editor import PROFILE_DIRECTORY, path_for
+    for path in sorted((ROOT / PROFILE_DIRECTORY).rglob('*')):
         if path.suffix not in {'.yaml', '.yml'} or not path.is_file():
             continue
-        row = {'profile': path.relative_to(ROOT / 'configs/campaigns').as_posix()}
+        row = {'profile': path.relative_to(ROOT / PROFILE_DIRECTORY).as_posix()}
         try:
-            if path.is_symlink():
-                raise ValueError('symlink profiles are not supported')
+            path_for(ROOT, row['profile'])
             _, data = resolver.load_campaign(path)
             policy = ExecutionPolicy.from_mapping(data['execution'])
             cases = resolver.expand_campaign(path)
             for case in cases:
                 validate_policy_against_case(policy=policy, case=case, resolver=resolver)
-            row.update(id=data['id'], workload=data['workload'], repetitions=policy.repetitions,
+            row.update(id=data['id'], profile_name=data['id'], template=data.get('queue_profile', {}).get('template'),
+                       workload=data['workload'], repetitions=policy.repetitions,
                        conditions=len(cases), attempts=len(cases) * policy.repetitions, error=None)
-        except (ValueError, RuntimeError, KeyError, OSError) as exc:
+        except (ValueError, RuntimeError, KeyError, OSError, AttributeError, TypeError, yaml.YAMLError) as exc:
             row['error'] = str(exc)
         values.append(row)
     return {'profiles': values}
@@ -40,29 +41,32 @@ def catalogue():
 def prepare(job, profile=None, repetitions=None, from_job=None):
     folder = owned_path(ROOT, job)
     resolver = ConfigResolver(ROOT)
+    if folder.exists():
+        raise ValueError('queue entry directory already exists')
     if from_job:
         previous = owned_path(ROOT, from_job)
-        plan = read(previous / 'plan.json')
-        if digest(previous / 'plan.json') != (previous / 'plan.sha256').read_text().strip():
-            raise ValueError('retained plan digest changed')
+        # Verify every retained profile, including original input when available.
+        plan = collection.check(previous, verify_source=False)
         source = previous / 'profiles/campaign.yaml'
-        relative = source.relative_to(ROOT).as_posix()
-        if digest(source) != plan['profile_hashes'].get(relative):
-            raise ValueError('retained campaign profile changed')
         profile_name = plan['steps'][0]['profile']
     else:
-        from framework.campaign_editor import path_for
+        from framework.campaign_editor import path_for, PROFILE_DIRECTORY
         source = path_for(ROOT, profile)
-        profile_name = source.relative_to(ROOT / 'configs/campaigns').as_posix()
-    _, data = resolver.load_campaign(source)
+        profile_name = source.relative_to(ROOT / PROFILE_DIRECTORY).as_posix()
+    # Resolve the exact bytes recorded here, never re-read the mutable profile.
+    original = source.read_bytes()
+    (folder / 'profiles').mkdir(parents=True, mode=0o700)
+    captured = folder / 'profiles/input.yaml'
+    captured.write_bytes(original)
+    _, data = resolver.load_campaign(captured)
     count = data['execution']['repetitions'] if repetitions is None else repetitions
     if type(count) is not int or not 1 <= count <= 1000:
         raise ValueError('repetitions must be 1..1000')
+    template = data.get('queue_profile', {}).get('template')
+    if from_job and 'queue_profile' not in data:
+        template = plan['steps'][0].get('template', 'Legacy')
     data['execution']['repetitions'] = count
     energy = collection.instrument_campaign(resolver, data)
-    if folder.exists():
-        raise ValueError('queue entry directory already exists')
-    (folder / 'profiles').mkdir(parents=True, mode=0o700)
     frozen = folder / 'profiles/campaign.yaml'
     frozen.write_text(yaml.safe_dump(data, sort_keys=False))
     cases = resolver.expand_campaign(frozen)
@@ -71,12 +75,16 @@ def prepare(job, profile=None, repetitions=None, from_job=None):
         validate_policy_against_case(policy=policy, case=case, resolver=resolver)
     if not cases:
         raise ValueError('campaign has no cases')
-    info = {'id': data['id'], 'profile': profile_name,
+    info = {'id': data['id'], 'profile': profile_name, 'profile_name': data['id'],
+            'template': template,
             'source': frozen.relative_to(ROOT).as_posix(), 'kind': 'campaign',
             'repetitions': count, 'conditions': len(cases), 'attempts': len(cases) * count,
             'energy_requested': energy}
     plan = {'schema': 'pqc-thesis-collection', 'version': 1, 'steps': [info],
-            'profile_hashes': {info['source']: digest(frozen)}, 'source': collection.source_identity(),
+            'profile_hashes': {info['source']: digest(frozen), captured.relative_to(ROOT).as_posix(): digest(captured)},
+            'profile_origin': {'path': source.relative_to(ROOT).as_posix(), 'sha256': digest(captured),
+                               'template': data.get('queue_profile', {})},
+            'source': collection.source_identity(),
             'planned_campaign_attempts': info['attempts'], 'independent_runs': False,
             'limitations': collection.GAPS}
     from framework.run_queue import source_label, commit_date

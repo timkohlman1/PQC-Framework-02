@@ -782,52 +782,82 @@ SSH and ICMP can look offline; this is a reachability indication, not proof of
 power state. Checks use `./scripts/dev.sh gateway-lock status-all` and never release
 an occupied lease. The execution wrapper still checks/acquires the actual lock.
 
-Queue rows show successful repetitions as `5/10` across all expanded conditions,
-plus **OK/ERR/TOTAL** run counts. Errors include failed and blocked slots; accepting
-an error does not increment successes. Completed rows show the local completion
-date/time, **OK/ERR/REPEAT** counts and **EXPORTED** status. Repeat counts are retained
-previous attempts, not worker restarts. Export status applies to the current
-completed manifest version; retrying results requires a new export. Existing
-exports remain recorded. Counts refresh once a second from the campaign manifest;
-unreadable evidence shows `?` rather than claiming zero progress.
+All tabs use **PROFILE NAME**, **TEMPLATE**, **REPS**, **CASES**, and **TOTAL RUNS**.
+REPS is the configured repetition count **per case**, CASES is the expanded
+matrix size, and TOTAL RUNS is their product. Queue and Completed entries occupy
+two lines; the second shows the full job ID, VERSION / DATE,
+**RUNS OK/ERROR/TOTAL**, **REPEATS**, local finish date/time and **EXPORTED** status.
+For example, 8 cases with 10 reps have 80 total runs; `5/1/80` means 5 successful
+runs and 1 error out of the 80 planned runs. Errors include failed and blocked
+slots; accepting an error does not increment successes. REPEATS counts retained
+previous attempts, not repetitions per case or worker restarts. Export status
+applies to the current completed manifest version; retrying results requires a
+new export. Existing exports remain recorded. Counts refresh once a second from
+the campaign manifest; unreadable evidence shows `?` rather than zero progress.
 
 The three tabs are **Profiles**, **Queue**, and **Completed**. `Tab` or `1`/`2`/`3`
 switches tabs and clears all profile selections, export marks and row highlights.
 Use arrow keys to choose a row again before issuing an item command. Switching
 tabs does not cancel an already-started operation. Completed rows show the full
-job ID, including removed/retained entries, for the permanent-deletion prompt. On Profiles, Space selects multiple
-profiles, `/` filters names, `R` reloads the catalogue, and `a` appends selected
-profiles (or the highlighted profile). Enter an override between 1 and 1000, or
-leave it blank to retain each profile's `execution.repetitions`. Counts are per
-expanded condition: the UI shows both the number of conditions and total planned
-attempts. Invalid profiles remain visible with their resolver error and cannot
-be enqueued. Each entry freezes a copied profile and source/submodule identity;
-enqueueing never rewrites canonical campaign YAML. As with the thesis collector, the
-existing ESP32/INA228 instrument is enabled for supported deferred-reporting
-workloads. Its provisioning, calibration and wiring remain external prerequisites.
+job ID, including removed/retained entries, for the permanent-deletion prompt.
 
-On Profiles, **`v` views**, **`e` edits**, **`n` creates**, and **`D` deletes** a
-campaign YAML. The menu has Campaign, Components, Factors/matrix, Workload
-parameters, Execution and Analysis sections. Arrow keys navigate, Enter opens a
-section/field, and Space toggles choices. Select multiple factor values to build a
-matrix, one for a fixed value, or default/omit to remove that override. Integer
-parameters accept comma-separated values. Component choices come from existing
-validated profiles; the editor never writes target, gateway, workload, crypto,
-broker, network-condition or instrument component files. New campaigns start from
-baseline defaults and require a distinct campaign ID and filename.
+**Tracked templates and local profiles:** `configs/campaigns/` remains the tracked
+campaign-template collection, also available to existing resolver/collector CLI
+workflows. The queue's Profiles tab reads only **`results/profiles/`**, shared by
+queues in this checkout even when `--directory` selects a different queue. It
+starts empty; templates are not automatically copied or migrated. Existing queued
+jobs and retained evidence remain available independently of this list.
+
+On Profiles, **`n` creates a profile**: choose **Blank** or **Use a template**. For
+a template, select one from `configs/campaigns/`; then enter your own profile
+name (letters, numbers, `_` or `-`). Blank starts with the minimum one-case
+execution scaffold and component defaults, without inheriting a template's
+matrix or analysis settings. The editor opens to customise the draft. `S` saves
+after validation, defaulting to `<name>.yaml` under `results/profiles/`. Template
+names and the SHA-256 of the selected template are retained in profile metadata;
+Blank profiles show `Blank` in the TEMPLATE column. Saving never rewrites the
+template. Older queued jobs without template metadata show `Legacy`.
+
+**`v` views**, **`e` edits**, and **`D` deletes a profile**. The menu has Profile,
+Components, Factors/matrix, Workload parameters, Execution and Analysis sections.
+Arrow keys navigate, Enter opens a section/field, and Space toggles choices.
+Select multiple factor values to build a matrix, one for a fixed value, or
+default/omit to remove that override. Integer parameters accept comma-separated
+values. Component choices come from existing validated profiles; the editor
+never writes target, gateway, workload, crypto, broker, network-condition or
+instrument component files. Profile names/IDs must be unique within the local
+profile collection; they may match a template name.
 
 Within the menu, `P` previews YAML, `V` validates all expanded cases and displays
-condition/run counts, and `S` validates then saves. `e` switches a read-only view to
+case/run counts, and `S` validates then saves. `e` switches a read-only view to
 editing. Esc returns or discards an unsaved draft after confirmation; main queue
 `q`/`d` controls apply after returning from the editor. Execution policy and
 component compatibility are enforced by the normal resolver. An invalid draft
-stays open with the validation error. Up to 10000 expanded conditions and 1000
+stays open with the validation error. Up to 10000 expanded cases and 1000
 repetitions are accepted. Unedited YAML sections are preserved verbatim; edited
 sections are re-serialized, so their layout/inline comments may change. File
 changes since opening the editor are rejected, preventing stale saves/deletions.
-Campaign deletion requires typing its filename and leaves frozen queue copies and
-results intact. Campaign changes are ordinary source changes visible to Git and
-can invalidate source verification for existing queued entries.
+Deletion requires typing the profile filename and leaves frozen queue copies,
+templates and results intact. Profile creation, editing and deletion are ignored
+by Git and do not change the checkout's source identity or dirty marker.
+
+Space selects multiple profiles, `/` filters names, `R` reloads the catalogue,
+and **`a` enqueues** selected profiles (or the highlighted profile). Enter a
+repetition override between 1 and 1000, or leave it blank to retain each profile's
+`execution.repetitions`. Invalid profiles remain visible with their resolver
+error and cannot be enqueued. Each entry retains the exact enqueued profile bytes
+as `profiles/input.yaml` and its effective configuration as `profiles/campaign.yaml`.
+Both SHA-256 hashes are sealed into the plan and checked before execution/resume;
+changing either frozen copy is rejected. The effective copy includes any
+repetition override and, as with the thesis collector, enables the existing
+ESP32/INA228 instrument for supported deferred-reporting workloads. Its
+provisioning, calibration and wiring remain external prerequisites.
+
+Editing or deleting a local profile after enqueueing affects **future jobs only**;
+existing jobs continue using their immutable copies. New jobs record the updated
+profile hash, original path and template provenance. Source/submodule identity
+is still verified separately; changing framework code or tracked templates still
+participates in the normal source-verification rules.
 
 `N` on Queue or Completed creates a fresh entry from the selected entry's retained
 campaign definition, with its repetition count or a new override, using the
@@ -836,7 +866,7 @@ when source verification prevents resume. The original frozen plan/profile hashe
 must still match; its historical evidence is untouched. The fresh entry starts
 all repetitions again, gets a new ID/version/date, records its parent entry, and
 is appended normally (eligible immediately when dispatch is running). It also
-works if the canonical campaign YAML has since been deleted. Active entries must
+works if the local profile has since been edited or deleted. Active entries must
 pause first; unregistered retained folders are not re-queued by this control.
 
 On Queue, `K`/`J` moves waiting entries up/down; `p` pauses the highlighted entry.
@@ -929,17 +959,19 @@ Generated notebooks have no executed outputs; run their cells in the framework
 Jupyter environment (`./scripts/dev.sh notebook`). Open the notebook beside its
 CSV; a repository-root kernel is also supported. User notebook edits are local.
 
-Queue databases, copied profiles, logs, captures, CSVs and notebooks remain under
+Local profiles, queue databases, copied profiles, logs, captures, CSVs and notebooks remain under
 ignored `results/` paths. Creating or using them does not add Git changes; the
 implementation and notebook generator are maintained source. Exported results
 remain sensitive under the existing results policy.
 
-The same actions are available without the full-screen UI:
+Queue actions are also available without the full-screen UI. The `add` names
+below must first exist as profiles under `results/profiles/` (create them with
+`n` in the UI); they are not template names:
 
 ```bash
 python3 scripts/run_queue.py profiles
-python3 scripts/run_queue.py add baseline thesis_kex
-python3 scripts/run_queue.py add thesis_authentication --repetitions 5
+python3 scripts/run_queue.py add my_baseline my_kex
+python3 scripts/run_queue.py add my_authentication --repetitions 5
 python3 scripts/run_queue.py list
 python3 scripts/run_queue.py start
 python3 scripts/run_queue.py pause <entry-id>

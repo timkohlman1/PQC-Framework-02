@@ -176,13 +176,18 @@ class Queue:
                 except (OSError, ValueError, KeyError, TypeError):
                     pass
         for row in rows:
+            row['profile_name'] = Path(row['profile']).stem
+            row['template'] = 'Legacy'
             row['version'] = 'unknown'
             row['version_date'] = 'unknown'
             try:
                 plan = read(self.folder(row['id']) / 'plan.json')
+                info = plan.get('steps', [{}])[0]
+                row['profile_name'] = info.get('profile_name', info.get('id', row['profile_name']))
+                row['template'] = info.get('template', 'Legacy')
                 row['version'] = source_label(plan['source'])
                 row['version_date'] = plan.get('display_version', {}).get('date') or commit_date(str(self.root), plan['source'].get('repository', {}).get('git_commit'))
-            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
                 pass
             row.update(success=0, errors=0, repeats=0, progress_available=True,
                        completed_at=completions.get(row['id']) if row['status'] in DONE else None,

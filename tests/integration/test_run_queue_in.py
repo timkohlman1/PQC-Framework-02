@@ -183,7 +183,7 @@ run(q)
     data = b''
     try:
         deadline = time.monotonic()+10
-        while b'baseline.yaml' not in data or b'fixture-gateway: READY' not in data:
+        while b'baseline' not in data or b'fixture-gateway: READY' not in data:
             assert time.monotonic() < deadline, data.decode(errors='replace')
             if select.select([master], [], [], .1)[0]:
                 data += os.read(master, 8192)
@@ -245,7 +245,8 @@ def test_current_framework_version_tracks_git_commit_and_dirty_files(tmp_path):
     assert framework_version(tmp_path)['label'] == short + '*'
 
 
-def test_campaign_menu_creates_valid_yaml_in_real_terminal(tmp_path):
+@pytest.mark.parametrize('use_template', [False, True])
+def test_campaign_menu_creates_valid_yaml_in_real_terminal(tmp_path, use_template):
     import pty
     import select
     import fcntl
@@ -285,23 +286,28 @@ run(q)
     try:
         expect(b'profiles. Space to select')
         os.write(master, b'n')
-        expect(b'EDIT CAMPAIGN')
-        os.write(master, b'\n')
-        expect(b'new_campaign')
-        os.write(master, b'\n')
-        expect(b'blank keeps')
+        expect(b'NEW PROFILE / starting point')
+        if use_template:
+            os.write(master, b'j\n')
+            expect(b'choose template')
+            os.write(master, b'\n')  # first sorted template: baremetal_benchmark.yaml
+        else:
+            os.write(master, b'\n')
+        expect(b'Profile name')
         os.write(master, b'terminal_campaign\n')
-        expect(b'V validates; S saves')
+        expect(b'EDIT PROFILE')
         os.write(master, b'S')
-        expect(b'Campaign filename')
+        expect(b'Profile filename')
         os.write(master, b'\n')
-        path = tmp_path / 'configs/campaigns/terminal_campaign.yaml'
+        path = tmp_path / 'results/profiles/terminal_campaign.yaml'
         deadline = time.monotonic()+15
         while not path.exists():
             assert time.monotonic() < deadline
             if select.select([master], [], [], .1)[0]:
                 output += os.read(master, 32768)
-        assert yaml.safe_load(path.read_text())['id'] == 'terminal_campaign'
+        data = yaml.safe_load(path.read_text())
+        assert data['id'] == 'terminal_campaign'
+        assert data['queue_profile']['template'] == ('baremetal_benchmark.yaml' if use_template else None)
         # Wait for return to main UI before requesting its pause-and-quit control.
         expect(b'profiles. Space to select')
         os.write(master, b'q')
@@ -314,8 +320,12 @@ run(q)
         os.close(master)
 
 
-def test_campaign_editor_helper_process_validates_and_saves(tmp_path):
+def test_campaign_editor_helper_process_validates_saves_and_freezes(tmp_path):
     shutil.copytree(ROOT / 'configs', tmp_path / 'configs')
+    shutil.copy2(ROOT / '.gitignore', tmp_path / '.gitignore')
+    for args in [('init',), ('config', 'user.email', 'fixture@example.invalid'),
+                 ('config', 'user.name', 'Queue test'), ('add', '.'), ('commit', '-m', 'fixture')]:
+        subprocess.run(['git', '-C', str(tmp_path), *args], check=True, capture_output=True)
     (tmp_path / 'results').mkdir()
     request = tmp_path / 'results/editor.json'
     script = """
@@ -324,17 +334,65 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import queue_workspace
 queue_workspace.ROOT=Path(sys.argv[2])
-raise SystemExit(queue_workspace.main(['campaign-editor','--request','results/editor.json']))
+queue_workspace.collection.ROOT=Path(sys.argv[2])
+raise SystemExit(queue_workspace.main(sys.argv[3:]))
 """
+    def helper(*args, expected=0):
+        result = subprocess.run([sys.executable, '-c', script, str(ROOT / 'scripts'), str(tmp_path), *args],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == expected, result.stdout + result.stderr
+        return json.loads(result.stdout.strip().splitlines()[-1]) if expected == 0 else result.stdout
     def call(value):
         request.write_text(json.dumps(value))
-        result = subprocess.run([sys.executable, '-c', script, str(ROOT / 'scripts'), str(tmp_path)],
-                                capture_output=True, text=True, timeout=20)
-        assert result.returncode == 0, result.stdout + result.stderr
-        return json.loads(result.stdout.strip().splitlines()[-1])
-    loaded = call({'action': 'load'})
-    loaded['data']['id'] = 'subprocess_campaign'
+        return helper('campaign-editor', '--request', 'results/editor.json')
+    assert helper('profiles') == {'profiles': []}
+    loaded = call({'action': 'load', 'template': 'thesis_authentication.yaml', 'name': 'subprocess_campaign'})
     saved = call({'action': 'save', 'profile': 'subprocess_campaign.yaml', 'data': loaded['data']})
-    assert saved['conditions'] == 1
+    assert saved['conditions'] == 8
+    info = helper('prepare', '--profile', 'subprocess_campaign', '--job', 'results/q/first', '--repetitions', '3')
+    assert info['template'] == 'thesis_authentication.yaml' and info['attempts'] == 24
+    original_plan = json.loads((tmp_path / 'results/q/first/plan.json').read_text())
+    loaded = call({'action': 'load', 'profile': 'subprocess_campaign.yaml'})
+    loaded['data']['execution']['repetitions'] = 2
+    saved = call({**loaded, 'action': 'save'})
+    helper('check', '--job', 'results/q/first')
+    info = helper('prepare', '--profile', 'subprocess_campaign', '--job', 'results/q/second')
+    assert info['attempts'] == 16
+    next_plan = json.loads((tmp_path / 'results/q/second/plan.json').read_text())
+    assert next_plan['profile_origin']['sha256'] != original_plan['profile_origin']['sha256']
+    assert next_plan['source'] == original_plan['source']
     call({'action': 'delete', 'profile': 'subprocess_campaign.yaml', 'sha256': saved['sha256'], 'confirm': 'subprocess_campaign.yaml'})
-    assert not (tmp_path / 'configs/campaigns/subprocess_campaign.yaml').exists()
+    assert helper('profiles') == {'profiles': []}
+    helper('check', '--job', 'results/q/first')
+    assert (tmp_path / 'configs/campaigns/thesis_authentication.yaml').is_file()
+    captured = tmp_path / 'results/q/first/profiles/input.yaml'
+    captured.write_text(captured.read_text() + '# tamper\n')
+    assert 'frozen campaign profile changed' in helper('check', '--job', 'results/q/first', expected=2)
+
+
+def test_profile_lifecycle_keeps_git_source_identity_clean(tmp_path):
+    from framework.campaign_editor import operate
+    from framework.source import capture_git_provenance
+    shutil.copytree(ROOT / 'configs', tmp_path / 'configs')
+    shutil.copy2(ROOT / '.gitignore', tmp_path / '.gitignore')
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
+            capture_output=True, text=True).stdout.strip()
+    git('init')
+    git('config', 'user.email', 'fixture@example.invalid')
+    git('config', 'user.name', 'Queue test')
+    git('add', '.')
+    git('commit', '-m', 'fixture')
+    before = capture_git_provenance(tmp_path)
+    loaded = operate(tmp_path, {'action': 'load', 'template': 'thesis_authentication.yaml', 'name': 'local_auth'})
+    saved = operate(tmp_path, {**loaded, 'action': 'save', 'profile': 'local_auth.yaml'})
+    assert git('status', '--porcelain') == ''
+    assert capture_git_provenance(tmp_path) == before
+    loaded = operate(tmp_path, {'action': 'load', 'profile': 'local_auth.yaml'})
+    loaded['data']['execution']['repetitions'] = 3
+    saved = operate(tmp_path, {**loaded, 'action': 'save'})
+    assert git('status', '--porcelain') == ''
+    assert capture_git_provenance(tmp_path) == before
+    operate(tmp_path, {'action': 'delete', 'profile': 'local_auth.yaml', 'sha256': saved['sha256'], 'confirm': 'local_auth.yaml'})
+    assert git('status', '--porcelain') == ''
+    assert capture_git_provenance(tmp_path) == before
