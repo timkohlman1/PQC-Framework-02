@@ -435,3 +435,28 @@ def test_quit_stops_idle_queue_and_detects_lost_active_worker(queue):
     queue.claim()
     with pytest.raises(ValueError, match='cleanup is unverified'):
         queue.shutdown()
+
+
+def test_clear_selection_persists_for_all_completed_entries(queue):
+    identifiers = queue.add(['one', 'two'])
+    for identifier in identifiers:
+        verdict(queue, identifier)
+        queue.finish(identifier, 'completed', 'done')
+        queue.mark(identifier)
+    queue.clear_selection()
+    assert all(not row['selected'] for row in Queue(queue.root).jobs())
+
+
+def test_requeue_registers_fresh_entry_preserves_old_evidence(queue, monkeypatch):
+    identifier = queue.add(['one'])[0]
+    path = verdict(queue, identifier, state='paused')
+    queue.finish(identifier, 'attention', 'wrong source')
+    original = path.read_bytes()
+    def offline(action, *args):
+        assert action == 'prepare' and '--from-job' in args
+        (queue.root / args[args.index('--job')+1]).mkdir(parents=True)
+        return {'profile': 'one', 'repetitions': 3, 'conditions': 2, 'attempts': 6}
+    monkeypatch.setattr(queue, 'offline', offline)
+    new = queue.requeue(identifier)[0]
+    assert new != identifier and queue.job(new)['status'] == 'queued'
+    assert queue.job(identifier)['status'] == 'attention' and path.read_bytes() == original

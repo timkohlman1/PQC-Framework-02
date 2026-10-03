@@ -64,3 +64,23 @@ def test_queue_documentation_and_generated_output_ignore_contract():
              'results/queue/exports/example/runs.csv', 'results/queue/exports/example/analysis.ipynb']
     result = subprocess.run(['git', 'check-ignore', *paths], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0 and result.stdout.splitlines() == paths
+
+
+def test_requeue_keeps_original_profile_but_uses_current_source(repository, monkeypatch):
+    from framework.run_queue import read
+    workspace.prepare('results/q/old', 'baseline', 4)
+    previous = repository / 'results/q/old'
+    before = (previous / 'profiles/campaign.yaml').read_bytes()
+    monkeypatch.setattr(collection, 'source_identity', lambda: {'source': 'new checkout'})
+    with pytest.raises(ValueError, match='source/submodule'):
+        collection.check(previous)
+    (repository / 'configs/campaigns/baseline.yaml').unlink()
+    info = workspace.prepare('results/q/new', repetitions=2, from_job='results/q/old')
+    assert info['repetitions'] == 2 and info['profile'] == 'baseline.yaml'
+    new = repository / 'results/q/new'
+    assert collection.check(new)['source'] == {'source': 'new checkout'}
+    assert read(new / 'plan.json')['requeued_from'] == 'results/q/old'
+    assert (previous / 'profiles/campaign.yaml').read_bytes() == before
+    (previous / 'profiles/campaign.yaml').write_text('tampered')
+    with pytest.raises(ValueError, match='profile changed'):
+        workspace.prepare('results/q/refused', from_job='results/q/old')

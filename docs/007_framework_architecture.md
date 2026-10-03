@@ -2493,6 +2493,18 @@ explicit completed campaign roots. The queue and thesis collector share the same
 energy instrumentation policy and campaign verdict checks. Queue state and all
 exports live below ignored `results/`; no new dependency or firmware path is added.
 
+`framework.campaign_menu` provides a menu-based viewer/editor on Profiles;
+`framework.campaign_editor` is the Docker-side owner of campaign-only writes.
+It enumerates existing components, validates expanded cases and execution policy,
+rejects stale document hashes and writes atomically under a shared editor lock.
+Read-only views/previews and validation do not alter source files. Editing changes
+ordinary campaign source and therefore participates in source verification.
+Re-queueing validates retained plan/profile hashes, then prepares a new entry from
+the frozen definition against current source/components without relabelling old
+evidence. Display metadata retains the commit date; older plans use local Git.
+Temporary-config CRUD tests, helper-process tests and a real PTY campaign-creation
+flow cover this host/Docker boundary without making new hardware claims.
+
 The terminal reserves eight log lines between rules and presents both the current
 Git version/date and each entry's frozen source SHA/dirty marker. Removing a waiting
 entry records `removed` without erasing its files. The Completed view also discovers

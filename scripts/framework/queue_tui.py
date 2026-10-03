@@ -111,7 +111,28 @@ class Terminal:
         if self.future is not None and self.future.done():
             try:
                 result = self.future.result()
-                if self.operation == 'catalogue':
+                if self.operation in {'campaign-view', 'campaign-edit', 'campaign-new'}:
+                    from framework.campaign_menu import CampaignMenu
+                    readonly = self.operation == 'campaign-view'
+                    self.future = None
+                    changed = CampaignMenu(self, result, readonly=readonly).run()
+                    if changed:
+                        self.background('catalogue', self.queue.catalogue)
+                    return
+                elif self.operation == 'campaign-delete-load':
+                    self.future = None
+                    profile = result['profile']
+                    confirmation = self.prompt(f'Permanently delete campaign YAML. Type {profile}: ')
+                    if confirmation == profile:
+                        self.background('campaign-delete', self.queue.campaign_editor, {'action': 'delete', 'profile': profile, 'sha256': result['sha256'], 'confirm': confirmation})
+                    else:
+                        self.message = 'Campaign deletion cancelled.'
+                    return
+                elif self.operation == 'campaign-delete':
+                    self.future = None
+                    self.background('catalogue', self.queue.catalogue)
+                    return
+                elif self.operation == 'catalogue':
                     self.profiles = result
                     self.message = f'{len(result)} campaign profiles. Space to select; a to enqueue.'
                 elif self.operation == 'purge':
@@ -157,12 +178,12 @@ class Terminal:
         height, width = self.screen.getmaxyx()
         minimum_height = 28 + max(0, len(self.gateways)-1)
         if height < minimum_height or width < 120:
-            self.put(1, 1, f'PQC Queue — resize terminal to at least 120 × {minimum_height}. q exits.')
+            self.put(1, 1, f'PQC Queue — resize terminal to at least 120 × {minimum_height}. d detaches; q pauses/quits.')
             self.screen.refresh()
             return
         self.put(0, 2, f"PQC / EXPERIMENT QUEUE - Framework Version {self.version['label']} {self.version['date']} | Today {datetime.now():%Y-%m-%d}", self.ink(1) | curses.A_BOLD)
         dispatch = self.queue.dispatch()
-        self.put(1, 2, f'{dispatch.upper()}  ·  {len(self.jobs)} entries  ·  {sum(r["selected"] for r in self.jobs)} marked for export  ·  * dirty checkout', self.ink(2) if dispatch == 'running' else self.ink(3))
+        self.put(1, 2, f'{dispatch.upper()}  ·  {len(self.jobs)} entries  ·  {sum(r["selected"] for r in self.jobs)} marked for export', self.ink(2) if dispatch == 'running' else self.ink(3))
         gateway_lines = self.gateways or [{'gateway': 'Gateways', 'status': 'CHECKING…', 'hostname': ''}]
         for index, gateway in enumerate(gateway_lines):
             status = gateway['status']
@@ -177,8 +198,8 @@ class Terminal:
             x += 19
         self.put(4+extra, 2, '─' * (width-4), self.ink(1))
         self.put(5+extra, 2, '   CAMPAIGN                                      REPS   CASES  ATTEMPTS' if self.tab == 0
-                 else '   ID            CAMPAIGN                  VERSION       REPS   OK/ERR/TOTAL  STATE' if self.tab == 1
-                 else '   CAMPAIGN                  VERSION   FINISHED (LOCAL)      OK/ERR/REPEAT  EXPORTED  STATE')
+                 else '   ID            CAMPAIGN             VERSION / DATE              REPS  OK/ERR/TOTAL  STATE' if self.tab == 1
+                 else '   ID            CAMPAIGN        VERSION / DATE        FINISHED (LOCAL)      OK/ERR/REPEAT EXP  STATE')
         usable = max(1, height-25-extra)
         cursor = self.cursor[self.tab]
         offset = max(0, cursor-usable+1)
@@ -192,17 +213,17 @@ class Terminal:
                 progress = f"{row['success']}/{row['attempts']}" if row['progress_available'] else '?'
                 if self.tab == 1:
                     counts = f"{row['success']}/{row['errors']}/{row['attempts']}" if row['progress_available'] else '?'
-                    line = f"{mark}  {row['id']}  {row['profile']:<25.25} {row['version']:<9.9} {progress:>9}  {counts:>12}  {row['status']}"
+                    line = f"{mark}  {row['id']}  {row['profile']:<20.20} {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {progress:>9}  {counts:>12}  {row['status']}"
                 else:
                     finished = datetime.fromtimestamp(row['completed_at']).strftime('%Y-%m-%d %H:%M:%S') if row['completed_at'] else 'unknown'
                     counts = f"{row['success']}/{row['errors']}/{row['repeats']}" if row['progress_available'] else '?'
-                    line = f"{mark}  {row['profile']:<25.25} {row['version']:<9.9} {finished}  {counts:>13}  {'YES' if row['exported'] else 'NO':<8}  {row['status']}"
+                    line = f"{mark}  {row['id']}  {row['profile']:<15.15} {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {finished}  {counts:>13} {'YES' if row['exported'] else 'NO':<3}  {row['status']}"
                 colour = 4 if row['status'] == 'attention' else 3 if row['status'] in {'paused','pausing'} else 2
             self.put(6+extra+i-offset, 2, line, self.ink(colour) | (curses.A_REVERSE if i == cursor else 0))
         if not self.rows:
             self.put(7+extra, 4, 'No entries. Add campaign profiles from the Profiles tab.', self.ink(3))
         y = height-19
-        if self.rows:
+        if self.rows and cursor >= 0:
             row = self.rows[cursor]
             if self.tab == 0:
                 self.put(y, 2, row.get('error') or f"{row.get('workload')} · repetitions per condition; thesis energy policy")
@@ -212,30 +233,43 @@ class Terminal:
                 stats = f"Success {row['success']} / Errors {row['errors']} / Total {row['attempts']} / Repeats {row['repeats']}" if row['progress_available'] else 'Progress unavailable: inspect campaign evidence'
                 self.put(y+1, 2, f"{row['id']}  {row['profile']} · {stats}")
         self.put(y+2, 2, '─ Log ' + '─' * (width-10), self.ink(1))
-        if self.rows and self.tab != 0:
+        if self.rows and cursor >= 0 and self.tab != 0:
             for i, line in enumerate(log_tail(self.queue, self.rows[cursor]['id'], 8)):
                 self.put(y+3+i, 2, line)
         self.put(y+11, 2, '─' * (width-4), self.ink(1))
         message = 'Pausing and quitting: waiting for the current operation, cleanup and worker exit…' if self.shutdown_future is not None else self.message
         self.put(height-6, 2, message, self.ink(3))
-        hints = ('Space select  a add  / filter  R refresh' if self.tab == 0 else
-                 'Space mark completed  e export  t retry failures  D permanently delete job files' if self.tab == 2 else
-                 'p pause  r resume  t retry  f accept failures  K/J move  d remove (keep files)')
+        hints = ('Space select  a add  n new  v view  e edit  D delete YAML  / filter  R refresh' if self.tab == 0 else
+                 'Space mark  e export  t retry  N re-queue current version  D permanently delete job files' if self.tab == 2 else
+                 'p pause  r resume  t retry  f accept  K/J move  Del remove  N re-queue current version')
         self.put(height-4, 2, hints, self.ink(1))
-        self.put(height-2, 2, 'Tab switch  ↑/↓ navigate  s start queue  x pause queue  q detach  Q pause and quit', self.ink(1))
+        self.put(height-2, 2, 'Tab switch  ↑/↓ navigate  s start queue  x pause queue  q pause and quit  d detach', self.ink(1))
         self.screen.refresh()
+
+    def switch_tab(self, tab):
+        if tab == self.tab:
+            return
+        self.queue.clear_selection()
+        self.picked.clear()
+        for row in self.jobs:
+            row['selected'] = 0
+        self.cursor = [-1, -1, -1]
+        self.rows = []
+        self.tab = tab
+        self.next_jobs_check = 0
+        self.message = 'Selections cleared. Use ↑/↓ to choose an entry.'
 
     def key(self, key):
         if self.shutdown_future is not None:
             return
-        if key == ord('Q'):
+        if key in (ord('q'), ord('Q')):
             self.shutdown_future = self.control_pool.submit(self.queue.shutdown)
             return
-        row = self.rows[self.cursor[self.tab]] if self.rows else None
+        row = self.rows[self.cursor[self.tab]] if self.rows and self.cursor[self.tab] >= 0 else None
         if key in (ord('1'), ord('2'), ord('3')):
-            self.tab = key-ord('1')
+            self.switch_tab(key-ord('1'))
         elif key == 9:
-            self.tab = (self.tab+1) % 3
+            self.switch_tab((self.tab+1) % 3)
         elif key in (curses.KEY_UP, ord('k')):
             self.cursor[self.tab] = max(0, self.cursor[self.tab]-1)
         elif key in (curses.KEY_DOWN, ord('j')):
@@ -272,7 +306,16 @@ class Terminal:
             value = self.prompt('Repetitions per condition (Enter = each profile default): ')
             if value is not None:
                 self.background('add', self.queue.add, names, int(value) if value.strip() else None)
-        elif key == ord('d') and row and self.tab == 1:
+        elif key == ord('n') and self.tab == 0:
+            self.background('campaign-new', self.queue.campaign_editor, {'action': 'load'})
+        elif key in (ord('v'), ord('e'), ord('D')) and row and self.tab == 0:
+            operation = {ord('v'): 'campaign-view', ord('e'): 'campaign-edit', ord('D'): 'campaign-delete-load'}[key]
+            self.background(operation, self.queue.campaign_editor, {'action': 'load', 'profile': row['profile']})
+        elif key == ord('N') and row and self.tab != 0:
+            value = self.prompt(f"Re-queue frozen campaign with CURRENT source; repetitions [{row['repetitions']}]: ")
+            if value is not None:
+                self.background('requeue', self.queue.requeue, row['id'], int(value) if value.strip() else None)
+        elif key == curses.KEY_DC and row and self.tab == 1:
             self.queue.remove(row['id'])
             self.next_jobs_check = 0
             self.message = 'Removed from queue; retained files are on Completed.'
@@ -282,7 +325,7 @@ class Terminal:
                 self.background('purge', self.queue.purge, row['id'], value)
             else:
                 self.message = 'Deletion cancelled.'
-        elif key == ord('e'):
+        elif key == ord('e') and self.tab == 2:
             self.background('export', self.queue.export)
         elif row and self.tab != 0:
             if key == ord('p'):
@@ -302,7 +345,7 @@ class Terminal:
                     return 0
                 self.draw()
                 key = self.screen.getch()
-                if key == ord('q'):
+                if key == ord('d'):
                     return 0
                 try:
                     self.key(key)

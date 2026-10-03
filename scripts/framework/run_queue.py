@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, ExitStack
+from functools import lru_cache
+import re
 import fcntl
 import hashlib
 import json
@@ -63,6 +65,19 @@ def framework_version(root):
         return {'label': short + ('*' if dirty else ''), 'date': date}
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return {'label': 'unknown', 'date': 'unknown'}
+
+
+@lru_cache(maxsize=256)
+def commit_date(root, commit):
+    if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40,64}', commit):
+        return 'unknown'
+    try:
+        result = subprocess.run(['git', '-C', str(root), 'show', '-s', '--format=%cs', commit],
+                                capture_output=True, text=True, timeout=5)
+        value = result.stdout.strip()
+        return value if result.returncode == 0 and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) else 'unknown'
+    except (OSError, subprocess.TimeoutExpired):
+        return 'unknown'
 
 
 class Queue:
@@ -162,8 +177,11 @@ class Queue:
                     pass
         for row in rows:
             row['version'] = 'unknown'
+            row['version_date'] = 'unknown'
             try:
-                row['version'] = source_label(read(self.folder(row['id']) / 'plan.json')['source'])
+                plan = read(self.folder(row['id']) / 'plan.json')
+                row['version'] = source_label(plan['source'])
+                row['version_date'] = plan.get('display_version', {}).get('date') or commit_date(str(self.root), plan['source'].get('repository', {}).get('git_commit'))
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 pass
             row.update(success=0, errors=0, repeats=0, progress_available=True,
@@ -226,6 +244,30 @@ class Queue:
         # The last line is the structured reply; wrapper notices may precede it.
         return json.loads(result.stdout.strip().splitlines()[-1])
 
+    def campaign_editor(self, request):
+        path = self.directory / ('editor-' + uuid.uuid4().hex + '.json')
+        path.write_text(json.dumps(request))
+        try:
+            return self.offline('campaign-editor', '--request', self.relative(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def requeue(self, identifier, repetitions=None):
+        with self.inventory_lock(), self.entry_lock(identifier):
+            row = self.job(identifier)
+            if row['status'] in ACTIVE:
+                raise ValueError('pause the active entry before re-queueing it')
+            count = row['repetitions'] if repetitions is None else repetitions
+            if type(count) is not int or not 1 <= count <= 1000:
+                raise ValueError('repetitions must be 1..1000')
+            new_id = uuid.uuid4().hex[:12]
+            info = self.offline('prepare', '--job', self.relative(self.folder(new_id)),
+                                '--from-job', self.relative(self.folder(identifier)), '--repetitions', count)
+            result = self._register([(new_id, info)])
+            with self.connect() as db:
+                self.event(db, new_id, 'requeued', identifier)
+            return result
+
     def catalogue(self):
         return self.offline('profiles')['profiles']
 
@@ -253,6 +295,9 @@ class Queue:
                 args += ['--repetitions', repetitions]
             info = self.offline('prepare', *args)
             planned.append((identifier, info))
+        return self._register(planned)
+
+    def _register(self, planned):
         # All requested plans must validate before any becomes dispatchable.
         with self.connect() as db:
             position = db.execute('SELECT COALESCE(MAX(position),0) FROM jobs').fetchone()[0]
@@ -389,6 +434,10 @@ class Queue:
                 db.execute('UPDATE jobs SET position=? WHERE id=?', (rows[j]['position'], identifier))
                 db.execute('UPDATE jobs SET position=? WHERE id=?', (rows[i]['position'], rows[j]['id']))
                 self.event(db, identifier, 'move', direction)
+
+    def clear_selection(self):
+        with self.connect() as db:
+            db.execute('UPDATE jobs SET selected=0 WHERE selected<>0')
 
     def mark(self, identifier):
         with self.connect() as db:

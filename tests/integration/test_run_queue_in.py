@@ -159,7 +159,7 @@ def test_selected_export_and_notebook_execute_without_unrelated_rows(tmp_path, m
         assert (output / name).is_file()
 
 
-@pytest.mark.parametrize('exit_key', [b'q', b'Q'])
+@pytest.mark.parametrize('exit_key', [b'd', b'q'])
 def test_terminal_renders_and_detaches_in_a_real_pty(tmp_path, exit_key):
     import pty
     import select
@@ -243,3 +243,98 @@ def test_current_framework_version_tracks_git_commit_and_dirty_files(tmp_path):
     assert framework_version(tmp_path) == {'label': short, 'date': date}
     (tmp_path / 'untracked.txt').write_text('dirty')
     assert framework_version(tmp_path)['label'] == short + '*'
+
+
+def test_campaign_menu_creates_valid_yaml_in_real_terminal(tmp_path):
+    import pty
+    import select
+    import fcntl
+    import struct
+    import termios
+    import yaml
+    shutil.copytree(ROOT / 'configs', tmp_path / 'configs')
+    script = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from framework.run_queue import Queue
+from framework.queue_tui import run
+from framework.campaign_editor import operate
+import queue_workspace
+root=Path(sys.argv[2]); queue_workspace.ROOT=root
+q=Queue(root)
+q.catalogue=lambda: queue_workspace.catalogue()['profiles']
+q.gateway_statuses=lambda: [{'gateway':'fixture','status':'READY','hostname':''}]
+q.campaign_editor=lambda request: operate(root, request)
+run(q)
+"""
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 140, 0, 0))
+    child = subprocess.Popen([sys.executable, '-c', script, str(ROOT / 'scripts'), str(tmp_path)],
+                             stdin=slave, stdout=slave, stderr=slave, env={**os.environ, 'TERM': 'xterm-256color'})
+    os.close(slave)
+    output = b''
+    def expect(needle):
+        nonlocal output
+        deadline = time.monotonic()+15
+        while needle not in output:
+            assert time.monotonic() < deadline, output.decode(errors='replace')[-4000:]
+            if select.select([master], [], [], .1)[0]:
+                output += os.read(master, 32768)
+        output = b''
+    try:
+        expect(b'profiles. Space to select')
+        os.write(master, b'n')
+        expect(b'EDIT CAMPAIGN')
+        os.write(master, b'\n')
+        expect(b'new_campaign')
+        os.write(master, b'\n')
+        expect(b'blank keeps')
+        os.write(master, b'terminal_campaign\n')
+        expect(b'V validates; S saves')
+        os.write(master, b'S')
+        expect(b'Campaign filename')
+        os.write(master, b'\n')
+        path = tmp_path / 'configs/campaigns/terminal_campaign.yaml'
+        deadline = time.monotonic()+15
+        while not path.exists():
+            assert time.monotonic() < deadline
+            if select.select([master], [], [], .1)[0]:
+                output += os.read(master, 32768)
+        assert yaml.safe_load(path.read_text())['id'] == 'terminal_campaign'
+        # Wait for return to main UI before requesting its pause-and-quit control.
+        expect(b'profiles. Space to select')
+        os.write(master, b'q')
+        child.wait(timeout=15)
+        assert child.returncode == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        os.close(master)
+
+
+def test_campaign_editor_helper_process_validates_and_saves(tmp_path):
+    shutil.copytree(ROOT / 'configs', tmp_path / 'configs')
+    (tmp_path / 'results').mkdir()
+    request = tmp_path / 'results/editor.json'
+    script = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import queue_workspace
+queue_workspace.ROOT=Path(sys.argv[2])
+raise SystemExit(queue_workspace.main(['campaign-editor','--request','results/editor.json']))
+"""
+    def call(value):
+        request.write_text(json.dumps(value))
+        result = subprocess.run([sys.executable, '-c', script, str(ROOT / 'scripts'), str(tmp_path)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    loaded = call({'action': 'load'})
+    loaded['data']['id'] = 'subprocess_campaign'
+    saved = call({'action': 'save', 'profile': 'subprocess_campaign.yaml', 'data': loaded['data']})
+    assert saved['conditions'] == 1
+    call({'action': 'delete', 'profile': 'subprocess_campaign.yaml', 'sha256': saved['sha256'], 'confirm': 'subprocess_campaign.yaml'})
+    assert not (tmp_path / 'configs/campaigns/subprocess_campaign.yaml').exists()

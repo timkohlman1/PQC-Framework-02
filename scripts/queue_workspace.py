@@ -37,15 +37,23 @@ def catalogue():
     return {'profiles': values}
 
 
-def prepare(job, profile, repetitions=None):
+def prepare(job, profile=None, repetitions=None, from_job=None):
     folder = owned_path(ROOT, job)
-    source = ROOT / 'configs/campaigns' / profile
-    if not source.suffix:
-        source = source.with_suffix('.yaml')
-    source = Path(source.absolute())
-    if not source.resolve().is_relative_to(ROOT / 'configs/campaigns') or any(p.is_symlink() for p in [source, *source.parents]):
-        raise ValueError('choose a non-symlink campaign from configs/campaigns')
     resolver = ConfigResolver(ROOT)
+    if from_job:
+        previous = owned_path(ROOT, from_job)
+        plan = read(previous / 'plan.json')
+        if digest(previous / 'plan.json') != (previous / 'plan.sha256').read_text().strip():
+            raise ValueError('retained plan digest changed')
+        source = previous / 'profiles/campaign.yaml'
+        relative = source.relative_to(ROOT).as_posix()
+        if digest(source) != plan['profile_hashes'].get(relative):
+            raise ValueError('retained campaign profile changed')
+        profile_name = plan['steps'][0]['profile']
+    else:
+        from framework.campaign_editor import path_for
+        source = path_for(ROOT, profile)
+        profile_name = source.relative_to(ROOT / 'configs/campaigns').as_posix()
     _, data = resolver.load_campaign(source)
     count = data['execution']['repetitions'] if repetitions is None else repetitions
     if type(count) is not int or not 1 <= count <= 1000:
@@ -63,7 +71,7 @@ def prepare(job, profile, repetitions=None):
         validate_policy_against_case(policy=policy, case=case, resolver=resolver)
     if not cases:
         raise ValueError('campaign has no cases')
-    info = {'id': data['id'], 'profile': source.relative_to(ROOT / 'configs/campaigns').as_posix(),
+    info = {'id': data['id'], 'profile': profile_name,
             'source': frozen.relative_to(ROOT).as_posix(), 'kind': 'campaign',
             'repetitions': count, 'conditions': len(cases), 'attempts': len(cases) * count,
             'energy_requested': energy}
@@ -71,6 +79,11 @@ def prepare(job, profile, repetitions=None):
             'profile_hashes': {info['source']: digest(frozen)}, 'source': collection.source_identity(),
             'planned_campaign_attempts': info['attempts'], 'independent_runs': False,
             'limitations': collection.GAPS}
+    from framework.run_queue import source_label, commit_date
+    plan['display_version'] = {'label': source_label(plan['source']),
+                               'date': commit_date(str(ROOT), plan['source'].get('repository', {}).get('git_commit'))}
+    if from_job:
+        plan['requeued_from'] = from_job
     collection.write(folder / 'plan.json', plan)
     (folder / 'plan.sha256').write_text(digest(folder / 'plan.json') + '\n')
     collection.write(folder / 'annotations.json', collection.annotations(
@@ -125,9 +138,13 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='action', required=True)
     sub.add_parser('profiles')
+    editor = sub.add_parser('campaign-editor')
+    editor.add_argument('--request', required=True)
     prep = sub.add_parser('prepare')
     prep.add_argument('--job', required=True)
-    prep.add_argument('--profile', required=True)
+    origin = prep.add_mutually_exclusive_group(required=True)
+    origin.add_argument('--profile')
+    origin.add_argument('--from-job')
     prep.add_argument('--repetitions', type=int)
     check = sub.add_parser('check')
     check.add_argument('--job', required=True)
@@ -136,10 +153,13 @@ def main(argv=None):
     exp.add_argument('--output', required=True)
     args = p.parse_args(argv)
     try:
-        if args.action == 'profiles':
+        if args.action == 'campaign-editor':
+            from framework.campaign_editor import operate
+            result = operate(ROOT, read(owned_path(ROOT, args.request)))
+        elif args.action == 'profiles':
             result = catalogue()
         elif args.action == 'prepare':
-            result = prepare(args.job, args.profile, args.repetitions)
+            result = prepare(args.job, args.profile, args.repetitions, args.from_job)
         elif args.action == 'check':
             collection.check(owned_path(ROOT, args.job))
             result = {'status': 'verified'}
@@ -147,7 +167,7 @@ def main(argv=None):
             result = export_selection(args.selection, args.output)
         print(json.dumps(result))
         return 0
-    except (ValueError, RuntimeError, OSError, KeyError) as exc:
+    except (ValueError, RuntimeError, OSError, KeyError, TypeError, yaml.YAMLError) as exc:
         print('queue-workspace: ' + str(exc))
         return 2
 

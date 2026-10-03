@@ -20,6 +20,9 @@ def main(argv=None):
     for action in ('pause', 'resume', 'retry', 'accept', 'mark', 'remove'):
         cmd = sub.add_parser(action)
         cmd.add_argument('id')
+    requeue = sub.add_parser('requeue')
+    requeue.add_argument('id')
+    requeue.add_argument('--repetitions', type=int)
     purge = sub.add_parser('purge', help='Permanently delete retained job files')
     purge.add_argument('id')
     purge.add_argument('--confirm', required=True, help='repeat the exact entry ID')
@@ -46,6 +49,8 @@ def main(argv=None):
         elif action in {'resume', 'retry', 'accept'}:
             queue.decide(args.id, action)
             result = {'id': args.id, 'decision': action}
+        elif action == 'requeue':
+            result = {'added': queue.requeue(args.id, args.repetitions)}
         elif action == 'purge':
             queue.purge(args.id, args.confirm)
             result = {'id': args.id, 'action': 'purged'}

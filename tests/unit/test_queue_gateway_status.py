@@ -72,13 +72,14 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     terminal.cursor = [0, 0, 0]
     row = dict(id='abcdef123456', profile='example.yaml', selected=False, success=5,
                errors=1, repeats=2, attempts=10, progress_available=True, status='running',
-               version='abcdef0*', detail='', conditions=1, repetitions=10, completed_at=1700000000, exported=True)
+               version='abcdef0*', version_date='2026-10-01', detail='', conditions=1, repetitions=10, completed_at=1700000000, exported=True)
     terminal.jobs = terminal.rows = [row]
     monkeypatch.setattr(queue_tui, 'log_tail', lambda *args: [f'log {i}' for i in range(8)])
     lines = {}
     terminal.put = lambda y, x, text, style=0: lines.__setitem__((y, x), text)
     terminal.tab = 1
     terminal.draw()
+    assert 'dirty checkout' not in lines[1, 2]
     assert lines[2, 2] == 'first: IN USE - lab'
     assert lines[3, 2] == 'second: READY'
     assert '5/10' in lines[7, 2] and '5/1/10' in lines[7, 2]
@@ -86,7 +87,36 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     terminal.draw()
     assert '5/1/2' in lines[7, 2] and 'YES' in lines[7, 2]
     assert '2023-' in lines[7, 2]
+    assert 'abcdef123456' in lines[7, 2]
+    assert '2026-10-01' in lines[7, 2]
     assert 'abcdef0*' in lines[0, 2] and 'abcdef0*' in lines[7, 2]
     assert lines[13, 2].startswith('─ Log')
     assert [lines[y, 2] for y in range(14, 22)] == [f'log {i}' for i in range(8)]
     assert lines[22, 2].startswith('──')
+
+
+@pytest.mark.parametrize('key', [9, ord('2'), ord('3')])
+def test_tab_change_clears_marks_and_requires_explicit_row_navigation(key):
+    from framework.queue_tui import Terminal
+    terminal = Terminal.__new__(Terminal)
+    cleared = []
+    terminal.queue = SimpleNamespace(clear_selection=lambda: cleared.append(True))
+    terminal.shutdown_future = None
+    terminal.tab = 0
+    terminal.picked = {'baseline.yaml'}
+    terminal.jobs = [{'id': 'abcdef123456', 'selected': 1}]
+    terminal.rows = [{'profile': 'baseline.yaml'}]
+    terminal.cursor = [0, 0, 0]
+    terminal.key(key)
+    assert cleared == [True]
+    assert terminal.picked == set() and terminal.jobs[0]['selected'] == 0
+    assert terminal.cursor == [-1, -1, -1] and terminal.rows == []
+    # A newly rendered row must not become an implicit command target.
+    terminal.rows = [{'id': 'abcdef123456'}]
+    import curses
+    terminal.key(curses.KEY_DC)
+    terminal.key(ord('D'))
+    terminal.key(ord('p'))
+    assert terminal.cursor[terminal.tab] == -1
+    terminal.key(ord('j'))
+    assert terminal.cursor[terminal.tab] == 0

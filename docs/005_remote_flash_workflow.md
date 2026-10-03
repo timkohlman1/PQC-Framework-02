@@ -767,7 +767,9 @@ or image rebuild is needed when the existing development image is current.
 The title shows the current framework's short Git SHA, commit date and today's
 local date. `*` after a SHA means the checkout was dirty (including submodules).
 Queue and Completed rows show the source identity frozen in that entry's plan;
-they do not change to the current version when the checkout changes. Unknown
+the **VERSION / DATE** column adds that commit's date to the right of its SHA.
+New plans retain the date; older plans look it up from local Git history, showing
+`unknown` if unavailable. Rows do not change version when the checkout changes. Unknown
 provenance is labelled `unknown`. These display labels do not replace full source
 verification. The selected entry's last eight dispatch-log lines appear between
 horizontal rules; short logs leave the remaining lines blank.
@@ -790,16 +792,52 @@ exports remain recorded. Counts refresh once a second from the campaign manifest
 unreadable evidence shows `?` rather than claiming zero progress.
 
 The three tabs are **Profiles**, **Queue**, and **Completed**. `Tab` or `1`/`2`/`3`
-switches tabs; arrow keys move the cursor. On Profiles, Space selects multiple
+switches tabs and clears all profile selections, export marks and row highlights.
+Use arrow keys to choose a row again before issuing an item command. Switching
+tabs does not cancel an already-started operation. Completed rows show the full
+job ID, including removed/retained entries, for the permanent-deletion prompt. On Profiles, Space selects multiple
 profiles, `/` filters names, `R` reloads the catalogue, and `a` appends selected
 profiles (or the highlighted profile). Enter an override between 1 and 1000, or
 leave it blank to retain each profile's `execution.repetitions`. Counts are per
 expanded condition: the UI shows both the number of conditions and total planned
 attempts. Invalid profiles remain visible with their resolver error and cannot
 be enqueued. Each entry freezes a copied profile and source/submodule identity;
-canonical campaign YAML is never rewritten. As with the thesis collector, the
+enqueueing never rewrites canonical campaign YAML. As with the thesis collector, the
 existing ESP32/INA228 instrument is enabled for supported deferred-reporting
 workloads. Its provisioning, calibration and wiring remain external prerequisites.
+
+On Profiles, **`v` views**, **`e` edits**, **`n` creates**, and **`D` deletes** a
+campaign YAML. The menu has Campaign, Components, Factors/matrix, Workload
+parameters, Execution and Analysis sections. Arrow keys navigate, Enter opens a
+section/field, and Space toggles choices. Select multiple factor values to build a
+matrix, one for a fixed value, or default/omit to remove that override. Integer
+parameters accept comma-separated values. Component choices come from existing
+validated profiles; the editor never writes target, gateway, workload, crypto,
+broker, network-condition or instrument component files. New campaigns start from
+baseline defaults and require a distinct campaign ID and filename.
+
+Within the menu, `P` previews YAML, `V` validates all expanded cases and displays
+condition/run counts, and `S` validates then saves. `e` switches a read-only view to
+editing. Esc returns or discards an unsaved draft after confirmation; main queue
+`q`/`d` controls apply after returning from the editor. Execution policy and
+component compatibility are enforced by the normal resolver. An invalid draft
+stays open with the validation error. Up to 10000 expanded conditions and 1000
+repetitions are accepted. Unedited YAML sections are preserved verbatim; edited
+sections are re-serialized, so their layout/inline comments may change. File
+changes since opening the editor are rejected, preventing stale saves/deletions.
+Campaign deletion requires typing its filename and leaves frozen queue copies and
+results intact. Campaign changes are ordinary source changes visible to Git and
+can invalidate source verification for existing queued entries.
+
+`N` on Queue or Completed creates a fresh entry from the selected entry's retained
+campaign definition, with its repetition count or a new override, using the
+**current checkout and current component profiles**. This is the recovery path
+when source verification prevents resume. The original frozen plan/profile hashes
+must still match; its historical evidence is untouched. The fresh entry starts
+all repetitions again, gets a new ID/version/date, records its parent entry, and
+is appended normally (eligible immediately when dispatch is running). It also
+works if the canonical campaign YAML has since been deleted. Active entries must
+pause first; unregistered retained folders are not re-queued by this control.
 
 On Queue, `K`/`J` moves waiting entries up/down; `p` pauses the highlighted entry.
 `r` resumes incomplete work with no unresolved failures, `t` retries recorded
@@ -812,7 +850,7 @@ never produced a capture. Verified successful captures are reused on resume.
 Previously accepted failures can be explicitly retried from Completed after
 unmarking the entry.
 
-`d` removes a waiting Queue entry from scheduling while preserving its job folder.
+**Delete** removes a waiting Queue entry from scheduling while preserving its job folder.
 Pause an active entry and wait for cleanup before removing it. Removed entries
 appear on Completed as `removed`; directories beneath this queue's `jobs/` with
 no database record appear as `retained`, including partial folders. Discovery does
@@ -832,12 +870,12 @@ selected queue directory, not arbitrary campaign result folders elsewhere.
 `s` starts the queue worker. Only one entry runs at a time, in queue order;
 paused/attention entries are skipped. Entries added while dispatch is running
 are appended and are eligible automatically. `x` stops dispatch and requests a
-cooperative pause of the active entry. `q` detaches the UI; it does not terminate
-the worker. **`Q` pauses and quits**: it requests a safe pause, keeps the waiting
+cooperative pause of the active entry. `d` detaches the UI; it does not terminate
+the worker. **`q` pauses and quits**: it requests a safe pause, keeps the waiting
 status visible while the active operation and cleanup finish, then waits for the
 worker to exit before closing the UI. Background planning/export operations also
 finish before the UI process exits. No resident queue worker remains after a
-successful `Q`; queued work stays on disk for the next `s`. The CLI equivalent is
+successful `q`; queued work stays on disk for the next `s`. The CLI equivalent is
 `python3 scripts/run_queue.py quit`. An active entry with a missing worker is
 reported as unverified cleanup rather than silently treated as a clean shutdown.
 Reopen the interface to reattach. Queues do not start at particular
@@ -908,6 +946,7 @@ python3 scripts/run_queue.py pause <entry-id>
 python3 scripts/run_queue.py move <entry-id> up
 python3 scripts/run_queue.py resume <entry-id>
 python3 scripts/run_queue.py retry <entry-id>
+python3 scripts/run_queue.py requeue <entry-id> --repetitions 5
 python3 scripts/run_queue.py accept <entry-id>
 python3 scripts/run_queue.py mark <completed-entry-id>
 python3 scripts/run_queue.py export
