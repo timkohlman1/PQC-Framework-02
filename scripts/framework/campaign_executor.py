@@ -484,6 +484,7 @@ class CampaignExecutor:
         accept_failed: bool = False,
         retry_failed: bool = False,
         preserve_completed: bool = False,
+        defer_failed: bool = False,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.results_root = Path(results_root)
@@ -501,6 +502,7 @@ class CampaignExecutor:
         self.accept_failed = accept_failed
         self.retry_failed = retry_failed
         self.preserve_completed = preserve_completed
+        self.defer_failed = defer_failed
         self._retained_firmware: set[tuple[str, str]] = set()
 
     def _checkpoint(self):
@@ -994,8 +996,8 @@ class CampaignExecutor:
     ) -> bool:
         """Skip hardware work only when every saved repetition still validates."""
         slots = {(r["case_id"], r["repetition_index"]): r for r in state.get("runs", [])}
-        if not self.retry_failed and all(slots.get((case["id"], rep), {}).get("accepted_failure")
-               and slots[(case["id"], rep)].get("state") in {"failed", "blocked"}
+        if not self.retry_failed and all((self.defer_failed or slots.get((case["id"], rep), {}).get("accepted_failure"))
+               and slots.get((case["id"], rep), {}).get("state") in {"failed", "blocked"}
                for case in group["cases"] for rep in range(1, repetitions + 1)):
             return all(self._resume_completed(state=state, campaign_id=campaign_id,
                 case=case, cid=condition_identity(case), repetition=rep,
@@ -1249,7 +1251,8 @@ class CampaignExecutor:
             raise RepetitionError(str(exc), manifest=None, return_code=0, log=log_path) from exc
         failure = None
         if rc != 0:
-            failure = f"repetition failed for {case['id']} #{repetition}; see {log_path}"
+            from framework.failure_details import run_failure
+            failure = run_failure(produced_manifest, rc)
         elif produced_manifest is None:
             failure = f"repetition produced no run manifest; see {log_path}"
         else:
@@ -1261,7 +1264,8 @@ class CampaignExecutor:
             except CampaignError:
                 valid = False
             if not valid:
-                failure = f"repetition evidence validation failed: {produced_manifest}"
+                from framework.failure_details import run_failure
+                failure = "Evidence validation rejected the run: " + run_failure(produced_manifest, rc)
         if failure:
             raise RepetitionError(failure, manifest=produced_manifest, return_code=rc, log=log_path)
         return produced_manifest
@@ -1318,8 +1322,8 @@ class CampaignExecutor:
             ),
             None,
         )
-        if isinstance(record, dict) and record.get("state") in {"failed", "blocked"} and record.get("accepted_failure") and not self.retry_failed:
-            if record["accepted_failure"].get("decision") == "policy_record_valid_failure":
+        if isinstance(record, dict) and record.get("state") in {"failed", "blocked"} and (record.get("accepted_failure") or self.defer_failed) and not self.retry_failed:
+            if record.get("accepted_failure", {}).get("decision") == "policy_record_valid_failure":
                 from framework.trial_outcome import verified_failure
                 if not verified_failure(Path(record["manifest"]), campaign_id=campaign_id,
                         case_id=str(case["id"]), condition_identity=cid, repetition_index=repetition,

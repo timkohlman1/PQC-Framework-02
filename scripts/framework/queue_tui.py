@@ -5,6 +5,7 @@ import curses
 import re
 import sys
 import time
+import textwrap
 from datetime import datetime
 
 from framework.run_queue import DONE, HISTORY, framework_version, log_tail
@@ -185,7 +186,7 @@ class Terminal:
     def draw(self):
         self.screen.erase()
         height, width = self.screen.getmaxyx()
-        minimum_height = 28 + max(0, len(self.gateways)-1)
+        minimum_height = 30 + max(0, len(self.gateways)-1)
         if height < minimum_height or width < 120:
             self.put(1, 1, f'PQC Queue — resize terminal to at least 120 × {minimum_height}. d detaches; q pauses/quits.')
             self.screen.refresh()
@@ -212,7 +213,7 @@ class Terminal:
             self.put(6+extra, 2, f"   {'JOB ID':<12}  {'VERSION / DATE':<21} {'RUNS OK/ERROR/TOTAL':>20}   {'REPEATS':>7}  {'FINISHED (LOCAL)':<19}  EXPORTED")
         row_height = 2 if self.tab else 1
         table_start = (7 if self.tab else 6) + extra
-        usable = max(1, (height-19-table_start)//row_height)
+        usable = max(1, (height-21-table_start)//row_height)
         cursor = self.cursor[self.tab]
         offset = max(0, cursor-usable+1)
         for i, row in enumerate(self.rows[offset:offset+usable], start=offset):
@@ -238,21 +239,23 @@ class Terminal:
         if not self.rows:
             message = 'No profiles. Press n to create a blank profile or use a template.' if self.tab == 0 else 'No entries. Enqueue profiles from the Profiles tab.'
             self.put(table_start, 4, message, self.ink(3))
-        y = height-19
+        y = height-21
         if self.rows and cursor >= 0:
             row = self.rows[cursor]
             if self.tab == 0:
                 self.put(y, 2, row.get('error') or f"{row['profile']} · {row.get('workload')} · reps per case; template: {row.get('template') or 'Blank'}")
                 self.put(y+1, 2, f'Filter: {self.filter or "all profiles"} · {len(self.picked)} selected')
             else:
-                self.put(y, 2, row['detail'] or f"{row['conditions']} cases × {row['repetitions']} reps per case = {row['attempts']} total runs")
+                detail = row['detail'] or f"{row['conditions']} cases × {row['repetitions']} reps per case = {row['attempts']} total runs"
+                for i, line in enumerate(textwrap.wrap(visible(detail), width-4, max_lines=3, placeholder=' …')):
+                    self.put(y+i, 2, line)
                 stats = f"Runs OK {row['success']} / Errors {row['errors']} / Total {row['attempts']} / Repeats {row['repeats']}" if row['progress_available'] else 'Progress unavailable: inspect campaign evidence'
-                self.put(y+1, 2, f"{row['id']}  {row['profile']} · {stats}")
-        self.put(y+2, 2, '─ Log ' + '─' * (width-10), self.ink(1))
+                self.put(y+3, 2, f"{row['id']}  {row['profile']} · {stats}")
+        self.put(y+4, 2, '─ Log ' + '─' * (width-10), self.ink(1))
         if self.rows and cursor >= 0 and self.tab != 0:
             for i, line in enumerate(log_tail(self.queue, self.rows[cursor]['id'], 8)):
-                self.put(y+3+i, 2, line)
-        self.put(y+11, 2, '─' * (width-4), self.ink(1))
+                self.put(y+5+i, 2, line)
+        self.put(y+13, 2, '─' * (width-4), self.ink(1))
         message = 'Pausing and quitting: waiting for the current operation, cleanup and worker exit…' if self.shutdown_future is not None else self.message
         self.put(height-6, 2, message, self.ink(3))
         hints = ('Space select  n new profile  v view  e edit  D delete profile  / filter  R refresh' if self.tab == 0 else

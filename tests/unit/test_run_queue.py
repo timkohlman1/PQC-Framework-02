@@ -72,8 +72,9 @@ def test_failure_requires_explicit_decision_and_keeps_evidence(queue):
     path = verdict(queue, identifier, state='paused', failures=1)
     before = path.read_bytes()
     queue.finish(identifier, 'attention', 'failed')
-    with pytest.raises(ValueError, match='retry or accept'):
-        queue.decide(identifier, 'resume')
+    queue.decide(identifier, 'resume')
+    assert path.read_bytes() == before
+    queue.finish(identifier, 'attention', 'failed')
     queue.decide(identifier, 'accept')
     assert queue.job(identifier)['mode'] == 'accept'
     assert path.read_bytes() == before
@@ -471,3 +472,39 @@ def test_display_uses_frozen_profile_name_and_template(queue):
     plan['steps'][0]['template'] = None
     (queue.folder(identifier) / 'plan.json').write_text(json.dumps(plan))
     assert queue.display_jobs()[0]['template'] is None
+
+
+def test_overnight_finishes_failures_for_review_then_dispatches_next(queue):
+    first, second = queue.add(['one', 'two'])
+    activate(queue)
+    def runner(command, log):
+        if 'campaign-gateway' in command:
+            assert '--stop-on-error' not in command
+            assert '--defer-failed' in command
+            path = verdict(queue, first, state='completed_with_failures', failures=1)
+            value = json.loads(path.read_text())
+            value['runs'][0]['failure'] = {'message': 'energy capture: sample gap'}
+            value.pop('final_index')
+            value['final_index'] = {'status': 'finalized', 'sha256': canonical_sha256(value)}
+            path.write_text(json.dumps(value))
+            return 1
+        return 0
+    queue.run_job(queue.claim(), runner)
+    row = queue.job(first)
+    assert row['status'] == 'attention'
+    assert 'All planned slots processed' in row['detail']
+    assert 'sample gap' in row['detail']
+    assert queue.claim()['id'] == second
+    assert not json.loads(queue.manifest(first).read_text())['runs'][0].get('accepted_failure')
+
+
+def test_failure_explanation_prefers_cleanup_and_includes_runtime_reason(tmp_path):
+    from framework.failure_details import run_failure, campaign_failure
+    path = tmp_path / 'manifest.json'
+    path.write_text(json.dumps({'run': {'failure_stage': 'energy_capture'},
+        'energy_capture': {'failure_reasons': ['sample gap counter incremented']}}))
+    reason = run_failure(path, 12)
+    assert 'energy capture' in reason and 'sample gap counter incremented' in reason
+    assert 'missing or unreadable' in run_failure(None, 12)
+    assert campaign_failure({'cleanup': {'errors': ['condition removal failed']},
+        'failure': {'message': 'less relevant'}}) == 'Cleanup failed: condition removal failed'

@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pause-file", type=Path, help="cooperative pause request; operations finish before cleanup")
     parser.add_argument("--stop-on-error", action="store_true", help="pause at the first failed attempt/setup")
     parser.add_argument("--preserve-completed", action="store_true", help="validate completed slots against their original preparations when resume rebuilds an image")
+    parser.add_argument("--defer-failed", action="store_true", help="preserve failed/blocked slots on resume for later review, without accepting them; explicit retry overrides this")
     decisions = parser.add_mutually_exclusive_group()
     decisions.add_argument("--accept-failed", action="store_true", help="resume while retaining failed outcomes without repeating them")
     decisions.add_argument("--retry-failed", action="store_true", help="resume including previously accepted failed attempts")
@@ -51,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
             SCRIPT_DIR.parent, results_root=args.results_root, pause_file=args.pause_file,
             stop_on_error=args.stop_on_error, accept_failed=args.accept_failed,
             retry_failed=args.retry_failed, preserve_completed=args.preserve_completed,
+            defer_failed=args.defer_failed,
         )
         manifest = executor.execute(campaign, resume_manifest=args.resume)
     except (CampaignError, ResolutionError) as exc:

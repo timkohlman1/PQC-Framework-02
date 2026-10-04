@@ -760,7 +760,7 @@ Run `python3 scripts/run_queue.py` from the Linux host at the repository root.
 The full-screen interface uses the Python standard library (`curses` and SQLite);
 its resolver, execution and analysis operations use the maintained Docker image
 through `scripts/dev.sh`. It must not be launched inside `dev.sh python`.
-A terminal of at least 120 columns by 28 rows is required (one additional row
+A terminal of at least 120 columns by 30 rows is required (one additional row
 per additional gateway). No new Python package
 or image rebuild is needed when the existing development image is current.
 
@@ -870,11 +870,12 @@ works if the local profile has since been edited or deleted. Active entries must
 pause first; unregistered retained folders are not re-queued by this control.
 
 On Queue, `K`/`J` moves waiting entries up/down; `p` pauses the highlighted entry.
-`r` resumes incomplete work with no unresolved failures, `t` retries recorded
+`r` resumes incomplete work while deferring earlier failures for review, `t` retries recorded
 failures plus remaining work, and `f` accepts existing failed/blocked outcomes
 and continues remaining work. Acceptance never turns a failed measurement into
-a success. Runtime failures pause at the first failed attempt; preparation errors
-record a blocked slot, retaining the remaining slots as incomplete. Earlier
+a success. Runtime failures are retained while remaining slots continue; preparation
+errors block unstarted slots in the affected firmware group and allow subsequent
+groups to proceed after cleanup. Earlier
 attempts stay in the campaign history, logs and archive, including attempts that
 never produced a capture. Verified successful captures are reused on resume.
 Previously accepted failures can be explicitly retried from Completed after
@@ -892,8 +893,10 @@ measured failed TLS handshake counts as a failed trial and continues, provided
 its reporting stream, capture, enabled instruments, broker evidence and cleanup
 are intact. Before the device requests a transfer, known host-observer network
 errors on the impaired path are expected; after a request, successful host
-operation is required. Missing tools and unknown observer errors still pause. TLS setup errors without a measured handshake, missing/corrupt
-reports and infrastructure faults still pause. The firmware emits
+operation is required. Missing tools, unknown observer errors, TLS setup errors without a measured
+handshake, missing/corrupt reports and infrastructure faults remain unaccepted
+failures for review. The queue continues remaining slots; direct callers may
+select `--stop-on-error` to pause. The firmware emits
 `PQC_WORKLOAD_OUTCOME` through the independent plaintext reporting broker;
 `trial-outcome.json` retains the classifier checks and is hashed in the capture.
 Campaign slots remain `failed`, with `accepted_failure.decision` set to
@@ -931,6 +934,20 @@ and are retained; source-verification of such exports can no longer read a delet
 job's original files. Other jobs and shared framework state are preserved. Removal
 and purge are recorded in the queue event history. Discovery is limited to the
 selected queue directory, not arbitrary campaign result folders elsewhere.
+
+Queue execution continues after individual runtime/capture failures by default.
+Each planned slot is attempted once; there is no automatic retry-until-success
+loop, including when every trial fails. Preparation/setup failure blocks that
+firmware group's remaining slots and proceeds to the next group after cleanup.
+At the end, unaccepted failures leave the entry needing attention for `t` retry
+or `f` accept; the next queued entry starts automatically. Acceptance never turns
+failed captures into valid data. `r` resume runs unfinished slots without repeating
+or accepting earlier failures; `t` explicitly retries failures and keeps history.
+The selected entry shows the latest failure reason while running and the cause
+of an error stop, including capture stage/rejection reasons when recorded.
+Condition verification and unsafe cleanup still stop the affected campaign;
+unverified cleanup or process completion halts dispatch. Source drift prevents
+hardware dispatch for that entry; it does not block other eligible entries.
 
 `s` starts the queue worker. Only one entry runs at a time, in queue order;
 paused/attention entries are skipped. Entries added while dispatch is running
@@ -1026,7 +1043,7 @@ python3 scripts/run_queue.py purge <retained-entry-id> --confirm <retained-entry
 Entry IDs come from `list` or the UI. For logs, open
 `results/queue/jobs/<entry-id>/logs/dispatch-*.log`; worker diagnostics are in
 `results/queue/worker.log`. The underlying campaign CLI additionally accepts
-`--pause-file`, `--stop-on-error`, `--preserve-completed`, and resume-only `--accept-failed` or
+`--pause-file`, `--stop-on-error`, `--preserve-completed`, `--defer-failed`, and resume-only `--accept-failed` or
 `--retry-failed`. Exit code 75 denotes a cooperative pause after cleanup; it is
 not a completed campaign verdict. Existing campaign invocations retain their
 continue-after-failure behavior unless `--stop-on-error` is selected.

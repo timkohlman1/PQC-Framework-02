@@ -58,7 +58,7 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     monkeypatch.setattr(queue_tui.curses, 'has_colors', lambda: False)
     class Screen:
         def erase(self): pass
-        def getmaxyx(self): return (30, 140)
+        def getmaxyx(self): return (32, 140)
         def refresh(self): pass
     terminal = queue_tui.Terminal.__new__(queue_tui.Terminal)
     terminal.screen = Screen()
@@ -72,7 +72,7 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     terminal.cursor = [0, 0, 0]
     row = dict(id='abcdef123456', profile='example.yaml', selected=False, success=5,
                errors=1, repeats=2, attempts=10, progress_available=True, status='running',
-               version='abcdef0*', version_date='2026-10-01', detail='', conditions=1, repetitions=10, completed_at=1700000000, exported=True)
+               version='abcdef0*', version_date='2026-10-01', detail='Energy capture rejected: sample gap counter incremented. ' * 6, conditions=1, repetitions=10, completed_at=1700000000, exported=True)
     terminal.jobs = terminal.rows = [row]
     monkeypatch.setattr(queue_tui, 'log_tail', lambda *args: [f'log {i}' for i in range(8)])
     lines = {}
@@ -93,9 +93,11 @@ def test_terminal_queue_and_completed_rows(monkeypatch):
     assert 'abcdef123456' in lines[9, 2]
     assert '2026-10-01' in lines[9, 2]
     assert 'abcdef0*' in lines[0, 2] and 'abcdef0*' in lines[9, 2]
-    assert lines[13, 2].startswith('─ Log')
-    assert [lines[y, 2] for y in range(14, 22)] == [f'log {i}' for i in range(8)]
-    assert lines[22, 2].startswith('──')
+    assert 'Energy capture rejected' in lines[11, 2]
+    assert len(lines[12, 2]) > 0 and len(lines[13, 2]) > 0
+    assert lines[15, 2].startswith('─ Log')
+    assert [lines[y, 2] for y in range(16, 24)] == [f'log {i}' for i in range(8)]
+    assert lines[24, 2].startswith('──')
 
 
 @pytest.mark.parametrize('key', [9, ord('2'), ord('3')])
@@ -129,7 +131,7 @@ def test_profiles_headings_and_hints_are_consistent(monkeypatch):
     from framework import queue_tui
     monkeypatch.setattr(queue_tui.curses, 'has_colors', lambda: False)
     terminal = queue_tui.Terminal.__new__(queue_tui.Terminal)
-    terminal.screen = SimpleNamespace(erase=lambda: None, getmaxyx=lambda: (28, 120), refresh=lambda: None)
+    terminal.screen = SimpleNamespace(erase=lambda: None, getmaxyx=lambda: (30, 120), refresh=lambda: None)
     terminal.queue = SimpleNamespace(dispatch=lambda: 'stopped')
     terminal.gateways = []
     terminal.gateway_error = ''
@@ -148,5 +150,5 @@ def test_profiles_headings_and_hints_are_consistent(monkeypatch):
     terminal.draw()
     assert lines[5, 2].split() == ['PROFILE', 'NAME', 'TEMPLATE', 'REPS', 'CASES', 'TOTAL', 'RUNS']
     assert lines[6, 2].split()[1:] == ['my_auth', 'thesis_authentication.yaml', '10', '8', '80']
-    assert 'D delete profile' in lines[24, 2] and 'a add' not in lines[24, 2]
+    assert 'D delete profile' in lines[26, 2] and 'a add' not in lines[26, 2]
     assert all('ATTEMPTS' not in text for text in lines.values())

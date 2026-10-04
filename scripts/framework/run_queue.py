@@ -17,6 +17,8 @@ import sys
 import time
 import uuid
 
+from framework.failure_details import campaign_failure
+
 ROOT = Path(__file__).resolve().parents[2]
 DONE = {'completed', 'completed_with_failures'}
 ACTIVE = {'running', 'pausing'}
@@ -208,6 +210,8 @@ class Queue:
                         row['exported'] = (row['id'], digest(manifest)) in exports
                     if row['status'] in DONE and digest(manifest) != row['manifest_sha']:
                         row['exported'] = False
+                    if row['status'] in ACTIVE and (reason := campaign_failure(data)):
+                        row['detail'] = 'Continuing; failure retained for review: ' + reason
                     row['success'] = sum(r.get('state') == 'completed' for r in runs)
                     row['errors'] = sum(r.get('state') in {'failed', 'blocked'} for r in runs)
                     row['repeats'] = sum(len(r.get('previous_attempts', [])) for r in runs)
@@ -371,8 +375,6 @@ class Queue:
                 raise ValueError('retained campaign manifest changed; inspect the evidence before recovery')
             data = read(manifest) if manifest else {}
             failures = [r for r in data.get('runs', []) if r.get('state') in {'failed', 'blocked'}]
-            if action == 'resume' and any(not r.get('accepted_failure') for r in failures):
-                raise ValueError('unresolved failures: choose retry or accept')
             if row['status'] in DONE and (action != 'retry' or not failures):
                 raise ValueError('finished entries can only retry recorded failures')
             if action == 'accept' and not failures:
@@ -517,7 +519,9 @@ class Queue:
         try:
             rc = runner(self.helper('check', '--job', self.relative(folder)), log)
             if rc:
-                self.finish(identifier, 'attention', 'Plan/source validation failed; inspect ' + self.relative(log))
+                explanation = next((line.removeprefix('queue-workspace: ') for line in reversed(log_tail(self, identifier, 30))
+                                    if line.startswith('queue-workspace: ')), 'No diagnostic returned')
+                self.finish(identifier, 'attention', 'Plan/source validation failed: ' + explanation + '; log: ' + self.relative(log))
                 return
             if (folder / 'pause.request').exists():
                 self.finish(identifier, 'paused', 'Paused before hardware dispatch')
@@ -527,7 +531,7 @@ class Queue:
                 self.finish(identifier, 'attention', 'Retained campaign manifest changed before dispatch; inspect the evidence.')
                 return
             command = [str(self.root / 'scripts/dev.sh'), 'campaign-gateway',
-                       '--pause-file', self.container(folder / 'pause.request'), '--stop-on-error', '--preserve-completed']
+                       '--pause-file', self.container(folder / 'pause.request'), '--defer-failed', '--preserve-completed']
             if manifest:
                 command += ['--resume', self.container(manifest)]
                 if row['mode'] == 'accept':
@@ -542,11 +546,13 @@ class Queue:
             data = read(manifest) if manifest else {}
             safe = data.get('cleanup', {}).get('status') == 'passed' and rc in {0, 1, 75}
             status = data.get('state')
+            reason = campaign_failure(data)
             if not safe:
-                self.finish(identifier, 'attention', 'Command/cleanup could not be verified; inspect ' + self.relative(log), safe=False)
+                self.finish(identifier, 'attention', 'Dispatch halted: ' + (reason or f'command exit {rc}; cleanup not verified') + '; log: ' + self.relative(log), safe=False)
             elif status == 'paused':
                 self.finish(identifier, 'attention' if data.get('pause', {}).get('reason') == 'error' else 'paused',
-                            'Stopped at a safe breakpoint; evidence retained.')
+                            ('Paused on error: ' + (reason or 'reason unavailable; inspect ' + self.relative(log)))
+                            if data.get('pause', {}).get('reason') == 'error' else 'Paused by request after cleanup; resume continues unfinished runs.')
             elif status in DONE:
                 from collect_thesis_evidence import campaign_verdict
                 verdict, verified, _ = campaign_verdict(manifest, rc, row['attempts'])
@@ -556,9 +562,9 @@ class Queue:
                     self.finish(identifier, 'attention', 'Campaign verdict/count validation failed', safe=False)
                 else:
                     self.finish(identifier, 'attention' if unresolved else verdict,
-                                'Choose retry or accept for retained failures.' if unresolved else 'Evidence finalized.')
+                                ('All planned slots processed; review failures with t retry / f accept. Latest: ' + reason) if unresolved else 'Evidence finalized.')
             else:
-                self.finish(identifier, 'attention', 'Incomplete campaign; inspect retained logs before resuming.')
+                self.finish(identifier, 'attention', 'Campaign stopped: ' + (reason or f'command exit {rc}; incomplete campaign; inspect ' + self.relative(log)) + '. Resume unfinished runs after resolving the cause.')
         except Exception as exc:
             # Unexpected failures cannot establish that a launched hardware command cleaned up.
             self.finish(identifier, 'attention', str(exc), safe=False)

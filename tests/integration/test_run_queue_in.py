@@ -23,7 +23,7 @@ def test_worker_observes_cross_process_pause_and_starts_next_unpaused_entry(tmp_
     (scripts / 'framework').mkdir(parents=True)
     for name in ('run_queue.py', 'collect_thesis_evidence.py'):
         shutil.copy2(ROOT / 'scripts' / name, scripts / name)
-    for name in ('run_queue.py', 'run_console.py', 'progress.py'):
+    for name in ('run_queue.py', 'run_console.py', 'progress.py', 'failure_details.py'):
         shutil.copy2(ROOT / 'scripts/framework' / name, scripts / 'framework' / name)
     # The shim owns no hardware; it simulates a completed command with a sealed verdict.
     shim = scripts / 'dev.sh'
@@ -204,6 +204,7 @@ def test_remove_discover_and_purge_through_separate_cli_processes(tmp_path):
     (scripts / 'framework').mkdir(parents=True)
     shutil.copy2(ROOT / 'scripts/run_queue.py', scripts / 'run_queue.py')
     shutil.copy2(ROOT / 'scripts/framework/run_queue.py', scripts / 'framework/run_queue.py')
+    shutil.copy2(ROOT / 'scripts/framework/failure_details.py', scripts / 'framework/failure_details.py')
     queue = Queue(tmp_path)
     identifier = 'c' * 12
     folder = queue.folder(identifier)

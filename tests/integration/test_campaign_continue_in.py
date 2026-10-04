@@ -328,3 +328,32 @@ def test_stop_on_error_records_only_verified_negative_trials(campaign, tmp_path,
     if valid:
         executor.execute(source, resume_manifest=path)
         assert len(attempts) == 4, 'accepted negative trials must not be repeated implicitly'
+
+
+def test_overnight_pause_resume_defers_failure_without_accepting_then_explicit_retry(campaign, tmp_path):
+    from framework.campaign_executor import RepetitionError
+    executor, cases, _ = campaign
+    executor.defer_failed = True
+    pause = tmp_path / 'pause.request'
+    executor.pause_file = pause
+    calls = []
+    def fail(**kwargs):
+        calls.append((kwargs['case']['id'], kwargs['repetition']))
+        if len(calls) == 1:
+            pause.touch()
+        raise RepetitionError('capture rejected: intermittent sample gap', manifest=None,
+                              return_code=12, log=tmp_path / 'runtime.log')
+    executor._run_repetition = fail
+    path = executor.execute('tls_matrix_energy')
+    assert json.loads(path.read_text())['state'] == 'paused'
+    pause.unlink()
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    data = json.loads(path.read_text())
+    assert len(calls) == 4
+    assert data['summary']['failed'] == 4
+    assert data['state'] == 'completed_with_failures'
+    assert all(not r.get('accepted_failure') and not r.get('previous_attempts') for r in data['runs'])
+    executor.retry_failed = True
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    assert len(calls) == 8
+    assert all(len(r['previous_attempts']) == 1 for r in json.loads(path.read_text())['runs'])
