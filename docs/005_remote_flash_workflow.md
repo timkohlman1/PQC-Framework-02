@@ -880,6 +880,41 @@ never produced a capture. Verified successful captures are reused on resume.
 Previously accepted failures can be explicitly retried from Completed after
 unmarking the entry.
 
+For loss sweeps, the editor's **Execution → Energy monitoring** can be `off`
+(`execution.energy_monitoring: 'off'` in YAML). The default `auto` retains the
+collector's existing instrumentation policy; clearing the instrument selector
+alone does not disable automatic instrumentation.
+
+**Execution → Valid workload failures** selects `pause` (default) or `record`.
+`execution.workload_failures: record` uses a fixed number of trials per case.
+For Ready Metrics 2, a reported network timeout, network connection failure or
+measured failed TLS handshake counts as a failed trial and continues, provided
+its reporting stream, capture, enabled instruments, broker evidence and cleanup
+are intact. Before the device requests a transfer, known host-observer network
+errors on the impaired path are expected; after a request, successful host
+operation is required. Missing tools and unknown observer errors still pause. TLS setup errors without a measured handshake, missing/corrupt
+reports and infrastructure faults still pause. The firmware emits
+`PQC_WORKLOAD_OUTCOME` through the independent plaintext reporting broker;
+`trial-outcome.json` retains the classifier checks and is hashed in the capture.
+Campaign slots remain `failed`, with `accepted_failure.decision` set to
+`policy_record_valid_failure`; they are never relabelled successful. The CSV
+retains failed rows, the acceptance decision and
+`recorded__PQC_WORKLOAD_OUTCOME__return_code`. Unmeasured timings stay null.
+A missing/null build reference leaves unverifiable static resource metrics
+unavailable; it does not prevent exporting the recorded trial outcome.
+
+Use the requested repetition count as the denominator, including valid failures.
+Report the success/failure fraction separately from timings among successes;
+at 100% failure, successful-transfer timing is unavailable. Do not retry until
+N successes: that conditions the sample on success and can run indefinitely.
+Use explicit retry only after investigating an invalid capture/infrastructure
+fault; retain all previous attempts, and decide a retry limit before collection.
+
+Profile edits affect newly enqueued entries only. Enqueue the edited profile
+with `a` to use its new policy. `N` re-queues the old frozen definition, including
+its original energy settings. Existing captures without the outcome marker are
+not automatically reclassified; manual acceptance remains available.
+
 **Delete** removes a waiting Queue entry from scheduling while preserving its job folder.
 Pause an active entry and wait for cleanup before removing it. Removed entries
 appear on Completed as `removed`; directories beneath this queue's `jobs/` with

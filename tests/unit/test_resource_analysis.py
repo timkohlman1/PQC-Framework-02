@@ -234,3 +234,17 @@ def test_task_stack_completion_checkpoint_retains_allocation_and_use(tmp_path):
     assert rows['task_stack_minimum_free_bytes']['value_bytes']==2048
     assert all(r['stage']=='network_task_complete' and r['source_records']==[{'line':1}] for r in rows.values())
     assert rows['task_stack_total_bytes']['accounting']=='allocated_task_stack_within_heap'
+
+
+@pytest.mark.parametrize('reference', [None, [], 'unavailable'])
+def test_missing_build_link_keeps_runtime_observations_exportable(tmp_path, reference):
+    _, runs = fixture(tmp_path, count=1, signed=True)
+    path = runs[0]/'run-provenance.json'
+    data = json.loads(path.read_text()); data['records']['build_reference'] = reference
+    path.write_text(json.dumps(data)); reseal(runs[0])
+    output = tmp_path/'nullable-reference'
+    export_dataset(run_dirs=runs, output=output)
+    result = extract_resources(load_dataset(output))
+    assert all(row['value_bytes'] is None for row in result['builds'][0]['resources'])
+    assert any(row['metric']=='freertos_heap_peak_used_bytes' and row['value_bytes']==40
+               for row in result['runtime'])

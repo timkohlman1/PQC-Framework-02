@@ -110,6 +110,8 @@ class ExecutionPolicy:
     reporting_broker: str
     condition: str
     evidence: str
+    energy_monitoring: str = "auto"
+    workload_failures: str = "pause"
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "ExecutionPolicy":
@@ -130,6 +132,8 @@ class ExecutionPolicy:
             reporting_broker=str(value.get("reporting_broker", "")),
             condition=str(value.get("condition", "")),
             evidence=str(value.get("evidence", "")),
+            energy_monitoring=str(value.get("energy_monitoring", "auto")),
+            workload_failures=str(value.get("workload_failures", "pause")),
         )
         expected = {
             "build": "once_per_firmware_identity",
@@ -145,6 +149,10 @@ class ExecutionPolicy:
                 raise CampaignError(f"execution.{field} must be '{wanted}', got {actual!r}")
         if policy.reset_between_runs not in {"hardware_reset", "none"}:
             raise CampaignError("execution.reset_between_runs must be 'hardware_reset' or 'none'")
+        if policy.energy_monitoring not in {"auto", "off"}:
+            raise CampaignError("execution.energy_monitoring must be auto or off")
+        if policy.workload_failures not in {"pause", "record"}:
+            raise CampaignError("execution.workload_failures must be pause or record")
         return policy
 
     def as_dict(self) -> dict[str, Any]:
@@ -157,6 +165,8 @@ class ExecutionPolicy:
             "reporting_broker": self.reporting_broker,
             "condition": self.condition,
             "evidence": self.evidence,
+            **({"energy_monitoring": self.energy_monitoring} if self.energy_monitoring != "auto" else {}),
+            **({"workload_failures": self.workload_failures} if self.workload_failures != "pause" else {}),
         }
 
 
@@ -725,16 +735,38 @@ class CampaignExecutor:
                                         ),
                                     )
                                 except RepetitionError as exc:
+                                    accepted = None
+                                    if policy.workload_failures == "record":
+                                        from framework.trial_outcome import verified_failure
+                                        accepted = verified_failure(
+                                            exc.manifest, campaign_id=str(campaign_data["id"]),
+                                            case_id=case["id"], condition_identity=cid,
+                                            repetition_index=repetition, firmware_sha256=firmware_sha256,
+                                        )
+                                    if accepted and active_condition is not None:
+                                        observed_after = verify_gateway_network_degradation(
+                                            degradation=active_condition, repo_root=self.repo_root)
+                                        after_packets = gateway_impairment_packet_counts(observed_after.stdout)
+                                        with active_condition.log_path.open("a", encoding="utf-8") as evidence:
+                                            evidence.write(f"\nNegative trial {repetition} packet counters: before={before_packets}, after={after_packets}\n")
+                                        # At 100% loss, delivered-packet counters need not advance.
+                                        # Effective controls must still match, and counters cannot reset.
+                                        if (observed_after.return_code != 0 or after_packets is None
+                                                or any(a < b for a, b in zip(after_packets, before_packets))):
+                                            accepted = None
                                     self._record_run(
                                         state=state, case=case, cid=cid, repetition=repetition,
                                         run_manifest=exc.manifest, firmware_sha256=firmware_sha256,
                                         failure={"message": str(exc), "return_code": exc.return_code,
                                                  "log": str(exc.log)},
                                     )
+                                    if accepted:
+                                        record = next(r for r in state["runs"] if r["case_id"] == case["id"] and r["repetition_index"] == repetition)
+                                        record["accepted_failure"] = {**accepted, "at": _now()}
                                     _write_json_atomic(manifest_path, state)
-                                    self._diagnostic(campaign_root, f"Campaign repetition failed; {'pausing' if self.stop_on_error else 'continuing'}: {exc}")
+                                    self._diagnostic(campaign_root, f"Campaign repetition failed; {'pausing' if self.stop_on_error and not accepted else 'continuing'}: {exc}")
                                     self._case_finished(case, repetition, "Failed", exc.manifest)
-                                    if self.stop_on_error:
+                                    if self.stop_on_error and not accepted:
                                         raise CampaignPaused("error")
                                     continue
                                 if active_condition is not None:
@@ -965,7 +997,10 @@ class CampaignExecutor:
         if not self.retry_failed and all(slots.get((case["id"], rep), {}).get("accepted_failure")
                and slots[(case["id"], rep)].get("state") in {"failed", "blocked"}
                for case in group["cases"] for rep in range(1, repetitions + 1)):
-            return True
+            return all(self._resume_completed(state=state, campaign_id=campaign_id,
+                case=case, cid=condition_identity(case), repetition=rep,
+                firmware_sha256=slots[(case["id"], rep)]["firmware_sha256"])
+                for case in group["cases"] for rep in range(1, repetitions + 1))
         recorded = state["firmware_groups"][group_index - 1].get("preparation_manifest")
         if not recorded:
             return False
@@ -1284,6 +1319,12 @@ class CampaignExecutor:
             None,
         )
         if isinstance(record, dict) and record.get("state") in {"failed", "blocked"} and record.get("accepted_failure") and not self.retry_failed:
+            if record["accepted_failure"].get("decision") == "policy_record_valid_failure":
+                from framework.trial_outcome import verified_failure
+                if not verified_failure(Path(record["manifest"]), campaign_id=campaign_id,
+                        case_id=str(case["id"]), condition_identity=cid, repetition_index=repetition,
+                        firmware_sha256=record["firmware_sha256"]):
+                    raise CampaignError("recorded negative trial evidence changed; review before resuming")
             return True
         if not isinstance(record, dict) or record.get("state") != "completed":
             return False

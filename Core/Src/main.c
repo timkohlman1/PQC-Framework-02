@@ -2471,9 +2471,14 @@ static int APP_RunReadyMetricsWorkload(void (*mark_complete)(void))
   return PQC_WolfMQTT_RunReadyMetricsApplication(mark_complete);
 }
 
+static bool app_rm2_workload_ran = false;
+static int app_rm2_workload_result = 0;
+
 static int APP_RunReadyMetrics2Workload(void (*mark_complete)(void))
 {
-  return PQC_WolfMQTT_RunReadyMetrics2Application(mark_complete);
+  app_rm2_workload_ran = true;
+  app_rm2_workload_result = PQC_WolfMQTT_RunReadyMetrics2Application(mark_complete);
+  return app_rm2_workload_result;
 }
 
 static int APP_RunTLSHandshakeRepeatWorkload(uint32_t handshakes_per_run)
@@ -2904,6 +2909,21 @@ void StartNetworkTask(void *argument)
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryAppend(0U);
 #endif
+  if (app_rm2_workload_ran)
+  {
+    const PQC_WolfMQTTReadyMetrics2Snapshot *metrics = PQC_WolfMQTT_ReadyMetrics2Snapshot();
+    char outcome[256];
+    /* Emit after the measurement boundary, including failures. Reporting uses
+     * its independent plaintext connection regardless of the workload result. */
+    (void)snprintf(outcome, sizeof(outcome),
+        "PQC_WORKLOAD_OUTCOME schema=1 application=mqtt_ready_metrics_2 "
+        "status=%s return_code=%d connection_attempted=%u transfer_complete=%u application_requested=%u",
+        app_rm2_workload_result == 0 ? "success" : "failed", app_rm2_workload_result,
+        metrics != NULL && metrics->tcp_connect_start_us != 0U ? 1U : 0U,
+        metrics != NULL && metrics->transfer_complete_valid != 0U ? 1U : 0U,
+        metrics != NULL && metrics->application_request_us != 0U ? 1U : 0U);
+    (void)PQC_ResultBufferAppendText(0U, "workload_outcome", outcome);
+  }
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);

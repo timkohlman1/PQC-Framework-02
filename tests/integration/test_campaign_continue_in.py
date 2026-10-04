@@ -13,6 +13,7 @@ from framework.config_resolver import ConfigResolver
 import run_campaign
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 pytestmark = pytest.mark.integration
 
 
@@ -293,3 +294,37 @@ def test_accepted_setup_failure_can_finish_without_repeating_preparation(campaig
     assert retried['runs'][0]['state'] == 'blocked'
     assert 'accepted_failure' not in retried['runs'][0]
     assert retried['runs'][0]['previous_attempts'][-1]['accepted_failure']['decision'] == 'operator_accept'
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_stop_on_error_records_only_verified_negative_trials(campaign, tmp_path, valid):
+    from trial_outcome_support import negative_run
+    executor, cases, _ = campaign
+    executor.stop_on_error = True
+    source, data = executor.resolver.load_campaign('tls_matrix_energy')
+    data['execution']['workload_failures'] = 'record'
+    attempts = []
+    def runner(command, cwd):
+        def arg(name): return command[command.index(name) + 1]
+        binding = {'campaign_id': arg('--campaign-id'), 'case_id': arg('--campaign-case-id'),
+                   'condition_identity': arg('--campaign-condition-identity'),
+                   'repetition_index': int(arg('--campaign-repetition-index')), 'firmware_sha256':'firmware-sha'}
+        directory = Path(arg('--results-dir')) / f'negative-{len(attempts)}'
+        path = negative_run(directory, binding)
+        if not valid:
+            (directory / 'mqtt-reporting-raw.ndjson').write_text('damaged capture')
+        attempts.append(path)
+        # Exercise the real process/manifest boundary; classifier remains unmocked.
+        return subprocess.run([sys.executable, '-c', 'import sys; print("negative trial"); sys.exit(12)'],
+                              cwd=cwd, text=True, capture_output=True)
+    executor.runner = runner
+    path = executor.execute(source)
+    state = json.loads(path.read_text())
+    assert len(attempts) == (4 if valid else 1)
+    assert state['state'] == ('completed_with_failures' if valid else 'paused')
+    assert state['summary']['completed'] == 0
+    assert all(bool(r.get('accepted_failure')) == valid for r in state['runs'])
+    assert state['cleanup']['status'] == 'passed'
+    if valid:
+        executor.execute(source, resume_manifest=path)
+        assert len(attempts) == 4, 'accepted negative trials must not be repeated implicitly'

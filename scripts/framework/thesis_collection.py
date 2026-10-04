@@ -97,6 +97,12 @@ def annotations(value):
 
 def instrument_campaign(resolver, data):
     """Apply the thesis collector energy policy to a copied campaign."""
+    mode = data.get('execution', {}).get('energy_monitoring', 'auto')
+    if mode not in {'auto', 'off'}:
+        raise ValueError('execution.energy_monitoring must be auto or off')
+    if mode == 'off':
+        data.setdefault('instruments', {}).pop('energy', None)
+        return False
     workload = resolver.load_profile('workload', data['workload']).data
     energy_supported = (workload.get('firmware_application') in {
         'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',

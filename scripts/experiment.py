@@ -1717,6 +1717,17 @@ def _execute_mqtt_e2e_uart_capture(
     broker_log_since = datetime.now(timezone.utc).isoformat()
     if manage_broker_lifecycle:
         broker_started, broker_failure_stage = _start_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)
+    elif not manage_network_condition and campaign_condition_log is not None:
+        # The campaign established readiness before applying loss and verifies
+        # the retained broker interface before/after every trial. A second data-
+        # plane probe here would reject the impairment we are trying to measure.
+        broker_started = True
+        broker_failure_stage = "none"
+        update_manifest(result_dir / "manifest.json", {"mqtt_broker": {
+            "managed_by_experiment": False, "campaign_reused": True,
+            "readiness_policy": "campaign_validated_before_impairment",
+            "readiness_passed": None, "failure_stage": "none",
+        }})
     else:
         readiness = _wait_for_plaintext_mqtt_broker(bundle=bundle, result_dir=result_dir)
         broker_started = readiness.return_code == 0
@@ -1986,12 +1997,13 @@ def _execute_mqtt_e2e_uart_capture(
     publisher_client_id = "pqc-host-e2e-publisher"
     subscriber_client_id = "pqc-host-e2e-subscriber"
     response_file = "/tmp/pqc-mqtt-e2e-response.$$"
+    subscriber_error_file = "/tmp/pqc-mqtt-e2e-subscriber-error.$$"
     uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
 
     subscriber_command = (
         f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} '
         f'-i {shlex.quote(subscriber_client_id)} -v -t {response_topic} '
-        f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" '
+        f'-C {expected_response_count} -W {hard_limit_seconds} >"$response_file" 2>"{subscriber_error_file}" '
         '& subscriber_pid=$!; '
     )
     if tls_handshake_repeat_application or baremetal_benchmark_application:
@@ -2124,6 +2136,7 @@ def _execute_mqtt_e2e_uart_capture(
         + subscriber_cleanup
         + transfer_responder_cleanup
         + 'wait "$subscriber_pid"; subscriber_rc=$?; '
+        + f"printf '\nPQC_MQTT_SUBSCRIBER_ERROR_BEGIN\n' 1>&2; if [ -f \"{subscriber_error_file}\" ]; then cat \"{subscriber_error_file}\" 1>&2; fi; printf 'PQC_MQTT_SUBSCRIBER_ERROR_END\n' 1>&2; "
         + 'wait "$capture_pid"; capture_rc=$?; '
         + f'if [ "$expected_reporting_completions" -eq 1 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
         + f'reporting_completion_count=$(grep -Fc "$reporting_completion_topic" {reporting_stream} 2>/dev/null || true); '
@@ -2144,7 +2157,7 @@ def _execute_mqtt_e2e_uart_capture(
             + common_suffix
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=0 publish_failures=0 last_publish_rc=0 response_count=$response_count expected_response_count={expected_response_count} response_matched=deferred response=$response" 1>&2; '
             + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen reporting_completion_count=$reporting_completion_count expected_reporting_completions=$expected_reporting_completions grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
-            + f'rm -f "$response_file" "$uart_file" "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
+            + f'rm -f "$response_file" "$uart_file" "{subscriber_error_file}" "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
     else:
@@ -2166,7 +2179,7 @@ def _execute_mqtt_e2e_uart_capture(
             + f'echo "{MQTT_E2E_MARKER_PREFIX} subscriber_rc=$subscriber_rc publish_attempts=$attempts publish_failures=$publish_failures last_publish_rc=$publish_rc response_count=$response_count expected_response_count=$expected_count response_matched=$matched response=$response" 1>&2; '
             + 'if [ "$publish_failures" -ne 0 ]; then echo "publisher_output:" 1>&2; cat /tmp/pqc-mqtt-e2e-publisher.$$ 1>&2 2>/dev/null || true; fi; '
             + f'echo "{MQTT_UART_CAPTURE_MARKER_PREFIX} termination_reason=$termination_reason boot_marker_present=$boot_seen reporting_complete_present=$reporting_complete_seen reporting_completion_count=$reporting_completion_count expected_reporting_completions=$expected_reporting_completions grace_seconds={completion_grace_seconds} hard_limit_seconds={hard_limit_seconds} raw_capture_rc=$capture_rc" 1>&2; '
-            + 'rm -f "$response_file" "$uart_file" /tmp/pqc-mqtt-e2e-publisher.$$; '
+            + f'rm -f "$response_file" "$uart_file" "{subscriber_error_file}" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
     ssh_command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
@@ -2523,6 +2536,32 @@ def _execute_mqtt_e2e_uart_capture(
             "hard_limit_seconds": duration_seconds,
         }
     })
+    if ready_metrics_2_application:
+        from framework.trial_outcome import classify, observer_checks
+        trial = classify(result_dir / "mqtt-reporting-raw.ndjson", result_dir.name, {
+            "reporting": collector_result.return_code == 0 and collector_result.validation.passed is True,
+            "capture_complete": capture_marker.get("reporting_complete_present") == 1
+                and capture_marker.get("termination_reason") == "reporting_complete",
+            "energy": energy is None or energy_validation.get("passed") is True,
+            "packet_capture": packet_capture_result.return_code == 0,
+            "broker_log": broker_log_rc == 0 and broker_message_evidence.get("available") is True,
+            "broker_integrity": broker_log_integrity.get("passed") is True,
+            "broker_stop": not manage_broker_lifecycle or broker_stop_rc == 0,
+            "condition_cleanup": degradation_cleanup_result is None or degradation_cleanup_result.return_code == 0,
+            **observer_checks(result_dir / "mqtt-reporting-raw.ndjson", result_dir.name, marker, {
+                "subscriber": _extract_marked_text(uart_result.capture.stderr,
+                    "PQC_MQTT_SUBSCRIBER_ERROR_BEGIN", "PQC_MQTT_SUBSCRIBER_ERROR_END"),
+                "responder": _extract_marked_text(uart_result.capture.stderr,
+                    "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN", "PQC_RM2_TRANSFER_RESPONDER_LOG_END"),
+            }),
+        })
+        (result_dir / "trial-outcome.json").write_text(json.dumps(trial, indent=2, sort_keys=True) + "\n")
+        if trial["eligible"]:
+            passed = False
+            failure_stage = "workload_network_failure"
+        update_manifest(result_dir / "manifest.json", {"trial_outcome": trial,
+            "mqtt_e2e": {"failure_stage": failure_stage,
+                         "return_code": 0 if passed else MQTT_E2E_FAILURE_RETURN_CODE}})
     return uart_result, (0 if passed else MQTT_E2E_FAILURE_RETURN_CODE), failure_stage
 
 

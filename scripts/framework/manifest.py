@@ -1040,6 +1040,8 @@ def _sync_legacy_evidence(manifest_path: Path, manifest: dict[str, Any], updates
                 stage=stage, tool=tool, acquisition_result=result,
             )
 
+    if updates.get("trial_outcome"):
+        artifact("trial_outcome", "trial-outcome.json", "trial_classification", "framework.trial_outcome")
     build = updates.get("build")
     firmware = updates.get("firmware")
     if isinstance(build, dict):

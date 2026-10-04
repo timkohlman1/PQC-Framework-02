@@ -43,6 +43,8 @@ def fields(options):
                    'multi', [None, 'disabled', 'minimal', 'full']))
     result.extend([('Execution', 'Repetitions per case', ['execution', 'repetitions'], 'integer', None),
                    ('Execution', 'Reset between runs', ['execution', 'reset_between_runs'], 'single', ['hardware_reset', 'none'])])
+    result.extend([('Execution', 'Energy monitoring', ['execution', 'energy_monitoring'], 'single', ['auto', 'off']),
+                   ('Execution', 'Valid workload failures', ['execution', 'workload_failures'], 'single', ['pause', 'record'])])
     for key, value in {'build': 'once_per_firmware_identity', 'flash': 'once_per_firmware_identity',
                        'experiment_broker': 'reuse_if_compatible', 'reporting_broker': 'always_available',
                        'condition': 'retain_within_condition', 'evidence': 'per_run'}.items():
@@ -56,7 +58,12 @@ def value_for(data, field):
     _, _, path, kind, _ = field
     if kind == 'factor':
         return data.get('matrix', {}).get(path[0], data.get('fixed', {}).get(path[0]))
-    return get(data, path)
+    value = get(data, path)
+    if value is None and path == ['execution', 'energy_monitoring']:
+        return 'auto'
+    if value is None and path == ['execution', 'workload_failures']:
+        return 'pause'
+    return value
 
 
 def apply_value(data, field, value):

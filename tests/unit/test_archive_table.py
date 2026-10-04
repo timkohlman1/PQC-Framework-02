@@ -209,3 +209,13 @@ def test_failed_history_without_capture_is_exported_with_current_acceptance(tmp_
     assert list(data.attempt_failure_accepted) == [False, True]
     assert not data.run_success.any()
     assert set(data.attempt_error) == {'first failure', 'second failure'}
+
+
+def test_negative_trial_exports_error_code_without_success_timings(tmp_path):
+    from trial_outcome_support import negative_run
+    negative_run(tmp_path/'raw'/'negative')
+    out = tmp_path/'flat'; export_archive(results_root=tmp_path/'raw', output=out)
+    row = load_archive(out, verify_sources=True).iloc[0]
+    assert not row['run_success'] and row['capture_valid']
+    assert row['recorded__PQC_WORKLOAD_OUTCOME__return_code'] == -7
+    assert pd.isna(row['timing__ttfb_us'])

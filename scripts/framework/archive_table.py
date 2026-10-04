@@ -25,10 +25,10 @@ from framework.run_evidence import sha256_file
 VERSION = 2
 SPEC = {'conditions': {'archive': {}}, 'baseline': 'archive', 'independent_runs': False}
 RAW_MARKERS = {'PQC_RM2_METRICS', 'PQC_RM2_COMPLETE', 'PQC_TLS_HANDSHAKE_TIMING',
-               'PQC_ENERGY_BOUNDARY'}
+               'PQC_ENERGY_BOUNDARY', 'PQC_WORKLOAD_OUTCOME'}
 BASE = {k:v for k,v in RUN_COLUMNS.items() if v != 'json'}
 BASE.update(dict.fromkeys(('row_kind', 'campaign_execution_id', 'campaign_manifest_path',
-    'campaign_manifest_sha256', 'campaign_state', 'attempt_state', 'attempt_error',
+    'campaign_manifest_sha256', 'campaign_state', 'attempt_state', 'attempt_error', 'attempt_failure_decision',
     'git_state_identity', 'tls_mode', 'energy_profile', 'electrical_boundary',
     'electrical_boundary_reference', 'network_identity_reference', 'issue_codes',
     'input_aliases', 'analysis_errors', 'row_id', 'data_status', 'profile_hashes', 'created_at', 'handshake_outcome', 'tcp_outcome', 'handshake_failure_stage', 'energy_firmware_sha256', 'energy_calibration', 'packet_client_ip', 'packet_server_ip'), 'string'))
@@ -188,6 +188,7 @@ def _campaign_rows(root, rows, inputs):
                 rows[key] = target
             target.update(attempt_index=attempt_index + 1, attempt_current=current,
                 attempt_failure_accepted=bool(attempt.get('accepted_failure')),
+                attempt_failure_decision=(attempt.get('accepted_failure') or {}).get('decision'),
                 campaign_slot_index=ordinal,campaign_execution_id=path.parent.name,
                 campaign_manifest_path=str(path), campaign_manifest_sha256=digest,
                 campaign_manifest_valid=valid, campaign_state=data.get('state'),

@@ -243,3 +243,15 @@ def test_certificate_report_reference_follows_frozen_design():
     assert 'ecdsa-p256' in profile['matrix']['tls_auth']
     specs = collection.analysis_specs('thesis_authentication', profile)
     assert all(s['baseline'] == 'rsa3072' for s in specs if s['field'] == 'tls_auth')
+
+
+def test_explicit_energy_off_overrides_auto_instrumentation(workspace):
+    resolver = collection.ConfigResolver(collection.ROOT)
+    _, data = resolver.load_campaign('thesis_network_loss')
+    data['execution']['energy_monitoring'] = 'off'
+    data['instruments'] = {'energy': 'esp32_ina228'}
+    assert collection.instrument_campaign(resolver, data) is False
+    assert data['instruments'] == {}
+    data['execution']['energy_monitoring'] = 'invalid'
+    with pytest.raises(ValueError, match='energy_monitoring'):
+        collection.instrument_campaign(resolver, data)

@@ -227,9 +227,12 @@ def extract_resources(dataset):
                 records = provenance.get("records", {})
                 fw = records.get("firmware", {})
                 role = fw.get("evidence_role")
+                build_reference = records.get("build_reference")
+                if not isinstance(build_reference, dict):
+                    raise ValueError("run_build_reference_unavailable")
                 if (not firmware_id or fw.get("sha256") != firmware_id
                         or role not in ("signed_application", "application_binary")
-                        or records.get("build_reference", {}).get("artifact_sha256") != elf_hash
+                        or build_reference.get("artifact_sha256") != elf_hash
                         or not any(a.get("role") == role and a.get("sha256") == firmware_id
                                    and a.get("acquisition", {}).get("status") == "available" for a in bm["artifacts"])):
                     raise ValueError("run_build_hash_mismatch")
