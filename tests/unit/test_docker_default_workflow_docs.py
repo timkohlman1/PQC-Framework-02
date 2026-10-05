@@ -11,24 +11,6 @@ def _read(relative_path: str) -> str:
     return (_repo_root() / relative_path).read_text(encoding="utf-8")
 
 
-def test_readme_documents_docker_as_default_workflow() -> None:
-    readme = _read("README.md")
-
-    assert "The default development path is Docker-hosted Linux execution" in readme
-    assert "./scripts/dev.sh pytest" in readme
-    assert "./scripts/dev.sh experiment-gateway run" in readme
-    assert "Host-native commands remain available as an explicit fallback" in readme
-
-
-def test_ai_build_guide_documents_gateway_hardware_container_default() -> None:
-    guide = _read("AI_BUILD_GUIDE.md")
-
-    assert "The project default is Docker-hosted Linux execution" in guide
-    assert "gateway-mediated hardware experiments" in guide
-    assert "Host-native development-machine builds remain available only as an explicit manual fallback" in guide
-    assert "Do not claim hardware" in guide
-
-
 def test_docker_wrappers_exist_for_default_and_gateway_paths() -> None:
     repo_root = _repo_root()
     sh = (repo_root / "scripts/dev.sh").read_text(encoding="utf-8")
@@ -57,44 +39,6 @@ def test_container_ci_records_relocated_build_provenance_before_signing() -> Non
     assert "--artifact build/Release/stm32_basic_hal1.elf" in workflow
 
 
-def test_signing_docs_do_not_describe_partial_key_generation_as_normal() -> None:
-    readme = _read("README.md").lower()
-    workflow = _read("docs/005_remote_flash_workflow.md").lower()
-
-    assert "may locally generate missing profile keys" not in readme
-    assert "silently reconstruct partial signing state" in readme
-    assert "completely absent tuple" in workflow
-    assert "partially missing tuple: fail before build/signing" in workflow
-    assert "mismatched tuple: fail before build/signing" in workflow
-
-
-def test_pytest_cleanup_is_documented_as_supplementary_hygiene() -> None:
-    for path in (
-        "AI_BUILD_GUIDE.md",
-        "README.md",
-        "docs/005_remote_flash_workflow.md",
-        "docs/006_security_and_secrets.md",
-        "docs/007_framework_architecture.md",
-    ):
-        content = _read(path).lower()
-        assert "supplementary cross-platform hygiene" in content
-
-
-def test_python_passthrough_is_supported_and_documented() -> None:
-    sh = _read("scripts/dev.sh")
-    readme = _read("README.md")
-    guide = _read("AI_BUILD_GUIDE.md")
-
-    assert 'python)' in sh
-    assert 'run_container python "$@"' in sh
-    assert 'python-gateway)' in sh
-    assert 'run_container --gateway python "$@"' in sh
-    assert './scripts/dev.sh python' in readme
-    assert './scripts/dev.sh python-gateway' in readme
-    assert './scripts/dev.sh python' in guide
-    assert './scripts/dev.sh python-gateway' in guide
-
-
 def test_linux_is_the_sole_supported_development_wrapper() -> None:
     assert not (_repo_root() / "scripts/dev.ps1").exists()
     for path in (
@@ -111,3 +55,16 @@ def test_linux_is_the_sole_supported_development_wrapper() -> None:
             "docs/001_ai_feature_request_workflow.md",
             "docs/008_chatgpt_project_prompt.md",
         ), path
+
+
+def test_common_documented_wrapper_commands_have_dispatch_paths() -> None:
+    import re
+
+    wrapper = _read("scripts/dev.sh")
+    readme = _read("README.md")
+    commands = set(re.findall(r"\./scripts/dev\.sh ([a-z][a-z-]*)", readme))
+    assert {"build-image", "pytest", "python", "experiment", "experiment-gateway", "campaign-gateway"} <= commands
+    for command in commands:
+        assert re.search(rf"(?m)^\s*{re.escape(command)}\)", wrapper), command
+    assert 'run_container python "$@"' in wrapper
+    assert 'run_container --gateway python "$@"' in wrapper

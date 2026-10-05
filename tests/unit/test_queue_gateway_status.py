@@ -150,5 +150,6 @@ def test_profiles_headings_and_hints_are_consistent(monkeypatch):
     terminal.draw()
     assert lines[5, 2].split() == ['PROFILE', 'NAME', 'TEMPLATE', 'REPS', 'CASES', 'TOTAL', 'RUNS']
     assert lines[6, 2].split()[1:] == ['my_auth', 'thesis_authentication.yaml', '10', '8', '80']
+    assert 'a enqueue' in lines[26, 2]
     assert 'D delete profile' in lines[26, 2] and 'a add' not in lines[26, 2]
     assert all('ATTEMPTS' not in text for text in lines.values())

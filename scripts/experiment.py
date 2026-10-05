@@ -903,15 +903,8 @@ def _run_mqtt_broker_step(*, repo_root: Path, result_dir: Path, step_name: str, 
     if extra_args:
         command.extend(extra_args)
     start = time.perf_counter()
-    completed = subprocess.run(
-        command,
-        cwd=repo_root,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
+    from framework.bounded_command import run as bounded_run
+    completed = bounded_run(command, cwd=repo_root, timeout=300)
     execution = CommandExecution(
         command=command,
         return_code=completed.returncode,
@@ -1961,7 +1954,7 @@ def _execute_mqtt_e2e_uart_capture(
             "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         mqtt_pub_stdin = (
-            f"docker run --rm -i {common_container_options}"
+            f'docker run --rm -i --name "pqc-mqtt-rm2-transfer-pub-$$" {common_container_options}'
             "--entrypoint mosquitto_pub eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797"
         )
         transfer_responder_subscriber_name = "pqc-mqtt-rm2-transfer-sub-$$"
@@ -2000,6 +1993,10 @@ def _execute_mqtt_e2e_uart_capture(
     subscriber_error_file = "/tmp/pqc-mqtt-e2e-subscriber-error.$$"
     uart_file = "/tmp/pqc-mqtt-e2e-uart.$$"
 
+    mqtt_sub = f"timeout --foreground --kill-after=5s {hard_limit_seconds}s " + mqtt_sub
+    mqtt_pub = f"timeout --foreground --kill-after=5s {hard_limit_seconds}s " + mqtt_pub
+    mqtt_pub_stdin = f"timeout --foreground --kill-after=5s {hard_limit_seconds}s " + mqtt_pub_stdin
+    transfer_mqtt_sub = f"timeout --foreground --kill-after=5s {hard_limit_seconds}s " + transfer_mqtt_sub
     subscriber_command = (
         f'{mqtt_sub} -h {client_host} -p {client_port} {tls_args} '
         f'-i {shlex.quote(subscriber_client_id)} -v -t {response_topic} '
@@ -2182,11 +2179,26 @@ def _execute_mqtt_e2e_uart_capture(
             + f'rm -f "$response_file" "$uart_file" "{subscriber_error_file}" /tmp/pqc-mqtt-e2e-publisher.$$; '
             + 'if [ "$reset_rc" -ne 0 ]; then exit "$reset_rc"; fi; exit "$normalized_capture_rc"'
         )
-    ssh_command = ["ssh", gateway_target, f"sh -c {shlex.quote(script)}"]
+    # The UART timer does not bound shell waits or a publisher blocked by loss.
+    # timeout owns the remote process group, including pipeline descendants.
+    if pqc_oqs:
+        owned_containers = f'"{oqs_subscriber_name}" "{transfer_responder_subscriber_name}" "pqc-mqtt-rm2-transfer-pub-$$"'
+        cleanup = f'timeout --kill-after=5s 10s docker rm -f {owned_containers} >/dev/null 2>&1 || true'
+        script = "trap " + shlex.quote(cleanup) + " EXIT; " + script
+    remote_deadline = hard_limit_seconds + 30
+    from framework.bounded_command import capture_command
+    ssh_command = capture_command(gateway_target, script, remote_deadline)
 
     def runner(_ignored_command: list[str], cwd: Path) -> CommandExecution:
         start = time.perf_counter()
-        completed = subprocess.run(ssh_command, cwd=cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+        from framework.bounded_command import run as bounded_run
+        completed = bounded_run(ssh_command, cwd=cwd, timeout=remote_deadline + 30)
+        if completed.returncode in {125, 137, 255} or (pqc_oqs and completed.returncode == 124):
+            update_manifest(result_dir / "manifest.json", {"execution_safety": {
+                "status": "unverified", "reason": "Capture SSH command timed out; remote completion unverified"}})
+        if completed.returncode in {124, 137}:
+            completed = subprocess.CompletedProcess(completed.args, 125, completed.stdout,
+                completed.stderr + f"\nCapture operation deadline exceeded ({remote_deadline}s); evidence retained as failure.\n")
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
         publisher_description = (
             "Publisher disabled: selected application is device-initiated.\n"
@@ -2410,6 +2422,9 @@ def _execute_mqtt_e2e_uart_capture(
                 }
             },
         )
+        if packet_capture_result.stop.return_code != 0 or not getattr(collector_result, "cleanup_verified", True):
+            update_manifest(result_dir / "manifest.json", {"execution_safety": {
+                "status": "unverified", "reason": "Capture/collector process cleanup could not be verified"}})
         emit_progress(
             "capture",
             "Gateway packet capture collected"
@@ -2562,6 +2577,11 @@ def _execute_mqtt_e2e_uart_capture(
         update_manifest(result_dir / "manifest.json", {"trial_outcome": trial,
             "mqtt_e2e": {"failure_stage": failure_stage,
                          "return_code": 0 if passed else MQTT_E2E_FAILURE_RETURN_CODE}})
+    if uart_result is not None and uart_result.capture.return_code == 125:
+        passed = False
+        failure_stage = "capture_operation_timeout"
+        update_manifest(result_dir / "manifest.json", {"mqtt_e2e": {
+            "failure_stage": failure_stage, "return_code": MQTT_E2E_FAILURE_RETURN_CODE}})
     return uart_result, (0 if passed else MQTT_E2E_FAILURE_RETURN_CODE), failure_stage
 
 

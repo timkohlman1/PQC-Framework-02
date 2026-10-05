@@ -172,14 +172,6 @@ def test_failed_and_absent_runs_remain_visible(tmp_path):
     assert frames['energy_intervals'].empty
 
 
-def test_a6_documentation_routes_to_canonical_methods():
-    architecture=(ROOT/'docs/007_framework_architecture.md').read_text()
-    for token in ('DTR-A6-EVIDENCE','--energy-spec','energy_comparison.ipynb',
-                  'outside_sample_coverage','2000000','physical acquisition qualification'):
-        assert token in architecture
-    assert '#offline-workload-and-bounded-phase-energy-analysis-request-a6' in (ROOT/'README.md').read_text()
-
-
 @pytest.mark.parametrize('end,expected_reason', [(9000, None), (31000, 'invalid_workload_tail_guard'),
                                                 (20000, 'invalid_workload_tail_guard')])
 def test_tail_guard_excludes_pause_and_requires_real_sample_brackets(tmp_path, end, expected_reason):

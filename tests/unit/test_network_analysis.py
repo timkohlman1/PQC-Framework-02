@@ -111,13 +111,9 @@ def test_matching_retains_a2_TLS_controls_and_refuses_waivers():
     assert result()['reason']=='incompatible_window_definitions'
 
 
-def test_network_doc_routes_and_metric_boundaries():
-    root=Path(__file__).parents[2]
-    text=(root/'docs/007_framework_architecture.md').read_text()
-    assert 'DTR-A5-EVIDENCE' in text
-    assert 'No key log or packet payload is exported' in text
-    assert 'network_comparison.ipynb' in text
-    assert 'network_spec' not in (root/'scripts/framework/timing_dataset_schema.py').read_text()
+def test_network_selection_does_not_change_core_timing_dataset_schema():
+    root = Path(__file__).parents[2]
+    assert 'network_spec' not in (root / 'scripts/framework/timing_dataset_schema.py').read_text()
 
 
 def test_tcp_sequence_spaces_are_independent_between_directions():

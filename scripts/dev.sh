@@ -155,7 +155,7 @@ run_container() (
     fi
     set -- -e PQC_CONTAINER_ENABLE_GATEWAY=1 -v "$ssh_source:/host-ssh:ro" "$@"
   fi
-  set -- -e PQC_PROGRESS_TTY -e PQC_PROGRESS_COLUMNS -e PQC_PROGRESS_TIMEZONE -e NO_COLOR "$@"
+  set -- -e PQC_PROGRESS_TTY -e PQC_PROGRESS_COLUMNS -e PQC_PROGRESS_TIMEZONE -e PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS -e NO_COLOR "$@"
   # Secret values are inherited by NAME, never interpolated into arguments.
   if [ -n "${PQC_WIFI_SSID:-}" ]; then set -- -e PQC_WIFI_SSID "$@"; fi
   if [ -n "${PQC_WIFI_PSK:-}" ]; then set -- -e PQC_WIFI_PSK "$@"; fi

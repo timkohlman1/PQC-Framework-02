@@ -26,8 +26,10 @@ the normative AI engineering guide.
 Use additional canonical documents only when relevant:
 
 - `docs/README.md` — documentation ownership/index
-- `docs/007_framework_architecture.md` — architecture, capability matrix,
-  evidence model, test architecture, and deferred tests
+- `docs/007_framework_architecture.md` — implemented components and capability boundaries
+- `docs/011_experiment_configuration.md` — profile and orchestration semantics
+- `docs/012_results_and_analysis.md` — capture contracts and measurement interpretation
+- `docs/013_testing_and_deferred_coverage.md` — test architecture and deferred tests
 - `README.md` — normal developer commands
 - `docs/005_remote_flash_workflow.md` — build, signing, flashing, UART,
   secure-boot, and gateway operation

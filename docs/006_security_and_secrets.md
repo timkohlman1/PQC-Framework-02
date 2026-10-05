@@ -31,7 +31,7 @@ Production, externally managed, or non-exportable material must fail closed rath
 
 Build/signing manifests retain aggregate and per-file SHA-256 fingerprints and must also reference the copied experiment material inventory. Private tuple members are copied byte-for-byte into the owning result directory after tuple validation; they are never reconstructed from public metadata.
 
-The reusable signing tuple consists of the canonical private key, matching wolfBoot-local private key, generated public key, and generated `tools/wolfboot/src/keystore.c`:
+The persistent tuple under `secrets/wolfboot/tuples/` contains the canonical private key, generated keystore and hash manifest. wolfBoot-local key/keystore files are materializations; a separate public DER export is optional. Absence of a disposable materialization is not a partial persistent tuple. The owning build may restore materializations only from a validated complete tuple:
 
 - A completely absent tuple may be created by its owning workflow when profile configuration permits generation.
 - A complete matching tuple is preserved and reused.
@@ -72,9 +72,16 @@ Broker/client validation is host-side or broker-side evidence. It cannot prove S
 
 ## Firmware secret boundary
 
-Current STM32 lwIP, wolfSSL, and wolfMQTT preparation must not compile private keys, broker credentials, real environment values, private certificates, CA private material, or bearer tokens into firmware.
+Runtime network profiles consume Wi-Fi credentials through private generated build
+inputs and selected mutual-TLS profiles may embed disposable experiment client
+keys. This is research provisioning, not protected production key storage.
+Generated firmware and retained material must follow the sensitive result policy
+above. CA private keys, production credentials, SSH/VPN material, tokens and
+unrelated host secrets must not become firmware inputs.
 
-The implemented STM32 evidence includes build-only linkage, local helper/context lifecycle smokes, an unavailable wolfSSL transport boundary with no socket I/O, local UDP loopback, and fake/no-network wolfMQTT initialization. These are not certificate-backed TLS-handshake or real MQTT evidence. Real credentials must not be introduced merely to exercise an unavailable boundary.
+Local/fake helpers do not need real credentials. Their bounded evidence must not
+be confused with the separately implemented ST67/TLS/MQTT runtime. Keep capability
+detail in [the architecture](007_framework_architecture.md).
 
 ## CI secret handling
 

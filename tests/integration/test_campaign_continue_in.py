@@ -357,3 +357,32 @@ def test_overnight_pause_resume_defers_failure_without_accepting_then_explicit_r
     executor.execute('tls_matrix_energy', resume_manifest=path)
     assert len(calls) == 8
     assert all(len(r['previous_attempts']) == 1 for r in json.loads(path.read_text())['runs'])
+
+
+def test_watchdog_failure_halts_campaign_with_unverified_cleanup(campaign, monkeypatch):
+    from framework.campaign_executor import CampaignCleanupError
+    executor, _, _ = campaign
+    def timeout(**kwargs):
+        raise CampaignCleanupError('operation timeout; remote completion unverified')
+    monkeypatch.setattr(executor, '_run_repetition', timeout)
+    with pytest.raises(CampaignCleanupError):
+        executor.execute('tls_matrix_energy')
+    state = json.loads(next(executor.results_root.glob('*/campaign-manifest.json')).read_text())
+    assert state['state'] == 'failed'
+    assert state['cleanup']['status'] == 'failed'
+    assert 'timeout' in state['failure']['message']
+
+
+def test_unverified_remote_completion_cannot_continue(campaign, tmp_path, monkeypatch):
+    from framework.campaign_executor import RepetitionError, CampaignCleanupError
+    executor, _, _ = campaign
+    manifest = tmp_path/'unverified.json'
+    manifest.write_text(json.dumps({'execution_safety': {'status': 'unverified', 'reason': 'SSH timeout'}}))
+    def fail(**kwargs):
+        raise RepetitionError('capture timeout', manifest=manifest, return_code=12, log=tmp_path/'capture.log')
+    monkeypatch.setattr(executor, '_run_repetition', fail)
+    with pytest.raises(CampaignCleanupError, match='SSH timeout'):
+        executor.execute('tls_matrix_energy')
+    state = json.loads(next(executor.results_root.glob('*/campaign-manifest.json')).read_text())
+    assert len(state['runs']) == 1
+    assert state['cleanup']['status'] == 'failed'

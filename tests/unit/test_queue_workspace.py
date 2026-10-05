@@ -58,7 +58,7 @@ def test_queue_documentation_and_generated_output_ignore_contract():
     import subprocess
     readme = (ROOT / 'README.md').read_text()
     guide = (ROOT / 'docs/005_remote_flash_workflow.md').read_text()
-    architecture = (ROOT / 'docs/007_framework_architecture.md').read_text()
+    architecture = (ROOT / 'docs/013_testing_and_deferred_coverage.md').read_text()
     assert 'python3 scripts/run_queue.py' in readme
     for control in ('cooperative pause', 'accept', 'analysis.ipynb', 'raw_df', 'does not terminate'):
         assert control in guide

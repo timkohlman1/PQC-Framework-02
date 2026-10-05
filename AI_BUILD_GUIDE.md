@@ -23,7 +23,10 @@ Use `docs/README.md` as the project-owned documentation index and ownership map.
 
 Canonical owners:
 
-- Current architecture, capability matrix, evidence boundaries, stable file map, generated-state model, test architecture, and consolidated deferred-test register: `docs/007_framework_architecture.md`
+- Current components, capability boundaries, source ownership and generated-state model: `docs/007_framework_architecture.md`
+- Profile composition and campaign/queue/collection semantics: `docs/011_experiment_configuration.md`
+- Capture schemas, measurement interpretation and offline analysis: `docs/012_results_and_analysis.md`
+- Test architecture and consolidated deferred-test register: `docs/013_testing_and_deferred_coverage.md`
 - Human-facing project orientation and common commands: `README.md`
 - AI implementation and review process: `docs/001_ai_feature_request_workflow.md`
 - Project prompt for fresh feature-development chats: `docs/008_chatgpt_project_prompt.md`
@@ -47,7 +50,7 @@ The canonical current capability matrix is in `docs/007_framework_architecture.m
 - Fake/no-network evidence is simulation or initialization evidence only.
 - An unavailable transport boundary performs no socket I/O and proves no handshake or protocol operation.
 - Host-side and broker-side evidence does not prove STM32, Wi-Fi-module, or end-to-end wireless behavior.
-- Real ST67W61M1-backed networking, external STM32 TCP, certificate-backed STM32 TLS handshakes, real STM32 MQTT connect/publish/reconnect, and end-to-end classical or PQC/hybrid MQTT-over-TLS remain unavailable unless the architecture matrix and explicit evidence show otherwise.
+- The ST67/lwIP/wolfSSL/wolfMQTT runtime is implemented. Build or partial runtime evidence does not establish a completed TCP, TLS, MQTT or end-to-end profile; those claims require the relevant retained evidence. Consult the test register for unqualified combinations.
 
 Do not promote evidence from one class into another. Do not implement a future or deferred capability early unless the current request explicitly requires it and the necessary repository context is available.
 
@@ -137,7 +140,7 @@ Specific rules:
 - Unavailable metrics must be recorded as unavailable with a reason rather than estimated.
 - Negative-test and repeated-run claims require their recorded samples and outcomes.
 
-Detailed result schemas, benchmark interpretation, evidence classes, and limitations are owned by `docs/007_framework_architecture.md`.
+Detailed result schemas, benchmark interpretation and analysis limitations are owned by `docs/012_results_and_analysis.md`; component capabilities remain in `docs/007_framework_architecture.md`.
 
 ## 8. Testing requirements
 
@@ -159,7 +162,7 @@ Testing rules:
 5. Integration tests may use real local toolchains or gateway probes but must skip cleanly when capabilities are unavailable unless a strict `--pqc-require-*` control is intentionally supplied.
 6. A plain full pytest run may skip unavailable gateway or hardware capabilities. A skip is not evidence that the capability succeeded.
 7. Do not stop at unit tests when a feature crosses process, build, Docker, gateway, broker, UART, firmware-runtime, network, or hardware boundaries.
-8. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/007_framework_architecture.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
+8. When an affected boundary cannot receive the required higher-layer test, state the specific reason in the implementation response and add or update the item in the consolidated deferred-test register in `docs/013_testing_and_deferred_coverage.md`. Each item must retain the feature, missing test layer, reason, required capability or phase, intended test file, eventual verification command, and status.
 9. Future related changes must inspect the deferred-test register and implement, update, or explicitly retire applicable entries with justification.
 10. Hardware tests must be self-contained by default. A normal `pytest-hardware` invocation must resolve or materialise its own test case, prepare required build/signing/runtime state, perform the framework-owned hardware actions, capture its own evidence, validate that evidence, and clean up test-owned temporary state. Do not require users to pre-generate campaigns, manually build/sign/flash firmware, export test-specific evidence-path variables, or supply prior result artifacts merely to make the test runnable. Capability gates and credentials required by the framework are external laboratory prerequisites; optional selectors may narrow an otherwise runnable matrix, but the default selected hardware case must be valid without test-specific setup steps.
 
@@ -246,7 +249,7 @@ Do not require the user to relocate the downloaded archive before extraction. St
 
 - Keep this guide compact, current, and normative. Do not add detailed phase narratives, exhaustive unstable file lists, complete command manuals, hardware identity values, or duplicated topic documentation.
 - Update `docs/README.md` whenever a project-owned document is added, removed, relocated, or reclassified.
-- Keep current capability detail and the deferred-test register in `docs/007_framework_architecture.md`.
+- Keep current component/capability detail in `docs/007_framework_architecture.md`, measurement/analysis contracts in `docs/012_results_and_analysis.md`, and deferred coverage in `docs/013_testing_and_deferred_coverage.md`.
 - Keep user-facing command orientation in `README.md`.
 - Keep operational procedures in their topic documents.
 - Keep roadmap status in active plans and historical narrative in historical plans or decisions.

@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import subprocess
+from framework.bounded_command import run as bounded_run
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,11 +58,12 @@ class GatewayResultCollectorResult:
     log_path: Path
     validation: ResultCollectorValidation
     failure_reason: str | None
+    cleanup_verified: bool = True
 
 
 def _run(command: list[str], *, cwd: Path) -> CommandExecution:
     started=time.perf_counter()
-    completed=subprocess.run(command,cwd=cwd,text=True,encoding="utf-8",errors="replace",capture_output=True,check=False)
+    completed=bounded_run(command,cwd=cwd)
     return CommandExecution(command,completed.returncode,completed.stdout,completed.stderr,time.perf_counter()-started)
 
 
@@ -475,7 +477,8 @@ def stop_and_collect_gateway_result_collector(*, collector: GatewayResultCollect
     stop=runner(["ssh",collector.gateway_target,f"sh -c {shlex.quote(stop_script)}"],cwd=repo_root)
     raw=result_dir/RAW_RESULT_STREAM_NAME
     copy=runner(["scp",f"{collector.gateway_target}:{collector.remote_stream_path}",str(raw)],cwd=repo_root)
-    runner(["ssh",collector.gateway_target,f"rm -f {shlex.quote(collector.remote_stream_path)}"],cwd=repo_root)
+    if copy.return_code == 0 and raw.is_file():
+        runner(["ssh",collector.gateway_target,f"rm -f {shlex.quote(collector.remote_stream_path)}"],cwd=repo_root)
     if stop.return_code!=0 or copy.return_code!=0 or not raw.is_file():
         validation=ResultCollectorValidation(False,0,0,tuple(),tuple(),None,0,None,None,None,{},("collector stream unavailable",))
         reason="result collector stop/copy failed"
@@ -486,4 +489,4 @@ def stop_and_collect_gateway_result_collector(*, collector: GatewayResultCollect
         ); reason=None if validation.passed else "; ".join(validation.failure_reasons)
     log=result_dir/RESULT_COLLECTOR_LOG_NAME
     log.write_text(json.dumps({"run_id":collector.run_id,"topics":collector.topics,"expected_sources":collector.expected_sources,"allow_additional_stm32_epochs":collector.allow_additional_stm32_epochs,"stop_return_code":stop.return_code,"copy_return_code":copy.return_code,"validation":validation.__dict__},indent=2,sort_keys=True,default=list)+"\n",encoding="utf-8")
-    return GatewayResultCollectorResult(0 if reason is None else 1,raw if raw.is_file() else None,log,validation,reason)
+    return GatewayResultCollectorResult(0 if reason is None else 1,raw if raw.is_file() else None,log,validation,reason,stop.return_code == 0)

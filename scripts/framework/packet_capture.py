@@ -6,6 +6,7 @@ import hashlib
 import re
 import shlex
 import subprocess
+from framework.bounded_command import run as bounded_run
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,15 +51,7 @@ class GatewayPacketCaptureResult:
 
 def _run(command: list[str], *, cwd: Path) -> CommandExecution:
     started = time.perf_counter()
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-    )
+    completed = bounded_run(command, cwd=cwd)
     return CommandExecution(
         command=command,
         return_code=completed.returncode,

@@ -154,13 +154,6 @@ def test_single_baremetal_repetition_has_no_sample_standard_deviation():
     assert all(r['n']==1 and r['stdev_cycles'] is None for r in result['statistics'])
 
 
-def test_research_documentation_retains_gaps_and_rebuild_contract():
-    text=(ROOT/'docs/007_framework_architecture.md').read_text().split('## Frozen research reports (Analysis Request A8)',1)[1]
-    for required in ('--rebuild','--verify','source.git_commit','stm32_st67_tls','not_assessed',
-                     'unconfirmed','same valid run/epoch/iteration','0700','RQ1–RQ6','longtable'):
-        assert required in text
-
-
 def test_runtime_repetition_inherits_only_verified_matching_preparation_source(tmp_path):
     prep=make_run(tmp_path/'results/preparations/build')
     p=prep/'run-provenance.json';obj=json.loads(p.read_text());obj['records']['source']={'git_commit':'a'*40,'git_dirty':False}

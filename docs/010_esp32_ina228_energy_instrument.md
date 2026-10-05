@@ -274,11 +274,11 @@ measurement path could complete, but it does **not** validate this simplified
 wire format, passive lifecycle, one-window repeated-TLS behaviour, or new host
 matching logic. Fresh hardware evidence is required before those behaviours are
 claimed successful. The corresponding deferred-test entry is DTR-013 in
-`docs/007_framework_architecture.md`.
+[testing and deferred coverage](013_testing_and_deferred_coverage.md).
 
 ## Offline A6 energy reports
 
-The [architecture's A6 section](007_framework_architecture.md#offline-workload-and-bounded-phase-energy-analysis-request-a6)
+The [energy analysis reference](012_results_and_analysis.md#energy)
 owns energy definitions, interpolation/pairing policy, output lineage and batch/
 notebook commands. `--energy` on `scripts/summarise_timing_dataset.py` analyses
 existing captures only. It reuses instrument acceptance checks, but requires valid

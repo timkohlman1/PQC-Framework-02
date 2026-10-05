@@ -748,7 +748,7 @@ A8 JSON's dataset path, named conditions, baseline and fixed controls, then buil
 ./scripts/dev.sh python scripts/build_research_report.py --verify results/analysis/NEW_THESIS_SNAPSHOT
 ```
 
-See [the A8 architecture contract](007_framework_architecture.md#frozen-research-reports-analysis-request-a8)
+See [the frozen-report contract](012_results_and_analysis.md#flat-archives-and-frozen-reports-a8)
 for the selection schema, offline rebuild command, metric boundaries, LaTeX
 fragments, clean-kernel HTML and incomplete Chapter 5/RQ coverage. Opening
 `report/notebook.html` does not run a measurement or edit the thesis.
@@ -979,6 +979,25 @@ gateway-lock controls for inspecting ownership, without force-releasing another
 owner. Worker SIGINT/SIGTERM requests cooperative stop; abrupt process loss does
 not establish cleanup and is recovered conservatively.
 
+MQTT workload clients have a wall-clock timeout even when packet loss stalls a
+publisher after connection. The remote capture process group has a deadline of
+`hard_limit_seconds + 30` seconds, a twenty-second forced-stop grace, and a local
+SSH deadline of `hard_limit_seconds + 60` seconds. These deadlines include shell
+waits and publisher pipelines, not just UART reads. Capture/result/network control
+and copy commands are bounded to 120 seconds; broker control steps to 300 seconds.
+The plaintext reporting collector is still collected after a workload timeout.
+A timeout remains a failed result and is not automatically accepted as a valid
+negative trial. Unverified remote completion or process cleanup halts dispatch.
+
+As a final fallback, each campaign preparation/runtime subprocess has a 1,800-second
+watchdog. It requests interruption and allows 90 seconds for cleanup before killing
+its local process group; dispatch then requires inspection. This is per operation,
+not a deadline for the whole multi-hour campaign. Override with the positive finite
+`PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS` environment variable when launching the
+worker if a deliberately longer operation is required. Gateway lease contention
+retains its normal wait policy. Pause-and-quit waits for the bounded active operation
+and cleanup; it does not forcibly release a lease.
+
 If cleanup, command completion or a worker restart cannot be verified, dispatch
 halts and the entry needs attention. Inspect its logs and gateway ownership,
 resolve the cause, explicitly resume/retry that entry, then press `s` again.
@@ -1060,7 +1079,7 @@ The live baseline pause/intervening-campaign/resume test passed on 2026-10-03
 (Australia/Melbourne): the first capture stayed unchanged, the remaining repetition
 completed, and cleanup passed. Synthetic process/notebook tests separately cover
 queue control and offline exports. Different-configuration interleaving and live
-fault injection remain tracked by DTR-RUN-QUEUE in the architecture.
+fault injection remain tracked by DTR-RUN-QUEUE in the [test register](013_testing_and_deferred_coverage.md#consolidated-deferred-test-register).
 
 ## Resumable thesis evidence collection
 
@@ -1213,7 +1232,7 @@ Collection cannot manufacture unsupported boot/OTA energy, cross-reset stage
 timing, final candidate-to-image binding, simultaneous system RAM, disjoint
 Total Crypto or handshake-only byte measurements. These remain explicit gaps
 until their measurement contracts exist or the corresponding thesis columns
-are revised as documented in the A8 architecture section.
+are revised in the [results reference](012_results_and_analysis.md#flat-archives-and-frozen-reports-a8).
 
 
 ### Matched no-TLS application baselines

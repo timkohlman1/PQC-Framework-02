@@ -1,6 +1,10 @@
-# OQS hybrid mutual TLS broker profile
+# Hybrid/PQC mutual-TLS broker profile
 
-This profile uses the same classical Step CA hierarchy and the same
-`SecP256r1MLKEM768` TLS 1.3 hybrid key-exchange capability as the `oqs`
-server-authentication profile. It additionally requires and validates a
-classical client certificate. No ML-DSA TLS signatures are used.
+The `oqs-mtls` service requires client-certificate authentication in addition to
+the selected TLS 1.3 key-exchange group. Certificate family and KEX are independent;
+the resolved `configs/tls_auth/` profile can select classical or ML-DSA material.
+Health checks use a distinct client identity from the STM32 workload.
+
+Use the [broker operating guide](../../README.md) for provisioning, deployment
+and validation. This profile's presence or a host-client test is not STM32
+hardware evidence.

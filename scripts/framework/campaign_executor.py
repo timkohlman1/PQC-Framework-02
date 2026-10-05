@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import signal
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -302,16 +304,11 @@ CommandRunner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
 
 
 def _default_runner(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    from framework.bounded_command import run as bounded_run
+    completed = bounded_run(command, cwd=cwd, timeout=300)
+    # Preserve the historical combined control log, including timeout diagnostics.
+    return subprocess.CompletedProcess(completed.args, completed.returncode,
+                                       completed.stdout + completed.stderr, None)
 
 
 def _stream_command_to_log(
@@ -323,6 +320,12 @@ def _stream_command_to_log(
     updates the compact console. The child also retains its own console.log.
     The returned stdout contains the full combined stream for error handling.
     """
+    try:
+        timeout = float(os.environ.get("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS", "1800"))
+    except ValueError as exc:
+        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     captured: list[str] = []
     with log_path.open("w", encoding="utf-8", buffering=1) as log_handle:
@@ -338,8 +341,27 @@ def _stream_command_to_log(
             stderr=subprocess.STDOUT,
             bufsize=1,
             env={**os.environ, "PQC_RUN_VERBOSE": "1"},
+            start_new_session=True,
         )
         assert process.stdout is not None
+        expired = threading.Event()
+        def terminate_group():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        hard_stop = threading.Timer(90, terminate_group)
+        hard_stop.daemon = True
+        def request_cleanup():
+            expired.set()
+            try:
+                process.send_signal(signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            hard_stop.start()
+        watchdog = threading.Timer(timeout, request_cleanup)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             for line in process.stdout:
                 captured.append(line)
@@ -361,6 +383,14 @@ def _stream_command_to_log(
             process.wait()
             log_handle.write(f"\n[{_now()}] interrupted; return_code={process.returncode}\n")
             raise
+        finally:
+            watchdog.cancel()
+            watchdog.join()
+            hard_stop.cancel()
+            if hard_stop.ident is not None:
+                hard_stop.join()
+        if expired.is_set():
+            raise CampaignCleanupError(f"Operation exceeded {timeout:g}s; interrupted with 90s cleanup grace. Remote completion requires inspection; log: {log_path}")
         log_handle.write(f"\n[{_now()}] return_code={return_code}\n")
         log_handle.flush()
     return subprocess.CompletedProcess(
@@ -762,6 +792,13 @@ class CampaignExecutor:
                                         failure={"message": str(exc), "return_code": exc.return_code,
                                                  "log": str(exc.log)},
                                     )
+                                    if exc.manifest is not None:
+                                        try:
+                                            safety = _read_json(exc.manifest).get("execution_safety", {})
+                                        except CampaignError:
+                                            safety = {}
+                                        if safety.get("status") == "unverified":
+                                            raise CampaignCleanupError(safety.get("reason", "Runtime cleanup unverified"))
                                     if accepted:
                                         record = next(r for r in state["runs"] if r["case_id"] == case["id"] and r["repetition_index"] == repetition)
                                         record["accepted_failure"] = {**accepted, "at": _now()}
@@ -886,6 +923,8 @@ class CampaignExecutor:
             state["pause"] = {"reason": exc.reason, "at": _now()}
             self._diagnostic(campaign_root, "Campaign paused: " + exc.reason)
         except BaseException as exc:
+            if isinstance(exc, CampaignCleanupError):
+                cleanup_errors.append(str(exc))
             self.progress.finish("Interrupted" if isinstance(exc, KeyboardInterrupt) else "Failed")
             self._diagnostic(campaign_root, f"{type(exc).__name__}: {exc}")
             state["state"] = "failed"
@@ -1247,6 +1286,8 @@ class CampaignExecutor:
                 log_path=log_path,
                 progress=self.progress,
             )
+        except CampaignCleanupError:
+            raise
         except CampaignError as exc:
             raise RepetitionError(str(exc), manifest=None, return_code=0, log=log_path) from exc
         failure = None

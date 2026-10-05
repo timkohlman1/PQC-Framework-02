@@ -320,7 +320,7 @@ def test_host_gate_is_registered_in_wrapper_and_ci():
 
 def test_documented_ownership_and_deferred_gates_preserve_security():
     setup = (ROOT / 'docs/002_host_gateway_setup.md').read_text()
-    architecture = (ROOT / 'docs/007_framework_architecture.md').read_text()
+    architecture = (ROOT / 'docs/013_testing_and_deferred_coverage.md').read_text()
     for value in ('check-host-user', 'volume-nocopy', '0077', '0700', 'no-new-privileges'):
         assert value in setup
     assert '--from=0:0' in setup

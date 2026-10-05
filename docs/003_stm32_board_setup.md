@@ -30,9 +30,12 @@ The persistent `/dev/serial/by-id/` path is the canonical UART device for the co
 
 ## Current firmware evidence model
 
-The current application is a CubeMX-generated HAL/CMSIS-RTOS v2 FreeRTOS firmware with direct-flash and relocated secure-boot builds. A representative successful direct-flash capture includes the application boot marker, scheduler/task markers, and recurring `tick` output. It may also include local-only lwIP and wolfSSL smokes, STM32-local UDP loopback, and fake/no-network wolfMQTT initialization.
-
-Those markers are evidence only for the boundary explicitly named in each line. They do not establish ST67W61M1 detection, Wi-Fi association, hardware-backed IP, external TCP, certificate-backed TLS handshake, real MQTT broker operations, or end-to-end wireless success. The canonical capability matrix and exact marker interpretation are in `docs/007_framework_architecture.md`.
+Current application builds use the relocated layout and separate heartbeat/network
+tasks. UART diagnostics are optional according to the selected mode; local helper
+markers establish only their stated boundary. Networked scientific capture uses
+deferred reporting records. See [baseline firmware](004_baseline_hal_app.md) for
+startup, [architecture](007_framework_architecture.md) for runtime capabilities,
+and [results](012_results_and_analysis.md) for evidence interpretation.
 
 ## Hardware evidence rules
 
@@ -46,8 +49,7 @@ Use `docs/005_remote_flash_workflow.md` for wrapper commands and provenance requ
 
 ## ST67 GPIO/SPI bring-up diagnostic
 
-The `feature/st67-spi-bringup` firmware invokes the existing ST67 vendor driver
-from the FreeRTOS default task. The task context is required because the driver
+The firmware invokes the ST67 driver from `networkTask`. The task context is required because the driver
 uses FreeRTOS delays, queues, semaphores, and interrupt-driven SPI handling.
 
 The diagnostic performs the following bounded sequence:
@@ -78,7 +80,10 @@ higher-level network evidence.
 
 ### ST67 vendor transport baseline
 
-The supported transport keeps `Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c` aligned with the X-CUBE-ST67W61 vendor implementation. The local integration retains only the CMSIS device include required to declare `__get_IPSR()`. Previous transaction-loop and READY diagnostic modifications are not part of the supported baseline because a controlled comparison associated them with the post-DHCP READY-high deadlock.
+The transport derives from
+`Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c`, with project
+integration, READY-level guards, bounded polling and diagnostics. Inspect that
+source before changing transaction behavior; it is not an unmodified vendor copy.
 
 The lwIP output adapter also follows the vendor `lwip_netif.c` behavior: each segment in a chained lwIP `pbuf` is submitted to `W6X_Netif_output()` in sequence. The framework does not coalesce the chain into a temporary contiguous allocation.
 

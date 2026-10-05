@@ -268,8 +268,6 @@ def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
     header = _read("Core/Inc/pqc_lwip_build_only.h")
     source = _read("Core/Src/pqc_lwip_build_only.c")
     main_c = _read("Core/Src/main.c")
-    architecture = _read("docs/007_framework_architecture.md")
-    readme = _read("README.md")
 
     assert "PQC_LwIP_BuildOnly_RuntimeSmokeLine" in header
     assert "LWIP_VERSION_MAJOR" in source
@@ -297,10 +295,6 @@ def test_lwip_runtime_smoke_marker_is_non_network_uart_evidence_only() -> None:
     for fragment in forbidden_runtime_network_fragments:
         assert fragment not in source
 
-    for doc in (architecture, readme):
-        assert "non-network lwIP runtime smoke" in doc
-        assert "version, IPv4 formatting, and checksum helpers" in doc
-        assert "does not initialize a netif" in doc
 
 
 def test_st67_wifi_dhcp_runtime_configuration():

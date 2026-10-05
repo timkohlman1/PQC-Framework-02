@@ -2,7 +2,8 @@
 
 This is the project-owned operational description for the dedicated bare-metal
 cryptographic measurement phase. The definitive framework capability/evidence
-matrix and deferred tests remain in `docs/007_framework_architecture.md`.
+matrix is in [the architecture](007_framework_architecture.md); deferred tests
+are in [the testing reference](013_testing_and_deferred_coverage.md).
 
 ## Execution and clock policy
 

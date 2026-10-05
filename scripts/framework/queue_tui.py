@@ -258,7 +258,7 @@ class Terminal:
         self.put(y+13, 2, '─' * (width-4), self.ink(1))
         message = 'Pausing and quitting: waiting for the current operation, cleanup and worker exit…' if self.shutdown_future is not None else self.message
         self.put(height-6, 2, message, self.ink(3))
-        hints = ('Space select  n new profile  v view  e edit  D delete profile  / filter  R refresh' if self.tab == 0 else
+        hints = ('Space select  a enqueue  n new profile  v view  e edit  D delete profile  / filter  R refresh' if self.tab == 0 else
                  'Space mark  e export  t retry  N re-queue current version  D permanently delete job files' if self.tab == 2 else
                  'p pause  r resume  t retry  f accept  K/J move  Del remove  N re-queue current version')
         self.put(height-4, 2, hints, self.ink(1))
