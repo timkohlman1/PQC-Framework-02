@@ -25,12 +25,14 @@ execution:
   reporting_broker: always_available
   condition: retain_within_condition
   evidence: per_run
+analysis_baselines:
+  tls_auth: ecdsa-p256
 matrix:
   tls_kex:
   - secp256r1
   - SecP256r1MLKEM768
   tls_auth:
-  - rsa3072
+  - ecdsa-p256
   - mldsa65
   auth_mode:
   - server

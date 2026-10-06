@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from framework.bounded_command import run as bounded_run
 from framework.uart import CommandExecution
 from framework.ssh_target import gateway_ssh_target
 
@@ -55,7 +56,7 @@ class GatewayNetworkDegradationResult:
     return_code:int; cleanup:CommandExecution; log_path:Path; failure_reason:str|None
 
 def _run(command:list[str],*,cwd:Path)->CommandExecution:
-    started=time.perf_counter(); c=subprocess.run(command,cwd=cwd,text=True,encoding='utf-8',errors='replace',capture_output=True,check=False)
+    started=time.perf_counter(); c=bounded_run(command,cwd=cwd)
     return CommandExecution(command,c.returncode,c.stdout,c.stderr,time.perf_counter()-started)
 
 def network_degradation_config(bundle:dict[str,dict[str,Any]])->NetworkDegradationConfig|None:

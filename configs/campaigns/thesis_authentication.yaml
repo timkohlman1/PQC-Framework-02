@@ -9,6 +9,8 @@ services:
   experiment_broker: experiment_gateway1
   reporting_broker: reporting_gateway1
 workload: ready_metrics_2
+instruments:
+  energy: esp32_ina228
 fixed:
   secure_boot: integrity_sha256
   firmware_mode: single_bank
@@ -26,7 +28,11 @@ execution:
   reporting_broker: always_available
   condition: retain_within_condition
   evidence: per_run
+analysis_baselines:
+  tls_auth: ecdsa-p256
 matrix:
+  workload.transfer.payload_bytes: [204800]
+  workload.transfer.chunk_bytes: [400]
   tls_auth:
   - rsa3072
   - ecdsa-p256

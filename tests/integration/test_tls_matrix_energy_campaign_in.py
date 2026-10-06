@@ -99,7 +99,7 @@ def test_synthetic_matrix_reaches_a1_and_clean_kernel_notebook(tmp_path):
         rows=list(csv.DictReader(handle))
     assert len(rows)==12*8
     assert {r['contributing_runs'] for r in rows} == {'1'}
-    baseline=[r for r in rows if r['condition']=='secp256r1__rsa3072__server']
+    baseline=[r for r in rows if r['condition']=='secp256r1__ecdsa-p256__server']
     assert all(r['completed_runs']=='1' and r['failed_runs']=='1' for r in baseline)
     assert (output/'executed.ipynb').exists()
     assert source.read_bytes() == original

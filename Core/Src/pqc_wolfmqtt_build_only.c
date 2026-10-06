@@ -767,7 +767,9 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     if ((result != 0) ||
         (lwip_connect(socket_context->socket_fd, (struct sockaddr *)&address, sizeof(address)) != 0)) {
         PQC_WolfMQTT_CloseTransport(socket_context);
-        return -1;
+        /* Preserve wolfMQTT error semantics: -1 means BAD_ARG, not a failed
+         * network connection. This code is also retained in deferred outcomes. */
+        return MQTT_CODE_ERROR_NETWORK;
     }
     socket_context->tcp_connected = true;
     socket_context->tcp_connection_observed = true;

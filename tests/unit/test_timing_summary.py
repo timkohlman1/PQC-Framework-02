@@ -133,15 +133,6 @@ def test_notebook_wrapper_local_publish_and_no_auth_override():
         assert refused.returncode == 2
 
 
-def test_a2_documentation_routes_to_canonical_owner():
-    architecture = (ROOT / "docs/007_framework_architecture.md").read_text()
-    section = architecture.split("### Offline timing comparisons and starter notebook (Analysis Request A2)",1)[1].split("\n### ",1)[0]
-    for expected in ("./scripts/dev.sh notebook", "--execute-notebook", "unknown", "Wilson", "bootstrap",
-                     "127.0.0.1:8888", "zero_baseline", "independent_runs", "not_applicable"):
-        assert expected in section
-    assert "#offline-timing-comparisons-and-starter-notebook-analysis-request-a2" in (ROOT / "README.md").read_text()
-
-
 def test_export_keeps_large_nullable_integers_and_escapes_null_strings(tmp_path, monkeypatch):
     import csv
     import json

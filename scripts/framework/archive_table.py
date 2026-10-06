@@ -25,10 +25,10 @@ from framework.run_evidence import sha256_file
 VERSION = 2
 SPEC = {'conditions': {'archive': {}}, 'baseline': 'archive', 'independent_runs': False}
 RAW_MARKERS = {'PQC_RM2_METRICS', 'PQC_RM2_COMPLETE', 'PQC_TLS_HANDSHAKE_TIMING',
-               'PQC_ENERGY_BOUNDARY'}
+               'PQC_ENERGY_BOUNDARY', 'PQC_WORKLOAD_OUTCOME'}
 BASE = {k:v for k,v in RUN_COLUMNS.items() if v != 'json'}
 BASE.update(dict.fromkeys(('row_kind', 'campaign_execution_id', 'campaign_manifest_path',
-    'campaign_manifest_sha256', 'campaign_state', 'attempt_state', 'attempt_error',
+    'campaign_manifest_sha256', 'campaign_state', 'attempt_state', 'attempt_error', 'attempt_failure_decision',
     'git_state_identity', 'tls_mode', 'energy_profile', 'electrical_boundary',
     'electrical_boundary_reference', 'network_identity_reference', 'issue_codes',
     'input_aliases', 'analysis_errors', 'row_id', 'data_status', 'profile_hashes', 'created_at', 'handshake_outcome', 'tcp_outcome', 'handshake_failure_stage', 'energy_firmware_sha256', 'energy_calibration', 'packet_client_ip', 'packet_server_ip'), 'string'))
@@ -156,8 +156,11 @@ def _campaign_rows(root, rows, inputs):
         index = data.get('final_index', {})
         valid = (index.get('status') == 'finalized' and index.get('sha256') ==
                  canonical_sha256({k:v for k,v in data.items() if k != 'final_index'}))
-        for ordinal, attempt in enumerate(data.get('runs', [])):
-            identity = (digest, ordinal)
+        attempts = [(ordinal, index, attempt, index == len(current.get('previous_attempts', [])))
+                    for ordinal, current in enumerate(data.get('runs', []))
+                    for index, attempt in enumerate([*current.get('previous_attempts', []), current])]
+        for ordinal, attempt_index, attempt, current in attempts:
+            identity = (digest, ordinal, attempt_index)
             if identity in seen: continue
             seen.add(identity)
             recorded = attempt.get('manifest')
@@ -170,7 +173,7 @@ def _campaign_rows(root, rows, inputs):
                     candidate = path.parent/Path(*parts[len(parts)-1-parts[::-1].index('runs'):])
                 target = paths.get(str(candidate.parent.resolve()))
             if target is None:
-                key = hashlib.sha256((digest+':'+str(ordinal)).encode()).hexdigest()
+                key = hashlib.sha256((digest+':'+str(ordinal)+':'+str(attempt_index)).encode()).hexdigest()
                 target = dict(run_key=key, row_kind='campaign_attempt_without_capture',
                     run_id=None, campaign_id=data.get('campaign_id'),
                     case_id=attempt.get('case_id'), repetition_index=attempt.get('repetition_index'),
@@ -183,7 +186,10 @@ def _campaign_rows(root, rows, inputs):
                     condition_identity=attempt.get('condition_identity'),
                     network_condition=attempt.get('network_condition'))
                 rows[key] = target
-            target.update(campaign_slot_index=ordinal,campaign_execution_id=path.parent.name,
+            target.update(attempt_index=attempt_index + 1, attempt_current=current,
+                attempt_failure_accepted=bool(attempt.get('accepted_failure')),
+                attempt_failure_decision=(attempt.get('accepted_failure') or {}).get('decision'),
+                campaign_slot_index=ordinal,campaign_execution_id=path.parent.name,
                 campaign_manifest_path=str(path), campaign_manifest_sha256=digest,
                 campaign_manifest_valid=valid, campaign_state=data.get('state'),
                 attempt_state=attempt.get('state'),

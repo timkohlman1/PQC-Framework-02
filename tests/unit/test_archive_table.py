@@ -189,3 +189,33 @@ def test_repeated_tls_never_acquires_application_end_to_end_metrics(tmp_path):
     assert row['row_kind']=='handshake'
     for metric in ('rtfb','rtlb','ttfb','ttlb','req_tfb','req_tlb','mqtt_readiness'):
         assert pd.isna(row['timing__'+metric+'_us'])
+
+
+def test_failed_history_without_capture_is_exported_with_current_acceptance(tmp_path):
+    root = tmp_path / 'campaign'
+    root.mkdir()
+    old = {'case_id': 'one', 'repetition_index': 1, 'state': 'blocked', 'manifest': None,
+           'failure': {'stage': 'preparation', 'message': 'first failure'}}
+    current = {**old, 'failure': {'stage': 'preparation', 'message': 'second failure'},
+               'accepted_failure': {'decision': 'operator_accept'}, 'previous_attempts': [old]}
+    value = {'campaign_id': 'example', 'state': 'completed_with_failures', 'runs': [current]}
+    value['final_index'] = {'status': 'finalized', 'sha256': canonical_sha256(value)}
+    (root / 'campaign-manifest.json').write_text(json.dumps(value))
+    export_archive(results_root=root, output=tmp_path / 'export')
+    data = load_archive(tmp_path / 'export', verify_sources=True).sort_values('attempt_index')
+    assert len(data) == 2
+    assert list(data.attempt_index) == [1, 2]
+    assert list(data.attempt_current) == [False, True]
+    assert list(data.attempt_failure_accepted) == [False, True]
+    assert not data.run_success.any()
+    assert set(data.attempt_error) == {'first failure', 'second failure'}
+
+
+def test_negative_trial_exports_error_code_without_success_timings(tmp_path):
+    from trial_outcome_support import negative_run
+    negative_run(tmp_path/'raw'/'negative')
+    out = tmp_path/'flat'; export_archive(results_root=tmp_path/'raw', output=out)
+    row = load_archive(out, verify_sources=True).iloc[0]
+    assert not row['run_success'] and row['capture_valid']
+    assert row['recorded__PQC_WORKLOAD_OUTCOME__return_code'] == -7
+    assert pd.isna(row['timing__ttfb_us'])

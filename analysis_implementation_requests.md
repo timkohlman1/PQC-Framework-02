@@ -1,5 +1,10 @@
 # Incremental analysis implementation requests
 
+> Historical record. Original phase instructions, capability limits, commands and
+> handling rules below describe their original context. Use the
+> [current reference](docs/012_results_and_analysis.md) and [open-data policy](docs/006_security_and_secrets.md)
+> for present work; this record does not authorize implementing old requests.
+
 ## Purpose and status
 
 Build an offline analysis component that becomes useful before every measurement channel is integrated. The first milestone is a reproducible timing dataset and a working comparison notebook. Later requests extend that same path rather than create separate analysis systems.

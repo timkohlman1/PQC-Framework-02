@@ -318,20 +318,6 @@ def test_host_gate_is_registered_in_wrapper_and_ci():
     assert 'Verify provisioned material ownership' in ci
 
 
-def test_documented_ownership_and_deferred_gates_preserve_security():
-    setup = (ROOT / 'docs/002_host_gateway_setup.md').read_text()
-    architecture = (ROOT / 'docs/007_framework_architecture.md').read_text()
-    for value in ('check-host-user', 'volume-nocopy', '0077', '0700', 'no-new-privileges'):
-        assert value in setup
-    assert '--from=0:0' in setup
-    assert 'does not follow symlinks' in setup
-    register = architecture.split('## Consolidated deferred-test register', 1)[1]
-    for name in ('DTR-HOST-USER', 'DTR-HOST-USER-GATEWAY'):
-        row = next(line for line in register.splitlines() if line.startswith('| ' + name + ' |'))
-        assert len(row.strip('|').split('|')) == 8
-    assert len((ROOT / 'README.md').read_text().splitlines()) <= 200
-
-
 def test_generic_run_without_arguments_keeps_default_unit_command(wrapper):
     result, record = wrapper(['run'])
     assert result.returncode == 0

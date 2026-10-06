@@ -1,862 +1,374 @@
+"""Documentation structure/navigation contracts, deliberately independent of prose."""
 from __future__ import annotations
 
-import re
-import subprocess
+from functools import lru_cache
 from pathlib import Path
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-ACTIVE_AI_DOCUMENTS = (
-    "AGENTS.md",
-    "AI_BUILD_GUIDE.md",
-    "README.md",
-    "docs/001_ai_feature_request_workflow.md",
-    "docs/008_chatgpt_project_prompt.md",
-)
-OBSOLETE_REFERENCES = (
-
-)
-CANONICAL_DOCUMENTS = (
-    "AGENTS.md",
-    "README.md",
-    "AI_BUILD_GUIDE.md",
-    "docs/README.md",
-    "docs/001_ai_feature_request_workflow.md",
-    "docs/007_framework_architecture.md",
-    "docs/008_chatgpt_project_prompt.md",
-)
-
-PROHIBITED_UNSAFE_COMMANDS = (
-    "make wolfboot_root=. keysclean",
-    "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_private_key.der",
-    "remove-item -force .\\tools\\wolfboot\\wolfboot_signing_public_key.der",
-    "remove-item -force .\\tools\\wolfboot\\src\\keystore.c",
-    "remove-item -recurse -force .\\secrets\\wolfboot",
-)
-PROJECT_DOCUMENT_REFERENCE = re.compile(
-    r"(?<![A-Za-z0-9_./-])"
-    r"(AGENTS\.md|AI_BUILD_GUIDE\.md|README\.md|docs/[A-Za-z0-9_./-]+\.(?:md|txt))"
-)
-
-
-def _read(relative_path: str) -> str:
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-
-
-def _repository_files() -> set[str]:
-    """Validate unstaged documentation additions without modifying the index."""
-    completed = subprocess.run(
-        [
-            "git",
-            "-c",
-            f"safe.directory={REPO_ROOT}",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-    )
-    return {
-        path.decode("utf-8")
-        for path in completed.stdout.split(b"\0")
-        if path
-    }
-
-
-def test_required_canonical_documents_exist_and_are_versionable() -> None:
-    available = _repository_files()
-    for path in CANONICAL_DOCUMENTS:
-        assert path in available, f"Required canonical document is absent or ignored: {path}"
-        assert (REPO_ROOT / path).is_file(), f"Required canonical document is missing: {path}"
-
-
-def test_explicit_ai_documentation_references_exist_and_are_versionable() -> None:
-    available = _repository_files()
-
-    for source in ACTIVE_AI_DOCUMENTS:
-        assert source in available, f"Active AI document is absent or ignored: {source}"
-        content = _read(source)
-        references = set(PROJECT_DOCUMENT_REFERENCE.findall(content))
-
-        for reference in sorted(references):
-            assert (REPO_ROOT / reference).is_file(), (
-                f"{source} references missing project documentation: {reference}"
-            )
-            assert reference in available, (
-                f"{source} references absent or ignored project documentation: {reference}"
-            )
-
-
-def test_obsolete_ai_workflow_references_are_absent() -> None:
-    for source in ACTIVE_AI_DOCUMENTS:
-        content = _read(source)
-        for obsolete_reference in OBSOLETE_REFERENCES:
-            assert obsolete_reference not in content, (
-                f"{source} still references obsolete documentation: "
-                f"{obsolete_reference}"
-            )
-
-
-def test_supported_ai_entry_points_are_consistent() -> None:
-    documents = {
-        "AI_BUILD_GUIDE.md": _read("AI_BUILD_GUIDE.md"),
-        "README.md": _read("README.md"),
-        "docs/001_ai_feature_request_workflow.md": _read(
-            "docs/001_ai_feature_request_workflow.md"
-        ),
-        "docs/008_chatgpt_project_prompt.md": _read(
-            "docs/008_chatgpt_project_prompt.md"
-        ),
-    }
-
-    for content in documents.values():
-        assert "AGENTS.md" in content
-        assert "AI_BUILD_GUIDE.md" in content
-        assert "docs/001_ai_feature_request_workflow.md" in content
-        assert "there is no separate release-readiness prompt document" in content.lower()
-
-    for path, content in documents.items():
-        if path != "docs/008_chatgpt_project_prompt.md":
-            assert "docs/008_chatgpt_project_prompt.md" in content
-
-
-def test_direct_repository_guidance_separates_context_and_delivery_from_uploads() -> None:
-    for path in (
-        "AGENTS.md", "AI_BUILD_GUIDE.md",
-        "docs/001_ai_feature_request_workflow.md", "docs/008_chatgpt_project_prompt.md",
-    ):
-        content = " ".join(_read(path).lower().split())
-        for rule in (
-            "normative ai engineering guide",
-            "inspect and modify the working tree directly",
-            "do not ask the user to zip or upload repository context that is already available",
-            "not return replacement zips for files already modified in the working tree",
-            "read-only requests",
-            "commands actually executed",
-            "pass/fail/skip",
-            "git diff --check",
-            "git status --short",
-        ):
-            assert rule in content, f"{path} lost direct-repository rule: {rule}"
-
-
-def test_upload_startup_and_replacement_rules_remain_scoped_to_fallback() -> None:
-    workflow = _read("docs/001_ai_feature_request_workflow.md")
-    prompt = _read("docs/008_chatgpt_project_prompt.md")
-    for content, heading in (
-        (workflow, "### Upload-based startup only"),
-        (prompt, "## Upload-based ChatGPT fallback"),
-    ):
-        direct, upload = content.split(heading, 1)
-        assert "AGENTS.md" in direct
-        assert "Please upload or paste" not in direct
-        assert "Please upload or paste the latest `AI_BUILD_GUIDE.md` first" in upload
-        assert "files=(...)" in upload or "files=(" in upload
-        assert "/home/timk/Downloads/" in upload
-        assert "unzip -o" in upload
-
-    for path, heading in (
-        ("AI_BUILD_GUIDE.md", "The following replacement-artifact requirements apply only to upload-based sessions."),
-        ("docs/001_ai_feature_request_workflow.md", "## Upload-based replacement-artifact requirements"),
-        ("docs/008_chatgpt_project_prompt.md", "## Upload-based ChatGPT fallback"),
-    ):
-        delivery = _read(path).split(heading, 1)[1].lower()
-        assert "complete replacement content" in delivery
-        assert "repository-relative paths" in delivery
-        assert "unzip -o" in delivery
-
-
-def test_ai_workflows_preserve_explicit_git_authorization_and_gateway_waiting() -> None:
-    for path in (
-        "AGENTS.md", "AI_BUILD_GUIDE.md",
-        "docs/001_ai_feature_request_workflow.md", "docs/008_chatgpt_project_prompt.md",
-    ):
-        content = " ".join(_read(path).lower().split())
-        for action in ("commit", "push", "merge", "rebase"):
-            assert action in content, f"{path} lost Git authorization coverage: {action}"
-        assert "pull request" in content or "pr creation" in content
-        assert "explicit user authorization" in content or "explicitly authorizes the relevant git action" in content
-        assert "ctrl-c" in content
-        assert "short timeout unless requested" in content
-        assert "force-release" in content
-
-
-def test_documented_pytest_wrapper_file_targets_exist() -> None:
-    for path in _active_project_owned_documents():
-        content = _read(path)
-        assert "tests/integration/test_gateway_flash_helper.py" not in content, path
-        commands = re.findall(
-            r"(?m)^\./scripts/dev\.sh pytest(?:-gateway|-hardware)?\s+[^\n]+",
-            content.replace("\\\n", " "),
-        )
-        for command in commands:
-            for target in re.findall(r"tests/[A-Za-z0-9_./-]+\.py", command):
-                assert (REPO_ROOT / target).is_file(), f"{path} documents missing test: {target}"
-
-
-SIGNING_STATE_DOCUMENTS = (
-    "AI_BUILD_GUIDE.md",
-    "README.md",
-    "docs/005_remote_flash_workflow.md",
-    "docs/006_security_and_secrets.md",
-    "docs/007_framework_architecture.md",
-)
-
-
-def test_active_docs_define_safe_signing_tuple_lifecycle() -> None:
-    combined = "\n".join(_read(path).lower() for path in SIGNING_STATE_DOCUMENTS)
-
-    required = (
-        "completely absent tuple",
-        "complete matching tuple",
-        "partially missing tuple",
-        "mismatched tuple",
-        "canonical private key",
-    )
-    for phrase in required:
-        assert phrase in combined, f"Missing signing-state lifecycle wording: {phrase}"
-
-    assert "silently replace" in combined
-    assert "silently reconstruct" in combined or "silently regenerated" in combined
-
-
-def test_generated_state_preflight_is_primary_and_pytest_cleanup_is_supplementary() -> None:
-    for path in SIGNING_STATE_DOCUMENTS:
-        content = _read(path).lower()
-        assert "generated-state preflight" in content, (
-            f"{path} must identify generated-state preflight"
-        )
-
-    combined = "\n".join(_read(path).lower() for path in SIGNING_STATE_DOCUMENTS)
-    assert "primary mechanism" in combined
-    assert "supplementary cross-platform hygiene" in combined
-    assert "must not remove" in combined
-
-
-def test_canonical_relocated_build_precedes_signing_in_active_docs() -> None:
-    command_fragment = "experiment build --experiment"
-    for path in ("README.md", "docs/005_remote_flash_workflow.md"):
-        content = _read(path).lower()
-        build_index = content.find(command_fragment)
-        signing_index = content.find("experiment sign-application", build_index + 1)
-        assert build_index >= 0, f"{path} is missing the framework-recorded relocated build"
-        assert signing_index > build_index, f"{path} must show relocated build before signing"
-        assert "release is the default" in content
-        assert "relocateddebug" not in content
-
-    guide = _read("AI_BUILD_GUIDE.md")
-    assert "framework-recorded relocated application build before signing" in guide
-    assert "docs/005_remote_flash_workflow.md" in guide
-
-    architecture = _read("docs/007_framework_architecture.md").lower()
-    assert "direct wrapped cmake remains a diagnostic fallback only" in architecture
-
-MQTT_COMMAND_DOCUMENTS = (
-    "AI_BUILD_GUIDE.md",
-    "README.md",
-    "docs/007_framework_architecture.md",
-    "experiment/mqtt-broker/README.md",
-)
-
-
-def test_linux_wolfmqtt_examples_use_named_client_argument_boundary() -> None:
-    broker_readme = _read("experiment/mqtt-broker/README.md")
-    architecture = _read("docs/007_framework_architecture.md")
-    root_readme = _read("README.md")
-
-    assert "--client-args '-h'" in broker_readme
-    assert "'-p'" in broker_readme
-    assert "'-t'" in broker_readme
-    assert "Linux/bash `--client-args` forwarding contract" in root_readme
-
-    combined = "\n".join((broker_readme, architecture)).lower()
-    assert "after `--client-args`" in combined
-    assert "for linux/bash, pass upstream wolfmqtt options after `--client-args`" in combined
-    assert "pass the selected upstream wolfmqtt client arguments after `--`" not in combined
-
-
-def test_certificate_provisioning_docs_use_config_driven_one_time_workflow() -> None:
-    broker_readme = _read("experiment/mqtt-broker/README.md")
-
-    assert "python scripts/provision_certificates.py" in broker_readme
-    assert "configs/tls_auth/" in broker_readme
-    assert "secrets/certificates/<profile-id>/" in broker_readme
-    assert "experiment execution never generates or renews certificates" in broker_readme
-    assert "provision-certs --server-name" not in broker_readme
-
-    for path in ("README.md", "AI_BUILD_GUIDE.md"):
-        assert "experiment/mqtt-broker/README.md" in _read(path)
-
-
-def test_mqtt_command_docs_preserve_compose_path_and_evidence_boundary() -> None:
-    combined = "\n".join(_read(path) for path in MQTT_COMMAND_DOCUMENTS)
-
-    assert "experiment/mqtt-broker/compose.yaml" in combined
-    assert "host_side" in combined or "host-side" in combined
-    assert "wolfMQTT-on-STM32" in combined
-    assert "end-to-end wireless" in combined
-
-
-def test_host_wolfmqtt_wrapper_help_uses_client_args_contract() -> None:
-    source = _read("experiment/mqtt-broker/scripts/host_wolfmqtt_validate.py")
-
-    assert "after --client-args" in source
-    assert "error=run requires explicit wolfMQTT client arguments after --client-args" in source
-    assert "Linux/bash forwarding path" in source
-
-
-def test_architecture_contains_canonical_current_capability_matrix() -> None:
-    architecture = _read("docs/007_framework_architecture.md")
-
-    assert "## Canonical current capability matrix" in architecture
-    required_rows = (
-        "Direct-flash HAL/FreeRTOS application",
-        "wolfBoot secure-boot build, signing, and flashing",
-        "MQTT/TLS config and result schema",
-        "Deterministic fake/no-network MQTT transport",
-        "Native host wolfMQTT/wolfSSL broker validation",
-        "STM32 wolfSSL transport boundary",
-        "STM32 wolfMQTT integration",
-        "ST67W61M1 hardware-backed network backend",
-        "Real classical STM32 MQTT-over-TLS",
-        "PQC or hybrid STM32 MQTT-over-TLS",
-    )
-    for row in required_rows:
-        assert f"| {row} |" in architecture, f"Missing capability matrix row: {row}"
-
-    for heading in (
-        "Build-only",
-        "STM32-local runtime",
-        "Host-side",
-        "Broker-side",
-        "Gateway/hardware",
-        "Evidence class or boundary",
-        "Current limitation",
-    ):
-        assert heading in architecture
-
-
-def test_architecture_preserves_mqtt_hardware_boundaries() -> None:
-    architecture = _read("docs/007_framework_architecture.md")
-
-    assert "STM32 wolfMQTT integration | Supported" in architecture
-    assert "stm32-fake-no-network-initialization-only" in architecture
-    assert "legacy transport-boundary self-test" in architecture
-    assert "ST67W61M1 hardware-backed network backend | Driver and interface sources build in direct and relocated profiles | Association and DHCP-supported runtime" in architecture
-    assert "stm32-st67-wifi-association-dhcp" in architecture
-    assert "Hardware success requires both association and DHCP pass markers from the latest boot and a non-zero IPv4 address." in architecture
-    assert "Real classical STM32 MQTT-over-TLS | Implemented | ST67/lwIP/wolfSSL/wolfMQTT runtime path implemented" in architecture
-    assert "STM32-local wolfMQTT build/runtime integration and real wolfSSL transport/handshake integration" not in architecture
-
-def test_readme_is_concise_and_routes_detail_to_canonical_owners() -> None:
-    readme = _read("README.md")
-
-    assert len(readme.splitlines()) <= 200
-    for heading in (
-        "## Current scope",
-        "## Documentation",
-        "## Default workflow",
-        "## Secure-boot example",
-        "## MQTT and broker orientation",
-        "## Safety and evidence",
-    ):
-        assert heading in readme
-
-    for owner in (
-        "docs/README.md",
-        "docs/005_remote_flash_workflow.md",
-        "docs/006_security_and_secrets.md",
-        "docs/007_framework_architecture.md",
-        "experiment/mqtt-broker/README.md",
-    ):
-        assert owner in readme
-
-    assert "## Containerised build/test/experiment environment" not in readme
-    assert "## Benchmark collection" not in readme
-    assert "### Phase" not in readme
-
-
-def test_architecture_is_capability_oriented_not_phase_structured() -> None:
-    architecture = _read("docs/007_framework_architecture.md")
-
-    required_headings = (
-        "## System capability overview",
-        "## Architectural organization",
-        "## Canonical current capability matrix",
-        "## Build and generated-state architecture",
-        "## Test architecture",
-        "## Consolidated deferred-test register",
-    )
-    for heading in required_headings:
-        assert heading in architecture
-    assert not re.search(r"(?m)^#{2,4} Phase ", architecture)
-
-
-ENTRY_DOCUMENTS = (
-    "AI_BUILD_GUIDE.md",
-    "README.md",
-    "docs/000_project_overview.md",
-    "docs/004_baseline_hal_app.md",
-)
-
-
-def test_entry_documents_match_canonical_mqtt_evidence_boundaries() -> None:
-    combined = "\n".join(_read(path).lower() for path in ENTRY_DOCUMENTS)
-
-    for phrase in (
-        "build-only",
-        "local-only",
-        "fake/no-network",
-        "host-side",
-        "unavailable transport",
-        "st67w61m1",
-    ):
-        assert phrase in combined, f"Missing D2.2 capability-boundary wording: {phrase}"
-
-    assert "real st67w61m1-backed networking" in combined
-    assert "no socket i/o" in combined
-    assert "end-to-end" in combined
-
-
-def test_overview_does_not_describe_all_mqtt_or_wolfssl_work_as_unimplemented() -> None:
-    overview = _read("docs/000_project_overview.md").lower()
-
-    assert "mqtt transport experiments" not in overview
-    assert "tls/wolfssl transport experiments" not in overview
-    assert "framework and fake/no-network" in overview
-    assert "broker-side and host-side" in overview
-    assert "stm32 build-only" in overview
-    assert "stm32 local-only" in overview
-    assert "stm32 unavailable transport" in overview
-    assert "future hardware-backed" in overview
-
-
-def test_baseline_document_matches_scheduler_and_task_smoke_sequence() -> None:
-    baseline = _read("docs/004_baseline_hal_app.md")
-    representative = baseline.split("A representative sequence is:", maxsplit=1)[1]
-
-    ordered_markers = (
-        "stm32-basic_hal1 boot v0.1.0",
-        "lwIP runtime smoke: context=pre_scheduler scheduler=not_started",
-        "lwIP network interface: evidence=lwip-netif-state-only",
-        "wolfSSL TLS context smoke: context=pre_scheduler scheduler=not_started",
-        "wolfSSL transport boundary: evidence=unavailable-transport-only",
-        "FreeRTOS defaultTask created:",
-        "FreeRTOS scheduler starting:",
-        "FreeRTOS defaultTask started: periodic tick task active",
-        "FreeRTOS task-context smoke starting:",
-        "wolfMQTT runtime smoke:",
-        "FreeRTOS task-context smoke complete:",
-        "\ntick\n",
-    )
-
-    positions = [representative.index(marker) for marker in ordered_markers]
-    assert positions == sorted(positions)
-    assert "evidence=stm32-fake-no-network-initialization-only" in baseline
-    assert "socket_io=not-performed" in baseline
-    assert "does not provide evidence of ST67W61M1 detection" in baseline
-
-OPERATIONAL_WORKFLOW_DOCUMENTS = (
-    "docs/002_host_gateway_setup.md",
-    "docs/003_stm32_board_setup.md",
-    "docs/005_remote_flash_workflow.md",
-    "docs/006_security_and_secrets.md",
-    "experiment/mqtt-broker/README.md",
-)
-
-
-def test_operational_workflow_docs_use_canonical_owners_and_evidence_boundaries() -> None:
-    combined = "\n".join(_read(path) for path in OPERATIONAL_WORKFLOW_DOCUMENTS)
-
-    for canonical_path in (
-        "configs/gateways/pqc_gateway1.yaml",
-        "docs/002_host_gateway_setup.md",
-        "docs/003_stm32_board_setup.md",
-        "docs/005_remote_flash_workflow.md",
-        "docs/006_security_and_secrets.md",
-        "docs/007_framework_architecture.md",
-        "experiment/mqtt-broker/README.md",
-    ):
-        assert canonical_path in combined
-
-    for boundary in (
-        "host-side",
-        "broker-side",
-        "UART",
-        "ST67W61M1",
-        "end-to-end wireless",
-    ):
-        assert boundary in combined
-
-
-def test_operational_commands_use_docker_wrappers_by_default() -> None:
-    gateway = _read("docs/002_host_gateway_setup.md")
-    workflow = _read("docs/005_remote_flash_workflow.md")
-    broker = _read("experiment/mqtt-broker/README.md")
-
-    assert "Docker-wrapper" in workflow
-    assert "diagnostic fallback only" in workflow
-    assert "./scripts/dev.sh experiment-gateway" in gateway
-    assert "./scripts/dev.sh experiment build-wolfboot" in workflow
-    assert "python experiment/mqtt-broker/scripts/mqtt_broker_ctl.py" in broker
-    assert "Diagnostic fallback: local Docker smoke test" in broker
-    assert "Diagnostic fallback: raw gateway-capable container execution" in broker
-
-
-def test_operational_secure_boot_profiles_match_tracked_config_inventory() -> None:
-    workflow = _read("docs/005_remote_flash_workflow.md")
-    expected_stems = (
-        "integrity_sha256",
-        "ecdsa_p256",
-        "ecdsa_p384",
-        "ecdsa_p521",
-        "ed25519",
-        "ed448",
-        "rsa2048",
-        "rsa3072",
-        "rsa4096",
-        "mldsa44",
-        "mldsa65",
-        "mldsa87",
-    )
-
-    for stem in expected_stems:
-        assert stem in workflow
-        assert (REPO_ROOT / f"configs/secure_boot/{stem}.yaml").is_file()
-
-    assert (REPO_ROOT / "configs/targets/stm32l4r5_wolfboot.yaml").is_file()
-    assert (REPO_ROOT / "configs/campaigns/secure_boot.yaml").is_file()
-    assert not (REPO_ROOT / "configs/builds").exists()
-    assert not (REPO_ROOT / "configs/signing").exists()
-
-
-def test_operational_docs_preserve_generated_state_and_secret_safety() -> None:
-    workflow = _read("docs/005_remote_flash_workflow.md").lower()
-    security = _read("docs/006_security_and_secrets.md").lower()
-
-    for content in (workflow, security):
-        assert "generated-state preflight" in content
-        assert "primary" in content
-        assert "supplementary cross-platform hygiene" in content
-        assert "keysclean" in content
-        assert "do not" in content
-
-    assert "partially missing tuple" in workflow
-    assert "mismatched tuple" in workflow
-    assert "disposable experiment cryptographic material" in security
-    assert "may, however, be copied into the result directory" in security
-    assert "ssh private keys" in security
-    assert "production or externally managed certificates and keys" in security
-    assert "must fail closed rather than be archived" in security
-
-
-
+import re
+import json
+import argparse
+import importlib.util
+import shlex
+import sys
+from unittest.mock import patch
+import subprocess
+from urllib.parse import unquote, urlsplit
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+INDEX = "docs/README.md"
 ARCHITECTURE = "docs/007_framework_architecture.md"
-DEFERRED_REGISTER_FIELDS = (
-    "ID",
-    "Feature",
-    "Missing test layer",
-    "Reason",
-    "Required capability or phase",
-    "Intended test file",
-    "Eventual verification command",
-    "Status",
+CONFIGURATION = "docs/011_experiment_configuration.md"
+RESULTS = "docs/012_results_and_analysis.md"
+TESTING = "docs/013_testing_and_deferred_coverage.md"
+AI_DOCUMENTS = (
+    "AGENTS.md", "AI_BUILD_GUIDE.md", "docs/001_ai_feature_request_workflow.md",
+    "docs/008_chatgpt_project_prompt.md",
 )
+LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^\s)]+)(?:\s+\"[^\"]*\")?\)")
+INDEX_ROW = re.compile(r"^\| \[([^]]+)\]\([^)]+\) \|")
 
 
-MQTT_PHASE_STATUS_FIELDS = (
-    "Status",
-    "Implemented evidence boundary",
-    "Verification",
-    "Remaining limitations",
-    "Deferred tests",
-    "Last reconciled",
-)
-
-def test_architecture_has_one_structured_deferred_test_register() -> None:
-    architecture = _read(ARCHITECTURE)
-    assert architecture.count("## Consolidated deferred-test register") == 1
-    assert "AI_BUILD_GUIDE.md" in architecture
-
-    header = "| " + " | ".join(DEFERRED_REGISTER_FIELDS) + " |"
-    assert header in architecture
-    assert "## Deferred test coverage —" not in architecture
-    assert "### Deferred test coverage" not in architecture
-    assert "#### Deferred test coverage" not in architecture
-
-    rows = re.findall(r"(?m)^\| (DTR-\d{3}) \|.*\|$", architecture)
-    assert rows == [f"DTR-{index:03d}" for index in range(1, len(rows) + 1)]
+def read(path: str) -> str:
+    content = (ROOT / path).read_text(encoding="utf-8-sig")
+    if Path(path).suffix == ".ipynb":
+        return "\n".join("".join(cell["source"]) for cell in json.loads(content)["cells"]
+                         if cell["cell_type"] == "markdown")
+    return content
 
 
-def test_deferred_register_rows_have_all_required_values() -> None:
-    architecture = _read(ARCHITECTURE)
-    rows = [
-        line for line in architecture.splitlines()
-        if re.match(r"^\| DTR-\d{3} \|", line)
-    ]
-    assert rows
-
-    expected_cells = len(DEFERRED_REGISTER_FIELDS)
-    for row in rows:
-        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
-        assert len(cells) == expected_cells, f"Malformed deferred-test row: {row}"
-        assert all(cells), f"Deferred-test row contains an empty required field: {row}"
-        assert cells[5].startswith("`tests/"), f"Intended test file is not explicit: {row}"
-        assert (
-            "./scripts/dev.sh" in cells[6]
-        ), f"Verification command is not explicit: {row}"
-
-DOCUMENTATION_INDEX = "docs/README.md"
-PROJECT_DOCUMENT_PATTERNS = (
-    re.compile(r"^(?:AGENTS|README|AI_BUILD_GUIDE)\.md$"),
-    re.compile(r"^docs/.*\.(?:md|txt)$"),
-    re.compile(r"^experiment/mqtt-broker/(?:README\.md|config/oqs/README\.md)$"),
-    re.compile(r"^instruments/esp32_ina228/README\.md$"),
-)
-INDEXED_DOCUMENT_PATH = re.compile(r"(?m)^\| `([^`]+\.(?:md|txt))` \|")
+@lru_cache(maxsize=1)
+def repository_files() -> set[str]:
+    result = subprocess.run(
+        ["git", "-c", f"safe.directory={ROOT}", "ls-files", "--cached",
+         "--others", "--exclude-standard", "-z"],
+        cwd=ROOT, check=True, capture_output=True,
+    )
+    return {p.decode() for p in result.stdout.split(b"\0") if p}
 
 
-def _submodule_roots() -> tuple[str, ...]:
-    gitmodules = REPO_ROOT / ".gitmodules"
-    if not gitmodules.is_file():
-        return ()
-    roots = re.findall(r"(?m)^\s*path\s*=\s*(\S+)\s*$", gitmodules.read_text(encoding="utf-8"))
-    return tuple(f"{root.rstrip('/')}/" for root in roots)
+@lru_cache(maxsize=1)
+def submodule_roots() -> tuple[str, ...]:
+    return tuple(path.rstrip("/") + "/" for path in re.findall(
+        r"(?m)^\s*path\s*=\s*(\S+)\s*$", read(".gitmodules")))
 
 
-def _is_project_owned_document(path: str) -> bool:
-    if any(path.startswith(root) for root in _submodule_roots()):
+def project_owned(path: str) -> bool:
+    if any(path.startswith(root) for root in submodule_roots()):
         return False
-    return any(pattern.fullmatch(path) for pattern in PROJECT_DOCUMENT_PATTERNS)
+    if path.startswith(("Drivers/", "Middlewares/", "LWIP/", "build/", "results/",
+                        ".pqc-generated-state/")):
+        return False
+    candidate = Path(path)
+    if ".ipynb_checkpoints" in candidate.parts:
+        return False
+    return candidate.suffix in {".md", ".rst", ".adoc", ".ipynb"} or (
+        path.startswith("docs/") and candidate.suffix == ".txt"
+    )
 
 
-def _indexed_document_paths() -> list[str]:
-    return INDEXED_DOCUMENT_PATH.findall(_read(DOCUMENTATION_INDEX))
-
-
-def _documentation_index_rows() -> list[tuple[str, str, str, str, str]]:
-    rows: list[tuple[str, str, str, str, str]] = []
-    for line in _read(DOCUMENTATION_INDEX).splitlines():
-        if not line.startswith("| `"):
+def index_rows(content: str) -> list[tuple[str, str, str]]:
+    rows = []
+    for line in content.splitlines():
+        match = INDEX_ROW.match(line)
+        if not match:
             continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        assert len(cells) == 5, f"Malformed documentation ownership row: {line}"
-        path = cells[0].strip("`")
-        rows.append((path, cells[1], cells[2], cells[3], cells[4]))
+        assert len(cells) == 3 and all(cells), f"Incomplete index row: {line}"
+        rows.append((match[1], cells[1], cells[2]))
     return rows
 
 
-def _active_project_owned_documents() -> list[str]:
-    active: list[str] = []
-    for path, classification, lifecycle, _owner, _audience in _documentation_index_rows():
-        metadata = f"{classification} {lifecycle}".lower()
-        if (
-            "historical" in metadata
-            or "decision record" in metadata
-            or "plan" in metadata
-        ):
+def outside_fences(content: str) -> str:
+    lines = []
+    fence = None
+    for line in content.splitlines():
+        match = re.match(r"^\s{0,3}(`{3,}|~{3,})(.*)$", line)
+        if match:
+            token, tail = match.groups()
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence) and not tail.strip():
+                fence = None
             continue
-        active.append(path)
-    return active
+        if fence is None:
+            lines.append(line)
+    assert fence is None, "Unclosed fenced code block"
+    return "\n".join(lines)
 
 
-def test_documentation_index_covers_every_project_owned_document() -> None:
-    available = _repository_files()
-    expected = sorted(path for path in available if _is_project_owned_document(path))
-    indexed = _indexed_document_paths()
+def anchors(content: str) -> set[str]:
+    prose = outside_fences(content)
+    found = set(re.findall(r'<(?:a|h[1-6])\s+[^>]*(?:id|name)="([^"]+)"', prose))
+    counts: dict[str, int] = {}
+    for heading in re.findall(r"(?m)^#{1,6}\s+(.+?)\s*#*\s*$", prose):
+        heading = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", heading)
+        slug = re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+        duplicate = counts.get(slug, 0)
+        counts[slug] = duplicate + 1
+        found.add(f"{slug}-{duplicate}" if duplicate else slug)
+    return found
 
-    assert indexed == sorted(indexed), "Documentation index paths must be sorted"
-    assert len(indexed) == len(set(indexed)), "Documentation index contains duplicate paths"
-    assert indexed == expected, (
-        "Project-owned documentation index coverage mismatch. "
+
+def local_link_errors(source: Path, content: str, root: Path) -> list[str]:
+    errors = []
+    for destination in LINK.findall(outside_fences(content)):
+        url = urlsplit(destination.strip("<>"))
+        if url.scheme or url.netloc:
+            continue
+        target = (source.parent / unquote(url.path)).resolve() if url.path else source
+        if not target.is_relative_to(root):
+            errors.append(f"link leaves repository: {destination}")
+        elif not target.exists():
+            errors.append(f"missing link: {destination}")
+        elif url.fragment and target.suffix == ".md":
+            if unquote(url.fragment) not in anchors(target.read_text(encoding="utf-8-sig")):
+                errors.append(f"missing anchor: {destination}")
+    return errors
+
+
+def active_documents() -> list[str]:
+    return [path for path, _role, status in index_rows(read(INDEX))
+            if status not in {"Historical plan", "Decision record"}]
+
+
+def test_index_covers_all_project_documents_including_unstaged_additions():
+    rows = index_rows(read(INDEX))
+    indexed = [row[0] for row in rows]
+    expected = sorted(path for path in repository_files() if project_owned(path))
+    assert len(indexed) == len(set(indexed)), "Duplicate index paths"
+    assert indexed == sorted(indexed), "Keep inventory paths sorted"
+    assert set(indexed) == set(expected), (
         f"Missing: {sorted(set(expected) - set(indexed))}; "
         f"unexpected: {sorted(set(indexed) - set(expected))}"
     )
+    for path, _role, status in rows:
+        assert (ROOT / path).is_file(), path
+        assert status in {"Current reference", "Operational guide", "AI workflow",
+                          "Historical plan", "Decision record", "Executable notebook",
+                          "Exploratory notebook"}, (path, status)
 
 
-def test_every_indexed_document_exists_and_is_versionable() -> None:
-    available = _repository_files()
-    for path in _indexed_document_paths():
-        assert (REPO_ROOT / path).is_file(), f"Indexed documentation file is missing: {path}"
-        assert path in available, f"Indexed documentation file is absent or ignored: {path}"
+def test_current_document_links_and_anchors_resolve():
+    failures = []
+    for path, _role, _status in index_rows(read(INDEX)):
+        failures.extend(f"{path}: {error}" for error in local_link_errors(ROOT / path, read(path), ROOT))
+    assert not failures, "\n".join(failures)
 
 
-def test_documentation_index_records_complete_ownership_metadata() -> None:
-    content = _read(DOCUMENTATION_INDEX)
-    header = (
-        "| Path | Classification | Lifecycle | Canonical subject ownership | "
-        "Intended audience |"
-    )
-    assert header in content
+def test_entry_points_route_to_one_index_and_normative_guide():
+    for path in ("README.md", "AGENTS.md", "AI_BUILD_GUIDE.md"):
+        assert INDEX in read(path), path
+    for path in AI_DOCUMENTS:
+        if path != "AI_BUILD_GUIDE.md":
+            assert "AI_BUILD_GUIDE.md" in read(path), path
+    for owner in (ARCHITECTURE, CONFIGURATION, RESULTS, TESTING):
+        assert owner in read("AI_BUILD_GUIDE.md"), owner
+    for owner in (CONFIGURATION, RESULTS, TESTING):
+        assert Path(owner).name in read(ARCHITECTURE), owner
 
-    rows = _documentation_index_rows()
+
+def test_documented_python_and_pytest_command_targets_exist():
+    for path in active_documents():
+        content = read(path).replace("\\\n", " ")
+        for line in content.splitlines():
+            # Deferred rows name future contracts explicitly; they are not runnable examples.
+            if path == TESTING and line.startswith("| DTR-"):
+                continue
+            if not re.search(r"(?:\./scripts/dev\.sh (?:python|pytest)|python3? )", line):
+                continue
+            for target in re.findall(r"(?<![\w/])((?:scripts|tests|experiment)/[\w./-]+\.py)", line):
+                assert (ROOT / target).is_file(), f"{path}: missing command target {target}"
+
+
+def test_deferred_register_is_unique_and_all_rows_are_complete():
+    owners = [path for path in active_documents() if re.search(r"(?m)^\| DTR-", read(path))]
+    assert owners == [TESTING], owners
+    rows = [line for line in read(TESTING).splitlines() if line.startswith("| DTR-")]
     assert rows
+    identifiers = set()
     for row in rows:
-        assert all(row), f"Documentation ownership row has an empty field: {row}"
-
-
-def test_active_project_docs_reject_unsafe_wolfboot_cleanup_commands() -> None:
-    for path in _active_project_owned_documents():
-        content = _read(path).lower()
-        for command in PROHIBITED_UNSAFE_COMMANDS:
-            assert command not in content, (
-                f"Unsafe signing-state cleanup command found in {path}: {command}"
+        cells = [cell.strip() for cell in row.strip("|").split("|")]
+        assert len(cells) == 8 and all(cells), row
+        assert re.fullmatch(r"DTR-[A-Z0-9-]+", cells[0]), row
+        assert cells[0] not in identifiers, cells[0]
+        identifiers.add(cells[0])
+        assert "tests/" in cells[5] and "scripts/" in cells[6], row
+        for target in re.findall(r"tests/[\w./-]+\.py", cells[5]):
+            assert (ROOT / target).is_file() or "planned" in cells[5].lower(), (
+                f"{cells[0]} names absent test without marking it planned: {target}"
             )
 
 
-
-def test_vendor_and_submodule_documentation_is_excluded_from_project_ownership() -> None:
-    content = _read(DOCUMENTATION_INDEX)
-    indexed = _indexed_document_paths()
-
-    assert "vendor or submodule trees is upstream-owned" in content
-    for root in _submodule_roots():
-        assert f"`{root}`" in content
-        assert not any(path.startswith(root) for path in indexed)
-
-    assert not any(path.startswith("Drivers/") for path in indexed)
-    assert not any(path.startswith("Middlewares/Third_Party/") for path in indexed)
+def test_documented_workload_catalog_matches_resolver_profiles():
+    catalog = {}
+    for path in (ROOT / "configs/workloads").glob("*.yaml"):
+        profile = yaml.safe_load(path.read_text())
+        catalog[profile["id"]] = profile["firmware_application"]
+    documented = dict(re.findall(r"(?m)^\| `([\w-]+)` \| `([\w-]+)` \|", read(CONFIGURATION)))
+    assert documented == catalog
 
 
-def test_root_entry_documents_link_to_documentation_index() -> None:
-    for path in ("AGENTS.md", "README.md", "AI_BUILD_GUIDE.md"):
-        content = _read(path)
-        assert DOCUMENTATION_INDEX in content, f"{path} must link to {DOCUMENTATION_INDEX}"
+def test_current_docs_do_not_publish_destructive_signing_cleanup_commands():
+    for path in active_documents():
+        # Inspect shell examples only; prohibitions may legitimately name these commands in prose.
+        examples = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", read(path), re.S)
+        for example in examples:
+            assert not re.search(r"(?m)^\s*(?:make\b[^\n]*\bkeysclean\b|rm\b[^\n]*(?:secrets/wolfboot|keystore\.c|signing_private_key))", example), path
 
 
-def test_ai_build_guide_is_compact_and_routes_detail_to_canonical_owners() -> None:
-    guide = _read("AI_BUILD_GUIDE.md")
-
-    required_headings = (
-        "## 1. Purpose and authority",
-        "## 2. Canonical documentation routing",
-        "## 3. Project and capability boundaries",
-        "## 4. Repository navigation and ownership",
-        "## 5. Default workflow model",
-        "## 6. Generated state, signing state, and provenance",
-        "## 7. Evidence and result rules",
-        "## 8. Testing requirements",
-        "## 9. Secrets and generated artifacts",
-        "## 10. AI-assisted implementation and review workflow",
-        "## 11. Replacement artifact delivery",
-        "## 12. Documentation maintenance rules",
-    )
-    for heading in required_headings:
-        assert heading in guide, f"AI build guide is missing required section: {heading}"
-
-    for canonical_path in (
-        "docs/README.md",
-        "docs/001_ai_feature_request_workflow.md",
-        "docs/002_host_gateway_setup.md",
-        "docs/003_stm32_board_setup.md",
-        "docs/004_baseline_hal_app.md",
-        "docs/005_remote_flash_workflow.md",
-        "docs/006_security_and_secrets.md",
-        "docs/007_framework_architecture.md",
-        "docs/008_chatgpt_project_prompt.md",
-        "experiment/mqtt-broker/README.md",
-    ):
-        assert canonical_path in guide, f"AI build guide is missing canonical link: {canonical_path}"
-
-    assert len(guide.splitlines()) <= 275
-    assert "Phase M" not in guide
-    assert "Gateway SSH alias:" not in guide
-    assert "ST-LINK serial:" not in guide
-    assert "Core/Src/pqc_" not in guide
-    assert "tests/unit/test_artifacts.py" not in guide
+@pytest.mark.parametrize("path, expected", [
+    ("analysis_implementation_requests.md", True),
+    ("experiment/mqtt-broker/config/oqs-mtls/README.md", True),
+    ("docs/new-reference.md", True),
+    ("scripts/README.md", True),
+    ("notebooks/new-analysis.ipynb", True),
+    ("notebooks/.ipynb_checkpoints/new-checkpoint.ipynb", False),
+    ("docs/new-reference.rst", True),
+    ("Drivers/vendor/README.md", False),
+    ("tools/wolfboot/README.md", False),
+    ("Middlewares/Third_Party/wolfSSL/README.md", False),
+    ("instruments/esp32_ina228/lib/SparkFun_Toolkit/README.md", False),
+    ("results/run/README.md", False),
+])
+def test_inventory_boundary(path, expected):
+    assert project_owned(path) is expected
 
 
-def test_ai_build_guide_preserves_mandatory_workflow_and_safety_rules() -> None:
-    guide = _read("AI_BUILD_GUIDE.md")
-    required_phrases = (
-        "Do not rely on prior chats, prior uploads, memory, or inferred repository state.",
-        "Do not move CubeMX-generated folders unless explicitly requested.",
-        "Do not implement a future or deferred capability early",
-        "Do not claim hardware, gateway, flashing, UART, runtime, timing, memory, benchmark",
-        "Do not implement code until the required context is available.",
-        "complete matching tuple",
-        "partially missing tuple",
-        "mismatched tuple",
-        "Never silently reconstruct tuple members",
-        "supplementary cross-platform hygiene",
-        "consolidated deferred-test register",
-        "Provide complete replacement content",
-        "unzip -o",
-    )
-    for phrase in required_phrases:
-        assert phrase in guide, f"AI build guide lost mandatory rule: {phrase}"
-
-def test_st67_transport_documentation_matches_vendor_aligned_runtime_baseline() -> None:
-    board = _read("docs/003_stm32_board_setup.md")
-    baseline = _read("docs/004_baseline_hal_app.md")
-    architecture = _read("docs/007_framework_architecture.md")
-    combined = "\n".join((board, baseline, architecture))
-
-    assert "SPI_BAUDRATEPRESCALER_4" in baseline
-    assert "SPI1 uses prescaler 4" in architecture
-    assert "approximately 30 Mbit/s" in combined
-    assert "vendor `spi_iface.c` implementation" in combined
-    assert "each segment in a chained lwIP `pbuf`" in combined
-    assert "30-second" in combined
-
-def test_wolfssl_dependency_ownership_is_explicit_and_consistent() -> None:
-    guide = _read("AI_BUILD_GUIDE.md")
-    architecture = _read("docs/007_framework_architecture.md")
-    readme = _read("README.md")
-
-    for document in (guide, architecture, readme):
-        assert "Middlewares/Third_Party/wolfSSL" in document
-        assert "tools/wolfboot/lib/wolfssl" in document
-
-    assert "Application TLS/wolfCrypt source of truth" in architecture
-    assert "wolfBoot-owned nested wolfSSL dependency" in architecture
-    assert "PQC_WOLFSSL_SOURCE_DIR" in architecture
-    assert "commit and push the wolfSSL source change" in architecture
-
-    assert "Application TLS/wolfCrypt changes must target `Middlewares/Third_Party/wolfSSL`" in guide
-    assert "Do not modify `tools/wolfboot/lib/wolfssl` for application TLS functionality" in guide
-    assert "parent-repository commit alone does not preserve dirty wolfSSL working-tree changes" in guide
-
-    assert "Application TLS/wolfCrypt builds use the top-level `Middlewares/Third_Party/wolfSSL` submodule" in readme
+def test_link_checker_detects_missing_file_and_anchor_but_ignores_examples(tmp_path):
+    source = tmp_path / "index.md"
+    target = tmp_path / "topic.md"
+    target.write_text("# Heading\n## Repeated `item`\n## Repeated `item`\n")
+    content = """[valid](topic.md#heading)
+[duplicate](topic.md#repeated-item-1)
+[missing](absent.md)
+[stale anchor](topic.md#old)
+[web](https://example.invalid/topic)
+```markdown
+[example](not-a-real-file.md)
+```
+"""
+    errors = local_link_errors(source, content, tmp_path)
+    assert errors == ["missing link: absent.md", "missing anchor: topic.md#old"]
 
 
-
-def test_hardware_test_standard_is_self_contained() -> None:
-    guide = _read("AI_BUILD_GUIDE.md")
-    workflow = _read("docs/001_ai_feature_request_workflow.md")
-    architecture = _read("docs/007_framework_architecture.md")
-    flash = _read("docs/005_remote_flash_workflow.md")
-
-    assert "Hardware tests must be self-contained by default" in guide
-    assert "Hardware-test design standard" in workflow
-    assert "Hardware tests are self-contained by default" in architecture
-    assert "pre-generated campaigns" in workflow
-    assert "test-specific environment variables" in workflow
-    assert "Automated hardware tests" in flash
-    assert "test_application_timebase_hw.py" in flash
-    assert "PQC_TIMEBASE_UART_LOG" not in architecture.split("| DTR-015 |", 1)[1].splitlines()[0]
+def test_index_parser_rejects_missing_metadata():
+    with pytest.raises(AssertionError, match="Incomplete index"):
+        index_rows("| [docs/new.md](new.md) | | Current reference |")
 
 
-# Energy operations belong in the instrument guide rather than the AI guide.
-def test_energy_guide_documents_passive_gpio_capture_contract():
-    root = Path(__file__).resolve().parents[2]
-    guide = (root / "docs/010_esp32_ina228_energy_instrument.md").read_text()
-    for text in (
-        "pqc/instrument/energy/capture",
-        "20-byte",
-        "pre-trigger",
-        "TIM2",
-        "offline",
-        "energy-capture.json",
-        "publish-only",
-        "acquisition is paused",
-    ):
-        assert text in guide
-    assert "PQC_ENERGY_WAITING` / `PQC_ENERGY_GO` start gate is retired" in guide
-    assert "session/association protocol" in guide and "no run ID" in guide
-    assert "schema 3 energy" not in guide
-    assert (root / "tests/hardware/test_energy_capture_hw.py").is_file()
+def test_unclosed_fence_is_reported():
+    with pytest.raises(AssertionError, match="Unclosed"):
+        outside_fences("# Title\n```bash\necho example\n")
+
+
+PARSER_SOURCES = {
+    "scripts/experiment.py": "build_arg_parser",
+    "scripts/run_campaign.py": "build_parser",
+    "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py": "build_parser",
+    "scripts/run_queue.py": None,
+    "scripts/collect_thesis_evidence.py": None,
+    "scripts/provision_certificates.py": "build_parser",
+    "scripts/ready_metrics_2_reliability_v2.py": None,
+}
+
+
+@lru_cache(maxsize=None)
+def command_parser(source):
+    """Construct real parsers only; never dispatch a documented operation."""
+    name = "documentation_cli_" + Path(source).stem
+    spec = importlib.util.spec_from_file_location(name, ROOT / source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    builder = PARSER_SOURCES[source]
+    if builder:
+        return getattr(module, builder)()
+
+    class ParserReady(Exception):
+        pass
+
+    captured = []
+
+    def capture(parser, *args, **kwargs):
+        captured.append(parser)
+        raise ParserReady
+
+    # These host launchers construct their parser at main's start. Interrupt at
+    # parse_args, before queue files, provisioning or Docker can be touched.
+    with patch.object(argparse.ArgumentParser, "parse_args", capture):
+        with pytest.raises(ParserReady):
+            module.main([])
+    assert len(captured) == 1
+    return captured[0]
+
+
+def documented_cli_commands(content):
+    for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", content, re.S):
+        for line in block.replace("\\\n", " ").splitlines():
+            words = shlex.split(line, comments=True)
+            if not words:
+                continue
+            if words[0] == "./scripts/dev.sh" and len(words) > 1:
+                wrapper = words[1]
+                if wrapper in {"experiment", "experiment-gateway"}:
+                    yield "scripts/experiment.py", words[2:]
+                elif wrapper in {"campaign", "campaign-gateway"}:
+                    yield "scripts/run_campaign.py", words[2:]
+                elif wrapper in {"python", "python-gateway"} and len(words) > 2:
+                    if words[2] in PARSER_SOURCES:
+                        yield words[2], words[3:]
+            elif words[0] in {"python", "python3"} and len(words) > 1:
+                if words[1] in PARSER_SOURCES:
+                    yield words[1], words[2:]
+
+
+def test_documented_cli_arguments_match_real_parsers_without_dispatch():
+    checked = set()
+    for path in active_documents():
+        for source, arguments in documented_cli_commands(read(path)):
+            parser = command_parser(source)
+            if "--help" in arguments:
+                continue
+            try:
+                parsed = parser.parse_args(arguments)
+            except SystemExit as exc:
+                pytest.fail(f"{path}: invalid {source} arguments {arguments}: {exc}")
+            # This compatibility command still calls removed provision-certs by
+            # default; examples must select the functioning preprovisioned path.
+            if getattr(parsed, "command", None) == "mqtt-broker-experiment":
+                assert parsed.no_provision_certs, path
+            checked.add(source)
+    assert checked == set(PARSER_SOURCES)
+
+
+def test_command_extraction_and_parser_reject_removed_broker_option():
+    content = "```bash\n./scripts/dev.sh python-gateway experiment/mqtt-broker/scripts/mqtt_broker_ctl.py \\\n  status --profile oqs\n```"
+    commands = list(documented_cli_commands(content))
+    assert commands == [("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py", ["status", "--profile", "oqs"])]
+    with pytest.raises(SystemExit):
+        command_parser(commands[0][0]).parse_args(["status", "--host-config", "old.yaml"])
+
+
+def test_ai_entry_points_and_history_route_to_current_data_policy():
+    policy = "006_security_and_secrets.md"
+    for path in AI_DOCUMENTS:
+        assert policy in {Path(urlsplit(link).path).name for link in LINK.findall(read(path))}, path
+    for path, _role, status in index_rows(read(INDEX)):
+        if status in {"Historical plan", "Decision record"}:
+            links = LINK.findall(read(path).split("\n## ", 1)[0])
+            assert any(Path(urlsplit(link).path).name == policy for link in links), path
+            assert any(Path(urlsplit(link).path).name in {
+                "007_framework_architecture.md", "009_dual_bank_ota_workflow.md",
+                "012_results_and_analysis.md",
+            } for link in links), path
+
+
+def test_host_docker_launchers_are_not_documented_inside_development_container():
+    launchers = {"scripts/provision_certificates.py", "scripts/run_queue.py",
+                 "scripts/collect_thesis_evidence.py", "scripts/ready_metrics_2_reliability_v2.py"}
+    for path in active_documents():
+        for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", read(path), re.S):
+            for source in launchers:
+                assert not re.search(r"\./scripts/dev\.sh (?:python|run python3?) " + re.escape(source), block), (path, source)

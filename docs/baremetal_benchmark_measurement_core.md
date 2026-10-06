@@ -1,8 +1,9 @@
-# STM32 pre-scheduler wolfCrypt benchmark (Request 1)
+# STM32 pre-scheduler wolfCrypt benchmark
 
 This is the project-owned operational description for the dedicated bare-metal
 cryptographic measurement phase. The definitive framework capability/evidence
-matrix and deferred tests remain in `docs/007_framework_architecture.md`.
+matrix is in [the architecture](007_framework_architecture.md); deferred tests
+are in [the testing reference](013_testing_and_deferred_coverage.md).
 
 ## Execution and clock policy
 
@@ -28,12 +29,13 @@ must **not** be described as directly equivalent PQM4 measurements.
 
 Three resolved firmware identities select ML-KEM-512, ML-KEM-768 or ML-KEM-1024.
 Each image measures its selected ML-KEM key generation, encapsulation and
- decapsulation, SHA-256 over 32 public bytes, and ML-DSA-65 key generation,
+decapsulation, SHA-256 over 32 public bytes, and ML-DSA-65 key generation,
 contextless signing and verification. Each image retains ten repetitions of
 each operation. The six non-selected ML-KEM operations appear exactly once
 as explicit `algorithm_not_compiled` records, never as zero-time samples.
-RSA, ECC, energy and memory measurements are not part of Request 1's original
-selected-operation acceptance criteria; they are not presented as measured.
+This benchmark does not measure RSA/ECC primitives or per-primitive energy/RAM.
+A separately selected instrument may retain an application GPIO trace; it does
+not turn these cycle samples into per-primitive energy observations.
 
 The two KEM deterministic APIs and ML-DSA seed-based keygen/signing APIs use
 fixed public *benchmark-only* seeds. They exclude entropy acquisition; neither

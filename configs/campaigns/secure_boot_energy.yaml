@@ -10,7 +10,7 @@ instruments:
   energy: esp32_ina228
 fixed:
   tls_kex: secp256r1
-  tls_auth: rsa3072
+  tls_auth: ecdsa-p256
   auth_mode: server
   network_condition: baseline
   firmware_mode: single_bank

@@ -1,0 +1,377 @@
+"""Responsive full-screen terminal interface, using Linux's standard curses UI."""
+from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
+import curses
+import re
+import sys
+import time
+import textwrap
+from datetime import datetime
+
+from framework.run_queue import DONE, HISTORY, framework_version, log_tail
+
+ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+
+
+def visible(value):
+    return ''.join(c if c.isprintable() else ' ' for c in ANSI.sub('', str(value)))
+
+
+def run(queue):
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise ValueError('the UI requires a terminal; use profiles/add/list commands for scripts')
+    return curses.wrapper(lambda screen: Terminal(screen, queue).run())
+
+
+class Terminal:
+    def __init__(self, screen, queue):
+        self.screen, self.queue = screen, queue
+        self.tab = 0
+        self.cursor = [0, 0, 0]
+        self.profiles = []
+        self.picked = set()
+        self.filter = ''
+        self.message = 'Loading profile catalogue…'
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.future = self.pool.submit(queue.catalogue)
+        self.operation = 'catalogue'
+        self.control_pool = ThreadPoolExecutor(max_workers=1)
+        self.shutdown_future = None
+        self.exit_requested = False
+        self.version_pool = ThreadPoolExecutor(max_workers=1)
+        self.version_future = None
+        self.version = {'label': 'checking…', 'date': 'unknown'}
+        self.next_version_check = 0
+        self.gateway_pool = ThreadPoolExecutor(max_workers=1)
+        self.gateway_future = None
+        self.gateways = []
+        self.gateway_error = ''
+        self.next_gateway_check = 0
+        self.next_jobs_check = 0
+        self.rows = []
+        self.jobs = []
+        screen.keypad(True)
+        screen.timeout(150)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+            for pair, foreground in enumerate((curses.COLOR_CYAN, curses.COLOR_GREEN,
+                                               curses.COLOR_YELLOW, curses.COLOR_RED,
+                                               curses.COLOR_WHITE), start=1):
+                curses.init_pair(pair, foreground, -1)
+
+    def ink(self, pair):
+        return curses.color_pair(pair) if curses.has_colors() else 0
+
+    def put(self, y, x, value, style=0):
+        height, width = self.screen.getmaxyx()
+        if y < 0 or y >= height or x >= width - 1:
+            return
+        try:
+            self.screen.addnstr(y, x, visible(value), max(0, width-x-1), style)
+        except curses.error:
+            pass
+
+    def prompt(self, label):
+        value = ''
+        while True:
+            height, width = self.screen.getmaxyx()
+            self.screen.move(height-2, 0)
+            self.screen.clrtoeol()
+            self.put(height-2, 2, label + value + '▏', self.ink(1))
+            self.screen.refresh()
+            key = self.screen.getch()
+            if key in (10, 13):
+                return value
+            if key == 27:
+                return None
+            if key in (curses.KEY_BACKSPACE, 127, 8):
+                value = value[:-1]
+            elif 32 <= key < 127 and len(value) < 160:
+                value += chr(key)
+
+    def background(self, operation, function, *args):
+        if self.future is not None:
+            raise ValueError('a catalogue/plan/export operation is already in progress')
+        self.operation = operation
+        self.future = self.pool.submit(function, *args)
+        self.message = operation.capitalize() + ' in progress…'
+
+    def poll(self):
+        if self.shutdown_future is not None and self.shutdown_future.done():
+            try:
+                self.shutdown_future.result()
+                self.exit_requested = True
+            except Exception as exc:
+                self.message = str(exc)
+                self.shutdown_future = None
+        if self.future is not None and self.future.done():
+            try:
+                result = self.future.result()
+                if self.operation == 'campaign-new-options':
+                    from framework.campaign_menu import new_profile_request
+                    self.future = None
+                    request = new_profile_request(self, result['templates'])
+                    if request:
+                        self.background('campaign-new', self.queue.campaign_editor, request)
+                    else:
+                        self.message = 'New profile cancelled.'
+                    return
+                if self.operation in {'campaign-view', 'campaign-edit', 'campaign-new'}:
+                    from framework.campaign_menu import CampaignMenu
+                    readonly = self.operation == 'campaign-view'
+                    self.future = None
+                    changed = CampaignMenu(self, result, readonly=readonly).run()
+                    if changed:
+                        self.background('catalogue', self.queue.catalogue)
+                    return
+                elif self.operation == 'campaign-delete-load':
+                    self.future = None
+                    profile = result['profile']
+                    confirmation = self.prompt(f'Permanently delete profile. Type {profile}: ')
+                    if confirmation == profile:
+                        self.background('campaign-delete', self.queue.campaign_editor, {'action': 'delete', 'profile': profile, 'sha256': result['sha256'], 'confirm': confirmation})
+                    else:
+                        self.message = 'Profile deletion cancelled.'
+                    return
+                elif self.operation == 'campaign-delete':
+                    self.future = None
+                    self.background('catalogue', self.queue.catalogue)
+                    return
+                elif self.operation == 'catalogue':
+                    self.profiles = result
+                    self.message = f'{len(result)} profiles. Space to select; a to enqueue.'
+                elif self.operation == 'purge':
+                    self.message = 'Entry and job files permanently deleted; combined exports retained.'
+                elif self.operation == 'export':
+                    self.message = f"Exported {result['rows']} rows → {result['output']}/analysis.ipynb"
+                else:
+                    self.picked.clear()
+                    self.message = 'Added to queue: ' + ', '.join(result)
+            except Exception as exc:
+                self.message = str(exc)
+            self.future = None
+        now = time.monotonic()
+        if self.version_future is not None and self.version_future.done():
+            self.version = self.version_future.result()
+            self.version_future = None
+            self.next_version_check = now + 5
+        if self.version_future is None and now >= self.next_version_check:
+            self.version_future = self.version_pool.submit(framework_version, self.queue.root)
+        if self.gateway_future is not None and self.gateway_future.done():
+            try:
+                self.gateways = self.gateway_future.result()
+                self.gateway_error = ''
+            except Exception:
+                self.gateway_error = 'Gateway status unavailable (check failed)'
+            self.gateway_future = None
+            self.next_gateway_check = now + 5
+        if self.gateway_future is None and now >= self.next_gateway_check:
+            self.gateway_future = self.gateway_pool.submit(self.queue.gateway_statuses)
+        if now >= self.next_jobs_check:
+            self.jobs = self.queue.display_jobs()
+            self.next_jobs_check = now + 1
+        if self.tab == 0:
+            self.rows = [r for r in self.profiles if self.filter.lower() in (str(r.get('profile_name', '')) + ' ' + r['profile']).lower()]
+        elif self.tab == 1:
+            self.rows = [r for r in self.jobs if r['status'] not in HISTORY]
+        else:
+            self.rows = [r for r in self.jobs if r['status'] in HISTORY]
+        self.cursor[self.tab] = min(self.cursor[self.tab], max(0, len(self.rows)-1))
+
+    def draw(self):
+        self.screen.erase()
+        height, width = self.screen.getmaxyx()
+        minimum_height = 30 + max(0, len(self.gateways)-1)
+        if height < minimum_height or width < 120:
+            self.put(1, 1, f'PQC Queue — resize terminal to at least 120 × {minimum_height}. d detaches; q pauses/quits.')
+            self.screen.refresh()
+            return
+        self.put(0, 2, f"PQC / EXPERIMENT QUEUE - Framework Version {self.version['label']} {self.version['date']} | Today {datetime.now():%Y-%m-%d}", self.ink(1) | curses.A_BOLD)
+        dispatch = self.queue.dispatch()
+        self.put(1, 2, f'{dispatch.upper()}  ·  {len(self.jobs)} entries  ·  {sum(r["selected"] for r in self.jobs)} marked for export', self.ink(2) if dispatch == 'running' else self.ink(3))
+        gateway_lines = self.gateways or [{'gateway': 'Gateways', 'status': 'CHECKING…', 'hostname': ''}]
+        for index, gateway in enumerate(gateway_lines):
+            status = gateway['status']
+            label = status + (' - ' + gateway['hostname'] if status == 'IN USE' else '')
+            self.put(2+index, 2, self.gateway_error or f"{gateway['gateway']}: {label}",
+                     self.ink(2 if status == 'READY' else 3 if status == 'IN USE' else 4))
+        extra = len(gateway_lines)-1
+        labels = ['1 Profiles', '2 Queue', '3 Completed']
+        x = 2
+        for i, label in enumerate(labels):
+            self.put(3+extra, x, ' ' + label + ' ', curses.A_REVERSE | curses.A_BOLD if i == self.tab else self.ink(1))
+            x += 19
+        self.put(4+extra, 2, '─' * (width-4), self.ink(1))
+        heading = f"   {'PROFILE NAME':<30} {'TEMPLATE':<27} {'REPS':>5} {'CASES':>6} {'TOTAL RUNS':>10}"
+        self.put(5+extra, 2, heading + ('  STATE' if self.tab else ''))
+        if self.tab:
+            self.put(6+extra, 2, f"   {'JOB ID':<12}  {'VERSION / DATE':<21} {'RUNS OK/ERROR/TOTAL':>20}   {'REPEATS':>7}  {'FINISHED (LOCAL)':<19}  EXPORTED")
+        row_height = 2 if self.tab else 1
+        table_start = (7 if self.tab else 6) + extra
+        usable = max(1, (height-21-table_start)//row_height)
+        cursor = self.cursor[self.tab]
+        offset = max(0, cursor-usable+1)
+        for i, row in enumerate(self.rows[offset:offset+usable], start=offset):
+            mark = '●' if (row['profile'] in self.picked if self.tab == 0 else row['selected']) else '○'
+            name = str(row.get('profile_name') or row['profile'].rsplit('.', 1)[0])
+            template = str(row.get('template') or 'Blank')
+            line = f"{mark}  {name:<30.30} {template:<27.27} {row.get('repetitions',0):>5} {row.get('conditions',0):>6} {row.get('attempts',0):>10}"
+            second = None
+            if self.tab == 0:
+                colour = 4 if row.get('error') else 5
+            else:
+                line += '  ' + row['status']
+                counts = f"{row['success']}/{row['errors']}/{row['attempts']}" if row['progress_available'] else '?'
+                repeats = str(row['repeats']) if row['progress_available'] else '?'
+                finished = datetime.fromtimestamp(row['completed_at']).strftime('%Y-%m-%d %H:%M:%S') if row['completed_at'] else '—'
+                second = f"   {row['id']}  {row['version']:<8.8} / {row.get('version_date', 'unknown'):<10.10} {counts:>20}   {repeats:>7}  {finished:<19}  {'YES' if row['exported'] else 'NO'}"
+                colour = 4 if row['status'] == 'attention' else 3 if row['status'] in {'paused','pausing'} else 2
+            style = self.ink(colour) | (curses.A_REVERSE if i == cursor else 0)
+            y = table_start + (i-offset)*row_height
+            self.put(y, 2, line, style)
+            if second:
+                self.put(y+1, 2, second, style)
+        if not self.rows:
+            message = 'No profiles. Press n to create a blank profile or use a template.' if self.tab == 0 else 'No entries. Enqueue profiles from the Profiles tab.'
+            self.put(table_start, 4, message, self.ink(3))
+        y = height-21
+        if self.rows and cursor >= 0:
+            row = self.rows[cursor]
+            if self.tab == 0:
+                self.put(y, 2, row.get('error') or f"{row['profile']} · {row.get('workload')} · reps per case; template: {row.get('template') or 'Blank'}")
+                self.put(y+1, 2, f'Filter: {self.filter or "all profiles"} · {len(self.picked)} selected')
+            else:
+                detail = row['detail'] or f"{row['conditions']} cases × {row['repetitions']} reps per case = {row['attempts']} total runs"
+                for i, line in enumerate(textwrap.wrap(visible(detail), width-4, max_lines=3, placeholder=' …')):
+                    self.put(y+i, 2, line)
+                stats = f"Runs OK {row['success']} / Errors {row['errors']} / Total {row['attempts']} / Repeats {row['repeats']}" if row['progress_available'] else 'Progress unavailable: inspect campaign evidence'
+                self.put(y+3, 2, f"{row['id']}  {row['profile']} · {stats}")
+        self.put(y+4, 2, '─ Log ' + '─' * (width-10), self.ink(1))
+        if self.rows and cursor >= 0 and self.tab != 0:
+            for i, line in enumerate(log_tail(self.queue, self.rows[cursor]['id'], 8)):
+                self.put(y+5+i, 2, line)
+        self.put(y+13, 2, '─' * (width-4), self.ink(1))
+        message = 'Pausing and quitting: waiting for the current operation, cleanup and worker exit…' if self.shutdown_future is not None else self.message
+        self.put(height-6, 2, message, self.ink(3))
+        hints = ('Space select  a enqueue  n new profile  v view  e edit  D delete profile  / filter  R refresh' if self.tab == 0 else
+                 'Space mark  e export  t retry  N re-queue current version  D permanently delete job files' if self.tab == 2 else
+                 'p pause  r resume  t retry  f accept  K/J move  Del remove  N re-queue current version')
+        self.put(height-4, 2, hints, self.ink(1))
+        self.put(height-2, 2, 'Tab switch  ↑/↓ navigate  s start queue  x pause queue  q pause and quit  d detach', self.ink(1))
+        self.screen.refresh()
+
+    def switch_tab(self, tab):
+        if tab == self.tab:
+            return
+        self.queue.clear_selection()
+        self.picked.clear()
+        for row in self.jobs:
+            row['selected'] = 0
+        self.cursor = [-1, -1, -1]
+        self.rows = []
+        self.tab = tab
+        self.next_jobs_check = 0
+        self.message = 'Selections cleared. Use ↑/↓ to choose an entry.'
+
+    def key(self, key):
+        if self.shutdown_future is not None:
+            return
+        if key in (ord('q'), ord('Q')):
+            self.shutdown_future = self.control_pool.submit(self.queue.shutdown)
+            return
+        row = self.rows[self.cursor[self.tab]] if self.rows and self.cursor[self.tab] >= 0 else None
+        if key in (ord('1'), ord('2'), ord('3')):
+            self.switch_tab(key-ord('1'))
+        elif key == 9:
+            self.switch_tab((self.tab+1) % 3)
+        elif key in (curses.KEY_UP, ord('k')):
+            self.cursor[self.tab] = max(0, self.cursor[self.tab]-1)
+        elif key in (curses.KEY_DOWN, ord('j')):
+            self.cursor[self.tab] = min(max(0, len(self.rows)-1), self.cursor[self.tab]+1)
+        elif key == ord('s'):
+            self.queue.start()
+            self.message = 'Queue started. Detaching leaves the worker running.'
+        elif key == ord('x'):
+            self.queue.stop()
+            self.message = 'Queue will stop at the next safe breakpoint.'
+        elif key == ord('R') and self.tab == 0:
+            self.background('catalogue', self.queue.catalogue)
+        elif key == ord('/') and self.tab == 0:
+            value = self.prompt('Filter profiles (blank = all): ')
+            if value is not None:
+                self.filter = value
+                self.cursor[0] = 0
+        elif key == ord(' ') and row:
+            if self.tab == 0:
+                if row.get('error'):
+                    raise ValueError(row['error'])
+                if row['profile'] in self.picked:
+                    self.picked.remove(row['profile'])
+                else:
+                    self.picked.add(row['profile'])
+            elif self.tab == 2:
+                self.queue.mark(row['id'])
+        elif key == ord('a') and self.tab == 0:
+            names = [r['profile'] for r in self.profiles if r['profile'] in self.picked]
+            if not names and row:
+                names = [row['profile']]
+            if not names:
+                raise ValueError('select a profile first')
+            value = self.prompt('Repetitions per case (Enter = each profile default): ')
+            if value is not None:
+                self.background('add', self.queue.add, names, int(value) if value.strip() else None)
+        elif key == ord('n') and self.tab == 0:
+            self.background('campaign-new-options', self.queue.campaign_editor, {'action': 'templates'})
+        elif key in (ord('v'), ord('e'), ord('D')) and row and self.tab == 0:
+            operation = {ord('v'): 'campaign-view', ord('e'): 'campaign-edit', ord('D'): 'campaign-delete-load'}[key]
+            self.background(operation, self.queue.campaign_editor, {'action': 'load', 'profile': row['profile']})
+        elif key == ord('N') and row and self.tab != 0:
+            value = self.prompt(f"Re-queue frozen campaign with CURRENT source; repetitions [{row['repetitions']}]: ")
+            if value is not None:
+                self.background('requeue', self.queue.requeue, row['id'], int(value) if value.strip() else None)
+        elif key == curses.KEY_DC and row and self.tab == 1:
+            self.queue.remove(row['id'])
+            self.next_jobs_check = 0
+            self.message = 'Removed from queue; retained files are on Completed.'
+        elif key == ord('D') and row and self.tab == 2:
+            value = self.prompt(f"Permanently delete job files (exports kept). Type {row['id']}: ")
+            if value == row['id']:
+                self.background('purge', self.queue.purge, row['id'], value)
+            else:
+                self.message = 'Deletion cancelled.'
+        elif key == ord('e') and self.tab == 2:
+            self.background('export', self.queue.export)
+        elif row and self.tab != 0:
+            if key == ord('p'):
+                self.queue.pause(row['id'])
+            elif key in (ord('r'), ord('t'), ord('f')):
+                action = {ord('r'): 'resume', ord('t'): 'retry', ord('f'): 'accept'}[key]
+                self.queue.decide(row['id'], action)
+                self.message = action.capitalize() + ' queued; failed outcomes remain recorded.'
+            elif key in (ord('K'), ord('J')):
+                self.queue.move(row['id'], 'up' if key == ord('K') else 'down')
+
+    def run(self):
+        try:
+            while True:
+                self.poll()
+                if self.exit_requested:
+                    return 0
+                self.draw()
+                key = self.screen.getch()
+                if key == ord('d'):
+                    return 0
+                try:
+                    self.key(key)
+                except (ValueError, OSError) as exc:
+                    self.message = str(exc)
+        finally:
+            self.pool.shutdown(wait=True)
+            self.gateway_pool.shutdown(wait=True)
+            self.version_pool.shutdown(wait=True)
+            self.control_pool.shutdown(wait=True)

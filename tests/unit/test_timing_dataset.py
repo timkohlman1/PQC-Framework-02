@@ -356,20 +356,6 @@ def test_analysis_calls_no_gateway_process_or_capture_mutator(tmp_path, monkeypa
     assert values(exported(tmp_path, run)) == EXPECTED
 
 
-def test_documented_a1_commands_and_ownership():
-    readme = (ROOT / "README.md").read_text()
-    architecture = (ROOT / "docs/007_framework_architecture.md").read_text()
-    wrapper = (ROOT / "scripts/dev.sh").read_text()
-    for flag in ("--run-dir", "--results-root", "--output", "--check", "--verify-source-inputs"):
-        assert flag in readme or flag in architecture
-    assert "scripts/export_timing_dataset.py" in readme and "python)" in wrapper
-    assert "selected_inputs_only" in architecture
-    assert "not_assessed" in architecture
-    assert "DTR-A1-CONTAINER" in architecture
-    for metric in EXPECTED:
-        assert metric in architecture
-
-
 def test_negative_validation_capture_class_remains_distinct(tmp_path):
     run = make_run(tmp_path / "run", failed=True)
     p = run / "manifest.json"

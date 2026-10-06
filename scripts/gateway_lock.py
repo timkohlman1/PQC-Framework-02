@@ -117,6 +117,50 @@ def ssh_command(target: str, mode: str, *args: str) -> list[str]:
             '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2', target, remote]
 
 
+def gateway_status(config: Path) -> dict:
+    """Bounded advisory probe; never wait for or release another owner's lease."""
+    row = {'gateway': config.stem, 'status': 'CONNECTION ERROR', 'hostname': ''}
+    try:
+        target = gateway_target(config)
+        row['gateway'] = target.rsplit('@', 1)[-1]
+        result = subprocess.run(ssh_command(target, 'status'), capture_output=True,
+                                text=True, timeout=12)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if type(data.get('busy')) is not bool:
+                raise ValueError('invalid lock response')
+            owner = data.get('owner') or {}
+            row['hostname'] = (owner.get('description') or 'unknown owner').split()[0] if data['busy'] else ''
+            row['status'] = 'IN USE' if data['busy'] else 'READY'
+            return row
+        # SSH rejection proves reachability. Only transport-level absence can
+        # qualify as OFFLINE, and an ICMP reply overrides that classification.
+        unreachable = any(value in result.stderr.lower() for value in
+                          ('connection timed out', 'no route to host', 'network is unreachable',
+                           'could not resolve hostname'))
+    except subprocess.TimeoutExpired:
+        unreachable = True
+    except (OSError, ValueError, TypeError, AttributeError):
+        return row
+    if unreachable:
+        try:
+            ping = subprocess.run(['ping', '-n', '-c', '1', '-W', '2', row['gateway']],
+                                  capture_output=True, timeout=3)
+            if ping.returncode == 1:
+                row['status'] = 'OFFLINE'
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return row
+
+
+def gateway_statuses() -> list[dict]:
+    from concurrent.futures import ThreadPoolExecutor
+    configs = sorted(p for p in (ROOT / 'configs/gateways').rglob('*')
+                     if p.is_file() and p.suffix in {'.yaml', '.yml'})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(gateway_status, configs))
+
+
 def remote_query(target: str, mode: str, *args: str) -> int:
     return subprocess.call(ssh_command(target, mode, *args))
 
@@ -286,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--gateway', default=None, help='Override SSH target')
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('status')
+    sub.add_parser('status-all', help='Bounded queue display probes for all gateway profiles')
     release = sub.add_parser('release', help='Terminate an identified holder; use only after checking status')
     release.add_argument('--owner-id', required=True)
     release.add_argument('--force', action='store_true', required=True)
@@ -293,6 +338,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
+        if args.action == 'status-all':
+            print(json.dumps(gateway_statuses()))
+            return 0
         target = args.gateway or gateway_target()
         if args.action == 'status':
             return remote_query(target, 'status')

@@ -1,108 +1,172 @@
-# Host and Gateway Setup
+# Linux host and gateway setup
 
-## Purpose
+This guide owns environment setup, access, output ownership and gateway coordination.
+Use [board setup](003_stm32_board_setup.md) for wiring,
+[operation](005_remote_flash_workflow.md) for runs and the
+[broker guide](../experiment/mqtt-broker/README.md) for certificates/services.
+All experiment data follows the [open policy](006_security_and_secrets.md).
 
-This document owns development-host access to the experiment gateway. Operational flash and UART commands are owned by `docs/005_remote_flash_workflow.md`; board and UART hardware details are owned by `docs/003_stm32_board_setup.md`; broker-specific operation is owned by `experiment/mqtt-broker/README.md`.
+## Development environment
 
-## Development-container ownership
-
-Invoke `scripts/dev.sh` from the normal Linux user shell, not through `sudo`.
-Every development workload uses the invoking numeric UID, primary GID,
-supplementary groups and umask. The container login name is an internal account;
-host ownership does not depend on its spelling. No developer-specific identity
-is baked into the image.
-
-The image starts a small, image-owned Python bootstrap as root. It creates only
-container-local account/home state and, for `pytest-hardware`, changes ownership
-of the two **empty, separately mounted** anonymous build/generated-state volume
-roots. `volume-nocopy` prevents accidental seeding. It permanently drops real,
-effective and saved UID/GID before copying runtime SSH material or executing any
-repository command. The wrapper also sets `no-new-privileges`. It never runs a
-workload as root to recover from a permission error, recursively changes a host
-bind tree, or relaxes private-file permissions.
-
-The home is a fresh mode-`0700` container-local directory, with a matching passwd
-entry for OpenSSH and `~` expansion. Gateway modes retain the host SSH directory's
-read-only mount. The copy belongs to the invoking user; copied ordinary files
-are `0600` and directories `0700`. Symlinks are retained without changing their
-target permissions; links to unavailable host paths remain unavailable. No SSH
-material is baked into the image, retained in the repository, or changed on the
-host. A runtime copy is discarded with its container.
-
-The separate `scripts/provision_certificates.py` launcher retains its pinned
-Alpine/OpenSSL runtime. Package installation uses root, then the same bootstrap
-drops to the invoking user **before** certificate profiles are read or keys and
-certificates are generated. Its private provisioning mask is `0077`; existing
-explicit public-file and private-key modes are unchanged. Do not reprovision or
-rotate existing material merely to repair ownership. Broker/service containers
-and gateway-side privilege policies are not remapped to a desktop UID.
-
-### Certificate-specific ownership verification
-
-Run the provisioner from the normal **host** shell with `python3
-scripts/provision_certificates.py`; it launches the pinned certificate container
-itself. The development image intentionally has no Docker CLI, so nesting this
-launcher under `./scripts/dev.sh python` is unsupported. Both the host launcher
-and local generation entry point refuse root generation. New certificate
-directories are `0700`, private keys `0600`, and files belong to the invoking
-UID/GID. Existing root-owned material still needs the one-time repair below;
-rebuilding an image cannot change its host ownership.
-
-Exercise the real provisioning boundary with disposable RSA-3072 and ML-DSA-65
-profiles, without replacing canonical certificates:
-
-```bash
-python3 scripts/check_certificate_ownership.py
-```
-
-Expected: `status: verified`, your numeric UID/GID, and two checked profiles.
-This host-side gate starts the pinned provisioning container, checks host-visible
-ownership, owner read/write access, private-key modes and private directories,
-then removes its temporary output. Initial package installation may need network
-access. It never reads or changes `secrets/certificates/`. The corresponding
-`tests/integration/test_certificate_ownership_in.py` skips inside the development
-container because nested Docker is unavailable; that skip does not replace the
-host command above.
-
-MQTT prerequisite permission failures now use `ExternalDependencyError`, naming
-the inaccessible path and caller UID. The existing experiment failure path can
-record `external_dependencies` rather than escaping via an unhandled traceback.
-Repair ownership instead of changing `0600` keys to world-readable files or
-using `--force` to regenerate certificates. Sealed results and Git objects may
-intentionally be owner-read-only even when ownership is correct; they do not
-need write permission for certificate prerequisite validation.
-
-### Apply and verify the runtime change
-
-Rebuild once after updating the runtime helper. An old image fails because it
-lacks the installed helper; it does not silently execute the workload as root.
+Use a normal non-root Linux shell with Docker access and the complete pinned
+submodule checkout. From the repository root:
 
 ```bash
 ./scripts/dev.sh build-image
 ./scripts/dev.sh run id
 ./scripts/dev.sh check-host-user
+./scripts/dev.sh pytest tests/unit
 ```
 
-The UID/GID must match host `id -u` / `id -g`. The last command runs on the host
-using standard-library Python and the already-built image. It checks actual
-host-visible file ownership, a private `0700` directory, writable/passwd-resolved
-home, supplementary groups, read-only dummy SSH configuration, isolated hardware
-build/state volumes and workload exit-code preservation. It uses a temporary
-checkout-shaped directory and synthetic SSH files, not the user's credentials,
-real gateway, firmware or experiments. It removes its own temporary data. Missing
-Docker/image or unsupported daemon mapping is a failure, not a passing skip.
-The equivalent capability-gated pytest entry is
-`tests/integration/test_container_host_user_in.py` (`docker_runtime`); inside the
-development image it skips because nested Docker is intentionally unavailable.
-CI runs the host gate separately and checks ownership after its existing
-certificate-provisioning step. No new certificates are generated by the host gate.
+Python analysis/test dependencies are pinned in [requirements-dev.txt](../requirements-dev.txt).
+After changing those requirements, rerun `./scripts/dev.sh build-image` before
+validation: normal wrapper commands reuse the existing image and do not rebuild it.
 
-The supported ownership boundary is a local, rootful Linux Docker daemon without
-UID remapping. Rootless/userns-remapped or remote daemon ownership is not qualified
-by this change; the host gate rejects those configurations. Do not alter daemon
-security settings to suppress a failed check.
+The image bootstrap creates a container-local account/home, then permanently drops
+real/effective/saved UID/GID to the invoking user's numeric identity before executing
+repository commands. Supplementary groups and umask are retained. The wrapper uses
+`no-new-privileges`; workloads are not rerun as root to hide permission failures.
+Hardware tests mount empty anonymous build/state volumes with `volume-nocopy`.
+The bootstrap adjusts only those volume roots, not recursive host trees.
 
-### One-time repair of older generated files
+Gateway wrappers mount the host SSH directory read-only and copy it into a fresh
+container home. The copy's directories/files use `0700`/`0600`; symlinks are retained
+without changing target permissions. That runtime copy is discarded with the
+container. These modes describe implementation, not project confidentiality.
+
+`check-host-user` is a host Python gate using synthetic SSH files and a temporary
+checkout-shaped tree. It checks host-visible ownership, home/passwd behavior,
+groups, isolated volumes and exit codes. It needs a built image and local rootful
+Docker without UID remapping; it rejects unsupported remote/rootless/userns setups.
+Do not change daemon settings merely to suppress a failure. Its pytest counterpart
+skips inside the development image because nested Docker is unavailable.
+
+Certificate provisioning has its own pinned container and must run on the host.
+It drops privileges before reading profiles/generating material, with umask `0077`.
+Check that boundary without replacing canonical certificates:
+
+```bash
+python3 scripts/check_certificate_ownership.py
+```
+
+Expected: `status: verified`, invoking UID/GID and two disposable profiles checked.
+An image rebuild does not repair existing host ownership. Inspect/repair ownership
+instead of regenerating keys with `--force`. Sealed results can legitimately remain
+read-only; ownership repair is not content verification or resealing.
+
+## Gateway identity and access
+
+[configs/gateways/pqc_gateway1.yaml](../configs/gateways/pqc_gateway1.yaml) owns SSH
+identity, network address, helper names, ST-LINK serial and UART path. Different
+adapters use the alias or FQDN; configure both locally. Do not hard-code duplicated
+lab identities into framework code.
+
+For a new development host, generate a key and install its public half:
+
+```bash
+ssh-keygen -t ed25519 -C "pqc-framework-dev-pc"
+ssh-copy-id timk@pqc-gateway1
+```
+
+An example `~/.ssh/config` matching the current gateway profile is:
+
+```sshconfig
+Host pqc-gateway1 pqc-gateway1.pqcnet
+    HostName 10.1.1.18
+    User timk
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+```
+
+Update local access configuration if lab identity changes. Where a VPN is needed,
+establish it on the development host before running wrappers. Authentication setup
+is an operator prerequisite; normal runs do not alter it.
+
+```bash
+ssh pqc-gateway1 "hostname && whoami"
+```
+
+This bounded diagnostic establishes reachability only. Gateway wrappers set
+`PQC_CONTAINER_ENABLE_GATEWAY=1`; `PQC_DOCKER_SSH_DIR` overrides the host SSH mount.
+The gateway needs its configured flash/reset helpers, UART access, Python 3,
+Docker Compose and the acquisition/impairment tools below.
+
+## Packet capture and impairment prerequisites
+
+Install `tcpdump` on the gateway and grant the experiment user noninteractive
+capture permission under the lab's OS policy. A capability-based setup, run on
+the gateway by its administrator, is:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tcpdump
+sudo setcap cap_net_raw,cap_net_admin=eip "$(command -v tcpdump)"
+getcap "$(command -v tcpdump)"
+tcpdump --version
+```
+
+The workflow invokes tcpdump directly. `network.packet_capture` selects interface
+and optional STM32 MAC filter; canonical gateway capture configuration should match
+the actual topology. Without a device filter, captures can contain unrelated traffic.
+[Results](012_results_and_analysis.md#packets-and-network) explains attribution.
+
+Impairment also requires noninteractive `tc`, `ip`, IFB/module support and `nsenter`.
+The framework requires distinct experiment/reporting broker veth peers, shapes only
+the experiment path in both directions, and restores MTUs/qdiscs on cleanup.
+It refuses occupied non-default qdiscs and existing IFBs. The physical/control
+interface is inspected rather than changed. Disconnection/reboot/SIGKILL can leave
+uncertain state; inspect it before another run. The lease is cooperative coordination,
+not an access-control boundary.
+
+Selected live checks build/flash and change temporary gateway state:
+
+```bash
+./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway
+./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py --pqc-require-hardware
+```
+
+Add `--pqc-request8-esp32-hardware` to the second command only with the provisioned
+energy instrument to qualify that reporting path too. Configured qdisc state and
+packet counters do not independently measure achieved RTT, loss or throughput.
+Refer to the [test register](013_testing_and_deferred_coverage.md) for remaining
+qualification; no setup instruction is itself evidence of a pass.
+
+## Gateway lock and recovery
+
+`pytest-gateway`, `pytest-hardware`, `experiment-gateway`, `campaign-gateway` and
+`python-gateway` acquire one gateway-side POSIX flock lease for the full container
+run. Local `experiment`, `python` and generic `run` do not. All cooperating hosts
+must use the same gateway user/wrappers and a filesystem supporting flock.
+
+Waiting owners retry until free; interactive terminals show elapsed waiting time,
+while logs report changes. Ctrl-C cancels waiting without releasing another owner.
+Do not impose a short timeout unless requested. Owner metadata does not prove its
+originating workload is still running. Inspect status with:
+
+```bash
+./scripts/dev.sh gateway-lock status
+```
+
+After verifying abandonment and obtaining explicit recovery authorization, release
+only the exact current owner:
+
+```bash
+./scripts/dev.sh gateway-lock release --owner-id OWNER_ID_FROM_STATUS --force
+```
+
+This terminates the lease holder; a still-running client detects lease loss and
+terminates its local group. Never unlink the lock file: multiple lock inodes can
+permit overlapping owners. Normal completion, Ctrl-C and SSH termination release
+the lease, but release does not prove remote helpers or impairment cleanup finished.
+Inspect interrupted board/broker/network state before proceeding.
+
+For a generic coordinated command use `./scripts/dev.sh gateway-lock run -- <command>`.
+Arbitrary SSH, direct helpers and host-native broker commands bypass the advisory
+lock. Separate local preparation from locked hardware work when the gateway need
+not be reserved throughout the build.
+
+## One-time ownership repair
+
 
 Changing future runtime identity does not change existing ownership. Stop active
 builds, exports and experiments first. Inspect the explicitly selected generated
@@ -146,219 +210,7 @@ metadata; it is not an evidence reseal or a content-integrity check.
 )
 ```
 
-Do not use recursive public/group permission grants on results or secrets.
 Root-owned generated files outside those paths, hard-linked/special files and
 pre-existing ACL/setgid policies require separate inspection, not a broader
 automatic ownership sweep. In particular, review old in-source wolfBoot tools
 or keystore outputs by exact filename rather than changing its whole source tree.
-
-## Canonical gateway configuration
-
-Repository-owned gateway identity and helper configuration is stored in `configs/gateways/pqc_gateway1.yaml`. Use its SSH alias for SSH/SCP orchestration and its `network.address` for MQTT/TLS client validation when the alias is not resolvable through DNS.
-
-Current configured values are:
-
-```text
-SSH alias: pqc-gateway1
-SSH user: timk
-Network address: 10.1.1.18
-Flash helper: flash-stm32a
-Reset helper: reset-stm32a
-```
-
-Do not duplicate these values in framework code or add private-key paths to repository configuration. Update `configs/gateways/pqc_gateway1.yaml` and the relevant canonical documentation when the lab identity changes.
-
-## Gateway role and evidence boundary
-
-The gateway provides remote STM32 flashing, reset, bounded UART capture, and broker orchestration. A successful SSH probe proves gateway reachability only. Broker logs prove broker-side or host-side compatibility only. Flash and UART success require the workflow logs or manifests described in `docs/005_remote_flash_workflow.md`. None of these outcomes alone proves Wi-Fi-module, ST67W61M1, STM32 network, TLS-handshake, MQTT, timing, memory, benchmark, or end-to-end wireless success.
-
-## SSH access
-
-Each development PC must generate its own SSH keypair. Keep the private key on that development PC and outside the repository. Install only the public key on the gateway.
-
-Generate a key:
-
-```bash
-ssh-keygen -t ed25519 -C "pqc-framework-dev-pc"
-```
-
-Recommended local paths are:
-
-```text
-Linux: ~/.ssh/id_ed25519
-```
-
-Install the public key from Linux:
-
-```bash
-ssh-copy-id timk@pqc-gateway1
-```
-
-When `ssh-copy-id` is unavailable:
-
-```bash
-cat ~/.ssh/id_ed25519.pub | ssh timk@pqc-gateway1 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
-```
-
-Configure the alias in the local SSH config, not in tracked repository files:
-
-```sshconfig
-Host pqc-gateway1
-    HostName 10.1.1.18
-    User timk
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-```
-
-Typical SSH config locations are `~/.ssh/config` on Linux.
-
-Verify reachability:
-
-```bash
-ssh pqc-gateway1 "hostname && whoami"
-```
-
-This is a host-native connectivity diagnostic, not a repository validation gate and not hardware-runtime evidence.
-
-## Docker-wrapper gateway execution
-
-Repository workflows normally run in the project container. Gateway-capable wrappers set `PQC_CONTAINER_ENABLE_GATEWAY=1`, mount the configured host SSH directory read-only, and copy the required SSH material into the temporary container for that run.
-
-Hardware validation examples from the repository root (the integration test builds and flashes the board; it is not a read-only reachability check):
-
-```bash
-./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration
-./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway
-./scripts/dev.sh experiment-gateway monitor --experiment .pqc-generated-state/campaigns/baseline/cases/<case>.yaml --duration-seconds 10
-```
-
-`PQC_DOCKER_SSH_DIR` may override the host-side SSH directory. SSH keys, VPN material, broker credentials, or TLS private keys must never be copied into the image or committed. See `docs/006_security_and_secrets.md`.
-
-## VPN access
-
-When the gateway is reachable only through a VPN, establish the VPN on the development host before invoking gateway wrappers. Keep VPN profiles, keys, and credentials outside the repository and container image. Resolve alternate gateway addresses through local SSH configuration rather than hard-coding private access details.
-
-## Operational links
-
-- Direct flash, secure boot, generated-state provenance, and UART evidence: `docs/005_remote_flash_workflow.md`
-- Board, ST-LINK, and UART hardware configuration: `docs/003_stm32_board_setup.md`
-- Broker deployment, certificate provisioning, and host/broker evidence: `experiment/mqtt-broker/README.md`
-- Secret and generated-state handling: `docs/006_security_and_secrets.md`
-- Canonical capability and evidence matrix: `docs/007_framework_architecture.md`
-
-## Gateway packet-capture prerequisite
-
-Firmware experiments containing a top-level `network` configuration start a bounded packet capture on the gateway before the STM32 is reset. Install `tcpdump` on the gateway and grant the experiment SSH user permission to capture packets without an interactive privilege prompt. A typical Linux capability-based setup is:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y tcpdump
-sudo setcap cap_net_raw,cap_net_admin=eip "$(command -v tcpdump)"
-getcap "$(command -v tcpdump)"
-tcpdump --version
-```
-
-The expected `getcap` result includes `cap_net_admin,cap_net_raw=eip`. Site policy may instead provide an equivalent dedicated capture group or wrapper. The experiment workflow invokes `tcpdump` directly and does not issue interactive `sudo` commands.
-
-Packet-capture settings belong under `network.packet_capture` in the experiment profile. `interface` defaults to `any`. `stm32_mac_address` is optional but preferred when the ST67W61M1 MAC address is known because it limits the capture to Ethernet frames involving that device while retaining DHCP, DNS, TCP, TLS, MQTT, ARP, and related traffic. The address must use six colon-separated hexadecimal octets.
-
-## Request 8: live impairment validation (capability-gated)
-
-Run the gateway/hardware validation only through the Linux wrapper and with the
-laboratory gateway lease. The experiment and plaintext reporting Mosquitto
-containers must both be running on the gateway. The impairment resolver checks
-that their container-side `eth0` links have **different host veth peers**; a
-missing reporting broker or an indistinguishable peer prevents application.
-The configured physical/control interface is inspected but is never modified.
-Only the experiment container's host veth and its `eth0` are given the selected
-MTU. The host veth receives an egress `netem` qdisc; its ingress filter redirects
-to a separately created IFB with its own `netem` qdisc. Each qdisc receives
-`rtt_ms / 2`, the configured loss percentage and the configured rate.
-
-The apply operation refuses to replace an existing non-default qdisc or reuse an
-existing IFB interface. An error after resources have been created triggers a
-best-effort gateway-side rollback, with explicit rollback status in the raw
-network-control log. After application, the framework separately reads both
-qdiscs, the ingress filter and both experiment-link MTUs, and rejects a
-configuration/state mismatch. The campaign rechecks the retained condition
-before and after every repetition; both directional netem packet counters must
-increase during the repetition. Cleanup checks both original MTUs, removes the
-IFB, and requires both experiment-interface qdiscs to be absent. A nonzero apply,
-verification or cleanup status fails the run or campaign even when STM32
-application work completed. An SSH disconnect, gateway reboot or SIGKILL cannot
-be assumed to guarantee restoration; inspect gateway state before a subsequent
-experiment. The gateway lease prevents cooperative overlap but is not a
-privileged access-control boundary.
-
-```bash
-cd /home/timk/rmit/PQC-Framework-02
-./scripts/dev.sh pytest tests/unit/test_network_degradation.py
-./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware
-```
-
-The hardware file runs a separate bounded STM32 plaintext MQTT experiment for
-each rate, RTT, loss and MTU profile and a two-repetition retained-rate campaign.
-Each individual run must retain a finalized run manifest, packet capture,
-network-control log, and an independently reparsed complete STM32 reporting
-stream. The campaign retains its condition-control log and cleanup status.
-The test checks configured effective qdisc state and traffic traversing both
-shaping directions; it does **not** independently quantify the achieved rate,
-packet-loss distribution or over-the-wire RTT. ESP32 reporting under impairment is an independent opt-in gate requiring a
-provisioned/calibrated persistent instrument and enabled acquisition. Invoke:
-
-```bash
-./scripts/dev.sh pytest-hardware tests/hardware/test_reporting_plane_isolation_hw.py -m hardware --pqc-require-hardware --pqc-request8-esp32-hardware
-```
-
-This command also runs the STM32 matrix. The opt-in energy cases require a
-complete run-specific ESP32 stream, independent source hash/completion checks,
-and an indexed energy-result artifact. STM32-only results must not be presented
-as ESP32 validation. No hardware or gateway pass may be
-claimed before retaining the corresponding test output and evidence.
-
-## Gateway experiment certificate staging
-
-Broker deployment may stage ignored experiment certificate profiles under the repository-shaped gateway workspace. This state is not an alternate source of truth. Staged certificate directories must remain mode `0700`, private `*.key` files mode `0600`, and public/non-key certificate files may be `0644`. Do not use recursive `chmod a+rX` on a certificate tree containing private keys. The broker containers consume the staged tree through read-only mounts and create their own restricted runtime copies.
-
-## Linux gateway-operation lock (advisory)
-
-The Linux wrapper acquires one gateway-side POSIX `flock` lease for each
-`pytest-gateway`, `pytest-hardware`, `experiment-gateway`, `campaign-gateway`,
-`python-gateway` invocation. The lease spans the full container run,
-including child experiment commands and sequential hardware operations. Local
-`experiment` and `python` build-only invocations do not acquire a gateway lease.
-Waiting owners retry until the gateway becomes free. Interactive terminals show
-a single updating spinner line with elapsed waiting time; an owner/detail change
-prints a new line. Non-interactive logs print only changes, without a spinner.
-Press Ctrl-C to cancel without releasing the current owner's lock.
-Treat contention as waiting, not command failure; do not impose a short timeout
-unless requested. The displayed owner description is recorded lease metadata,
-not a live check that the named workload is still running on its originating host.
-All development hosts must use the same gateway SSH user and these wrappers.
-The gateway must provide `python3` and a Linux filesystem with working `flock`.
-
-```bash
-./scripts/dev.sh gateway-lock status
-./scripts/dev.sh gateway-lock release --owner-id OWNER_ID_FROM_STATUS --force
-```
-
-The `release` command deliberately requires the exact current owner ID. It
-terminates that owner's gateway-side lease holder, so use it **only** when the
-owner is abandoned, after checking `status` and contacting the developer if
-possible. A still-running client detects lock loss and terminates its local
-command group. Never delete the gateway lock file: unlinking it can create
-multiple independent lock inodes. Normal completion, Ctrl-C and SSH session
-termination release the lease automatically; after a forced release, inspect
-any interrupted firmware, broker and impairment state before proceeding.
-
-This is cooperative coordination, **not** a gateway-side access-control or
-security boundary. Direct SSH, direct gateway helpers, direct Python entry
-points, and standalone broker administration are not intercepted by this
-wrapper. All developers must use the locked Linux wrapper for shared hardware
-operations; independent gateway access can still invalidate an experiment.
-Generic `./scripts/dev.sh run` does not acquire the gateway lock and is intended
-for non-hardware container operations, including CI toolchain checks. For an
-explicitly protected generic command use `./scripts/dev.sh gateway-lock run --
-<command>`. A `python-gateway` invocation can perform long preparation under
-the lock; use separate local build commands when preserving gateway state is
-unnecessary.

@@ -37,19 +37,13 @@ TIM2 timebase. Immediately before deasserting PF12 LOW it records `s1_us`.
 The retained marker is:
 
 ```text
-PQC_ENERGY_BOUNDARY scope=experiment s0_us=<...> s1_us=<...> valid=1 clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write
+PQC_ENERGY_BOUNDARY scope=experiment s0_us=<...> s1_us=<...> workload_end_us=<...> tail_guard_ms=20 valid=1 clock=TIM2 counter_hz=1000000 timestamp_convention=before_gpio_write
 ```
 
 There is one GPIO HIGH interval per experiment. Repeated TLS therefore does not
 pulse the GPIO once per handshake. Existing TIM2 TLS/benchmark instrumentation
 continues to describe internal sub-intervals; offline analysis projects those
 TIM2 intervals onto the one ESP32 trace.
-
-The former UART `PQC_ENERGY_WAITING` / `PQC_ENERGY_GO` start gate is retired.
-STM32 reset/initialization returns PF12 LOW. During the normal framework lifecycle
-there is no next rising edge until the preceding ESP32 publication has completed.
-An unexpected rising edge during publication cancels that old transfer and leaves
-the abnormal new window without a valid capture.
 
 ## ESP32 acquisition lifecycle
 
@@ -92,9 +86,9 @@ integration requires samples bracketing the selected interval; legacy captures
 ending before `e1_us` remain unavailable for full GPIO-window energy.
 Hash, ordering, sample format, calibration and acquisition-fault checks remain
 mandatory. A gap crossing the rising edge is checked only for its measured part.
-Existing local pre-trigger settings above 1000 ms are capped in firmware, so the
-new policy requires rebuilding and manually flashing the ESP32. Existing retained
-captures and manifests are not rewritten or retroactively marked successful.
+Firmware caps local pre-trigger settings at 1000 ms. Firmware changes require
+manual appliance maintenance; existing captures are not rewritten or retroactively
+marked successful.
 
 Sensor acquisition remains the calibrated alert-triggered bus/shunt path:
 
@@ -136,21 +130,13 @@ For the configured 7 MiB maximum ring, the theoretical record capacity is:
 floor(7,340,032 / 20) = 367,001 samples
 ```
 
-The former 64-byte record size could hold:
-
-```text
-7,340,032 / 64 = 114,688 samples
-```
-
-Thus the compact record provides about `64 / 20 = 3.2` times the sample history
-at the same byte limit. Actual allocation may be smaller because the firmware
-also preserves a 512 KiB PSRAM reserve and is bounded by the largest available
-PSRAM block; the firmware reports the actual capacity.
+Actual allocation may be smaller than this limit: firmware preserves a 512 KiB
+PSRAM reserve and is bounded by the largest free block. Completion metadata
+reports the actual capacity.
 
 Voltage and current remain in the raw record even though offline energy can be
 derived from power. They preserve the measurements used to diagnose/calibrate
-power without reintroducing per-sample protocol/session metadata. A future
-format reduction to timestamp+power would be a separate evidence-format change.
+power without reintroducing per-sample protocol/session metadata.
 
 ## MQTT transfer contract
 
@@ -219,15 +205,15 @@ The two-edge fit does not remove GPIO propagation delay, ESP32 interrupt latency
 or any edge-asymmetry bias. A logic-analyser comparison is still required before
 claiming a bounded cross-device timing error.
 
-## Configuration and secrets
+## Configuration and maintenance
 
 The instrument profile is `configs/instruments/energy/esp32_ina228.yaml`. Its
 endpoint is descriptive and declares `direction: publish_only` and
 `command_plane: none`.
 
-The ESP32 local `sdkconfig` may contain laboratory Wi-Fi credentials and must
-remain uncommitted. Non-secret defaults are maintained in
-`main/Kconfig.projbuild`, including broker host/port/client ID, GPIOs,
+The generated/ignored ESP32 `sdkconfig` contains local experiment settings,
+including Wi-Fi. Their classification follows the [open-data policy](006_security_and_secrets.md).
+Defaults are maintained in `instruments/esp32_ina228/main/Kconfig.projbuild`, including broker host/port/client ID, GPIOs,
 pre-trigger duration, MQTT/publisher task stacks, ring limit, and PSRAM reserve.
 
 Energy-enabled resolution still requires a workload with deferred reporting and
@@ -259,7 +245,7 @@ ESP32_PORT=/dev/serial/by-id/YOUR_ESP32_DEVICE
 idf.py -p "$ESP32_PORT" flash
 ```
 
-Do not share the generated local `sdkconfig` if it contains Wi-Fi credentials.
+Use the selected appliance configuration when interpreting retained captures.
 
 After the updated ESP32 has been manually flashed, the hardware gate is:
 
@@ -268,22 +254,21 @@ cd /home/timk/rmit/PQC-Framework-02
 ./scripts/dev.sh pytest-hardware tests/hardware/test_energy_capture_hw.py -m hardware --pqc-require-hardware
 ```
 
-The earlier 2026-09-27 single-interval evidence belongs to the superseded
-session/association protocol. It is useful historical evidence that the physical
-measurement path could complete, but it does **not** validate this simplified
-wire format, passive lifecycle, one-window repeated-TLS behaviour, or new host
-matching logic. Fresh hardware evidence is required before those behaviours are
-claimed successful. The corresponding deferred-test entry is DTR-013 in
-`docs/007_framework_architecture.md`.
+DTR-013 in [testing and deferred coverage](013_testing_and_deferred_coverage.md)
+records current-protocol normal acquisition/endpoint evidence and remaining live
+fault recovery. Older session/association captures do not validate the passive
+protocol. This guide does not independently rerun or requalify historical results.
 
 ## Offline A6 energy reports
 
-The [architecture's A6 section](007_framework_architecture.md#offline-workload-and-bounded-phase-energy-analysis-request-a6)
+The [energy analysis reference](012_results_and_analysis.md#energy)
 owns energy definitions, interpolation/pairing policy, output lineage and batch/
 notebook commands. `--energy` on `scripts/summarise_timing_dataset.py` analyses
 existing captures only. It reuses instrument acceptance checks, but requires valid
 sample brackets for joule integration: a capture may pass acquisition checks and
-still lack a whole-window energy result when its last sample precedes e1. No tail
+still lack energy for the selected endpoint when sample brackets are absent.
+Current whole-workload integration stops at `workload_end_us`; legacy GPIO-window
+integration ends at `s1_us`/`e1_us`. No tail
 extrapolation or inferred reporting-time trimming is permitted. Physical electrical
 boundary assertions require a lab evidence reference before comparison inclusion.
 Mathematical parser tests do not replace the physical qualification limits above.

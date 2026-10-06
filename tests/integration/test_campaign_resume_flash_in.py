@@ -64,8 +64,10 @@ def test_saved_preparation_reenters_flash_path_only_when_forced(tmp_path, monkey
 
 
 @pytest.mark.parametrize("changed_sha", [False, True])
-def test_resume_restores_pending_group_before_runtime_and_skips_completed_group(campaign, monkeypatch, changed_sha):
+@pytest.mark.parametrize("preserve_completed", [False, True])
+def test_resume_restores_pending_group_before_runtime_and_skips_completed_group(campaign, monkeypatch, changed_sha, preserve_completed):
     executor, cases, _ = campaign
+    executor.preserve_completed = preserve_completed
     events = []
     attempt = 0
 
@@ -75,6 +77,8 @@ def test_resume_restores_pending_group_before_runtime_and_skips_completed_group(
         sha = "new-sha" if force and changed_sha else "old-sha"
         path = kwargs["campaign_root"] / f"prep-{kwargs['group_index']}-{force}" / "manifest.json"
         preparation(path, kwargs["firmware_identity"], sha)
+        if group.get("preparation_manifest"):
+            group.setdefault("previous_preparations", []).append({"manifest": group["preparation_manifest"]})
         group["preparation_manifest"] = str(path)
         events.append(("flash", kwargs["group_index"], force))
         return path, sha
@@ -105,7 +109,7 @@ def test_resume_restores_pending_group_before_runtime_and_skips_completed_group(
     executor.execute("tls_matrix_energy", resume_manifest=manifest)
     assert events[0] == ("flash", 1, True)
     assert [event for event in events if event[0] == "flash"] == [("flash", 1, True)]
-    assert len([event for event in events if event[0] == "runtime"]) == (2 if changed_sha else 1)
+    assert len([event for event in events if event[0] == "runtime"]) == (2 if changed_sha and not preserve_completed else 1)
     assert json.loads(manifest.read_text())["state"] == "completed"
     events.clear()
     executor.execute("tls_matrix_energy", resume_manifest=manifest)

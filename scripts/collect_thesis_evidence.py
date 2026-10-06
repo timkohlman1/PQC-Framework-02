@@ -210,8 +210,10 @@ def main(argv=None):
     parser.add_argument('action', choices=['plan','run','report','status'])
     parser.add_argument('--output', required=True, type=Path, help='collection directory under results/')
     parser.add_argument('--repetitions', type=int, default=None, help='plan only; reset attempts per condition, default 10')
-    parser.add_argument('--only', nargs='+', help='plan only; selected campaign IDs (OTA also included unless --skip-ota)')
-    parser.add_argument('--skip-ota', action='store_true', help='plan only; omit lifecycle scenarios explicitly')
+    parser.add_argument('--only', nargs='+', help='plan only; selected campaign IDs (default: secure boot, KEX, authentication and matched plaintext)')
+    ota = parser.add_mutually_exclusive_group()
+    ota.add_argument('--include-ota', action='store_true', help='plan only; opt into lifecycle scenarios')
+    ota.add_argument('--skip-ota', action='store_true', help='plan only; compatibility option, OTA is omitted by default')
     parser.add_argument('--retry-failed', action='store_true', help='run only; append attempts for failed terminal steps')
     parser.add_argument('--reanalyze', action='store_true', help='report only; preserve captures and record a new analysis source revision')
     args = parser.parse_args(args_list)
@@ -220,7 +222,7 @@ def main(argv=None):
     output = Path(os.path.abspath(ROOT/args.output))
     if not output.is_relative_to(ROOT/'results') or output == ROOT/'results' or any(p.is_symlink() for p in [output,*output.parents]):
         parser.error('output must be a non-symlink directory below results/')
-    if args.action != 'plan' and (args.repetitions is not None or args.only or args.skip_ota):
+    if args.action != 'plan' and (args.repetitions is not None or args.only or args.skip_ota or args.include_ota):
         parser.error('collection choices are frozen by plan; these options are plan-only')
     if args.retry_failed and args.action != 'run':
         parser.error('--retry-failed requires run')
@@ -229,6 +231,7 @@ def main(argv=None):
             extra = ['--repetitions',str(10 if args.repetitions is None else args.repetitions)]
             if args.only: extra += ['--only',*args.only]
             if args.skip_ota: extra += ['--skip-ota']
+            if args.include_ota: extra += ['--include-ota']
             return run_command(helper('plan',output,extra))
         if not (output/'plan.json').is_file():
             parser.error('create this collection with plan first')

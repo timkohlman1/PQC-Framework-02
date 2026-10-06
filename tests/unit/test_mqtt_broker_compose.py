@@ -331,18 +331,6 @@ def test_mqtt_stop_removes_profiled_and_orphaned_broker_containers(tmp_path, mon
     assert "|| true" in command_text
 
 
-def test_mqtt_docs_record_oqs_as_experimental_not_production():
-    readme = _read(BROKER_ROOT / "README.md")
-    oqs_readme = _read(BROKER_ROOT / "config" / "oqs" / "README.md")
-
-    assert "experimental" in readme.lower()
-    assert "not be treated as production" in readme
-    assert "Confirm negotiated algorithms" in oqs_readme
-
-
-
-
-
 def test_mqtt_remote_shell_path_preserves_home_directory_expansion():
     module = _load_ctl_module()
 

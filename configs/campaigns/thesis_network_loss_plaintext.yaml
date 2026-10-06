@@ -1,4 +1,4 @@
-# No TLS: inert crypto selections are resolver compatibility values, not compiled algorithms.
+# No TLS: omit TLS selections; the application does not link wolfSSL/wolfCrypt.
 # Thesis pilot design: ten independent reset attempts per condition.
 # Set final sample counts from pilot variability; these are not completed measurements.
 schema_version: 1
@@ -12,9 +12,6 @@ services:
 workload: ready_metrics_2
 fixed:
   mqtt_transport: plaintext
-  tls_kex: secp256r1
-  tls_auth: rsa3072
-  auth_mode: server
   secure_boot: integrity_sha256
   firmware_mode: single_bank
   standby_signing_keys: 0

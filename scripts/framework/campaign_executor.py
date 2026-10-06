@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import signal
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +35,14 @@ class CampaignError(RuntimeError):
 
 class CampaignCleanupError(CampaignError):
     """Shared infrastructure could not be removed safely."""
+
+
+class CampaignPaused(Exception):
+    """Cooperative stop after an operation, followed by normal cleanup."""
+
+    def __init__(self, reason="requested"):
+        self.reason = reason
+        super().__init__(reason)
 
 
 class GroupSetupError(CampaignError):
@@ -102,6 +112,8 @@ class ExecutionPolicy:
     reporting_broker: str
     condition: str
     evidence: str
+    energy_monitoring: str = "auto"
+    workload_failures: str = "pause"
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "ExecutionPolicy":
@@ -122,6 +134,8 @@ class ExecutionPolicy:
             reporting_broker=str(value.get("reporting_broker", "")),
             condition=str(value.get("condition", "")),
             evidence=str(value.get("evidence", "")),
+            energy_monitoring=str(value.get("energy_monitoring", "auto")),
+            workload_failures=str(value.get("workload_failures", "pause")),
         )
         expected = {
             "build": "once_per_firmware_identity",
@@ -137,6 +151,10 @@ class ExecutionPolicy:
                 raise CampaignError(f"execution.{field} must be '{wanted}', got {actual!r}")
         if policy.reset_between_runs not in {"hardware_reset", "none"}:
             raise CampaignError("execution.reset_between_runs must be 'hardware_reset' or 'none'")
+        if policy.energy_monitoring not in {"auto", "off"}:
+            raise CampaignError("execution.energy_monitoring must be auto or off")
+        if policy.workload_failures not in {"pause", "record"}:
+            raise CampaignError("execution.workload_failures must be pause or record")
         return policy
 
     def as_dict(self) -> dict[str, Any]:
@@ -149,6 +167,8 @@ class ExecutionPolicy:
             "reporting_broker": self.reporting_broker,
             "condition": self.condition,
             "evidence": self.evidence,
+            **({"energy_monitoring": self.energy_monitoring} if self.energy_monitoring != "auto" else {}),
+            **({"workload_failures": self.workload_failures} if self.workload_failures != "pause" else {}),
         }
 
 
@@ -284,16 +304,11 @@ CommandRunner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
 
 
 def _default_runner(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    from framework.bounded_command import run as bounded_run
+    completed = bounded_run(command, cwd=cwd, timeout=300)
+    # Preserve the historical combined control log, including timeout diagnostics.
+    return subprocess.CompletedProcess(completed.args, completed.returncode,
+                                       completed.stdout + completed.stderr, None)
 
 
 def _stream_command_to_log(
@@ -305,6 +320,12 @@ def _stream_command_to_log(
     updates the compact console. The child also retains its own console.log.
     The returned stdout contains the full combined stream for error handling.
     """
+    try:
+        timeout = float(os.environ.get("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS", "1800"))
+    except ValueError as exc:
+        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     captured: list[str] = []
     with log_path.open("w", encoding="utf-8", buffering=1) as log_handle:
@@ -320,8 +341,27 @@ def _stream_command_to_log(
             stderr=subprocess.STDOUT,
             bufsize=1,
             env={**os.environ, "PQC_RUN_VERBOSE": "1"},
+            start_new_session=True,
         )
         assert process.stdout is not None
+        expired = threading.Event()
+        def terminate_group():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        hard_stop = threading.Timer(90, terminate_group)
+        hard_stop.daemon = True
+        def request_cleanup():
+            expired.set()
+            try:
+                process.send_signal(signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            hard_stop.start()
+        watchdog = threading.Timer(timeout, request_cleanup)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             for line in process.stdout:
                 captured.append(line)
@@ -343,6 +383,14 @@ def _stream_command_to_log(
             process.wait()
             log_handle.write(f"\n[{_now()}] interrupted; return_code={process.returncode}\n")
             raise
+        finally:
+            watchdog.cancel()
+            watchdog.join()
+            hard_stop.cancel()
+            if hard_stop.ident is not None:
+                hard_stop.join()
+        if expired.is_set():
+            raise CampaignCleanupError(f"Operation exceeded {timeout:g}s; interrupted with 90s cleanup grace. Remote completion requires inspection; log: {log_path}")
         log_handle.write(f"\n[{_now()}] return_code={return_code}\n")
         log_handle.flush()
     return subprocess.CompletedProcess(
@@ -461,6 +509,12 @@ class CampaignExecutor:
         *,
         results_root: Path | str = "results/campaigns",
         runner: CommandRunner = _default_runner,
+        pause_file: Path | None = None,
+        stop_on_error: bool = False,
+        accept_failed: bool = False,
+        retry_failed: bool = False,
+        preserve_completed: bool = False,
+        defer_failed: bool = False,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.results_root = Path(results_root)
@@ -473,6 +527,17 @@ class CampaignExecutor:
         self.progress = RunStatus()
         self._finished_slots: set[tuple[str, int]] = set()
         self._total = 1
+        self.pause_file = pause_file
+        self.stop_on_error = stop_on_error
+        self.accept_failed = accept_failed
+        self.retry_failed = retry_failed
+        self.preserve_completed = preserve_completed
+        self.defer_failed = defer_failed
+        self._retained_firmware: set[tuple[str, str]] = set()
+
+    def _checkpoint(self):
+        if self.pause_file is not None and self.pause_file.exists():
+            raise CampaignPaused()
 
     def _case_finished(self, case, repetition, status, run_manifest=None):
         key = (str(case["id"]), repetition)
@@ -528,9 +593,14 @@ class CampaignExecutor:
             campaign_root = manifest_path.parent
             state.pop("final_index", None)
             state.pop("failure", None)
+            state.pop("pause", None)
+            for record in state.get("runs", []):
+                if self.accept_failed and record.get("state") in {"failed", "blocked"}:
+                    record["accepted_failure"] = {"at": _now(), "decision": "operator_accept"}
             state.pop("completed_at", None)
             state["resumed_at"] = _now()
             state["state"] = "running"
+            state["cleanup"] = {"status": "pending", "errors": []}
         else:
             timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             campaign_root = self.results_root / f"{_safe_component(str(campaign_data['id']))}_{timestamp}"
@@ -544,6 +614,22 @@ class CampaignExecutor:
                 cases=cases,
                 groups=groups,
             )
+        # Freeze historical preparation validation before a resumed build changes
+        # the board image. Old captures retain their own image identity.
+        self._retained_firmware = set()
+        if self.preserve_completed:
+            for group_state in state["firmware_groups"]:
+                refs = [group_state.get("preparation_manifest")]
+                refs.extend(p.get("manifest") for p in group_state.get("previous_preparations", []))
+                for ref in filter(None, refs):
+                    path = Path(ref)
+                    if not path.is_absolute():
+                        path = campaign_root / path
+                    try:
+                        sha = validate_preparation_manifest(path, expected_firmware_identity=group_state["firmware_identity"])
+                        self._retained_firmware.add((group_state["firmware_identity"], sha))
+                    except CampaignError:
+                        continue
         _write_json_atomic(manifest_path, state)
 
         cleanup_errors: list[str] = []
@@ -552,6 +638,7 @@ class CampaignExecutor:
             for group_index, group in enumerate(groups, start=1):
                 firmware_sha256 = None
                 try:
+                    self._checkpoint()
                     representative = group["cases"][0]
                     if resume_manifest is not None and self._resume_group_completed(
                         state=state, group=group, group_index=group_index,
@@ -581,12 +668,14 @@ class CampaignExecutor:
                     group_state["validated_firmware_sha256"] = firmware_sha256
                     _write_json_atomic(manifest_path, state)
 
+                    self._checkpoint()
                     bundle = self.resolver.to_legacy_bundle(representative)
                     wanted_broker_identity = broker_identity(bundle, representative)
                     _setup_step("broker_setup", self._ensure_broker, bundle=bundle, identity=wanted_broker_identity, campaign_root=campaign_root)
                     group_state["broker_identity"] = wanted_broker_identity
                     _write_json_atomic(manifest_path, state)
 
+                    self._checkpoint()
                     condition_groups: dict[str, list[dict[str, Any]]] = {}
                     condition_order: list[str] = []
                     for case in group["cases"]:
@@ -597,6 +686,7 @@ class CampaignExecutor:
                         condition_groups[cid].append(case)
 
                     for cid in condition_order:
+                        self._checkpoint()
                         if active_condition is not None:
                             cleanup = remove_gateway_network_degradation(
                                 degradation=active_condition, repo_root=self.repo_root
@@ -630,6 +720,7 @@ class CampaignExecutor:
                         for case in condition_cases:
                             case_path = self._case_path(generated_root, case)
                             for repetition in range(1, policy.repetitions + 1):
+                                self._checkpoint()
                                 if self._resume_completed(
                                     state=state,
                                     campaign_id=str(campaign_data["id"]),
@@ -646,6 +737,7 @@ class CampaignExecutor:
                                     identity=broker_identity(self.resolver.to_legacy_bundle(case), case),
                                     campaign_root=campaign_root,
                                 )
+                                self._checkpoint()
                                 before_packets = None
                                 if active_condition is not None:
                                     observed_before = verify_gateway_network_degradation(
@@ -675,15 +767,46 @@ class CampaignExecutor:
                                         ),
                                     )
                                 except RepetitionError as exc:
+                                    accepted = None
+                                    if policy.workload_failures == "record":
+                                        from framework.trial_outcome import verified_failure
+                                        accepted = verified_failure(
+                                            exc.manifest, campaign_id=str(campaign_data["id"]),
+                                            case_id=case["id"], condition_identity=cid,
+                                            repetition_index=repetition, firmware_sha256=firmware_sha256,
+                                        )
+                                    if accepted and active_condition is not None:
+                                        observed_after = verify_gateway_network_degradation(
+                                            degradation=active_condition, repo_root=self.repo_root)
+                                        after_packets = gateway_impairment_packet_counts(observed_after.stdout)
+                                        with active_condition.log_path.open("a", encoding="utf-8") as evidence:
+                                            evidence.write(f"\nNegative trial {repetition} packet counters: before={before_packets}, after={after_packets}\n")
+                                        # At 100% loss, delivered-packet counters need not advance.
+                                        # Effective controls must still match, and counters cannot reset.
+                                        if (observed_after.return_code != 0 or after_packets is None
+                                                or any(a < b for a, b in zip(after_packets, before_packets))):
+                                            accepted = None
                                     self._record_run(
                                         state=state, case=case, cid=cid, repetition=repetition,
                                         run_manifest=exc.manifest, firmware_sha256=firmware_sha256,
                                         failure={"message": str(exc), "return_code": exc.return_code,
                                                  "log": str(exc.log)},
                                     )
+                                    if exc.manifest is not None:
+                                        try:
+                                            safety = _read_json(exc.manifest).get("execution_safety", {})
+                                        except CampaignError:
+                                            safety = {}
+                                        if safety.get("status") == "unverified":
+                                            raise CampaignCleanupError(safety.get("reason", "Runtime cleanup unverified"))
+                                    if accepted:
+                                        record = next(r for r in state["runs"] if r["case_id"] == case["id"] and r["repetition_index"] == repetition)
+                                        record["accepted_failure"] = {**accepted, "at": _now()}
                                     _write_json_atomic(manifest_path, state)
-                                    self._diagnostic(campaign_root, f"Campaign repetition failed; continuing: {exc}")
+                                    self._diagnostic(campaign_root, f"Campaign repetition failed; {'pausing' if self.stop_on_error and not accepted else 'continuing'}: {exc}")
                                     self._case_finished(case, repetition, "Failed", exc.manifest)
+                                    if self.stop_on_error and not accepted:
+                                        raise CampaignPaused("error")
                                     continue
                                 if active_condition is not None:
                                     observed_after = verify_gateway_network_degradation(
@@ -743,7 +866,10 @@ class CampaignExecutor:
                             existing = next((run for run in state["runs"]
                                              if run["case_id"] == blocked_case["id"]
                                              and run["repetition_index"] == blocked_rep), None)
-                            if existing and existing.get("state") == "failed":
+                            if existing and existing.get("accepted_failure") and not self.retry_failed and existing.get("state") in {"failed", "blocked"}:
+                                self._case_finished(blocked_case, blocked_rep, "Skipped", existing.get("manifest"))
+                                continue
+                            if existing and existing.get("state") == "failed" and not self.stop_on_error:
                                 self._case_finished(blocked_case, blocked_rep, "Failed", existing.get("manifest"))
                                 continue
                             if firmware_sha256 is not None and self._resume_completed(
@@ -766,6 +892,8 @@ class CampaignExecutor:
                                 blocked=True,
                             )
                             self._case_finished(blocked_case, blocked_rep, "Blocked")
+                            if self.stop_on_error:
+                                raise CampaignPaused("error")
                     _write_json_atomic(manifest_path, state)
                     # Shared infrastructure must be removed before trying another group.
                     if active_condition is not None:
@@ -790,13 +918,25 @@ class CampaignExecutor:
                                 "failed": failed, "blocked": blocked}
             state["state"] = "completed_with_failures" if failed or blocked else "completed"
             state["completed_at"] = _now()
+        except CampaignPaused as exc:
+            state["state"] = "paused"
+            state["pause"] = {"reason": exc.reason, "at": _now()}
+            self._diagnostic(campaign_root, "Campaign paused: " + exc.reason)
         except BaseException as exc:
+            if isinstance(exc, CampaignCleanupError):
+                cleanup_errors.append(str(exc))
             self.progress.finish("Interrupted" if isinstance(exc, KeyboardInterrupt) else "Failed")
             self._diagnostic(campaign_root, f"{type(exc).__name__}: {exc}")
             state["state"] = "failed"
             state["failure"] = {"type": type(exc).__name__, "message": str(exc), "at": _now()}
             raise
         finally:
+            if state.get("state") == "paused":
+                state["summary"] = {
+                    "planned": len(cases) * policy.repetitions,
+                    **{name: sum(r.get("state") == name for r in state["runs"])
+                       for name in ("completed", "failed", "blocked")},
+                }
             if active_condition is not None:
                 cleanup = remove_gateway_network_degradation(
                     degradation=active_condition, repo_root=self.repo_root
@@ -811,7 +951,7 @@ class CampaignExecutor:
                 "errors": cleanup_errors,
                 "completed_at": _now(),
             }
-            if cleanup_errors and state.get("state") in {"completed", "completed_with_failures"}:
+            if cleanup_errors and state.get("state") in {"completed", "completed_with_failures", "paused"}:
                 state["state"] = "failed"
                 state["failure"] = {"type": "CleanupError", "message": "; ".join(cleanup_errors), "at": _now()}
             if state.get("state") in {"completed", "completed_with_failures"} and state.get("cleanup", {}).get("status") == "passed":
@@ -894,6 +1034,14 @@ class CampaignExecutor:
         campaign_root: Path, campaign_id: str, repetitions: int,
     ) -> bool:
         """Skip hardware work only when every saved repetition still validates."""
+        slots = {(r["case_id"], r["repetition_index"]): r for r in state.get("runs", [])}
+        if not self.retry_failed and all((self.defer_failed or slots.get((case["id"], rep), {}).get("accepted_failure"))
+               and slots.get((case["id"], rep), {}).get("state") in {"failed", "blocked"}
+               for case in group["cases"] for rep in range(1, repetitions + 1)):
+            return all(self._resume_completed(state=state, campaign_id=campaign_id,
+                case=case, cid=condition_identity(case), repetition=rep,
+                firmware_sha256=slots[(case["id"], rep)]["firmware_sha256"])
+                for case in group["cases"] for rep in range(1, repetitions + 1))
         recorded = state["firmware_groups"][group_index - 1].get("preparation_manifest")
         if not recorded:
             return False
@@ -1138,11 +1286,14 @@ class CampaignExecutor:
                 log_path=log_path,
                 progress=self.progress,
             )
+        except CampaignCleanupError:
+            raise
         except CampaignError as exc:
             raise RepetitionError(str(exc), manifest=None, return_code=0, log=log_path) from exc
         failure = None
         if rc != 0:
-            failure = f"repetition failed for {case['id']} #{repetition}; see {log_path}"
+            from framework.failure_details import run_failure
+            failure = run_failure(produced_manifest, rc)
         elif produced_manifest is None:
             failure = f"repetition produced no run manifest; see {log_path}"
         else:
@@ -1154,7 +1305,8 @@ class CampaignExecutor:
             except CampaignError:
                 valid = False
             if not valid:
-                failure = f"repetition evidence validation failed: {produced_manifest}"
+                from framework.failure_details import run_failure
+                failure = "Evidence validation rejected the run: " + run_failure(produced_manifest, rc)
         if failure:
             raise RepetitionError(failure, manifest=produced_manifest, return_code=rc, log=log_path)
         return produced_manifest
@@ -1211,8 +1363,23 @@ class CampaignExecutor:
             ),
             None,
         )
+        if isinstance(record, dict) and record.get("state") in {"failed", "blocked"} and (record.get("accepted_failure") or self.defer_failed) and not self.retry_failed:
+            if record.get("accepted_failure", {}).get("decision") == "policy_record_valid_failure":
+                from framework.trial_outcome import verified_failure
+                if not verified_failure(Path(record["manifest"]), campaign_id=campaign_id,
+                        case_id=str(case["id"]), condition_identity=cid, repetition_index=repetition,
+                        firmware_sha256=record["firmware_sha256"]):
+                    raise CampaignError("recorded negative trial evidence changed; review before resuming")
+            return True
         if not isinstance(record, dict) or record.get("state") != "completed":
             return False
+        if self.preserve_completed:
+            original_sha = record.get("firmware_sha256")
+            identity = case["provenance"]["firmware_identity"]
+            if (record.get("configuration_identity") == case["provenance"]["configuration_identity"]
+                    and record.get("firmware_identity") == identity
+                    and (identity, original_sha) in self._retained_firmware):
+                firmware_sha256 = original_sha
         manifest_path = Path(str(record.get("manifest", "")))
         if not manifest_path.is_absolute():
             manifest_path = self.repo_root / manifest_path

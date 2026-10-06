@@ -15,7 +15,7 @@ def test_trial_has_fifteen_attempts_and_one_firmware():
     for c in cases:
         assert not c['selections'].get('instruments')
         assert c['choices']['tls_kex']=='SecP256r1MLKEM768'
-        assert c['choices']['tls_auth']=='rsa3072' and c['choices']['auth_mode']=='server'
+        assert c['choices']['tls_auth']=='ecdsa-p256' and c['choices']['auth_mode']=='server'
         assert c['execution']['reset_between_runs']=='hardware_reset'
         assert not c['choices']['boot_uart_diagnostics'] and not c['choices']['boot_stack_profiling']
         bundle=resolver.to_legacy_bundle(c,resolve_secrets=False)

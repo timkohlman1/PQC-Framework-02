@@ -26,6 +26,11 @@ CAMPAIGNS = (
     'thesis_network_mtu_plaintext', 'thesis_energy_plaintext',
     'secure_boot', 'secure_boot_stack', 'baremetal_benchmark', 'thesis_ota_overhead',
 )
+# Retain the extended catalogue for explicit plans and archived report synthesis.
+DEFAULT_CAMPAIGNS = (
+    'secure_boot', 'secure_boot_stack', 'thesis_kex',
+    'thesis_authentication', 'thesis_application_plaintext',
+)
 GAPS = [
     'Boot/OTA energy and cross-reset stage durations have no supported acquisition boundary.',
     'OTA final candidate-to-image binding remains unconfirmed by the current importer.',
@@ -90,10 +95,28 @@ def annotations(value):
     return value
 
 
-def plan(output, repetitions=10, only=None, include_ota=True):
+def instrument_campaign(resolver, data):
+    """Apply the thesis collector energy policy to a copied campaign."""
+    mode = data.get('execution', {}).get('energy_monitoring', 'auto')
+    if mode not in {'auto', 'off'}:
+        raise ValueError('execution.energy_monitoring must be auto or off')
+    if mode == 'off':
+        data.setdefault('instruments', {}).pop('energy', None)
+        return False
+    workload = resolver.load_profile('workload', data['workload']).data
+    energy_supported = (workload.get('firmware_application') in {
+        'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',
+        'tls_handshake_repeat', 'baremetal_benchmark'}
+        and workload.get('evidence', {}).get('deferred_reporting') is True)
+    if energy_supported:
+        data.setdefault('instruments', {})['energy'] = 'esp32_ina228'
+    return energy_supported
+
+
+def plan(output, repetitions=10, only=None, include_ota=False):
     if type(repetitions) is not int or not 1 <= repetitions <= 1000:
         raise ValueError('repetitions must be 1..1000')
-    names = list(only or CAMPAIGNS)
+    names = list(only or DEFAULT_CAMPAIGNS)
     if not names or len(set(names)) != len(names) or set(names) - set(CAMPAIGNS):
         raise ValueError('select unique supported campaign names')
     output = collection_path(output)
@@ -109,13 +132,7 @@ def plan(output, repetitions=10, only=None, include_ota=True):
         data['execution']['repetitions'] = repetitions
         # Instrument every supported single-window workload in this collection.
         # Unsupported boot-only and multi-reset OTA workflows remain explicit gaps.
-        workload = resolver.load_profile('workload', data['workload']).data
-        energy_supported = (workload.get('firmware_application') in {
-            'mqtt_validation', 'mqtt_ready_metrics', 'mqtt_ready_metrics_2',
-            'tls_handshake_repeat', 'baremetal_benchmark'}
-            and workload.get('evidence', {}).get('deferred_reporting') is True)
-        if energy_supported:
-            data.setdefault('instruments', {})['energy'] = 'esp32_ina228'
+        energy_supported = instrument_campaign(resolver, data)
         # Explicitly preserve instrumented stack runs separately from normal timing.
         source = output / 'profiles' / (name + '.yaml')
         source.write_text(yaml.safe_dump(data, sort_keys=False))
@@ -165,7 +182,7 @@ def analysis_specs(name, profile):
     """Predeclared one-factor strata; never choose conditions from observed success."""
     matrix = profile.get('matrix', {})
     kex = matrix.get('tls_kex', [profile['fixed'].get('tls_kex', 'secp256r1')])
-    auth = matrix.get('tls_auth', [profile['fixed'].get('tls_auth', 'rsa3072')])
+    auth = matrix.get('tls_auth', [profile['fixed'].get('tls_auth', 'ecdsa-p256')])
     modes = matrix.get('auth_mode', [profile['fixed'].get('auth_mode', 'server')])
     result = []
     def add(label, field, values, baseline, filters, domains, sections, security='key_establishment'):
@@ -193,11 +210,11 @@ def analysis_specs(name, profile):
         add(name, 'tls_kex', kex, 'secp256r1', {}, ['timing','resources','tls'],
             ['dataset-summary','classical-tls-baseline','kex-timing','kex-resources','kex-network-application'])
     elif name in ('thesis_authentication', 'thesis_repeated_tls', 'thesis_energy'):
-        domains = ['timing','resources','tls'] + (['energy'] if name == 'thesis_energy' else [])
+        domains = ['timing','resources','tls'] + (['energy'] if name == 'thesis_energy' or profile.get('instruments', {}).get('energy') else [])
         sections = ['energy-tls-mqtt'] if name == 'thesis_energy' else ['repeated-tls'] if name == 'thesis_repeated_tls' else ['cert-family']
         for group in kex:
             for mode in modes:
-                add(f'{name}_cert_{group}_{mode}', 'tls_auth', auth, 'rsa3072',
+                add(f'{name}_cert_{group}_{mode}', 'tls_auth', auth, profile.get('analysis_baselines', {}).get('tls_auth', 'rsa3072'),
                     {'tls_kex':group,'auth_mode':mode}, domains, sections, 'endpoint_authentication')
         if len(modes) > 1:
             for group in kex:
@@ -230,6 +247,12 @@ def analysis_specs(name, profile):
         for algorithm in matrix['secure_boot']:
             add(name+'_'+algorithm, 'firmware_mode', matrix['firmware_mode'], 'dual_bank_no_ota',
                 {'secure_boot':algorithm}, ['resources','secure_boot'], ['ota-capability'], 'firmware_authentication')
+    # Energy is a concurrent capture, not a separate set of experimental runs.
+    # Secure-boot traces currently cover the post-handoff application only.
+    if profile.get('instruments', {}).get('energy') and name not in ('secure_boot', 'secure_boot_stack'):
+        for design in result:
+            if 'energy' not in design['domains']:
+                design['domains'] = [*design['domains'], 'energy']
     return result
 
 
@@ -275,12 +298,12 @@ def transport_specs(name, profile, resolver):
     for index, (network, payload, chunk) in enumerate(strata, 1):
         conditions = {'plaintext_no_tls': {'controls.tls.mode': 'plaintext'}}
         for kex, auth, mode in itertools.product(values('tls_kex', 'secp256r1'),
-                values('tls_auth', 'rsa3072'), values('auth_mode', 'server')):
+                values('tls_auth', 'ecdsa-p256'), values('auth_mode', 'server')):
             conditions[f'{kex}_{auth}_{mode}'] = {'tls_kex': kex, 'tls_auth': auth, 'auth_mode': mode}
         yield {'id': f'{name}_transport_{index}', 'conditions': conditions,
             'filters': {'network_condition': network, 'payload_bytes': payload, 'chunk_bytes': chunk},
             'domains': ['timing', 'resources'] + (['network'] if name.startswith('thesis_network_') else [])
-                + (['energy'] if name == 'thesis_energy' else []),
+                + (['energy'] if name == 'thesis_energy' or profile.get('instruments', {}).get('energy') else []),
             'sections': ['energy-tls-mqtt'] if name == 'thesis_energy' else
                 ['network-impairment-summary', 'packet-analysis'] if name.startswith('thesis_network_') else ['ready-metrics2'],
             'security_domain': 'key_establishment'}
@@ -436,14 +459,16 @@ def main(argv=None):
     parser.add_argument('--output', required=True)
     parser.add_argument('--repetitions', type=int, default=10)
     parser.add_argument('--only', nargs='+', choices=CAMPAIGNS)
-    parser.add_argument('--skip-ota', action='store_true')
+    ota = parser.add_mutually_exclusive_group()
+    ota.add_argument('--include-ota', action='store_true', help='plan only: add lifecycle scenarios')
+    ota.add_argument('--skip-ota', action='store_true', help='compatibility option; OTA is omitted by default')
     parser.add_argument('--reanalyze', action='store_true', help='report only: new analysis revision; never resume hardware with changed source')
     args = parser.parse_args(argv)
     if args.reanalyze and args.action != 'report':
         parser.error('--reanalyze requires report')
     try:
         if args.action == 'plan':
-            plan(args.output, args.repetitions, args.only, not args.skip_ota)
+            plan(args.output, args.repetitions, args.only, args.include_ota)
         elif args.action == 'check':
             check(args.output)
             print('Frozen collection plan and source verified.')

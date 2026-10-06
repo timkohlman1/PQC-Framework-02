@@ -251,3 +251,15 @@ def test_secure_boot_uart_diagnostics_must_be_boolean():
     }
     with pytest.raises(ResolutionError, match="boot_uart_diagnostics must be a boolean"):
         resolver.resolve_case(campaign_id="diag_bad", case_index=1, selections=selected, choices=choices, workload_overrides={}, execution=campaign["execution"])
+
+
+def test_plaintext_omitted_tls_choices_match_legacy_compatibility_defaults():
+    import yaml
+    resolver = ConfigResolver(ROOT)
+    profile = yaml.safe_load((ROOT/'configs/campaigns/mqtt_plaintext_validation.yaml').read_text())
+    assert not {'tls_kex', 'tls_auth', 'auth_mode'} & profile['fixed'].keys()
+    case = resolver.expand_campaign('mqtt_plaintext_validation')[0]
+    explicit = resolver.resolve_case(campaign_id=case['campaign']['id'], case_index=case['campaign']['case_index'],
+        selections=case['selections'], choices=case['choices'],
+        workload_overrides=case['overrides'].get('workload', {}), execution=case['execution'])
+    assert explicit['provenance']['configuration_identity'] == case['provenance']['configuration_identity']

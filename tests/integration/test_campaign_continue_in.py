@@ -13,6 +13,7 @@ from framework.config_resolver import ConfigResolver
 import run_campaign
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 pytestmark = pytest.mark.integration
 
 
@@ -200,3 +201,188 @@ def test_broker_failure_with_failed_cleanup_does_not_start_next_group(campaign, 
     state = json.loads(next(executor.results_root.glob("*/campaign-manifest.json")).read_text())
     assert state["state"] == "failed"
     assert state["cleanup"]["status"] == "failed"
+
+
+def test_cooperative_pause_finishes_command_cleans_up_then_resumes(campaign, monkeypatch, tmp_path):
+    executor, cases, cleanups = campaign
+    pause = tmp_path / 'pause.request'
+    executor.pause_file = pause
+    calls = []
+    def repetition(**kwargs):
+        calls.append((kwargs['case']['id'], kwargs['repetition']))
+        # This child represents a complete runtime command, not an interrupted one.
+        subprocess.run([sys.executable, '-c', 'print("operation completed")'], check=True, capture_output=True)
+        pause.touch()
+        return tmp_path / f'run-{len(calls)}.json'
+    monkeypatch.setattr(executor, '_run_repetition', repetition)
+    path = executor.execute('tls_matrix_energy')
+    state = json.loads(path.read_text())
+    assert state['state'] == 'paused' and state['pause']['reason'] == 'requested'
+    assert state['summary']['completed'] == 1
+    assert len(calls) == 1 and cleanups == [True]
+    assert state['cleanup']['status'] == 'passed'
+    assert 'final_index' not in state
+    pause.unlink()
+    monkeypatch.setattr(executor, '_resume_group_completed', lambda **kwargs: False)
+    monkeypatch.setattr(executor, '_resume_completed', lambda **kwargs: any(
+        r['case_id'] == kwargs['case']['id'] and r['repetition_index'] == kwargs['repetition']
+        for r in kwargs['state']['runs']))
+    # One more operation runs before the same cooperative request is observed.
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    assert calls == [(cases[0]['id'], 1), (cases[0]['id'], 2)]
+    assert len(cleanups) == 2
+
+
+def test_queue_mode_pauses_first_failure_and_accept_preserves_failure(campaign):
+    executor, _, cleanups = campaign
+    executor.stop_on_error = True
+    attempts = []
+    def fail(command, cwd):
+        attempts.append(command)
+        return subprocess.run([sys.executable, '-c', 'raise SystemExit(9)'], capture_output=True, text=True)
+    executor.runner = fail
+    path = executor.execute('tls_matrix_energy')
+    state = json.loads(path.read_text())
+    assert state['state'] == 'paused' and state['pause']['reason'] == 'error'
+    assert state['summary'] == {'planned': 4, 'completed': 0, 'failed': 1, 'blocked': 0}
+    assert len(attempts) == 1 and len(cleanups) == 1
+    executor.accept_failed = True
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    state = json.loads(path.read_text())
+    assert state['runs'][0]['state'] == 'failed'
+    assert state['runs'][0]['accepted_failure']['decision'] == 'operator_accept'
+    assert len(state['runs']) == 2 and len(attempts) == 2
+
+
+def test_pause_after_preparation_prevents_broker_setup(campaign, monkeypatch, tmp_path):
+    executor, _, cleanups = campaign
+    executor.pause_file = tmp_path / 'pause'
+    def prepare(**kwargs):
+        executor.pause_file.touch()
+        return tmp_path / 'prep.json', 'sha'
+    monkeypatch.setattr(executor, '_ensure_preparation', prepare)
+    monkeypatch.setattr(executor, '_ensure_broker', lambda **kwargs: pytest.fail('no broker after pause'))
+    path = executor.execute('tls_matrix_energy')
+    assert json.loads(path.read_text())['state'] == 'paused'
+    assert cleanups == [True]
+
+
+def test_accepted_setup_failure_can_finish_without_repeating_preparation(campaign, monkeypatch):
+    executor, _, _ = campaign
+    executor.stop_on_error = True
+    preparations = []
+    def fail(**kwargs):
+        preparations.append(True)
+        raise CampaignError('preparation unavailable')
+    monkeypatch.setattr(executor, '_ensure_preparation', fail)
+    path = executor.execute('tls_matrix_energy')
+    executor.accept_failed = True
+    for _ in range(4):
+        executor.execute('tls_matrix_energy', resume_manifest=path)
+    state = json.loads(path.read_text())
+    assert state['state'] == 'completed_with_failures'
+    assert state['summary']['blocked'] == 4
+    assert len(preparations) == 4
+    assert state['cleanup']['status'] == 'passed'
+    assert all(r['accepted_failure'] for r in state['runs'])
+    # A later explicit retry appends a new attempt while retaining the old acceptance.
+    executor.accept_failed = False
+    executor.retry_failed = True
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    retried = json.loads(path.read_text())
+    assert retried['state'] == 'paused'
+    assert retried['runs'][0]['state'] == 'blocked'
+    assert 'accepted_failure' not in retried['runs'][0]
+    assert retried['runs'][0]['previous_attempts'][-1]['accepted_failure']['decision'] == 'operator_accept'
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_stop_on_error_records_only_verified_negative_trials(campaign, tmp_path, valid):
+    from trial_outcome_support import negative_run
+    executor, cases, _ = campaign
+    executor.stop_on_error = True
+    source, data = executor.resolver.load_campaign('tls_matrix_energy')
+    data['execution']['workload_failures'] = 'record'
+    attempts = []
+    def runner(command, cwd):
+        def arg(name): return command[command.index(name) + 1]
+        binding = {'campaign_id': arg('--campaign-id'), 'case_id': arg('--campaign-case-id'),
+                   'condition_identity': arg('--campaign-condition-identity'),
+                   'repetition_index': int(arg('--campaign-repetition-index')), 'firmware_sha256':'firmware-sha'}
+        directory = Path(arg('--results-dir')) / f'negative-{len(attempts)}'
+        path = negative_run(directory, binding)
+        if not valid:
+            (directory / 'mqtt-reporting-raw.ndjson').write_text('damaged capture')
+        attempts.append(path)
+        # Exercise the real process/manifest boundary; classifier remains unmocked.
+        return subprocess.run([sys.executable, '-c', 'import sys; print("negative trial"); sys.exit(12)'],
+                              cwd=cwd, text=True, capture_output=True)
+    executor.runner = runner
+    path = executor.execute(source)
+    state = json.loads(path.read_text())
+    assert len(attempts) == (4 if valid else 1)
+    assert state['state'] == ('completed_with_failures' if valid else 'paused')
+    assert state['summary']['completed'] == 0
+    assert all(bool(r.get('accepted_failure')) == valid for r in state['runs'])
+    assert state['cleanup']['status'] == 'passed'
+    if valid:
+        executor.execute(source, resume_manifest=path)
+        assert len(attempts) == 4, 'accepted negative trials must not be repeated implicitly'
+
+
+def test_overnight_pause_resume_defers_failure_without_accepting_then_explicit_retry(campaign, tmp_path):
+    from framework.campaign_executor import RepetitionError
+    executor, cases, _ = campaign
+    executor.defer_failed = True
+    pause = tmp_path / 'pause.request'
+    executor.pause_file = pause
+    calls = []
+    def fail(**kwargs):
+        calls.append((kwargs['case']['id'], kwargs['repetition']))
+        if len(calls) == 1:
+            pause.touch()
+        raise RepetitionError('capture rejected: intermittent sample gap', manifest=None,
+                              return_code=12, log=tmp_path / 'runtime.log')
+    executor._run_repetition = fail
+    path = executor.execute('tls_matrix_energy')
+    assert json.loads(path.read_text())['state'] == 'paused'
+    pause.unlink()
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    data = json.loads(path.read_text())
+    assert len(calls) == 4
+    assert data['summary']['failed'] == 4
+    assert data['state'] == 'completed_with_failures'
+    assert all(not r.get('accepted_failure') and not r.get('previous_attempts') for r in data['runs'])
+    executor.retry_failed = True
+    executor.execute('tls_matrix_energy', resume_manifest=path)
+    assert len(calls) == 8
+    assert all(len(r['previous_attempts']) == 1 for r in json.loads(path.read_text())['runs'])
+
+
+def test_watchdog_failure_halts_campaign_with_unverified_cleanup(campaign, monkeypatch):
+    from framework.campaign_executor import CampaignCleanupError
+    executor, _, _ = campaign
+    def timeout(**kwargs):
+        raise CampaignCleanupError('operation timeout; remote completion unverified')
+    monkeypatch.setattr(executor, '_run_repetition', timeout)
+    with pytest.raises(CampaignCleanupError):
+        executor.execute('tls_matrix_energy')
+    state = json.loads(next(executor.results_root.glob('*/campaign-manifest.json')).read_text())
+    assert state['state'] == 'failed'
+    assert state['cleanup']['status'] == 'failed'
+    assert 'timeout' in state['failure']['message']
+
+
+def test_unverified_remote_completion_cannot_continue(campaign, tmp_path, monkeypatch):
+    from framework.campaign_executor import RepetitionError, CampaignCleanupError
+    executor, _, _ = campaign
+    manifest = tmp_path/'unverified.json'
+    manifest.write_text(json.dumps({'execution_safety': {'status': 'unverified', 'reason': 'SSH timeout'}}))
+    def fail(**kwargs):
+        raise RepetitionError('capture timeout', manifest=manifest, return_code=12, log=tmp_path/'capture.log')
+    monkeypatch.setattr(executor, '_run_repetition', fail)
+    with pytest.raises(CampaignCleanupError, match='SSH timeout'):
+        executor.execute('tls_matrix_energy')
+    state = json.loads(next(executor.results_root.glob('*/campaign-manifest.json')).read_text())
+    assert len(state['runs']) == 1
+    assert state['cleanup']['status'] == 'failed'

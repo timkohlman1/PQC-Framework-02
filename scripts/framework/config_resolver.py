@@ -212,6 +212,13 @@ class ConfigResolver:
         target = self.load_profile("target", str(selections["target"]))
         gateway = self.load_profile("gateway", str(selections["gateway"]))
         workload = self.load_profile("workload", str(selections["workload"]))
+        # Plaintext profiles omit TLS knobs. Preserve the historical internal
+        # defaults so older explicit compatibility selections still resolve.
+        if choices.get("mqtt_transport") == "plaintext":
+            choices = dict(choices)
+            choices.setdefault("tls_kex", "secp256r1")
+            choices.setdefault("tls_auth", "rsa3072")
+            choices.setdefault("auth_mode", "server")
         tls_kex = self.load_profile("tls_kex", str(_require(choices, "tls_kex", "case choices")))
         tls_auth = self.load_profile("tls_auth", str(_require(choices, "tls_auth", "case choices")))
         secure_boot = self.load_profile("secure_boot", str(_require(choices, "secure_boot", "case choices")))
