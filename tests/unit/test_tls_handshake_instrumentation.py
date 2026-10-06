@@ -116,13 +116,10 @@ def test_instrumentation_report_is_post_handshake_only():
 
 def test_stale_tls_context_only_cmake_description_removed():
     cmake = read("CMakeLists.txt")
-    architecture = read("docs/007_framework_architecture.md")
 
     assert "TLS 1.2 client WOLFSSL_CTX" not in cmake
     assert "No transport, certificate loading, handshake" not in cmake
     assert "STM32 wolfSSL TLS 1.3 runtime source integration" in cmake
-    assert "every five seconds" not in architecture
-    assert "After the fifth metrics publication" not in architecture
 
 
 def test_tls_io_diagnostics_are_compile_time_disabled_by_default():

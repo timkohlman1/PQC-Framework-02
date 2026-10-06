@@ -34,6 +34,32 @@ def invoke(dataset, spec, output, *args):
         cwd=ROOT, text=True, capture_output=True, timeout=240)
 
 
+def test_plotting_import_and_math_render_without_deprecations(tmp_path):
+    # A fresh interpreter catches import-time warnings even when other tests have
+    # already loaded pyplot. Exercise mathtext as well as fontconfig parsing.
+    output = tmp_path / "plot.png"
+    script = r"""
+import sys
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+from matplotlib.font_manager import FontProperties
+
+fig, ax = plt.subplots()
+ax.plot([0, 1, 2], [0, 1, 4])
+ax.set_title(r"$x^2 + \frac{1}{2}$", fontproperties=FontProperties("DejaVu Sans:bold"))
+fig.savefig(sys.argv[1])
+plt.close(fig)
+"""
+    result = subprocess.run(
+        [sys.executable, "-W", "error::DeprecationWarning", "-c", script, str(output)],
+        cwd=tmp_path, text=True, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    png = output.read_bytes()
+    assert png.startswith(b"\x89PNG\r\n\x1a\n") and len(png) > 1000
+
+
 def test_batch_and_clean_kernel_agree_and_preserve_inputs(tmp_path):
     dataset, spec = prepare(tmp_path)
     source = ROOT / "notebooks/timing_comparison.ipynb"

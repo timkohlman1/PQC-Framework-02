@@ -4,6 +4,12 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 import re
+import json
+import argparse
+import importlib.util
+import shlex
+import sys
+from unittest.mock import patch
 import subprocess
 from urllib.parse import unquote, urlsplit
 
@@ -25,7 +31,11 @@ INDEX_ROW = re.compile(r"^\| \[([^]]+)\]\([^)]+\) \|")
 
 
 def read(path: str) -> str:
-    return (ROOT / path).read_text(encoding="utf-8-sig")
+    content = (ROOT / path).read_text(encoding="utf-8-sig")
+    if Path(path).suffix == ".ipynb":
+        return "\n".join("".join(cell["source"]) for cell in json.loads(content)["cells"]
+                         if cell["cell_type"] == "markdown")
+    return content
 
 
 @lru_cache(maxsize=1)
@@ -47,12 +57,14 @@ def submodule_roots() -> tuple[str, ...]:
 def project_owned(path: str) -> bool:
     if any(path.startswith(root) for root in submodule_roots()):
         return False
+    if path.startswith(("Drivers/", "Middlewares/", "LWIP/", "build/", "results/",
+                        ".pqc-generated-state/")):
+        return False
     candidate = Path(path)
-    return candidate.suffix in {".md", ".txt"} and (
-        (len(candidate.parts) == 1 and candidate.suffix == ".md")
-        or path.startswith("docs/")
-        or (path.startswith("experiment/mqtt-broker/") and candidate.name == "README.md")
-        or path == "instruments/esp32_ina228/README.md"
+    if ".ipynb_checkpoints" in candidate.parts:
+        return False
+    return candidate.suffix in {".md", ".rst", ".adoc", ".ipynb"} or (
+        path.startswith("docs/") and candidate.suffix == ".txt"
     )
 
 
@@ -134,12 +146,13 @@ def test_index_covers_all_project_documents_including_unstaged_additions():
     for path, _role, status in rows:
         assert (ROOT / path).is_file(), path
         assert status in {"Current reference", "Operational guide", "AI workflow",
-                          "Historical plan", "Decision record"}, (path, status)
+                          "Historical plan", "Decision record", "Executable notebook",
+                          "Exploratory notebook"}, (path, status)
 
 
 def test_current_document_links_and_anchors_resolve():
     failures = []
-    for path in active_documents():
+    for path, _role, _status in index_rows(read(INDEX)):
         failures.extend(f"{path}: {error}" for error in local_link_errors(ROOT / path, read(path), ROOT))
     assert not failures, "\n".join(failures)
 
@@ -148,7 +161,8 @@ def test_entry_points_route_to_one_index_and_normative_guide():
     for path in ("README.md", "AGENTS.md", "AI_BUILD_GUIDE.md"):
         assert INDEX in read(path), path
     for path in AI_DOCUMENTS:
-        assert "AI_BUILD_GUIDE.md" in read(path), path
+        if path != "AI_BUILD_GUIDE.md":
+            assert "AI_BUILD_GUIDE.md" in read(path), path
     for owner in (ARCHITECTURE, CONFIGURATION, RESULTS, TESTING):
         assert owner in read("AI_BUILD_GUIDE.md"), owner
     for owner in (CONFIGURATION, RESULTS, TESTING):
@@ -208,6 +222,11 @@ def test_current_docs_do_not_publish_destructive_signing_cleanup_commands():
     ("analysis_implementation_requests.md", True),
     ("experiment/mqtt-broker/config/oqs-mtls/README.md", True),
     ("docs/new-reference.md", True),
+    ("scripts/README.md", True),
+    ("notebooks/new-analysis.ipynb", True),
+    ("notebooks/.ipynb_checkpoints/new-checkpoint.ipynb", False),
+    ("docs/new-reference.rst", True),
+    ("Drivers/vendor/README.md", False),
     ("tools/wolfboot/README.md", False),
     ("Middlewares/Third_Party/wolfSSL/README.md", False),
     ("instruments/esp32_ina228/lib/SparkFun_Toolkit/README.md", False),
@@ -242,3 +261,114 @@ def test_index_parser_rejects_missing_metadata():
 def test_unclosed_fence_is_reported():
     with pytest.raises(AssertionError, match="Unclosed"):
         outside_fences("# Title\n```bash\necho example\n")
+
+
+PARSER_SOURCES = {
+    "scripts/experiment.py": "build_arg_parser",
+    "scripts/run_campaign.py": "build_parser",
+    "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py": "build_parser",
+    "scripts/run_queue.py": None,
+    "scripts/collect_thesis_evidence.py": None,
+    "scripts/provision_certificates.py": "build_parser",
+    "scripts/ready_metrics_2_reliability_v2.py": None,
+}
+
+
+@lru_cache(maxsize=None)
+def command_parser(source):
+    """Construct real parsers only; never dispatch a documented operation."""
+    name = "documentation_cli_" + Path(source).stem
+    spec = importlib.util.spec_from_file_location(name, ROOT / source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    builder = PARSER_SOURCES[source]
+    if builder:
+        return getattr(module, builder)()
+
+    class ParserReady(Exception):
+        pass
+
+    captured = []
+
+    def capture(parser, *args, **kwargs):
+        captured.append(parser)
+        raise ParserReady
+
+    # These host launchers construct their parser at main's start. Interrupt at
+    # parse_args, before queue files, provisioning or Docker can be touched.
+    with patch.object(argparse.ArgumentParser, "parse_args", capture):
+        with pytest.raises(ParserReady):
+            module.main([])
+    assert len(captured) == 1
+    return captured[0]
+
+
+def documented_cli_commands(content):
+    for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", content, re.S):
+        for line in block.replace("\\\n", " ").splitlines():
+            words = shlex.split(line, comments=True)
+            if not words:
+                continue
+            if words[0] == "./scripts/dev.sh" and len(words) > 1:
+                wrapper = words[1]
+                if wrapper in {"experiment", "experiment-gateway"}:
+                    yield "scripts/experiment.py", words[2:]
+                elif wrapper in {"campaign", "campaign-gateway"}:
+                    yield "scripts/run_campaign.py", words[2:]
+                elif wrapper in {"python", "python-gateway"} and len(words) > 2:
+                    if words[2] in PARSER_SOURCES:
+                        yield words[2], words[3:]
+            elif words[0] in {"python", "python3"} and len(words) > 1:
+                if words[1] in PARSER_SOURCES:
+                    yield words[1], words[2:]
+
+
+def test_documented_cli_arguments_match_real_parsers_without_dispatch():
+    checked = set()
+    for path in active_documents():
+        for source, arguments in documented_cli_commands(read(path)):
+            parser = command_parser(source)
+            if "--help" in arguments:
+                continue
+            try:
+                parsed = parser.parse_args(arguments)
+            except SystemExit as exc:
+                pytest.fail(f"{path}: invalid {source} arguments {arguments}: {exc}")
+            # This compatibility command still calls removed provision-certs by
+            # default; examples must select the functioning preprovisioned path.
+            if getattr(parsed, "command", None) == "mqtt-broker-experiment":
+                assert parsed.no_provision_certs, path
+            checked.add(source)
+    assert checked == set(PARSER_SOURCES)
+
+
+def test_command_extraction_and_parser_reject_removed_broker_option():
+    content = "```bash\n./scripts/dev.sh python-gateway experiment/mqtt-broker/scripts/mqtt_broker_ctl.py \\\n  status --profile oqs\n```"
+    commands = list(documented_cli_commands(content))
+    assert commands == [("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py", ["status", "--profile", "oqs"])]
+    with pytest.raises(SystemExit):
+        command_parser(commands[0][0]).parse_args(["status", "--host-config", "old.yaml"])
+
+
+def test_ai_entry_points_and_history_route_to_current_data_policy():
+    policy = "006_security_and_secrets.md"
+    for path in AI_DOCUMENTS:
+        assert policy in {Path(urlsplit(link).path).name for link in LINK.findall(read(path))}, path
+    for path, _role, status in index_rows(read(INDEX)):
+        if status in {"Historical plan", "Decision record"}:
+            links = LINK.findall(read(path).split("\n## ", 1)[0])
+            assert any(Path(urlsplit(link).path).name == policy for link in links), path
+            assert any(Path(urlsplit(link).path).name in {
+                "007_framework_architecture.md", "009_dual_bank_ota_workflow.md",
+                "012_results_and_analysis.md",
+            } for link in links), path
+
+
+def test_host_docker_launchers_are_not_documented_inside_development_container():
+    launchers = {"scripts/provision_certificates.py", "scripts/run_queue.py",
+                 "scripts/collect_thesis_evidence.py", "scripts/ready_metrics_2_reliability_v2.py"}
+    for path in active_documents():
+        for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", read(path), re.S):
+            for source in launchers:
+                assert not re.search(r"\./scripts/dev\.sh (?:python|run python3?) " + re.escape(source), block), (path, source)

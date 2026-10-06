@@ -54,15 +54,8 @@ def test_prepare_refuses_escape_and_mutated_profile(repository):
         collection.check(repository / 'results/q')
 
 
-def test_queue_documentation_and_generated_output_ignore_contract():
+def test_generated_queue_output_remains_ignored():
     import subprocess
-    readme = (ROOT / 'README.md').read_text()
-    guide = (ROOT / 'docs/005_remote_flash_workflow.md').read_text()
-    architecture = (ROOT / 'docs/013_testing_and_deferred_coverage.md').read_text()
-    assert 'python3 scripts/run_queue.py' in readme
-    for control in ('cooperative pause', 'accept', 'analysis.ipynb', 'raw_df', 'does not terminate'):
-        assert control in guide
-    assert 'DTR-RUN-QUEUE' in architecture
     paths = ['results/profiles/example.yaml', 'results/queue/queue.sqlite3', 'results/queue/jobs/example/plan.json',
              'results/queue/exports/example/runs.csv', 'results/queue/exports/example/analysis.ipynb']
     result = subprocess.run(['git', 'check-ignore', *paths], cwd=ROOT, text=True, capture_output=True)

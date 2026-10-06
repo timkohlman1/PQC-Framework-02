@@ -226,13 +226,3 @@ def test_runtime_output_confirms_complete_sequence(tmp_path):
     assert data["command_succeeded"] is True
     assert data["runtime_markers"] == markers
     assert data["broker_compatibility_confirmed"] is True
-
-
-def test_compose_filename_is_canonical():
-    for path in (
-        ROOT / "README.md",
-        ROOT / "AI_BUILD_GUIDE.md",
-        ROOT / "docs/007_framework_architecture.md",
-    ):
-        text = path.read_text(encoding="utf-8")
-        assert "docker-compose.yml" not in text

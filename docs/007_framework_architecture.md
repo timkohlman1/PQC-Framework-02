@@ -11,7 +11,7 @@ Detailed owners:
 - [Result contracts and offline analysis](012_results_and_analysis.md)
 - [Test architecture and deferred coverage](013_testing_and_deferred_coverage.md)
 - [Build, flash and operation](005_remote_flash_workflow.md)
-- [Security and signing-state policy](006_security_and_secrets.md)
+- [Open-data and signing-state policy](006_security_and_secrets.md)
 
 ## System boundaries
 
@@ -154,10 +154,10 @@ matching successful records and artifact hashes. Direct CMake is a diagnostic
 fallback and does not create framework provenance. Pytest cleanup is supplementary
 hygiene, not provenance validation.
 
-Persistent signing tuples under `secrets/wolfboot/tuples/` contain the private key,
-keystore and hash manifest. Complete matching tuples are reused; partial or
+Persistent signing tuples under `secrets/wolfboot/tuples/` contain the primary private key,
+keystore and hash manifest, plus profile-selected public exports/standby keys. Complete matching tuples are reused; partial or
 mismatched tuples fail. wolfBoot-local files are materializations of that state.
-The [security policy](006_security_and_secrets.md) owns creation, preservation and
+The [open-data policy](006_security_and_secrets.md) owns creation, preservation and
 retention rules. Integrity-only packaging requires no signing tuple.
 
 The Docker runtime drops to the invoking non-root UID/GID before workload
@@ -215,7 +215,7 @@ qualification and offline alignment belong to the
 ## Evidence and validation boundary
 
 A finalized `pqc-run-evidence` v3 manifest records execution/capture provenance.
-`resolved-case.json` and `run-provenance.json` retain non-secret configuration and
+`resolved-case.json` and `run-provenance.json` retain resolved configuration and
 source/build/deployment identity. Scientific values remain in indexed raw records;
 post-capture analysis has separate input/output hashes and cannot rewrite the
 sealed capture. Execution outcome, capture acceptance, metric validity and

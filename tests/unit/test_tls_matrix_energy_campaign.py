@@ -58,11 +58,3 @@ def test_analysis_preset_covers_each_condition_once_without_waiving_controls():
         assert matches(run, spec['filters'])
         assert sum(matches(run, selector) for selector in spec['conditions'].values()) == 1
     assert 'evidence_class' not in spec['treatment']
-
-
-def test_campaign_usage_documents_offline_limits_and_commands():
-    doc=(ROOT/'docs/005_remote_flash_workflow.md').read_text()
-    section=doc.split('## TLS matrix with energy and notebook analysis',1)[1].split('\n## ',1)[0]
-    for text in ('tls_matrix_energy', '120', 'energy', 'independent_runs', 'unknown',
-                 './scripts/dev.sh campaign-gateway tls_matrix_energy', '--verify-source-inputs'):
-        assert text in section

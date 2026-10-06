@@ -63,9 +63,10 @@ pass markers and a nonzero IPv4 address. Those observations do not establish an
 external TCP connection, TLS handshake, MQTT exchange or complete profile matrix.
 The separate workload tests use their own device/broker/capture contracts.
 
-Wi-Fi credentials are named environment references resolved during preparation,
-not secret values stored in generated campaign YAML. Generated build inputs that
-need them remain private generated state; logs and provenance redact them.
+Current implementation resolves Wi-Fi environment references during preparation,
+uses values in generated build inputs, and redacts logs/provenance. This behavior
+is distinct from the [open-data policy](006_security_and_secrets.md); experiment
+Wi-Fi settings are not confidential.
 
 ## UART modes and transport diagnostics
 

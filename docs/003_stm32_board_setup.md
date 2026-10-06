@@ -1,90 +1,57 @@
-# STM32 Board Setup
+# STM32 board and wiring
 
-## Purpose
+The target is NUCLEO-L4R5ZI-P / STM32L4R5 with ST67W611M1 Wi-Fi. Canonical hardware
+and access values belong to [target configuration](../configs/targets/stm32l4r5_st67.yaml)
+and [gateway configuration](../configs/gateways/pqc_gateway1.yaml). Use
+[host setup](002_host_gateway_setup.md) for access and
+[operation](005_remote_flash_workflow.md) for known-image flash/capture.
 
-This document owns the physical board, ST-LINK, UART, and memory configuration used by the experiment framework. Gateway identity and SSH setup are owned by `docs/002_host_gateway_setup.md`; flash and capture commands are owned by `docs/005_remote_flash_workflow.md`.
+## Board, debugger and console
 
-## Target board
+The MCU has 2 MiB Flash, 192 KiB primary RAM, 64 KiB RAM2 and 384 KiB RAM3.
+The selected linker script owns reservations and placement; bank capacity is not
+measured usage. Normal application vectors use the relocated wolfBoot layout.
 
-```text
-Board: NUCLEO-L4R5ZI-P / NUCLEO-L4R5ZI
-MCU: STM32L4R5 / STM32L4Rxxx
-Flash: 2 MB
-Primary RAM: 192 KB
-RAM2: 64 KB
-RAM3: 384 KB
-```
+The maintained console is LPUART1, 115200 baud, 8N1, no flow control, routed through
+ST-LINK. Use the gateway profile's ST-LINK serial and persistent
+`/dev/serial/by-id/` UART path rather than assuming a transient `/dev/ttyACM*` name.
+The bootloader diagnostic console uses PG7 TX / PG8 RX, AF8. UART availability
+also depends on the selected firmware output mode.
 
-## ST-LINK and UART
+## ST67 SPI observation
 
-```text
-ST-LINK serial: 066EFF3932504E3043111818
-UART interface: LPUART1
-UART device: /dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_066EFF3932504E3043111818-if02
-Baud: 115200
-Format: 8N1
-Flow control: none
-```
+`networkTask` invokes the ST67 driver after FreeRTOS starts; the driver uses delays,
+queues, semaphores and interrupt-driven SPI. `Core/Src/main.c` owns bring-up:
+BOOT, CHIP_EN and active-high SPI_CS start low; a 20 ms task delay makes the initial
+low state observable; logging/callback setup precedes `W6X_Init()`, which performs
+module startup. The old three-second analyzer-start delay is no longer present.
+Arm the analyzer before initiating the known-image run/reset.
 
-The persistent `/dev/serial/by-id/` path is the canonical UART device for the configured board. Do not infer board identity from a transient `/dev/ttyACM*` name.
-
-## Current firmware evidence model
-
-Current application builds use the relocated layout and separate heartbeat/network
-tasks. UART diagnostics are optional according to the selected mode; local helper
-markers establish only their stated boundary. Networked scientific capture uses
-deferred reporting records. See [baseline firmware](004_baseline_hal_app.md) for
-startup, [architecture](007_framework_architecture.md) for runtime capabilities,
-and [results](012_results_and_analysis.md) for evidence interpretation.
-
-## Hardware evidence rules
-
-- A build or link result is software-build evidence only.
-- Flash success requires the gateway flash workflow log or manifest.
-- UART success requires a bounded capture from the configured device.
-- Secure-boot, timing, cycles, stack, heap, MQTT/TLS, or benchmark claims require their explicit UART fields, broker/client logs, or manifests.
-- A monitor-only capture cannot prove which image is running unless image provenance is established separately.
-
-Use `docs/005_remote_flash_workflow.md` for wrapper commands and provenance requirements.
-
-## ST67 GPIO/SPI bring-up diagnostic
-
-The firmware invokes the ST67 driver from `networkTask`. The task context is required because the driver
-uses FreeRTOS delays, queues, semaphores, and interrupt-driven SPI handling.
-
-The diagnostic performs the following bounded sequence:
-
-1. waits 3 seconds in the FreeRTOS task so a logic-analyser capture can start without resetting the board during acquisition;
-2. holds `BOOT`, `CHIP_EN`, and the active-high `SPI_CS` low;
-3. records the initial `BOOT`, `CHIP_EN`, `SPI_RDY`, and `SPI_CS` states on UART;
-4. initializes the ST67 logging service;
-5. calls `W6X_Init()`, which raises `CHIP_EN` and performs the vendor-defined
-   SPI transport and module initialization;
-6. records the returned `W6X_Status_t` value and final GPIO states.
-
-The UART evidence begins with `ST67 SPI bring-up: begin` and ends with
-`ST67 SPI bring-up: complete`. A successful result establishes only that the
-STM32 invoked the ST67 driver and that the driver reported successful module
-initialization. It does not establish Wi-Fi association, IP acquisition, an
-external TCP connection, a TLS handshake, MQTT operation, or end-to-end
-wireless success.
-
-The current validated runtime configuration uses SPI1 prescaler 4 (approximately 30 Mbit/s with the current 120 MHz PCLK2). The earlier prescaler-32 setting was a temporary logic-analyser diagnostic and is no longer the supported runtime configuration. A logic-analyser capture at the current rate requires equipment and sampling settings capable of resolving the faster bus. Start the capture during the 3-second UART-announced delay; no board reset is required while acquisition is active.
-
-Do not reuse the earlier 12 MHz FX2 capture command at this rate; it cannot reliably decode an approximately 30 Mbit/s SPI clock.
-
-The expected physical ordering is `CHIP_EN` rising, `SPI_RDY` activity, active
-high `SPI_CS`, SPI clock bursts, and MOSI/MISO transfers. Compare those
-transitions with the UART markers rather than treating either source alone as
-higher-level network evidence.
-
-### ST67 vendor transport baseline
+SPI1 prescaler 4 gives approximately 30 Mbit/s with the configured 120 MHz PCLK2.
+Use acquisition equipment capable of resolving that clock. The earlier 12 MHz
+FX2 acquisition setting cannot reliably decode it. Expected observations include
+CHIP_EN rising, SPI_RDY activity, active-high chip select, clock and MOSI/MISO bursts.
+Correlate pins with diagnostics rather than inferring higher-level network success.
 
 The transport derives from
 `Middlewares/ST/ST67W6X_Network_Driver/Driver/W61_bus/spi_iface.c`, with project
-integration, READY-level guards, bounded polling and diagnostics. Inspect that
-source before changing transaction behavior; it is not an unmodified vendor copy.
+READY guards, bounded polling and diagnostics. It is not an unmodified vendor copy.
+The lwIP adapter submits each chained `pbuf` segment to `W6X_Netif_output()` without
+coalescing it into a temporary contiguous allocation.
 
-The lwIP output adapter also follows the vendor `lwip_netif.c` behavior: each segment in a chained lwIP `pbuf` is submitted to `W6X_Netif_output()` in sequence. The framework does not coalesce the chain into a temporary contiguous allocation.
+## Energy connection
 
-A provenance-backed 30-second hardware run with this vendor-aligned transport, SPI prescaler 4, configured-AP association, and DHCP completed without `Invalid magic 0xffff`, READY-wait timeout, or SPI transaction-timeout messages. This evidence covers only the captured interval and the association/DHCP path; sustained external traffic, TLS, MQTT, and end-to-end protocol operation require separate evidence.
+STM32 D8/PF12 drives the passive recorder's GPIO11; INA228 ALERT goes to ESP32
+GPIO12, and its shared I2C uses GPIO48 SDA / GPIO47 SCL. The
+[instrument guide](010_esp32_ina228_energy_instrument.md) owns detailed setup,
+calibration and interval boundaries. Confirm the actual measured power rail through
+collection annotations; wiring alone does not establish calibration accuracy.
+
+## Evidence
+
+[Baseline firmware](004_baseline_hal_app.md) owns startup/task diagnostics.
+A module-init marker proves only that stage; association/DHCP, TCP, TLS, MQTT,
+secure boot and valid measurements need their respective records. A monitor-only
+capture cannot establish which image is running. Use the
+[test register](013_testing_and_deferred_coverage.md) for recorded qualification
+and the [results reference](012_results_and_analysis.md) for measurement meaning.

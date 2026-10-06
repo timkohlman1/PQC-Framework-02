@@ -9,9 +9,9 @@ to implement again.
 
 ## Capture and provenance
 
-Every new run uses `pqc-run-evidence` schema v3. `manifest.json` owns execution
-and capture provenance. `resolved-case.json` retains non-secret selected profiles,
-hashes, choices and named secret references. `run-provenance.json` retains detailed
+Current firmware experiment captures use `pqc-run-evidence` schema v3. `manifest.json` owns execution
+and capture provenance. `resolved-case.json` retains selected profiles,
+hashes, choices and named environment references. `run-provenance.json` retains detailed
 source, dependency, preparation, build and deployment records. Both snapshots are
 hashed required evidence. Source identity includes recorded commit, dirty-state
 fingerprint and submodule state; current checkout metadata cannot fill historical
@@ -37,10 +37,10 @@ v3 captures. Transient metric blocks used by orchestration are removed on
 finalization; new scientific fields belong in raw records and derived products.
 
 Results retain explicitly selected experiment images and disposable cryptographic
-material through `material-inventory.json`. Canonical secrets remain future-input
-authority; archived copies are reproduction evidence. The
-[security policy](006_security_and_secrets.md) defines sensitive handling and
-exclusions. Scalar exports do not authorize sharing raw result trees.
+material through `material-inventory.json`. Canonical material remains future-input
+authority; archived copies are reproduction evidence. All experiment material
+follows the [open-data policy](006_security_and_secrets.md). Current export
+allowlists/redaction describe implemented output shape, not confidentiality.
 
 ## Device, packet and clock boundaries
 
@@ -77,7 +77,7 @@ Select existing captures and a new output directory:
 
 Alternatively repeat `--run-dir` for explicit run directories; do not combine it
 with `--results-root`. Discovery excludes generated analysis, preparation, build,
-secret and dependency trees and stops at a run. Empty discovery fails. Missing or
+`secrets/` and dependency trees and stops at a run. Empty discovery fails. Missing or
 unreadable explicitly selected runs remain inventory findings. Outputs cannot be
 existing directories, symlinks, or overlap selected raw inputs.
 
@@ -316,9 +316,8 @@ repeated TLS has per-handshake rows without duplicating run-wide measurements.
 Bare-metal columns contain within-run raw-cycle medians/counts and HCLK context,
 not fabricated peak RAM. Sealed campaign indexes retain blocked/no-capture attempts
 and attempt/acceptance history. Schema-1 archives remain loadable; schema 2 uses
-functional-role columns with algorithm/parameter fields. The
-[flat archive procedure](005_remote_flash_workflow.md#flat-experiment-archive)
-owns pandas and queue-export examples.
+functional-role columns with algorithm/parameter fields. The [flat archive procedure](#flat-experiment-archive) below owns typed loading;
+the [queue guide](014_campaign_queue.md) owns selected-job export.
 
 `scripts/build_research_report.py` consumes explicit datasets and analysis specs.
 `configs/analysis/thesis_report.example.json` declares analysis IDs, relative dataset
@@ -332,11 +331,12 @@ thesis prose generation.
 ./scripts/dev.sh python scripts/build_research_report.py --rebuild results/analysis/NEW_REPORT --output results/analysis/REBUILT_REPORT
 ```
 
-The private `0700` snapshot separates `local/` source/selection/lock data from
+The current `0700` snapshot separates `local/` source/selection/lock data from
 allowlisted scalar `report/` products, executed notebook and HTML. CSV/PNG/LaTeX
 use the same rows; LaTeX fragments require `longtable`. Raw keys, addresses,
-packet/energy traces and nested provenance are not report outputs. Integrity
-checking is not a digital signature or public-release authorization.
+packet/energy traces and nested provenance are not emitted by this report builder.
+Those output restrictions do not change the open-data classification. Integrity
+checking establishes hashes, not a digital signature.
 
 Verification checks exact dependency/output inventories; rebuild requires matching
 frozen code/environment and identical scientific CSV/LaTeX. Newly collected runs
@@ -351,3 +351,91 @@ median per boot. OTA import keeps delivery, authentication, bank selection,
 confirmation and rollback separate; candidate transitions without immutable
 identity remain unconfirmed. No cross-reset duration, software bank-copy time,
 security ranking, aggregate migration score or completed RQ is invented.
+
+## Flat experiment archive
+
+Export a bounded collection/campaign, or explicitly select the full `results/`
+archive. Supply annotations only when the electrical boundary and device attribution
+apply to every selected capture:
+
+```bash
+./scripts/dev.sh python scripts/export_archive_table.py --results-root results/thesis/collection-01 --output results/analysis/flat-archive-01 --annotations configs/analysis/thesis_collection_annotations.json
+./scripts/dev.sh python scripts/export_archive_table.py --check results/analysis/flat-archive-01 --verify-sources
+```
+
+`runs.csv` and `archive.json` retain typed columns, output hashes, source lineage,
+attempt/acceptance history and unavailable data. A run usually has one row; repeated
+TLS has one per observed handshake without copying whole-run energy, packet totals
+or end-to-end timing into each row. Blocked attempts with no capture remain rows
+with null measurements. No configured counts invent missing handshakes.
+
+`run_key` identifies a retained capture and `row_id` a row. Identical copies are
+deduplicated; never join by run ID alone. Schema 2 uses common metric columns and
+separate treatment fields. Plaintext application values occupy the same timing
+columns as TLS but have no handshake duration; absent is not zero cost.
+
+| Domain | Representative columns / interpretation |
+|---|---|
+| Application | `timing__rtfb_us`, `timing__rtlb_us`, `timing__ttfb_us`, `timing__ttlb_us`, `timing__req_tfb_us`, `timing__req_tlb_us`, `application__payload_throughput_bytes_s` |
+| TLS | `timing__tls_handshake_us`, `tls__aggregate__signature_verify__elapsed_us`; roles retain observed implementation identity |
+| Resources | `resource__flash_section_bytes`, `resource__ram_static_base_bytes`, `resource__freertos_heap_peak_used_bytes`; reservations and peaks cannot be blindly added |
+| Network | `packet__client_to_server__wire_bytes`, `packet__server_to_client__overlap_bytes`; retain layer, flow and window meaning |
+| Energy | `energy__whole_workload__energy_j`, `energy__whole_workload__average_power_w`; require sample brackets and attribution |
+| Boot/OTA | `boot__image_verification_ms`, `boot__image_signature_used_bytes`, `ota__*`; stage success is not final-image proof |
+| Primitive reference | `primitive__signature_verify_median_cycles`, `primitive__kem_keygen_median_cycles`; within-run cycle summaries stay separate from RTOS elapsed time |
+
+`transport_mode`, `tls_kex`, `tls_auth`, `auth_mode`, `secure_boot` and workload/network
+fields describe treatments/controls. A role with multiple implementations is labelled
+`mixed` and has no combined value. Nested/aggregate/invocation TLS views cannot be
+summed into disjoint Total Crypto. Static build facts are repeated context, not
+independent measurements.
+
+Diagnostics include `run_success`, `capture_valid`, `selected_inputs_valid`,
+`data_status`, `analysis_errors` and `timing_policy_exclusion`. A valid metric may
+survive an unrelated channel failure; comparison restrictions remain explicit.
+Regenerate specialist analysis for per-value reasons. Schema-1 exports remain
+loadable; regenerate from raw inputs for schema 2 rather than editing sealed CSVs.
+
+Use the maintained loader instead of pandas' default NA/type guessing:
+
+```python
+import sys
+sys.path.insert(0, "scripts")
+from framework.archive_table import load_archive
+
+df = load_archive("results/analysis/flat-archive-01")
+handshakes = df.loc[
+    df["row_kind"].eq("handshake") & df["handshake_outcome"].eq("success"),
+    ["run_key", "iteration_id", "tls_kex", "tls_auth", "timing__tls_handshake_us"],
+]
+```
+
+The loader verifies hashes and returns nullable numeric/boolean/string columns.
+CSV null is `\N`; literal identifiers such as `NA` and leading zeros survive.
+Count unique run keys for run counts; intra-run handshake rows are not extra boots.
+Before comparisons, select one compatible source/platform/workload/QoS/network/boot/
+instrumentation stratum and declare the treatment. Summary statistics alone do not
+establish matching, independence or causality.
+
+## Notebook operation
+
+The domain table above selects analysis notebooks. `notebooks/00_checkout.ipynb`
+is different: it is a host-Docker checkout diagnostic, so run it in a Linux Jupyter
+environment with Docker access. `notebooks/Memory_Analysis.ipynb` is an exploratory
+notebook with local paths/saved analysis; it is not the maintained resource parser
+or a validation gate. Use the resources option for canonical A3 interpretation.
+
+For maintained analysis notebooks, use `./scripts/dev.sh notebook`, configure paths
+under `/workspace`, and run all cells. Use fresh output directories. CLI clean-kernel
+execution verifies the notebook path without relying on interactive saved outputs.
+
+For PDF of saved outputs, use JupyterLab's Save and Export Notebook As → PDF, or:
+
+```bash
+./scripts/dev.sh run python -m jupyter nbconvert --to pdf notebooks/tls_matrix_energy.ipynb --output-dir results/analysis/tls_matrix_energy_pdf
+```
+
+The image contains pinned Pandoc/TeX tools. After an image update, save work, stop
+the notebook server, rebuild with `./scripts/dev.sh build-image` and relaunch it.
+Restarting only a kernel keeps the old container. PDF export does not rerun hardware
+or establish any new measurement evidence.

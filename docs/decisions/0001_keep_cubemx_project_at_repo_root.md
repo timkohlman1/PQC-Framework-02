@@ -1,5 +1,10 @@
 # Decision 0001 — Keep CubeMX Project at Repository Root
 
+> Historical record. Original phase instructions, capability limits, commands and
+> handling rules below describe their original context. Use the
+> [current reference](../007_framework_architecture.md) and [open-data policy](../006_security_and_secrets.md)
+> for present work; this record does not authorize implementing old requests.
+
 ## Context
 
 The current STM32CubeMX-generated firmware project builds successfully from the repository root.

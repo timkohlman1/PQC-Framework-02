@@ -52,7 +52,7 @@ entire campaign:
 ```
 
 For interactive profile editing, queuing and selected-data export, launch the
-[terminal queue](docs/005_remote_flash_workflow.md#terminal-campaign-queue) on the
+[terminal queue](docs/014_campaign_queue.md) on the
 Linux host:
 
 ```bash
@@ -74,6 +74,6 @@ and outstanding validation.
 
 Use `.env.sample` as the template for ignored local Wi-Fi credentials and the
 [broker guide](experiment/mqtt-broker/README.md) for certificate provisioning.
-Private keys and credentials must not be committed or baked into images.
-Selected disposable experiment material may be retained in sensitive ignored
-results under the [security policy](docs/006_security_and_secrets.md).
+All framework experiment material, including private keys and dedicated Wi-Fi
+settings, follows the [open-data policy](docs/006_security_and_secrets.md).
+Generated-state integrity and recorded experiment identities still matter.

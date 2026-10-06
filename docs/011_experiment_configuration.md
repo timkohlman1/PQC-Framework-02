@@ -2,8 +2,8 @@
 
 This reference owns profile composition, execution identities and orchestration
 semantics. Use the [operating guide](005_remote_flash_workflow.md) for command
-sequences, recovery and queue controls, or the [architecture](007_framework_architecture.md)
-for component boundaries.
+sequences and diagnostics, the [queue guide](014_campaign_queue.md) for controls,
+and the [architecture](007_framework_architecture.md) for component boundaries.
 
 ## Configuration sources
 
@@ -26,19 +26,21 @@ cases under `.pqc-generated-state/campaigns/<campaign>/cases/`.
 | `benchmarks/`, `analysis/` | Benchmark aggregation and offline report/collection declarations |
 
 Source campaign YAML is declarative. Generated cases are the operational inputs
-to `experiment.py`; they retain profile IDs/content hashes, non-secret choices,
+to `experiment.py`; they retain profile IDs/content hashes, resolved choices,
 configuration identity and firmware identity. Consumption rechecks source profile
 hashes and refuses stale resolution. Do not edit generated cases as a substitute
 for changing their canonical inputs.
 
-Wi-Fi credentials remain named environment references. Only execution resolves
-values from the caller environment or ignored `.env`; generated campaign YAML,
-logs and provenance must not contain those values. The wrapper imports only
+The current implementation retains named Wi-Fi environment references in cases
+and resolves values from the caller environment or ignored `.env` at execution.
+Logs/provenance redact these fields; this is current behavior, not a confidentiality
+requirement under the [open-data policy](006_security_and_secrets.md).
+The wrapper imports only
 `PQC_WIFI_SSID` and `PQC_WIFI_PSK`, respects caller values and scopes imports to its
 Docker invocation. TLS certificates are an explicit offline prerequisite under
 `secrets/certificates/<profile-id>/`; experiments consume them without renewal.
 See [broker operations](../experiment/mqtt-broker/README.md) and
-[security](006_security_and_secrets.md).
+[open-data policy](006_security_and_secrets.md).
 
 ## Independent selections
 
@@ -135,10 +137,8 @@ deadline. Evidence/control commands are bounded separately. Campaign streaming
 has a 30-minute fallback watchdog and 90-second interrupt/kill grace; watchdog
 activation or unverified remote cleanup is unsafe and halts dispatch.
 `tests/integration/test_operation_timeout_in.py` exercises local disposable
-processes, not every remote-disconnection or Docker-daemon failure. The prior
-change records three passing live deadline/plaintext/classical-TLS loss/reference
-tests under `results/automated-tests/pytest-2026-10-05T211035Z-1/`; its remaining
-fault qualification is preserved as DTR-CAPTURE-DEADLINE in the testing register.
+processes, not every remote-disconnection or Docker-daemon failure. Remaining
+remote-fault qualification is tracked by DTR-CAPTURE-DEADLINE in the testing register.
 
 Operator acceptance of failed/blocked slots records a decision without relabelling
 the outcome. Explicit retry preserves prior attempt history. `--defer-failed`
@@ -154,6 +154,8 @@ have stopped, or authorize forced release. Recovery belongs to the
 [host/gateway guide](002_host_gateway_setup.md).
 
 ## Collection and export
+
+Use [campaign collection](015_campaign_collection.md) for commands and recovery.
 
 `scripts/collect_thesis_evidence.py` checkpoints frozen multi-campaign plans,
 source/profile identity, attempts and explicit retries. It advances only after a
