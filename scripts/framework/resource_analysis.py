@@ -12,6 +12,7 @@ import struct
 from pathlib import Path
 from statistics import median
 
+from framework.analysis_paths import result_path
 from framework.run_evidence import sha256_file
 from framework.timing_dataset import DatasetError, _has_symlink, _verify_header, read_json, verify_source_inputs
 from framework.timing_metrics import decode_epochs, uint
@@ -170,7 +171,7 @@ def _artifact(root, manifest, role, inputs):
 
 def _build_root(run):
     """Relocate the recorded /workspace results prefix only, never arbitrary paths."""
-    root = Path(run["input_path"])
+    root = result_path(run["input_path"])
     ref = run["build_references"].get("preparation_manifest") or run["build_references"].get("build_manifest")
     if not ref:
         return root
@@ -203,7 +204,7 @@ def extract_resources(dataset):
     verify_source_inputs(dataset.metadata)
     builds, runtime, inputs = {}, [], []
     for run in dataset.runs:
-        root = Path(run["input_path"])
+        root = result_path(run["input_path"])
         firmware_id = run.get("firmware_sha256")
         build_id = None
         lineage = dict(run_key=run["run_key"], run_id=run["run_id"], build_id=build_id,

@@ -140,17 +140,23 @@ or certify it. Incomplete removed/retained entries cannot be exported or auto-re
 
 Mark completed entries on Completed, then `e`. Export locks only that selection
 and writes a fresh `results/queue/exports/<timestamp>-<id>/` containing `runs.csv`,
-archive metadata, selection/provenance and `analysis.ipynb`. Changed completion
+archive metadata and selection/provenance. The completion message points to the
+shared analysis notebook. Changed completion
 manifests, unresolved failures and incompatible annotations are refused.
 
 Every job copies `configs/analysis/thesis_collection_annotations.json`; review
 its electrical boundary and network attribution for the actual lab before export.
 Local annotations may be corrected; select compatible annotations together.
-The generated notebook validates hashes/types and retains raw values/missingness
-in `raw_df`; `df` is the editable view. It starts with no executed outputs. Use
-`./scripts/dev.sh notebook`, then open the notebook beside its CSV. Custom thesis
-comparisons require explicit controls/treatments. See the
-[flat archive contract](012_results_and_analysis.md#flat-experiment-archive).
+For thesis tables and figures, launch `./scripts/dev.sh notebook` and open
+`notebooks/analysis.ipynb`. Select the export and campaigns from its catalogue,
+review counts and exclusions, preview, then save a named revision. The
+[default analysis workflow](012_results_and_analysis.md#default-thesis-workflow)
+records hashes and selection counts automatically.
+
+Exports contain no generated notebooks. Existing exported notebooks and saved
+outputs remain available as research artifacts. For custom exploration use
+`load_archive()` in the shared notebook to retain nullable types and missingness;
+see the [flat archive contract](012_results_and_analysis.md#flat-experiment-archive).
 
 Local profiles, queue databases, captures and exports remain generated/ignored.
 Their handling follows the [open-data policy](006_security_and_secrets.md).

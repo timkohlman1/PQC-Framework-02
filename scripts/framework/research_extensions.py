@@ -9,6 +9,7 @@ from statistics import median
 
 import pandas as pd
 
+from framework.analysis_paths import result_path
 from framework.timing_dataset import verify_source_inputs, read_json
 from framework.timing_metrics import decode_epochs, _fields
 from framework.timing_summary import summarise, digest
@@ -24,7 +25,7 @@ def summarise_baremetal(dataset, spec):
     for run in dataset.runs:
         if run.get('application') != 'baremetal_benchmark':
             continue
-        root = Path(run['input_path'])
+        root = result_path(run['input_path'])
         base = {k:run[k] for k in ('run_key', 'run_id', 'firmware_sha256')}
         try:
             if run['selected_input_status'] != 'verified':
@@ -113,7 +114,7 @@ def summarise_ota(dataset, spec):
     for run in base['inventory'].to_dict('records'):
         if run.get('exclusion_reason'):
             continue
-        root = Path(run['input_path'])
+        root = result_path(run['input_path'])
         if run['selected_input_status'] != 'verified':
             if run.get('firmware_mode') == 'dual_bank_ota':
                 outcomes.append(dict(run_key=run['run_key'], condition=run['condition'],

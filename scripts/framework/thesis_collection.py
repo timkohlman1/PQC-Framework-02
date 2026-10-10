@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from framework.analysis_paths import result_path
 from framework.config_resolver import ConfigResolver
 from framework.source import capture_git_provenance, capture_submodule_provenance
 from framework.timing_dataset import _has_symlink, discover_inputs, export_dataset
@@ -363,7 +364,7 @@ def network_selection(dataset, annotation):
     for run in dataset.runs:
         if run['selected_input_status'] != 'verified':
             continue
-        root = Path(run['input_path'])
+        root = result_path(run['input_path'])
         manifest = read(root / 'manifest.json')
         raw, _ = _artifact(root, manifest, 'resolved_case_snapshot', [])
         if raw is None:

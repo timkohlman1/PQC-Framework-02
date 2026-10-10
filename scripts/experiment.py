@@ -26,8 +26,7 @@ touch network resources. The flash command requires either an explicit
 command builds firmware and, only if the build succeeds, flashes that artifact
 through the configured gateway in the same result run folder. The monitor
 command performs ad hoc bounded UART monitoring and writes timestamped logs
-under results/adhoc/. The aggregate-benchmarks command reads existing secure-boot
-benchmark manifests and writes JSON/CSV summaries without touching hardware. The mqtt-fake-transport command records deterministic simulated fake/no-network MQTT control-flow evidence without broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access.
+under results/adhoc/. The mqtt-fake-transport command records deterministic simulated fake/no-network MQTT control-flow evidence without broker, socket, TLS, gateway, UART, STM32 runtime, Wi-Fi, hardware, or network access.
 """
 
 from __future__ import annotations
@@ -125,12 +124,6 @@ from framework.external_dependencies import (
     ExternalDependencyError,
     prepare_external_dependencies,
     resolve_signing_material,
-)
-from framework.benchmark_aggregation import (
-    BenchmarkAggregationError,
-    aggregate_benchmark_manifests,
-    resolve_manifest_inputs,
-    write_benchmark_summary_outputs,
 )
 
 
@@ -6901,33 +6894,6 @@ def run_mqtt_fake_transport_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_aggregate_benchmarks_command(args: argparse.Namespace) -> int:
-    """Aggregate secure-boot benchmark manifests into JSON and CSV summaries."""
-
-    try:
-        manifest_paths = resolve_manifest_inputs(
-            results_dir=args.results_dir,
-            manifest_paths=args.manifest,
-            run_dirs=args.run_dir,
-        )
-        summary = aggregate_benchmark_manifests(manifest_paths)
-        output_files = write_benchmark_summary_outputs(summary, args.output_dir)
-    except BenchmarkAggregationError as exc:
-        print(f"Benchmark aggregation failed: {exc}", file=sys.stderr)
-        return 2
-
-    print("Benchmark aggregation completed")
-    print("-------------------------------")
-    print(f"Input manifests: {summary['input_manifest_count']}")
-    print(f"Aggregated profiles: {summary['aggregated_profile_count']}")
-    print(f"Skipped manifests: {summary['skipped_manifest_count']}")
-    print(f"JSON summary: {output_files['json']}")
-    print(f"CSV summary: {output_files['csv']}")
-
-    if summary["aggregated_profile_count"] == 0:
-        return 1
-    return 0
-
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
@@ -7400,38 +7366,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     mqtt_parser.add_argument("--stop-after", action="store_true", help="Stop the broker after logs are collected, or after a failed earlier step.")
     mqtt_parser.add_argument("--dry-run", action="store_true", help="Pass --dry-run through to broker control commands while still writing framework result evidence.")
     mqtt_parser.set_defaults(func=run_mqtt_broker_experiment_command)
-
-    aggregate_parser = subparsers.add_parser(
-        "aggregate-benchmarks",
-        help="Aggregate secure-boot benchmark manifests into benchmark_summary.json and benchmark_summary.csv.",
-    )
-    aggregate_parser.add_argument(
-        "--results-dir",
-        default=Path("results"),
-        type=Path,
-        help="Directory to scan for result run manifests when --manifest or --run-dir is not supplied.",
-    )
-    aggregate_parser.add_argument(
-        "--output-dir",
-        default=Path("results/benchmark-aggregation"),
-        type=Path,
-        help="Directory where benchmark_summary.json and benchmark_summary.csv are written.",
-    )
-    aggregate_parser.add_argument(
-        "--manifest",
-        action="append",
-        default=None,
-        type=Path,
-        help="Explicit secure-boot run manifest to include. May be supplied more than once.",
-    )
-    aggregate_parser.add_argument(
-        "--run-dir",
-        action="append",
-        default=None,
-        type=Path,
-        help="Explicit result run directory containing manifest.json. May be supplied more than once.",
-    )
-    aggregate_parser.set_defaults(func=run_aggregate_benchmarks_command)
 
     monitor_parser = subparsers.add_parser(
         "monitor",

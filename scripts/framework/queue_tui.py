@@ -148,7 +148,7 @@ class Terminal:
                 elif self.operation == 'purge':
                     self.message = 'Entry and job files permanently deleted; combined exports retained.'
                 elif self.operation == 'export':
-                    self.message = f"Exported {result['rows']} rows → {result['output']}/analysis.ipynb"
+                    self.message = f"Exported {result['rows']} rows → {result['output']}; open {result['notebook']}"
                 else:
                     self.picked.clear()
                     self.message = 'Added to queue: ' + ', '.join(result)

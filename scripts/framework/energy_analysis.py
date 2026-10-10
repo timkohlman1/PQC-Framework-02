@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from framework.analysis_paths import result_path
 from framework.energy_evidence import (CAPTURE_ID, COUNTERS, ENERGY_CHUNK_TOPIC,
     ENERGY_COMPLETE_TOPIC, chunk_bytes, decode_acquisition, envelope, _stm32_boundaries)
 from framework.timing_dataset import verify_source_inputs
@@ -278,7 +279,7 @@ def summarise_energy(dataset, spec, selection):
     rows, availability, inputs, trace_rows = [], [], [], []
     for run in inventory:
         context = {k:run[k] for k in ('run_key','run_id','condition','exclusion_reason')}
-        root = Path(run['input_path'])
+        root = result_path(run['input_path'])
         manifest_path = root/'manifest.json'
         try:
             manifest = json.loads(manifest_path.read_text())
@@ -336,31 +337,3 @@ def summarise_energy(dataset, spec, selection):
             whole_workload='STM32 s0 to explicit workload_end_us when recorded; excludes the 20 ms tail guard; legacy captures use s1',
             comparison='A2 success-conditional summaries; unknown electrical boundary excluded; policy/scope strata separate; repeated intervals descriptive only',
             qualification='parser validity is not instrument accuracy or calibration qualification; physical boundary is operator-asserted with evidence reference'))
-
-
-def plot_energy(frames, output):
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(11,5),constrained_layout=True)
-    traces=frames['energy_trace']
-    for (run,cid),group in traces.groupby(['run_key','capture_id']):
-        origin=int(group['timestamp_us'].iloc[0])
-        for _,segment in group.groupby('segment'):
-            ax.plot([(int(t)-origin)/1e6 for t in segment['timestamp_us']],segment['power_w'],label=cid)
-        for row in frames['energy_intervals'].to_dict('records'):
-            if row['run_key']==run and row['capture_id']==cid and row['validity']=='valid' and row['scope']!='recorded_interval':
-                a,b=(float(Fraction(row[k])-origin)/1e6 for k in ('esp32_start_us','esp32_end_us'))
-                ax.axvspan(a,b,alpha=.12,label=row['scope'])
-    ax.set(xlabel='Seconds from first acquired sample (ESP32)',ylabel='Recorded power (W)')
-    if len(traces): ax.legend(fontsize=7)
-    else: ax.text(.5,.5,'Select trace_run to view one retained run',ha='center',transform=ax.transAxes)
-    fig.savefig(output/'energy-trace.png',dpi=140);plt.close(fig)
-    for measure,unit in (('energy_j','J'),('average_power_w','W')):
-        fig,ax=plt.subplots(figsize=(12,6),constrained_layout=True)
-        data=frames['energy_distributions'].to_dict('records')
-        points=[r for r in data if '.'+measure+'.' in r['metric'] and r['median'] is not None]
-        for i,r in enumerate(points):
-            ax.plot([i,i],[r['q1'],r['q3']],color='steelblue');ax.scatter(i,r['median'],color='steelblue')
-        ax.set_xticks(range(len(points)),[r['condition']+'\n'+r['metric'] for r in points],rotation=65,ha='right',fontsize=6)
-        ax.set_ylabel('Median and IQR ('+unit+') — separate scope/policy strata')
-        if not points: ax.text(.5,.5,'No qualified energy comparisons',ha='center',transform=ax.transAxes)
-        fig.savefig(output/('energy-'+measure+'.png'),dpi=140);plt.close(fig)

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.analysis_paths import result_path
 from framework.run_evidence import sha256_file
 from framework.timing_dataset import DatasetError, read_json, verify_source_inputs
 from framework.timing_dataset_schema import METRICS, NULL, SCHEMA_NAME, SCHEMA_VERSION, TABLES
@@ -102,7 +103,7 @@ class TimingDataset:
 
 def load_dataset(directory: Path | str, *, verify_inputs: bool = False) -> TimingDataset:
     """Verify metadata/CSV hashes, schema/types/joins and optionally original inputs."""
-    root = Path(directory)
+    root = result_path(directory)
     try:
         for name in ("dataset.json", "dataset.sha256", "runs.csv", "timings.csv", "issues.csv"):
             if (root / name).is_symlink():

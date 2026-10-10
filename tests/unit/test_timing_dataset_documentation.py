@@ -10,7 +10,7 @@ RESULTS = ROOT / "docs/012_results_and_analysis.md"
 
 @pytest.mark.parametrize("script,flags", [
     ("export_timing_dataset.py", ("--results-root", "--run-dir", "--output", "--check", "--verify-source-inputs")),
-    ("summarise_timing_dataset.py", ("--dataset", "--spec", "--output", "--execute-notebook", "--resources", "--tls", "--network-spec", "--energy", "--energy-spec", "--secure-boot")),
+    ("analyse_results.py", ("--spec", "--output", "--export", "--recipe", "--comparison", "--network-selection", "--energy-selection", "--verify-sources")),
     ("build_research_report.py", ("--spec", "--output", "--verify", "--rebuild")),
 ])
 def test_analysis_reference_exposes_supported_cli_options(script, flags):

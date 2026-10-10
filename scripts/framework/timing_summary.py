@@ -5,17 +5,14 @@ Consumes only the validated A1 loader; no raw-evidence parsing or execution.
 from __future__ import annotations
 
 import hashlib
-import importlib.metadata
 import json
 import math
-import platform
 from pathlib import Path
 from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
 
-from framework.timing_dataset_loader import load_dataset
 from framework.timing_dataset_schema import METRICS, RUN_COLUMNS, TIMING_COLUMNS, ISSUE_COLUMNS
 
 VERSION = "1.1.0"
@@ -270,119 +267,3 @@ def summarise(dataset, spec, *, metrics=None):
         frames["observations"] = pd.DataFrame(columns=[*TIMING_COLUMNS, "condition", "capture_class", "evidence_class", "exclusion_reason"])
     frames["issues"] = pd.DataFrame(dataset.issues, columns=list(ISSUE_COLUMNS), dtype=object)
     return frames, spec
-
-
-def export_summary(dataset_path, spec, output, *, resources=False, tls=False, network=None, energy=None, secure_boot=False):
-    """New output directory only; record direct inputs, selections and output hashes."""
-    dataset_path, output = Path(dataset_path).resolve(), Path(output).resolve()
-    dataset = load_dataset(dataset_path)
-    forbidden = [dataset_path, *[Path(r["input_path"]).resolve() for r in dataset.runs if r.get("input_path")]]
-    if any(output == p or output in p.parents or p in output.parents for p in forbidden):
-        raise ValueError("summary output must be separate from dataset and raw runs")
-    frames, spec = summarise(dataset, spec)
-    resource_provenance = None
-    if resources or secure_boot:
-        from framework.resource_analysis import summarise_resources
-        resource_frames, resource_provenance = summarise_resources(dataset, spec)
-        frames.update(resource_frames)
-        for source in resource_provenance["inputs"]:
-            parent = Path(source["path"]).resolve().parent
-            if output == parent or parent in output.parents or output in parent.parents:
-                raise ValueError("summary output overlaps resource evidence")
-    tls_provenance = None
-    if tls:
-        from framework.tls_analysis import summarise_tls
-        tls_frames, tls_provenance = summarise_tls(dataset, spec)
-        frames.update(tls_frames)
-    network_provenance = None
-    if network is not None:
-        from framework.network_analysis import summarise_network
-        network_frames, network_provenance = summarise_network(dataset, spec, network)
-        frames.update(network_frames)
-    energy_provenance = None
-    if energy is not None:
-        from framework.energy_analysis import summarise_energy
-        energy_frames, energy_provenance = summarise_energy(dataset, spec, energy)
-        frames.update(energy_frames)
-    boot_provenance = None
-    if secure_boot:
-        from framework.secure_boot_analysis import summarise_secure_boot
-        boot_frames, boot_provenance = summarise_secure_boot(dataset, spec)
-        frames.update(boot_frames)
-        for source in boot_provenance['inputs']:
-            parent = Path(source['path']).resolve().parent
-            if output == parent or parent in output.parents or output in parent.parents:
-                raise ValueError('summary output overlaps secure-boot evidence')
-    output.mkdir(parents=True, exist_ok=False)
-    for name, frame in frames.items():
-        exported = frame.copy()
-        for col in exported:
-            exported[col] = pd.Series([json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else ("\\" + v if isinstance(v, str) and v.startswith("\\") else v)
-                                       for v in exported[col]], dtype=object)
-        exported.to_csv(output / (name + ".csv"), index=False, na_rep=r"\N")
-    plot_summary(frames, spec, output)
-    if network is not None:
-        from framework.network_analysis import plot_network
-        plot_network(frames, output)
-    if energy is not None:
-        from framework.energy_analysis import plot_energy
-        plot_energy(frames, output)
-    if secure_boot:
-        from framework.secure_boot_analysis import plot_secure_boot
-        plot_secure_boot(frames, output)
-    lineage = dict(schema="pqc-timing-summary", version=VERSION, specification=spec,
-        estimands={"latency": "success-conditional observation median; repeated samples descriptive only",
-                   "completion": "completed / (completed + failed); unknown and explicit exclusions reported separately",
-                   "median_ci": "run-level percentile bootstrap; linear quantiles",
-                   "completion_ci": "Wilson score; independent known binary run outcomes"},
-        dataset_metadata=dataset.metadata,
-        counts={"inventory_runs": len(dataset.runs), "observations": len(dataset.timings), "issues": len(dataset.issues)},
-        null_encoding={"token": r"\N", "string_escape": "leading backslash doubled"},
-        columns={name: list(frame.columns) for name, frame in frames.items()},
-        inputs={name: digest(dataset_path / name) for name in ("dataset.json", "dataset.sha256", "runs.csv", "timings.csv", "issues.csv")},
-        sources={p.name: digest(p) for p in (Path(__file__), Path(__file__).with_name("timing_dataset_loader.py"),
-                 Path(__file__).with_name("timing_dataset_schema.py"))},
-        environment={"python": platform.python_version(), **{p: importlib.metadata.version(p) for p in ("numpy", "pandas", "matplotlib", "nbclient", "nbformat")}},
-        outputs={p.name: digest(p) for p in sorted(output.iterdir())})
-    if boot_provenance is not None:
-        lineage['secure_boot'] = boot_provenance
-    if energy_provenance is not None:
-        lineage["energy"] = energy_provenance
-    if network_provenance is not None:
-        lineage['network'] = network_provenance
-    if tls_provenance is not None:
-        lineage["tls"] = tls_provenance
-    if resource_provenance is not None:
-        lineage["resources"] = resource_provenance
-    (output / "summary.json").write_text(json.dumps(lineage, indent=2, sort_keys=True, allow_nan=False) + "\n")
-    return frames
-
-
-def plot_summary(frames, spec, output):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(4, 2, figsize=(13, 15), constrained_layout=True)
-    samples = frames["observations"].to_dict("records")
-    for metric, ax in zip(METRICS, axes.flat):
-        groups = {}
-        for sample in samples:
-            if sample["metric"] == metric and not sample["exclusion_reason"]:
-                label = f'{sample["condition"]}\n{sample["capture_class"]}/{sample["evidence_class"]}'
-                groups.setdefault(label, []).append(sample)
-        for i, (label, rows) in enumerate(sorted(groups.items())):
-            ax.scatter([i]*len(rows), [s["value_us"] for s in rows], alpha=.6)
-        ax.set_xticks(range(len(groups)), [f'{k}\nruns={len({s["run_key"] for s in v})}, obs={len(v)}' for k,v in sorted(groups.items())], fontsize=7)
-        ax.set_title(metric + " (success conditional)"); ax.set_ylabel("µs")
-        if not groups: ax.text(.5, .5, "No eligible measurements", ha="center", transform=ax.transAxes)
-    fig.savefig(output / "timing-distributions.png", dpi=140); plt.close(fig)
-    fig, ax = plt.subplots(figsize=(11, 6), constrained_layout=True)
-    rows = [r for r in frames["differences"].to_dict("records") if r["reason"] is None]
-    if rows:
-        ax.barh(range(len(rows)), [r["delta_median"] for r in rows])
-        ax.set_yticks(range(len(rows)), [f'{r["condition"]}: {r["metric"]} (n={r["treatment_runs"]}/{r["baseline_runs"]})' for r in rows])
-    else:
-        ax.text(.5, .5, "No supported matched differences; see differences.csv", ha="center", transform=ax.transAxes)
-    ax.set_title("Median difference from baseline: " + spec["baseline"]); ax.set_xlabel("Difference (µs)")
-    ax.axvline(0, color="black", linewidth=.5)
-    fig.savefig(output / "matched-differences.png", dpi=140); plt.close(fig)

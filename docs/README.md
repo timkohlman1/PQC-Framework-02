@@ -28,8 +28,8 @@ redact or omit fields; those implementation behaviors do not reinstate old polic
 
 Paths in the first column are repository-relative. Operational guides own procedures;
 references own contracts; AI workflows own process. Executable notebooks are entry
-points into maintained code, not independent metric definitions. The exploratory
-notebook is retained user analysis. Decision records and the analysis request plan
+points into maintained code, not independent metric definitions. The chapter report notebook is an internal renderer. Retired exploratory work
+is preserved with generated research artifacts. Decision records and the analysis request plan
 are historical and do not instruct agents to implement old phases again.
 
 | Document | Owns | Status |
@@ -65,14 +65,8 @@ are historical and do not instruct agents to implement old phases again.
 | [experiment/mqtt-broker/config/oqs/README.md](../experiment/mqtt-broker/config/oqs/README.md) | OQS Mosquitto profile algorithms, generated certificate material, and runtime diagnostic limits | Operational guide |
 | [instruments/esp32_ina228/README.md](../instruments/esp32_ina228/README.md) | Routes the extracted device source to its instrument guide; does not establish surrounding framework integration | Current reference |
 | [notebooks/00_checkout.ipynb](../notebooks/00_checkout.ipynb) | Host-Docker checkout and unit-test diagnostics | Executable notebook |
-| [notebooks/Memory_Analysis.ipynb](../notebooks/Memory_Analysis.ipynb) | Exploratory saved analysis with local paths; not a maintained parser or validation gate | Exploratory notebook |
-| [notebooks/energy_comparison.ipynb](../notebooks/energy_comparison.ipynb) | Energy comparison using maintained offline analysis | Executable notebook |
-| [notebooks/network_comparison.ipynb](../notebooks/network_comparison.ipynb) | Network comparison using maintained offline analysis | Executable notebook |
-| [notebooks/research_report.ipynb](../notebooks/research_report.ipynb) | Research report using maintained offline analysis | Executable notebook |
-| [notebooks/secure_boot_comparison.ipynb](../notebooks/secure_boot_comparison.ipynb) | Secure boot comparison using maintained offline analysis | Executable notebook |
-| [notebooks/timing_comparison.ipynb](../notebooks/timing_comparison.ipynb) | Timing comparison using maintained offline analysis | Executable notebook |
-| [notebooks/tls_attribution.ipynb](../notebooks/tls_attribution.ipynb) | Tls attribution using maintained offline analysis | Executable notebook |
-| [notebooks/tls_matrix_energy.ipynb](../notebooks/tls_matrix_energy.ipynb) | Timing notebook for the TLS/energy pilot using its explicit preset | Executable notebook |
+| [notebooks/analysis.ipynb](../notebooks/analysis.ipynb) | Default selection, comparison, preview and publication for all supported analysis domains | Executable notebook |
+| [scripts/framework/templates/research_report.ipynb](../scripts/framework/templates/research_report.ipynb) | Renderer used inside a generated frozen chapter report | Internal template |
 
 ## Maintenance boundary
 

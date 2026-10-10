@@ -263,7 +263,7 @@ protocol. This guide does not independently rerun or requalify historical result
 
 The [energy analysis reference](012_results_and_analysis.md#energy)
 owns energy definitions, interpolation/pairing policy, output lineage and batch/
-notebook commands. `--energy` on `scripts/summarise_timing_dataset.py` analyses
+notebook commands. The `energy` recipe in `scripts/analyse_results.py` analyses
 existing captures only. It reuses instrument acceptance checks, but requires valid
 sample brackets for joule integration: a capture may pass acquisition checks and
 still lack energy for the selected endpoint when sample brackets are absent.

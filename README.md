@@ -59,6 +59,11 @@ Linux host:
 python3 scripts/run_queue.py
 ```
 
+For thesis tables and figures across all supported analysis domains, run `./scripts/dev.sh notebook`
+and open [notebooks/analysis.ipynb](notebooks/analysis.ipynb). Choose a catalogue row and recipe,
+preview the analysis, then save a reproducible revision; see the
+[analysis workflow](docs/012_results_and_analysis.md#default-thesis-workflow).
+
 Generated cases are the runner's operational inputs. Release is the default,
 with a wolfBoot-relocated layout; the default `integrity_sha256` boot profile
 checks the image digest without signature authentication. Detailed signing,

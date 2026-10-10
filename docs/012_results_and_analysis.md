@@ -7,6 +7,199 @@ results. The [architecture](007_framework_architecture.md) explains producers;
 validation gaps. Historical A1–A8 labels below identify existing tools, not phases
 to implement again.
 
+## Default thesis workflow
+
+Run `./scripts/dev.sh notebook` and open
+[notebooks/analysis.ipynb](../notebooks/analysis.ipynb). The maintained path is:
+choose retained results → select the question/recipe → review evidence and counts
+→ preview tables and figures → save a revision. The same backend is available
+through `scripts/analyse_results.py`.
+
+### Choose results once
+
+The catalogue scans only `results/queue/exports/*/archive.json` and
+`results/analysis/exports/*/archive.json`. It lists campaigns, captured source
+commits, current attempts, historical rows and missing captures. Invalid archives
+remain visible. Set the notebook's `CHOICE` to a catalogue row; no filenames or
+hashes need copying. Alternatively reopen a saved `selection.json`, or use the
+advanced `EXPORTS`/`REQUESTS` list for several disjoint selections.
+
+Selection freezes exact archive identities and expected run counts. It never
+silently selects the latest export or adds later captures. Overlapping exports
+and overlapping campaign selections are refused. General domain recipes select
+complete runs: a repeated handshake row cannot be filtered out to change its
+run's weight. Queue replacements remain replacements in inference checks.
+Standalone retained captures are included without inventing queue attempts.
+
+For retained results outside the queue, import explicit capture/campaign folders
+using the existing archive exporter:
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py import \
+  --source results/campaigns/SELECTED_CAMPAIGN \
+  --output results/analysis/exports/selected-campaign
+./scripts/dev.sh python scripts/analyse_results.py catalog
+./scripts/dev.sh python scripts/analyse_results.py inspect \
+  --export results/analysis/exports/selected-campaign --campaign SELECTED_CAMPAIGN
+```
+
+`--source` may be repeated. Import creates a new derived archive; it neither
+acquires data nor changes captures. An optional `--annotations` file uses the
+existing energy/network annotation contract. `inspect` exposes recorded control
+values, run keys and timing metrics, allowing selection without browsing raw
+files. Use `--filter FIELD=JSON` for other explicit archive equality filters.
+A non-default catalogue root uses `--exports-root`.
+
+### Choose the question
+
+| Recipe | Purpose and statistic |
+|---|---|
+| `secure_boot`, `secure_boot_stack` | Compact boot timing/size table and a separately linked stack selection |
+| `tls_auth`, `tls_kex`, `tls_auth_followup` | Compact thesis matrices: timing means/sample SD, unique static sizes, observed regional maxima; follow-up remains a separate matched batch |
+| `network_loss` | Configured loss grid: all-current-attempt outcomes and success-conditional timing medians/IQR |
+| `timing` | Recorded checkpoints and same-iteration payload throughput; descriptive medians/IQR |
+| `resources` | Memory/flash medians across unique builds or final run lifetimes, retaining regions/accounting |
+| `tls` | Handshake and operation attribution; repeated handshakes reduce to a median per run before across-run summaries |
+| `network` | Selected packet flows, directions, windows and matched rate/RTT/loss/MTU comparisons |
+| `energy` | Recorded-window and aligned phase energy/power with explicit electrical attribution |
+| `boot_evidence` | Detailed mailbox/clock/image/static evidence and boot timing exclusions |
+| `baremetal` | Raw primitive cycles: within-run operation medians, then across-run summaries |
+| `ota` | Delivery, stages and image evidence, with unconfirmed transitions and unsupported durations explicit |
+| `comparison` | Several chosen domains sharing one selection and comparison specification |
+
+`recipes` lists these purposes in the CLI. Compact recipes retain their existing
+scientific policy and old pinned selections remain valid. General recipes reuse
+the same A2–A8 engines used by detailed/frozen reports; there is no separate
+notebook parser or statistical implementation.
+
+For general recipes, `GROUP_BY` defines named conditions from recorded fields
+(default `case_id`); the first sorted condition becomes the recorded baseline
+unless explicitly changed. `TREATMENT` identifies deliberately changed controls.
+Every other required control remains checked. No control waiver or independence
+claim is inferred from grouping. An explicit `COMPARISON` dictionary can instead
+provide the existing comparison contract, including exclusions with reasons,
+not-applicable controls and the deliberately opt-in evidence equivalence policy.
+The CLI accepts this as `--comparison FILE`; grouping uses repeatable
+`--group-by`/`--treatment` and `--baseline`.
+
+Example TLS selection:
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py select \
+  --export SELECTED_EXPORT --campaign SELECTED_CAMPAIGN --recipe tls \
+  --group-by tls_kex --treatment tls_kex \
+  --output results/analysis/selections/tls.json
+./scripts/dev.sh python scripts/analyse_results.py preview \
+  --spec results/analysis/selections/tls.json
+./scripts/dev.sh python scripts/analyse_results.py publish \
+  --spec results/analysis/selections/tls.json --name tls
+```
+
+This example does not waive correlated TLS/profile controls; inspect the matched
+comparison reasons before claiming an effect. `comparison` accepts repeatable
+`--domain` selections. Energy and packet recipes reuse explicit archive
+annotations, or accept `--energy-selection` and `--network-selection` JSON using
+the existing per-run contracts. Missing boundaries/endpoints produce unavailable
+results, never guessed physical attribution. The retained broker identity helper
+`scripts/prepare_network_selection.py` remains available for conservative flow
+selection from broker/PCAP evidence.
+
+General reports distinguish descriptive summaries from matched differences.
+Conflicting/unknown controls leave differences unavailable with reasons. Failed
+and unknown runs remain in detailed completeness data; unsuccessful attempts are
+not latency samples. Attempts without captures stay in `observations.csv` and
+cannot supply an attributed domain measurement or controlled completion
+denominator. Compact recipes refuse those attempts where their controls are
+unestablished. Do not filter them away to suggest a complete campaign.
+
+### Preview and shape the output
+
+The notebook shows the selected attempt audit, frozen comparison, table index,
+metric names and full-precision statistics. `DETAIL_FRAMES` displays any of the
+computed domain frames for inspection. Preview writes only temporary rendering
+files. Saved specifications retain their presentation settings unless
+`APPLY_PRESENTATION` is enabled.
+
+General recipes default to a small primary set of measurements. All detailed
+frames remain available. Set `measurements` to a list of metric names or glob
+patterns (for example `tls_handshake` or `*.energy_j.*`), or `["*"]` for every
+metric. The notebook lists available measurement names.
+
+Other presentation options are `figures` (metric names), `tables` (ordered table IDs),
+`captions` (table ID to caption/figure heading), `labels` (original condition to display label),
+`order` (original conditions) and `width_inches` (3–16). Empty `tables` means all;
+empty `figures` means tables only. General recipe defaults plot available
+summaries; `figures: ["*"]` expands these explicitly on publication. Unavailable
+summaries and their reasons remain in the detailed domain exports. Selecting a
+smaller presentation does not alter the domain calculation.
+
+Tables and figures use the same computed values, with the statistic, units and
+sample unit recorded. SD/IQR bars describe spread, not confidence intervals.
+Missing values are not zero. Static-build observations, run lifetimes, per-run
+medians and repeated samples remain distinct. Regional memory peaks cannot be
+added to obtain system peak RAM. Network percentages are configured loss, not
+observed loss. Unsupported boot/OTA energy and cross-reset durations remain
+unavailable. LaTeX fragments require `booktabs` and `graphicx`.
+
+### Save, verify and reproduce
+
+Saving creates `results/analysis/reports/<name>/<revision>/` or an explicitly
+selected fresh directory. Existing reports and source exports are preserved.
+Every revision contains CSV/LaTeX tables, SVG/PDF/PNG figures plus
+`figure-data.csv` when requested, full-precision `metrics.csv`, attempt audit,
+pinned `selection.json`, HTML preview, provenance and checksums. General recipes
+also emit `data-<selection>-<frame>.csv` for every detailed frame and `methods.json`
+with normalized comparisons and domain provenance. Detailed CSV uses `\N` for
+null, JSON for nested provenance and a doubled leading backslash for literal
+backslash-prefixed strings. Empty domain frames still have their exported schema.
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py verify results/analysis/reports/tls/SELECTED_REVISION
+./scripts/dev.sh python scripts/analyse_results.py verify results/analysis/reports/tls/SELECTED_REVISION --verify-sources
+./scripts/dev.sh python scripts/analyse_results.py rebuild \
+  results/analysis/reports/tls/SELECTED_REVISION --output results/analysis/rebuilt-tls
+```
+
+Output verification needs only the saved report. Source verification also checks
+original retained inputs, additional evidence consumed by the domain engines,
+and recorded absence of selected inputs.
+`rebuild` requires unchanged recorded framework sources and analysis environment,
+and compares every scientific CSV/LaTeX file before publishing the new directory.
+Vector/raster metadata is not promised byte-identical. Reports created before the
+complete source inventory was added require deliberate republication instead of
+strict rebuild. Reopening a pinned selection and publishing it with changed code
+or a different Python/library environment is deliberate reanalysis; it is a new revision.
+
+Exit 0 means the requested software operation completed; exit 2 means invalid
+inputs, integrity failure, unsupported selection or failed reproduction. None of
+these checks establishes physical measurement accuracy, hardware qualification
+or completion of a campaign's intended design.
+
+### One interactive workflow
+
+`notebooks/analysis.ipynb` and `scripts/analyse_results.py` are the maintained
+interactive and batch interfaces to the same selection, comparison and publication
+functions. Domain engines own evidence interpretation; notebooks contain no
+independent parsers or statistics. Queue exports contain data and provenance and
+appear in the notebook catalogue automatically.
+
+The old domain notebooks, compact-table notebook/CLI, summary CLI and per-export
+notebook generator have been retired. Existing pinned compact selections still
+work through `analyse_results.py publish --spec` or the shared notebook's
+`SPEC_FILE`. The old `PQC_A2_*` and `PQC_THESIS_TABLES_*` notebook overrides are
+replaced by `PQC_ANALYSIS_SPEC`, `PQC_ANALYSIS_PUBLISH` and `PQC_ANALYSIS_OUTPUT`.
+Retired notebook bytes, including saved outputs, are preserved in the local
+`results/analysis/cleanup-backups/` archive; prior generated reports and export
+notebooks remain research artifacts. They are not inputs to new analyses.
+
+`build_research_report.py` retains its separate purpose: collection-driven chapter
+coverage and frozen snapshots. Its internal renderer lives in
+`scripts/framework/templates/research_report.ipynb`; it is not a notebook to
+configure interactively. `00_checkout.ipynb` diagnoses the host Docker checkout.
+Raw packet/stack diagnostics and the A1 dataset exporter retain their distinct
+acquisition/inspection roles. The obsolete manifest-metric aggregation command
+has been removed; current boot/primitive evidence uses the shared recipes.
+
 ## Capture and provenance
 
 Current firmware experiment captures use `pqc-run-evidence` schema v3. `manifest.json` owns execution
@@ -140,29 +333,22 @@ without a successful-latency value. Phase overflow does not automatically invali
 an independent outer scalar. No configured repeat count manufactures observations.
 A1 reports `comparison_inclusion=not_assessed`; it does not select a comparison.
 
-## Comparisons and notebooks (A2)
+## Comparison policy (A2)
 
 A JSON analysis specification declares disjoint named `conditions`, an explicit
 `baseline`, optional `filters`/`exclude_runs`, and intentional `treatment` paths.
-Use `notebooks/timing_comparison.example.json` as an inspection-only starting point.
+The shared selection command creates this specification; `--comparison FILE`
+accepts an explicit one. Maintained pilot presets live in
+`configs/analysis/comparisons/`.
 Unknown or conflicting controls refuse matched differences; absolute distributions
 remain available. Hardware, source/dirty identity, workload, payload/chunk, QoS,
 boot, diagnostics, authentication and network properties stay fixed unless the
 selected scientific treatment explicitly changes them. `not_applicable` needs a
 methodological reason and does not mean silently waiving an unknown value.
 
-```bash
-./scripts/dev.sh python scripts/summarise_timing_dataset.py \
-  --dataset results/analysis/SELECTED_DATASET \
-  --spec notebooks/SELECTED_SPEC.json \
-  --output results/analysis/NEW_SUMMARY
-```
-
-Choose fresh destinations outside raw runs and datasets. Add `--execute-notebook`
-for a clean kernel, or run `./scripts/dev.sh notebook` and edit the chosen notebook's
-configuration cell before Run All. The notebook server retains authentication and
-binds through `127.0.0.1:8888`; an occupied port fails. CLI/notebook scientific CSVs
-use the same functions; rendering timestamps need not match. Cell failures propagate.
+Select a recipe and publish through the [default workflow](#default-thesis-workflow).
+Choose fresh destinations outside raw runs and datasets. CLI and notebook use the
+same functions; rendering timestamps need not match. Cell failures propagate.
 
 Failures, unknown outcomes and explicit exclusions remain visible. The binary
 completion denominator is completed + failed framework runs; other states stay
@@ -186,19 +372,27 @@ merges positive experiments with deliberate negative validation.
 
 ## Analysis domains
 
-The summary command and `summary.json` retain effective selections, parser/source
-versions, direct input hashes, output hashes and unavailable reasons. Domain
-extensions consume only their declared retained inputs and never mutate captures.
-Use the same `/workspace` mount for paths recorded by Docker-generated datasets.
+`report.json` and `methods.json` retain effective selections, parser/source
+versions, direct input hashes and unavailable reasons. Domain engines consume only
+their declared retained inputs and never mutate captures. Detailed tables are
+exported as `data-<selection>-<frame>.csv`, alongside publication tables and figures.
+Docker-recorded `/workspace/results/...` inputs also load from the matching
+`results/...` location in the active checkout when that Docker path is absent.
+Recorded paths and source hashes remain unchanged; existing paths, hash failures
+and symlink refusals never trigger a search for substitute evidence.
+All domains use the shared notebook or `analyse_results.py --recipe` selection.
 
-| Domain | CLI option | Notebook | Main outputs |
-|---|---|---|---|
-| Timing | default | `notebooks/timing_comparison.ipynb` | Inventory, observations, completeness, distributions, differences |
-| Application resources (A3) | `--resources` | Timing notebook, `INCLUDE_RESOURCES` | `resource_builds.csv`, observations/distributions/differences |
-| TLS attribution (A4) | `--tls` | `notebooks/tls_attribution.ipynb` | `tls_attribution.csv`, coverage/issues/iterations/handshakes, `tls_per_run.csv`, operation/run comparisons |
-| Network (A5) | `--network-spec <selection.json>` | `notebooks/network_comparison.ipynb` | Flow observations, comparisons and diagnostic packet view |
-| Energy (A6) | `--energy` or `--energy-spec <selection.json>` | `notebooks/energy_comparison.ipynb` | Interval/availability tables, distributions, selected trace |
-| Secure boot (A7) | `--secure-boot` (includes resources) | `notebooks/secure_boot_comparison.ipynb` | Boot observations/outcomes/resources/distributions/differences |
+| Recipe | Main detailed frames |
+|---|---|
+| `timing` | Inventory, observations, completeness, distributions, differences |
+| `resources` | Resource builds, observations, distributions, differences |
+| `tls` | Attribution, coverage/issues/iterations/handshakes, per-run comparisons |
+| `network` | Flow observations, comparisons, availability and packet view |
+| `energy` | Intervals, availability, distributions and explicitly selected trace data |
+| `boot_evidence` | Boot observations, outcomes, resources, distributions, differences |
+| `baremetal` | Primitive observations, availability and per-run summaries |
+| `ota` | Observed update outcomes and explicit confirmation limitations |
+| `comparison` | Multiple explicitly selected domains |
 
 ### Resources
 
@@ -417,22 +611,84 @@ Before comparisons, select one compatible source/platform/workload/QoS/network/b
 instrumentation stratum and declare the treatment. Summary statistics alone do not
 establish matching, independence or causality.
 
+## Compact publication recipes
+
+The shared workflow also supports compact grids for secure boot, TLS authentication,
+TLS key exchange and packet loss. Select the corresponding recipe in the notebook
+or CLI. `configs/analysis/thesis_tables.example.json` demonstrates linked
+selections for advanced use; existing pinned specifications can be loaded as
+`SPEC_FILE` or published with `analyse_results.py publish --spec FILE`.
+These recipes use the same archive loader, publication writer and source verification
+as domain comparisons. Their explicit statistical conventions are described below.
+
+Load `booktabs` and `graphicx` in the thesis preamble, then insert copied fragments
+with `\input{secure_boot.tex}`, `\input{tls_auth.tex}` or `\input{tls_kex.tex}`.
+Each fragment has a caption and a `tab:pqc-...` label. Its marked draft-provenance
+block is visible by default: change `\iftrue` to `\iffalse` to hide it. Scientific
+measurement definitions remain with the table. Make thesis edits to copies;
+editing the generated report invalidates its output checksums.
+
+Table kinds are `secure_boot`, `secure_boot_stack`, `tls_auth`, `tls_kex`,
+`tls_auth_followup`, and `network_loss`. A secure-boot selection can name its separate
+`stack_selection`; a follow-up must name its original `baseline_selection` and
+match the selected case's configuration, firmware and source identities. The
+follow-up is displayed separately, preserving the main matrix's sample sizes.
+Stack profiling never supplies normal boot timings. Baseline TLS selections
+require impairment disabled; zero-loss impairment controls remain separate.
+
+The tables select current successful captures with verified inputs and preserve
+failed/historical attempts in the audit. Repeated-handshake rows are refused
+rather than treated as extra independent boots. TLS timing cells show mean and sample
+SD. Secure-boot timing cells show means, with integrity verification before authentication;
+all secure-boot sizes use bytes. A note reports identical values across ten executions
+only when every applicable displayed metric meets that condition in both campaigns.
+Otherwise the note directs readers to counts and dispersion in `metrics.csv`.
+Per-metric missingness is disclosed. Static sizes are build facts and
+conflicting sizes are unavailable rather than averaged. TLS regional peak RAM values
+overlap static reservations and are not additive. Bootloader static RAM excludes
+stack; its stack watermark covers selected-image verification in a separate profiling
+build, so their sum is not a measured whole-boot RAM maximum. These are descriptive tables:
+no confidence intervals, independent-run claim or causal difference is inferred.
+
+A `network_loss` selection generates three grids: `_success.tex` reports successful
+runs / all current attempts; `_completion.tex` reports median TCP-connect-start to
+application-last-byte time; `_handshake.tex` reports median device TLS handshake
+time. Timing is in seconds and conditions on successful, valid captures only.
+Capture failures remain in outcome denominators; missing timing is never zero-filled.
+Read latency alongside success counts because high-loss survivors are a selected subset.
+Full-precision counts, sample SD and quartiles remain in `metrics.csv`.
+
+Loss columns use configured percentages, including an enabled-impairment 0% reference.
+The exported configured controls do not establish realized packet loss or verified
+application of impairment. Keep RTT, rate, MTU, payload, QoS and TLS authentication
+mode fixed within a grid; do not merge later diagnostic follow-ups into the pilot.
+Use an explicitly pinned selection with `kind: network_loss`, created through
+`analyse_results.py select --recipe network_loss`, and review the current attempt
+count before publication.
+
 ## Notebook operation
 
-The domain table above selects analysis notebooks. `notebooks/00_checkout.ipynb`
-is different: it is a host-Docker checkout diagnostic, so run it in a Linux Jupyter
-environment with Docker access. `notebooks/Memory_Analysis.ipynb` is an exploratory
-notebook with local paths/saved analysis; it is not the maintained resource parser
-or a validation gate. Use the resources option for canonical A3 interpretation.
+Launch `./scripts/dev.sh notebook`, open `notebooks/analysis.ipynb`, and Run All.
+Your own Linux Jupyter installation can also open this notebook from the checkout
+with the analysis dependencies installed (`requirements-dev.txt` records the
+maintained environment). After framework changes, restart its kernel and Run All
+to load the updated modules. Docker remains the reproducible validation environment.
+The Docker launcher retains authentication and binds through `127.0.0.1:8888`; an occupied
+port fails. Paths recorded in Docker use `/workspace`; result reads resolve that prefix
+to this checkout when needed, retaining all integrity checks. Select results and a recipe,
+preview, then save a fresh report revision. Notebook outputs are a view; published
+CSV/LaTeX and PNG/SVG/PDF files are the thesis artifacts. The committed notebook
+starts without a selection and with saving disabled. Keep reusable selections in
+`results/analysis/selections/` or use a published report's `selection.json`; set
+`SPEC_FILE` to that repository-relative path to reopen the selection.
 
-For maintained analysis notebooks, use `./scripts/dev.sh notebook`, configure paths
-under `/workspace`, and run all cells. Use fresh output directories. CLI clean-kernel
-execution verifies the notebook path without relying on interactive saved outputs.
-
-For PDF of saved outputs, use JupyterLab's Save and Export Notebook As → PDF, or:
+`notebooks/00_checkout.ipynb` is a host Docker diagnostic and needs a Linux Jupyter
+environment with Docker access. It does not analyse experiment results.
+For PDF of saved notebook outputs, use JupyterLab's Save and Export Notebook As →
+PDF, or:
 
 ```bash
-./scripts/dev.sh run python -m jupyter nbconvert --to pdf notebooks/tls_matrix_energy.ipynb --output-dir results/analysis/tls_matrix_energy_pdf
+./scripts/dev.sh run python -m jupyter nbconvert --to pdf notebooks/analysis.ipynb --output-dir results/analysis/notebook-pdf
 ```
 
 The image contains pinned Pandoc/TeX tools. After an image update, save work, stop

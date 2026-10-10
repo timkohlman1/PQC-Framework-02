@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "exports": [
+    {
+      "path": "../../results/queue/exports/SELECTED_EXPORT",
+      "archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "selections": [
+    {
+      "id": "tls_auth",
+      "kind": "tls_auth",
+      "filters": {
+        "campaign_id": "SELECTED_CAMPAIGN"
+      },
+      "source_commit": "0000000000000000000000000000000000000000",
+      "expected_current_runs": 240
+    }
+  ]
+}

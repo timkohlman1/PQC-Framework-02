@@ -1,4 +1,4 @@
-"""Real host processes and generated-notebook execution with synthetic evidence."""
+"""Real host processes and selected archive export with synthetic evidence."""
 import json
 import os
 from pathlib import Path
@@ -104,9 +104,7 @@ raise SystemExit(75 if paused else 0)
 
 
 @pytest.mark.parametrize('without_captures', [False, True])
-def test_selected_export_and_notebook_execute_without_unrelated_rows(tmp_path, monkeypatch, without_captures):
-    import nbformat
-    from nbclient import NotebookClient
+def test_selected_export_hands_off_to_shared_analysis_without_unrelated_rows(tmp_path, monkeypatch, without_captures):
     import queue_workspace as workspace
     from framework import thesis_collection as collection
     from framework.archive_table import load_archive
@@ -114,8 +112,6 @@ def test_selected_export_and_notebook_execute_without_unrelated_rows(tmp_path, m
     monkeypatch.setattr(workspace, 'ROOT', tmp_path)
     monkeypatch.setattr(collection, 'ROOT', tmp_path)
     monkeypatch.setattr(collection, 'source_identity', lambda: {'fixture': 'synthetic'})
-    # Notebook root discovery locates the maintained framework without copying dependencies.
-    (tmp_path / 'scripts').symlink_to(ROOT / 'scripts', target_is_directory=True)
     selection = []
     for index in range(3):
         folder = tmp_path / 'results/queue/jobs' / str(index)
@@ -148,15 +144,18 @@ def test_selected_export_and_notebook_execute_without_unrelated_rows(tmp_path, m
         assert len(frame) == 2 and frame.run_id.isna().all() and not frame.run_success.any()
     else:
         assert set(frame.run_id) == {'run-0', 'run-1'}
-    notebook = nbformat.read(output / 'analysis.ipynb', as_version=4)
-    NotebookClient(notebook, timeout=60, kernel_name='python3', resources={'metadata': {'path': str(output)}}).execute()
-    text = '\n'.join(o.get('text', '') for c in notebook.cells if c.cell_type == 'code' for o in c.outputs)
-    assert 'original values, missingness, nullable types, row identity and timestamps preserved' in text
-    # Generated notebooks have no frozen results or executed cells until the user runs them.
-    fresh = nbformat.read(output / 'analysis.ipynb', as_version=4)
-    assert all(not c.get('outputs') for c in fresh.cells)
-    for name in ('runs.csv', 'analysis.ipynb', 'queue-selection.json', 'archive.json'):
-        assert (output / name).is_file()
+    assert result['notebook']=='notebooks/analysis.ipynb'
+    assert (ROOT/result['notebook']).is_file()
+    assert not list(output.glob('*.ipynb'))
+    assert json.loads((output/'queue-selection.json').read_text())['analysis_notebook']==result['notebook']
+    files=json.loads((output/'export-files.json').read_text())
+    assert set(files)=={'runs.csv','archive.json','queue-selection.json'}
+    for name,sha in files.items():assert digest(output/name)==sha
+    # Both captured and capture-less failures remain discoverable in the shared catalogue.
+    from framework.analysis_workspace import catalogue
+    rows=catalogue(output.parent)
+    assert sum(r['current_attempts'] for r in rows)==2
+    assert sum(r['no_capture_attempts'] for r in rows)==(2 if without_captures else 0)
 
 
 @pytest.mark.parametrize('exit_key', [b'd', b'q'])
