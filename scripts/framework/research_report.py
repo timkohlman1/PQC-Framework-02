@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from framework.analysis_paths import result_path
 from framework.timing_dataset import _has_symlink, read_json
 from framework.timing_dataset_loader import load_dataset
 from framework.timing_summary import digest, summarise
@@ -111,14 +112,15 @@ def write_csv(path, rows, columns):
 
 
 def dependency(path):
-    path=Path(path).absolute()
+    recorded=Path(path).absolute()
+    path=result_path(recorded)
     if _has_symlink(path):
         raise ValueError('symlink dependency refused')
     if not path.exists():
-        return {'path':str(path),'sha256':None,'size_bytes':None}
+        return {'path':str(recorded),'sha256':None,'size_bytes':None}
     if not path.is_file():
         raise ValueError('dependency must be a file')
-    return {'path':str(path),'sha256':digest(path),'size_bytes':path.stat().st_size}
+    return {'path':str(recorded),'sha256':digest(path),'size_bytes':path.stat().st_size}
 
 
 def verify_dependencies(items):
@@ -171,7 +173,11 @@ def specification(path):
 
 
 def analyse(item):
-    dataset=load_dataset(item['dataset'],verify_inputs=True)
+    return analyse_dataset(load_dataset(item['dataset'],verify_inputs=True), item)
+
+
+def analyse_dataset(dataset, item):
+    """Shared domain dispatch for frozen reports and the interactive workspace."""
     frames,spec=summarise(dataset,item['spec'])
     provenance={}
     for domain in item['domains']:
@@ -362,18 +368,18 @@ def build(value,source_paths,output,*,expected=None):
         if item['path'] in deps and deps[item['path']]!=item:raise ValueError('input changed during report build')
         deps[item['path']]=item
     sources=[*sorted((ROOT/'scripts/framework').glob('*.py')),ROOT/'scripts/benchmark_summary.py',
-             ROOT/'scripts/build_research_report.py',ROOT/'scripts/experiment.py',ROOT/'notebooks/research_report.ipynb',ROOT/'requirements-dev.txt']
+             ROOT/'scripts/build_research_report.py',ROOT/'scripts/experiment.py',ROOT/'scripts/framework/templates/research_report.ipynb',ROOT/'requirements-dev.txt']
     for path in [*sources,*source_paths]:add(path)
     analysis_metadata=[]
     for item in value['analyses']:
-        dataset_path=Path(item['dataset'])
+        dataset_path=result_path(item['dataset'])
         if output==dataset_path or output in dataset_path.parents or dataset_path in output.parents:
             raise ValueError('report must be separate from datasets')
         for name in DATASET_FILES:add(dataset_path/name)
         dataset,frames,spec,provenance=analyse(item)
         datasets.append(dataset)
         for run in dataset.runs:
-            root=Path(run['input_path'])
+            root=result_path(run['input_path'])
             if output==root or output in root.parents or root in output.parents:
                 raise ValueError('report must be separate from raw runs')
         for source in dataset.metadata['inputs']:
@@ -476,7 +482,7 @@ def build(value,source_paths,output,*,expected=None):
             input_inventory=[{'input_id':identity(d),'sha256':d['sha256'],'size_bytes':d['size_bytes']} for d in sorted(deps.values(),key=lambda x:x['path'])],
             environment=environment(),determinism='CSV selections/scientific tables must reproduce. Notebook execution IDs/timestamps, HTML rendering IDs and environment identity are not promised bit-identical.')
         (report/'report.json').write_text(canonical(public))
-        render_notebook(report,ROOT/'notebooks/research_report.ipynb')
+        render_notebook(report,ROOT/'scripts/framework/templates/research_report.ipynb')
         output_hashes={str(p.relative_to(staging)):digest(p) for p in sorted(report.iterdir())}
         if expected:
             for name,sha in output_hashes.items():

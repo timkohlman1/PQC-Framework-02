@@ -57,7 +57,7 @@ def test_prepare_refuses_escape_and_mutated_profile(repository):
 def test_generated_queue_output_remains_ignored():
     import subprocess
     paths = ['results/profiles/example.yaml', 'results/queue/queue.sqlite3', 'results/queue/jobs/example/plan.json',
-             'results/queue/exports/example/runs.csv', 'results/queue/exports/example/analysis.ipynb']
+             'results/queue/exports/example/runs.csv', 'results/queue/exports/example/queue-selection.json']
     result = subprocess.run(['git', 'check-ignore', *paths], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0 and result.stdout.splitlines() == paths
 

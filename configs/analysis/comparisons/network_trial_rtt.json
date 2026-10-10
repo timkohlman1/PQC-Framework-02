@@ -11,7 +11,7 @@
   "filters": {
     "workload": "ready_metrics_2",
     "tls_kex": "SecP256r1MLKEM768",
-    "tls_auth": "rsa3072",
+    "tls_auth": "ecdsa-p256",
     "auth_mode": "server",
     "secure_boot": "integrity_sha256"
   },

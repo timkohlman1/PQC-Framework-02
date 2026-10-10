@@ -66,11 +66,16 @@ each. Configured limits are not measured throughput, RTT or loss.
 ```bash
 ./scripts/dev.sh python scripts/resolve_campaign.py network_trial
 ./scripts/dev.sh campaign-gateway network_trial
-./scripts/dev.sh python scripts/export_timing_dataset.py --results-root results/campaigns/<network-trial-run> --output results/analysis/network_trial_dataset_01
-./scripts/dev.sh python scripts/export_timing_dataset.py --check results/analysis/network_trial_dataset_01 --verify-source-inputs
-./scripts/dev.sh python scripts/prepare_network_selection.py --dataset results/analysis/network_trial_dataset_01 --output results/analysis/network_trial_selection_01
+./scripts/dev.sh python scripts/analyse_results.py import --source results/campaigns/<network-trial-run> --output results/analysis/exports/network-trial-01
+./scripts/dev.sh python scripts/prepare_network_selection.py --dataset results/analysis/exports/network-trial-01/source-dataset --output results/analysis/network-trial-flow-selection
 for axis in rate rtt loss mtu; do
-  ./scripts/dev.sh python scripts/summarise_timing_dataset.py     --dataset results/analysis/network_trial_dataset_01     --spec "notebooks/network_trial_${axis}.json"     --network-spec results/analysis/network_trial_selection_01/network-selection.json     --output "results/analysis/network_trial_${axis}_01" --execute-notebook
+  ./scripts/dev.sh python scripts/analyse_results.py select \
+    --export results/analysis/exports/network-trial-01 --filter 'workload="ready_metrics_2"' \
+    --recipe network --comparison "configs/analysis/comparisons/network_trial_${axis}.json" \
+    --network-selection results/analysis/network-trial-flow-selection/network-selection.json \
+    --output "results/analysis/network-trial-${axis}.json"
+  ./scripts/dev.sh python scripts/analyse_results.py publish \
+    --spec "results/analysis/network-trial-${axis}.json" --name "network-trial-${axis}"
 done
 ```
 
@@ -96,9 +101,12 @@ hardware interoperability nor valid metrics; qualification remains DTR-TLS-MATRI
 ```bash
 ./scripts/dev.sh python scripts/resolve_campaign.py tls_matrix_energy
 ./scripts/dev.sh campaign-gateway tls_matrix_energy
-./scripts/dev.sh python scripts/export_timing_dataset.py --results-root results/campaigns/<tls-matrix-run> --output results/analysis/tls_matrix_energy_dataset_01
-./scripts/dev.sh python scripts/export_timing_dataset.py --check results/analysis/tls_matrix_energy_dataset_01 --verify-source-inputs
-./scripts/dev.sh python scripts/summarise_timing_dataset.py   --dataset results/analysis/tls_matrix_energy_dataset_01   --spec notebooks/tls_matrix_energy.example.json   --output results/analysis/tls_matrix_energy_summary_01 --execute-notebook   --notebook notebooks/tls_matrix_energy.ipynb
+./scripts/dev.sh python scripts/analyse_results.py import --source results/campaigns/<tls-matrix-run> --output results/analysis/exports/tls-matrix-01
+./scripts/dev.sh python scripts/analyse_results.py select \
+  --export results/analysis/exports/tls-matrix-01 --filter 'workload="ready_metrics_2"' \
+  --recipe timing --comparison configs/analysis/comparisons/tls_matrix_energy.example.json \
+  --output results/analysis/tls-matrix-selection.json
+./scripts/dev.sh python scripts/analyse_results.py publish --spec results/analysis/tls-matrix-selection.json --name tls-matrix
 ```
 
 The preset uses P-256/ECDSA/server as baseline, keeps `independent_runs: false`,
@@ -107,10 +115,11 @@ class policy, so cross-family matched differences are refused. The analysis libr
 also supports explicit STM32 TLS/transport policies; selecting one still requires
 all other matching controls and a justified question. Multi-factor deltas cannot
 be called isolated KEX or certificate effects. Energy derivation uses the energy
-analysis options in the results reference; this notebook's default is timing.
+recipe and explicit electrical-boundary annotations in the results reference;
+this example selects timing.
 
-For interactive use, launch `./scripts/dev.sh notebook`, open the TLS matrix
-notebook, set `ROOT = Path("/workspace")` and select your dataset/spec/fresh output.
+For interactive use, launch `./scripts/dev.sh notebook`, open `notebooks/analysis.ipynb`
+and select the export and recipe, or set `SPEC_FILE` to the saved selection.
 Keep any chosen baseline within the filters. Notebook/PDF export procedures are in
 [results](012_results_and_analysis.md#notebook-operation).
 

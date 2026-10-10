@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from framework.analysis_paths import result_path
 from framework.run_evidence import (build_derived_record, canonical_sha256,
     evaluate_capture_acceptance, sha256_file, validate_manifest_schema)
 from framework.timing_dataset_schema import (ISSUE_COLUMNS, METRICS, NULL, PARSER_VERSION,
@@ -489,7 +490,7 @@ def verify_source_inputs(metadata: dict) -> None:
         for item in source["artifacts"]:
             if not item.get("consumed"):
                 continue
-            path = Path(item["path"])
+            path = result_path(item["path"])
             if (_has_symlink(path) or not path.is_file() or path.stat().st_size != item["size_bytes"]
                     or sha256_file(path) != item["sha256"]):
                 raise DatasetError("consumed input changed: " + str(path))

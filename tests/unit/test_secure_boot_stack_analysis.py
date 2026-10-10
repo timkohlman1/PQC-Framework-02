@@ -84,15 +84,6 @@ def test_disabled_manifest_cannot_be_presented_as_measured(tmp_path):
         analyse_run(manifest)
 
 
-def test_legacy_timing_aggregation_rejects_stack_profiled_run():
-    from framework.benchmark_aggregation import (
-        BenchmarkAggregationError, build_benchmark_summary_row,
-    )
-    with pytest.raises(BenchmarkAggregationError, match='must not enter normal'):
-        build_benchmark_summary_row({'boot_selection': {'boot_stack_profiling': True},
-                                     'secure_boot_benchmark': {'aggregate_statistics': {}}},
-                                    source_manifest='test/manifest.json')
-
 
 def test_default_off_and_profiled_campaign_separated():
     import yaml

@@ -164,7 +164,8 @@ Energy-enabled plans select acquisition before resolution. Application energy in
 a boot-profile campaign is not bootloader energy.
 
 Queue exports select explicit completed campaign roots and preserve decisions,
-attempt history and capture identities. `runs.csv` and generated `analysis.ipynb`
-are offline products, not new measurements. Flat archives, typed loading, analysis
+attempt history and capture identities. `runs.csv` and archive metadata
+are offline products, not new measurements. The shared analysis notebook lists
+these exports without generating another notebook per export. Flat archives, typed loading, analysis
 controls and frozen report verification are owned by the
 [result reference](012_results_and_analysis.md).

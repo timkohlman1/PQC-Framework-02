@@ -18,7 +18,8 @@ from framework.run_evidence import build_resolved_case_snapshot
 from framework.timing_dataset import export_dataset
 from framework.timing_dataset_loader import load_dataset
 from timing_dataset_support import make_run, reseal, rm2_records
-from timing_notebook_support import isolated_notebook
+from framework import analysis_workspace as workspace
+from test_analysis_workspace_in import invoke
 
 pytestmark = pytest.mark.integration
 
@@ -62,7 +63,7 @@ def test_each_broker_command_preserves_certificate_and_auth_selection(tmp_path):
         assert checked == 2
 
 
-def test_synthetic_matrix_reaches_a1_and_clean_kernel_notebook(tmp_path):
+def test_synthetic_matrix_reaches_dataset_and_shared_publication(tmp_path):
     resolver=ConfigResolver(ROOT)
     cases=resolver.expand_campaign('tls_matrix_energy')
     runs=[]
@@ -87,23 +88,20 @@ def test_synthetic_matrix_reaches_a1_and_clean_kernel_notebook(tmp_path):
     export_dataset(run_dirs=runs, output=dataset)
     loaded=load_dataset(dataset, verify_inputs=True)
     assert sum(t['validity']=='valid' for t in loaded.timings) == 12*8
-    source = ROOT/'notebooks/tls_matrix_energy.ipynb'
-    original = source.read_bytes()
-    test_notebook = isolated_notebook(source, tmp_path/'analysis.ipynb')
-    output=tmp_path/'summary'
-    result=subprocess.run([sys.executable, str(ROOT/'scripts/summarise_timing_dataset.py'),
-        '--dataset', str(dataset), '--spec', str(ROOT/'notebooks/tls_matrix_energy.example.json'),
-        '--output', str(output), '--execute-notebook', '--notebook', str(test_notebook)], cwd=ROOT, text=True, capture_output=True, timeout=240)
-    assert result.returncode == 0, result.stderr
-    with (output/'completeness.csv').open() as handle:
+    archive,_=workspace.import_sources(runs,output=tmp_path/'archive')
+    comparison=json.loads((ROOT/'configs/analysis/comparisons/tls_matrix_energy.example.json').read_text())
+    value=workspace.draft([archive],[dict(id='matrix',kind='timing',filters={'campaign_id':'synthetic-matrix'},comparison=comparison)],presentation={'figures':[]})
+    selection=tmp_path/'selection.json';workspace.save_selection(value,selection)
+    output=tmp_path/'report'
+    result=invoke('publish','--spec',selection,'--output',output)
+    assert result.returncode==0,result.stderr
+    with (output/'data-matrix-completeness.csv').open() as handle:
         rows=list(csv.DictReader(handle))
     assert len(rows)==12*8
     assert {r['contributing_runs'] for r in rows} == {'1'}
     baseline=[r for r in rows if r['condition']=='secp256r1__ecdsa-p256__server']
     assert all(r['completed_runs']=='1' and r['failed_runs']=='1' for r in baseline)
-    assert (output/'executed.ipynb').exists()
-    assert source.read_bytes() == original
-    with (output/'differences.csv').open() as handle:
+    with (output/'data-matrix-differences.csv').open() as handle:
         differences=list(csv.DictReader(handle))
     # Cross-evidence-family matching must remain refused, not silently relabelled.
     assert all('conflicting_control:evidence_class' in r['reason'] for r in differences

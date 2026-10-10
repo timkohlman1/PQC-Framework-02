@@ -7,6 +7,7 @@ import hashlib
 
 import pandas as pd
 
+from framework.analysis_paths import result_path
 from framework.timing_dataset import (verify_source_inputs, inspect_run, read_json,
                                       _artifact, ROLES)
 from framework.timing_metrics import decode_epochs, uint, _clock
@@ -182,7 +183,7 @@ def extract_attribution(dataset):
     observations, coverage, issues, inputs, iteration_rows = [], [], [], [], []
     for run in dataset.runs:
         base = dict(run_key=run["run_key"], run_id=run["run_id"])
-        root = Path(run["input_path"])
+        root = result_path(run["input_path"])
         current, _, _, consumed = inspect_run(root)
         inputs.extend(consumed)
         if current["run_key"] != run["run_key"]:

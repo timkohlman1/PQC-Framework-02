@@ -102,7 +102,6 @@ def prepare(job, profile=None, repetitions=None, from_job=None):
 def export_selection(selection, output):
     from collect_thesis_evidence import campaign_verdict
     from framework.archive_table import export_archive
-    from framework.archive_notebook import write_notebook
     destination = owned_path(ROOT, output)
     request = read(owned_path(ROOT, selection))
     jobs = request['jobs']
@@ -133,13 +132,12 @@ def export_selection(selection, output):
     collection.write(destination / 'queue-selection.json', {
         'schema': 'pqc-queue-selection', 'version': 1, 'jobs': jobs,
         'analysis_source': collection.source_identity(),
-        'notebook_scope': 'Untitled general nullable-type, UTC and diagnostic normalisation',
+        'analysis_notebook': 'notebooks/analysis.ipynb',
     })
-    notebook = write_notebook(destination, ROOT)
     collection.write(destination / 'export-files.json', {
-        name: digest(destination / name) for name in ('runs.csv', 'archive.json', 'queue-selection.json', notebook.name)
+        name: digest(destination / name) for name in ('runs.csv', 'archive.json', 'queue-selection.json')
     })
-    return {'output': destination.relative_to(ROOT).as_posix(), 'rows': metadata['rows'], 'notebook': notebook.name}
+    return {'output': destination.relative_to(ROOT).as_posix(), 'rows': metadata['rows'], 'notebook': 'notebooks/analysis.ipynb'}
 
 
 def main(argv=None):

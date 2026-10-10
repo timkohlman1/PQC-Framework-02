@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from framework.analysis_paths import result_path
 from framework.packet_analysis import (ANALYSER_VERSION, analyse_run, read_pcap,
     _connection_key, _reassemble)
 from framework.timing_dataset import verify_source_inputs
@@ -223,7 +224,7 @@ def summarise_network(dataset, spec, selections):
     rows, diagnostics, availability, inputs = [], [], [], []
     for run in inventory:
         context = dict(run_key=run['run_key'], run_id=run['run_id'], condition=run['condition'], exclusion_reason=run['exclusion_reason'])
-        root = Path(run['input_path'])
+        root = result_path(run['input_path'])
         manifest = json.loads((root/'manifest.json').read_text())
         if manifest.get('final_index', {}).get('status') != 'finalized':
             availability.append({**context, 'status': 'manifest_not_finalized'}); continue
@@ -349,29 +350,3 @@ def matched_comparisons(inventory, differences, spec, selections):
             'percent_difference': None if reason else difference['percent_difference'],
             'percent_reason': reason or difference.get('percent_reason')})
     return comparisons
-
-
-def plot_network(frames, output):
-    import matplotlib.pyplot as plt
-    comparisons = frames['network_comparisons'].to_dict('records')
-    fig, axes = plt.subplots(2,2,figsize=(12,8),constrained_layout=True)
-    for (axis,unit), ax in zip(AXES.items(),axes.flat):
-        rows = [r for r in comparisons if r['axis']==axis and r['unit']=='us' and not r['reason']]
-        for metric in sorted({r['metric'] for r in rows}):
-            points = sorted((r['axis_value'],r['delta_median']) for r in rows if r['metric']==metric)
-            ax.scatter([p[0] for p in points],[p[1] for p in points],label=metric)
-        ax.set_xlabel(axis+' ('+unit+')');ax.set_ylabel('Matched median timing difference (µs)')
-        if rows: ax.legend(fontsize=7)
-        else: ax.text(.5,.5,'No supported one-factor comparison',ha='center',transform=ax.transAxes)
-    fig.savefig(output/'network-condition-response.png',dpi=140);plt.close(fig)
-
-    fig, axes = plt.subplots(2,2,figsize=(12,8),constrained_layout=True)
-    for (axis,unit), ax in zip(AXES.items(),axes.flat):
-        rows = [r for r in comparisons if r['axis']==axis and r['metric'].endswith('.tcp_payload_bytes') and not r['reason']]
-        for metric in sorted({r['metric'] for r in rows}):
-            points = sorted((r['axis_value'],r['delta_median']) for r in rows if r['metric']==metric)
-            ax.scatter([p[0] for p in points],[p[1] for p in points],label=metric)
-        ax.set_xlabel(axis+' ('+unit+')');ax.set_ylabel('Matched TCP payload difference (bytes)')
-        if rows: ax.legend(fontsize=7)
-        else: ax.text(.5,.5,'No supported transport comparison',ha='center',transform=ax.transAxes)
-    fig.savefig(output/'network-transport-response.png',dpi=140);plt.close(fig)

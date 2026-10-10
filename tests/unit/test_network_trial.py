@@ -27,7 +27,9 @@ def test_each_preset_changes_one_axis_and_accepts_actual_profile_hash_paths():
     resolver=ConfigResolver(ROOT)
     cases={c['choices']['network_condition']:c for c in resolver.expand_campaign('network_trial')}
     for axis,key in [('rate','rate_kbit'),('rtt','rtt_ms'),('loss','loss_percent'),('mtu','mtu')]:
-        spec=json.loads((ROOT/f'notebooks/network_trial_{axis}.json').read_text())
+        spec=json.loads((ROOT/f'configs/analysis/comparisons/network_trial_{axis}.json').read_text())
+        from framework.timing_summary import matches
+        assert all(matches({**c['choices'], 'workload':'ready_metrics_2'}, spec['filters']) for c in cases.values())
         assert spec['not_applicable']=={} and spec['independent_runs'] is False
         runs=[]
         for label,name in [('reference','trial_reference'),(axis,'validation_'+axis)]:

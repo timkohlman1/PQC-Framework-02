@@ -28,7 +28,7 @@ Linux development host
                  ├─ reporting broker ← deferred STM32 and ESP32 records
                  └─ packet capture / broker logs → immutable run capture
 
-retained captures → offline datasets → comparisons / notebooks / frozen reports
+retained captures → selected archives → shared analysis notebook/CLI → tables and figures
 ```
 
 The NUCLEO-L4R5ZI-P hosts the application, cryptography and protocol clients.
@@ -76,7 +76,8 @@ implemented/verified boundary.
 | Runtime acquisition | `scripts/framework/result_collector.py`, `run_evidence.py`, `network_degradation.py`, `packet_capture.py`, `energy_evidence.py` |
 | Broker and instrument | `experiment/mqtt-broker/`, `instruments/esp32_ina228/` |
 | Queue and collection | `scripts/run_queue.py`, `scripts/collect_thesis_evidence.py`, `scripts/framework/run_queue.py`, `thesis_collection.py` |
-| Offline interpretation | `scripts/framework/*_analysis.py`, `timing_dataset.py`, `timing_summary.py`, `archive_table.py`, `research_report.py` |
+| Offline interpretation | `scripts/analyse_results.py`, `analysis_workspace.py`, `analysis_comparison.py`, `thesis_tables.py`, `analysis_presentation.py`; shared domain engines and `archive_table.py` |
+| Collection chapter snapshots | `scripts/build_research_report.py`, `research_report.py`; internal notebook template under `scripts/framework/templates/` |
 
 Some runtime files retain historical `build_only` names. Read the selected
 backend and actual call path before treating a filename as a capability limit.

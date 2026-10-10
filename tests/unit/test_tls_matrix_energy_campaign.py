@@ -48,7 +48,7 @@ def test_every_condition_keeps_energy_and_timing_controls():
 
 
 def test_analysis_preset_covers_each_condition_once_without_waiving_controls():
-    spec = json.loads((ROOT/'notebooks/tls_matrix_energy.example.json').read_text())
+    spec = json.loads((ROOT/'configs/analysis/comparisons/tls_matrix_energy.example.json').read_text())
     assert spec['independent_runs'] is False
     assert spec['not_applicable'] == {} and spec['exclude_runs'] == {}
     assert spec['baseline'] == 'secp256r1__ecdsa-p256__server'

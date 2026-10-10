@@ -1,4 +1,5 @@
-"""Offline campaign -> retained fixtures -> selection -> A5 notebook boundary."""
+"""Offline campaign -> retained fixtures -> selected publication boundary."""
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -13,13 +14,14 @@ from framework.run_evidence import build_resolved_case_snapshot,register_artifac
 from framework.packet_analysis import read_pcap
 from framework.timing_dataset import export_dataset
 from framework.timing_dataset_loader import load_dataset
-from framework.timing_summary import export_summary
+from framework import analysis_workspace as workspace
+from test_analysis_workspace_in import invoke
 from timing_dataset_support import make_run,reseal
 from prepare_network_selection import prepare
 pytestmark=pytest.mark.integration
 
 
-def test_trial_resolves_and_drives_notebook(tmp_path):
+def test_trial_resolves_and_drives_shared_analysis(tmp_path):
     proc=subprocess.run([sys.executable,str(ROOT/'scripts/resolve_campaign.py'),'network_trial','--output-root',str(tmp_path/'cases')],capture_output=True,text=True,timeout=30)
     assert proc.returncode==0,proc.stderr
     assert yaml.safe_load((tmp_path/'cases/campaign-resolved.yaml').read_text())['case_count']==5
@@ -43,15 +45,18 @@ def test_trial_resolves_and_drives_notebook(tmp_path):
     result=prepare(dataset,tmp_path/'selections')
     assert result['selected']==5 and result['unselected']==0
     selections=json.loads((tmp_path/'selections/network-selection.json').read_text())
+    archive,_=workspace.import_sources(runs,output=tmp_path/'archive')
     for axis in ('rate','rtt','loss','mtu'):
-        spec=json.loads((ROOT/f'notebooks/network_trial_{axis}.json').read_text())
-        frames=export_summary(dataset,spec,tmp_path/axis,network=selections)
-        reasons=frames['network_comparisons']['reason'].tolist()
+        spec=json.loads((ROOT/f'configs/analysis/comparisons/network_trial_{axis}.json').read_text())
+        value=workspace.draft([archive],[dict(id=axis,kind='network',filters={'workload':'ready_metrics_2'},comparison=spec,network=selections)],presentation={'figures':[]})
+        chosen=tmp_path/(axis+'.json');workspace.save_selection(value,chosen)
+        proc=invoke('publish','--spec',chosen,'--output',tmp_path/axis)
+        assert proc.returncode==0,proc.stderr
+        with (tmp_path/axis/('data-'+axis+'-network_comparisons.csv')).open() as stream:
+            comparisons=list(csv.DictReader(stream))
+        assert comparisons, 'preset must select actual campaign evidence'
+        reasons=[r['reason'] for r in comparisons]
         assert not any(r and ('non_network_treatment' in r or 'unknown_control:controls.profile_hashes.network_condition:' in r) for r in reasons)
-    cmd=[sys.executable,str(ROOT/'scripts/summarise_timing_dataset.py'),'--dataset',str(dataset),'--spec',str(ROOT/'notebooks/network_trial_rate.json'),'--network-spec',str(tmp_path/'selections/network-selection.json'),'--output',str(tmp_path/'notebook'),'--execute-notebook']
-    proc=subprocess.run(cmd,cwd=ROOT,text=True,capture_output=True,timeout=180)
-    assert proc.returncode==0,proc.stderr
-    assert (tmp_path/'notebook/network_flows.csv').read_bytes()==(tmp_path/'rate/network_flows.csv').read_bytes()
     assert all(p.read_bytes()==data for p,data in before.items())
     # An unassociated extra port on the same address must not be swept in.
     log=runs[0]/'mqtt-broker-log.log';log.write_text('No completed STM32 client connection\n');reseal(runs[0])

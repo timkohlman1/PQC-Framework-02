@@ -8,6 +8,7 @@ import struct
 from pathlib import Path
 from statistics import median
 
+from framework.analysis_paths import result_path
 from framework.resource_analysis import _read, _build_root, _row
 from framework.timing_dataset import read_json, _verify_header, verify_source_inputs, DatasetError
 from framework.timing_metrics import decode_epochs, uint
@@ -193,7 +194,7 @@ def extract_secure_boot(dataset):
     verify_source_inputs(dataset.metadata)
     inputs, observations, outcomes, resources = [], [], [], []
     for run in dataset.runs:
-        root = Path(run['input_path']); key = run['run_key']
+        root = result_path(run['input_path']); key = run['run_key']
         negative = run.get('capture_class') == 'secure_boot_negative_validation'
         base = dict(run_key=key, run_id=run['run_id'], profile=run.get('secure_boot'),
                     capture_class=run.get('capture_class'), case_kind='rejection_validation' if negative else 'normal_boot',
@@ -385,17 +386,3 @@ def summarise_secure_boot(dataset, spec):
         boundaries=BOUNDARIES, resources=RESOURCE_DEFINITIONS,
         policy='v8 structural mailbox validity is not freshness proof; no concurrent bootloader/application RAM sum; integrity is a reference; descriptive per-run/build medians',
         energy='A6 currently records application-origin intervals only; no matching boot interval, boot energy unavailable')
-
-
-def plot_secure_boot(frames, output):
-    import matplotlib.pyplot as plt
-    data = frames['secure_boot_distributions']
-    for unit, suffix in [('ms','timing'), ('bytes','resources')]:
-        subset = data[(data['unit']==unit) & data['median'].notna()]
-        fig, ax = plt.subplots(figsize=(11, max(3, len(subset)*.23)))
-        if len(subset):
-            ax.barh([r.condition+' / '+r.metric for r in subset.itertuples()], subset['median'].astype(float))
-        else:
-            ax.text(.5,.5,'No usable '+suffix+' evidence', ha='center', transform=ax.transAxes)
-        ax.set_xlabel(unit + ' (distinct boundaries/accounting; do not sum)')
-        fig.tight_layout(); fig.savefig(Path(output)/('secure_boot_'+suffix+'.png')); plt.close(fig)

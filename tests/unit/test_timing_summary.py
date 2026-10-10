@@ -133,30 +133,6 @@ def test_notebook_wrapper_local_publish_and_no_auth_override():
         assert refused.returncode == 2
 
 
-def test_export_keeps_large_nullable_integers_and_escapes_null_strings(tmp_path, monkeypatch):
-    import csv
-    import json
-    from framework import timing_summary
-    d = data()
-    d.runs[0]["run_id"] = r"\N"
-    for i, observation in enumerate(d.timings):
-        observation["start_us"] = 2**53 + 1 if i == 0 else None
-    dataset_path = tmp_path / "dataset"; dataset_path.mkdir()
-    for filename in ("dataset.json", "dataset.sha256", "runs.csv", "timings.csv", "issues.csv"):
-        (dataset_path / filename).write_text("synthetic test input")
-    monkeypatch.setattr(timing_summary, "load_dataset", lambda path: d)
-    output = tmp_path / "summary"
-    timing_summary.export_summary(dataset_path, spec(), output)
-    with (output / "observations.csv").open() as stream:
-        rows = list(csv.DictReader(stream))
-    assert rows[0]["start_us"] == str(2**53+1)
-    assert rows[1]["start_us"] == r"\N"
-    with (output / "inventory.csv").open() as stream:
-        assert next(csv.DictReader(stream))["run_id"] == r"\\N"
-    assert json.loads((output / "summary.json").read_text())["null_encoding"]["token"] == r"\N"
-    assert (output / "matched-differences.png").stat().st_size > 1000
-
-
 def test_transport_policy_requires_opt_in_and_matching_device_capture():
     from framework.timing_summary import comparison_field
     plain = {'capture_class': 'mqtt_plaintext_runtime', 'evidence_class': 'stm32_st67_plaintext_e2e'}

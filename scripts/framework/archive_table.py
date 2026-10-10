@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 from statistics import median
 
+from framework.analysis_paths import result_path
 from framework.timing_dataset import (DatasetError, PRUNED, _has_symlink, _artifact,
     encode_cell, export_dataset, read_json, verify_source_inputs)
 from framework.timing_dataset_loader import load_dataset, _decode
@@ -510,7 +511,7 @@ def export_archive(*, results_root, output, annotations=None, source_roots=None)
 def load_archive(path, *, verify_sources=False):
     """Load into pandas with nullable dtypes; default pandas NA guessing is disabled."""
     import pandas as pd
-    path=Path(path)
+    path=result_path(path)
     if _has_symlink(path): raise DatasetError('symlink archive refused')
     if sha256_file(path/'archive.json')!=(path/'archive.sha256').read_text().strip():
         raise DatasetError('archive metadata hash mismatch')
@@ -522,7 +523,9 @@ def load_archive(path, *, verify_sources=False):
     if verify_sources:
         if meta['source_dataset_id'] is not None: load_dataset(path/'source-dataset',verify_inputs=True)
         for item in meta['inputs']:
-            if sha256_file(Path(item['path']))!=item['sha256']: raise DatasetError('archive source hash mismatch')
+            source = result_path(item['path'])
+            if _has_symlink(source) or not source.is_file() or sha256_file(source)!=item['sha256']:
+                raise DatasetError('archive source hash mismatch: ' + item['path'])
     columns={k:meta['columns'][k] for k in meta['column_order']}; values={k:[] for k in columns}
     with (path/'runs.csv').open(newline='',encoding='utf-8') as f:
         reader=csv.DictReader(f)

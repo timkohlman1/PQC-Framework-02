@@ -45,7 +45,7 @@ def repository_files() -> set[str]:
          "--others", "--exclude-standard", "-z"],
         cwd=ROOT, check=True, capture_output=True,
     )
-    return {p.decode() for p in result.stdout.split(b"\0") if p}
+    return {p.decode() for p in result.stdout.split(b"\0") if p and (ROOT / p.decode()).is_file()}
 
 
 @lru_cache(maxsize=1)
@@ -147,7 +147,7 @@ def test_index_covers_all_project_documents_including_unstaged_additions():
         assert (ROOT / path).is_file(), path
         assert status in {"Current reference", "Operational guide", "AI workflow",
                           "Historical plan", "Decision record", "Executable notebook",
-                          "Exploratory notebook"}, (path, status)
+                          "Exploratory notebook", "Internal template"}, (path, status)
 
 
 def test_current_document_links_and_anchors_resolve():
