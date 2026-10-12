@@ -2851,6 +2851,7 @@ def load_secure_boot_profile_section(
     if standby_signing_keys not in {0, 1, 2}:
         raise ConfigError("standby_signing_keys must be 0, 1, or 2")
     if tuple_id and standby_signing_keys:
+        tuple_id = signing.get("standby_tuple_id", tuple_id)
         tuple_id = f"{tuple_id}-standby{standby_signing_keys}"
     tuple_dir = None if not tuple_id else f"secrets/wolfboot/tuples/{tuple_id}"
     private_key = None if tuple_dir is None else f"{tuple_dir}/private_key.der"

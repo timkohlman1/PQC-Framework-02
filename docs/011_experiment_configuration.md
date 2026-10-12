@@ -78,6 +78,9 @@ Payload and chunk sizes can vary through dotted campaign matrix dimensions
 `uart_output_mode`, `boot_uart_diagnostics` and `boot_stack_profiling` affect
 firmware identity and interpretation. Instrument selection and
 `energy_monitoring` determine acquisition requirements, not measured energy.
+Queue/collection planning defaults to `off` and requires an explicit `auto` policy
+for instrumented acquisition. Direct campaign execution uses its resolved instrument
+selection; use the queue planner when applying its acquisition policy.
 
 ## Preparation and repetition
 

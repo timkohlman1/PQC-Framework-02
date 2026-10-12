@@ -142,9 +142,9 @@ for that default. The OTA step checks eight selected lifecycle scenarios.
 
 Planning freezes source/submodule identity, original/effective profiles and hashes.
 Uncommitted source can be frozen, but cannot change during execution. Existing plans
-do not acquire new templates or policies. The coordinator automatically enables
-the existing energy instrument on supported deferred-reporting workloads unless
-`execution.energy_monitoring: 'off'` is selected. The application interval in a boot
+do not acquire new templates or policies. The coordinator defaults energy monitoring to `off`.
+Set `execution.energy_monitoring: auto` explicitly to enable the existing instrument
+on supported deferred-reporting workloads; dedicated energy templates already opt in. The application interval in a boot
 campaign cannot measure bootloader verification energy or multi-reset OTA energy.
 
 Review the copied `annotations.json` before analysis. Its electrical-boundary and

@@ -76,7 +76,7 @@ def network_degradation_config(bundle:dict[str,dict[str,Any]])->NetworkDegradati
     if not isinstance(rate,int) or isinstance(rate,bool) or rate<=0:raise ValueError('network.degradation.rate_kbit must be a positive integer')
     if not isinstance(rtt,int) or isinstance(rtt,bool) or rtt<0:raise ValueError('network.degradation.rtt_ms must be a non-negative integer')
     if not isinstance(loss,(int,float)) or isinstance(loss,bool) or not 0<=float(loss)<=100:raise ValueError('network.degradation.loss_percent must be between 0 and 100')
-    if not isinstance(mtu,int) or isinstance(mtu,bool) or not 576<=mtu<=9000:raise ValueError('network.degradation.mtu must be an integer between 576 and 9000')
+    if not isinstance(mtu,int) or isinstance(mtu,bool) or not 400<=mtu<=9000:raise ValueError('network.degradation.mtu must be an integer between 400 and 9000')
     if safe is not True:raise ValueError('network.degradation.management_safe must be true')
     profile=str(bundle.get('experiment',{}).get('mqtt',{}).get('broker_profile','classical'))
     service=BROKER_SERVICE_BY_PROFILE.get(profile)

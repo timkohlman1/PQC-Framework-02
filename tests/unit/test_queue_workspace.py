@@ -35,13 +35,37 @@ def test_prepare_default_override_energy_and_source_guard(repository, monkeypatc
     first = workspace.prepare('results/queue/jobs/first', 'baseline')
     second = workspace.prepare('results/queue/jobs/second', 'baseline.yaml', 4)
     assert first['repetitions'] == 1 and second['attempts'] == 4
-    assert second['energy_requested']
+    assert not second['energy_requested']
     job = repository / 'results/queue/jobs/second'
     assert collection.check(job)['steps'][0] == second
     assert not (job / 'campaigns').exists()
     monkeypatch.setattr(collection, 'source_identity', lambda: {'source': 'changed'})
     with pytest.raises(ValueError, match='source/submodule'):
         collection.check(job)
+
+
+def test_explicit_energy_opt_in_and_legacy_requeue_preserve_acquisition(repository):
+    import yaml
+    from framework.run_queue import read, digest
+    profile = repository / 'results/profiles/baseline.yaml'
+    value = yaml.safe_load(profile.read_text())
+    value['execution']['energy_monitoring'] = 'auto'
+    profile.write_text(yaml.safe_dump(value))
+    assert workspace.prepare('results/q/instrumented', 'baseline')['energy_requested']
+    old = repository / 'results/q/instrumented'
+    frozen = old / 'profiles/campaign.yaml'
+    data = yaml.safe_load(frozen.read_text())
+    data['execution'].pop('energy_monitoring')  # Pre-default-change frozen format.
+    frozen.write_text(yaml.safe_dump(data))
+    plan = read(old / 'plan.json')
+    plan['profile_hashes'][frozen.relative_to(repository).as_posix()] = digest(frozen)
+    collection.write(old / 'plan.json', plan)
+    (old / 'plan.sha256').write_text(digest(old / 'plan.json') + '\n')
+    before = frozen.read_bytes()
+    new = workspace.prepare('results/q/requeued', from_job='results/q/instrumented')
+    assert new['energy_requested']
+    assert yaml.safe_load((repository / 'results/q/requeued/profiles/campaign.yaml').read_text())['execution']['energy_monitoring'] == 'auto'
+    assert frozen.read_bytes() == before
 
 
 def test_prepare_refuses_escape_and_mutated_profile(repository):

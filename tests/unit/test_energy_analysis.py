@@ -81,7 +81,7 @@ def test_total_phases_identity_and_boundary_policy(tmp_path):
         assert r['interval_id']==key+':'+CAPTURE
     assert len(frames['energy_trace'])==31
     assert 'value_us' not in frames['energy_observations']
-    assert set(frames['energy_observations']['unit'])=={'J','W'}
+    assert set(frames['energy_observations']['unit'])=={'J','W','s'}
     assert set(frames['energy_observations']['capture_id'])=={CAPTURE}
     assert lineage['inputs']
     assert all(p.read_bytes()==data for p,data in before.items())
@@ -158,7 +158,7 @@ def test_policy_strata_prevent_pooling(tmp_path):
     selection={'boundaries':{row['run_key']:{'electrical_boundary':str(i),'evidence_reference':'test'} for i,row in enumerate(ds.runs)}}
     frames,_=summarise_energy(ds,{'conditions':{'b':{}},'baseline':'b'},selection)
     rows=frames['energy_distributions'].to_dict('records')
-    assert len(rows)==16
+    assert len(rows)==24
     assert all(row['n_observations']==1 for row in rows)
     assert len(set(frames['energy_intervals']['comparison_policy_id']))==2
 
@@ -199,3 +199,16 @@ def test_tail_guard_excludes_pause_and_requires_real_sample_brackets(tmp_path, e
         assert whole['energy_j'] is None
     recorded = next(row for row in rows if row['scope'] == 'recorded_interval')
     assert recorded['reason'] == 'outside_sample_coverage'
+
+
+def test_energy_spread_weights_runs_equally_and_preserves_policy_and_exclusions():
+    from framework.energy_analysis import run_spread
+    base = dict(condition='a', capture_class='tls', evidence_class='stm32', unit='J', metric='whole_workload.energy_j.policy1', exclusion_reason=None)
+    rows = [dict(base,run_key=k,value=v) for k,v in [('r1',1),('r1',3),('r2',6)]]
+    rows += [dict(base,run_key='failed',value=100,exclusion_reason='failed_run'),
+             dict(base,run_key='other_policy',value=20,metric='whole_workload.energy_j.policy2')]
+    a,b = run_spread(rows).to_dict('records')
+    assert a['mean'] == 4 and a['standard_deviation'] == pytest.approx(8**.5)
+    assert (a['n_runs'],a['n_observations'],a['excluded_observations']) == (2,3,1)
+    assert b['mean'] == 20 and b['standard_deviation'] is None
+    assert b['spread_reason'] == 'fewer_than_two_contributing_runs'

@@ -41,6 +41,9 @@ from framework.fingerprint import (
     default_wolfboot_fingerprint_inputs,
 )
 
+# wolfBoot keygen exports concatenated raw private/public keys (ML-DSA-44/65/87).
+ML_DSA_TUPLE_PARAMETERS = {"mldsa44": (2, 3872), "mldsa65": (3, 5984), "mldsa87": (5, 7488)}
+
 MISSING_SOURCE_RETURN_CODE = 20
 WOLFBOOT_BUILD_ARTIFACT_MISSING_RETURN_CODE = 21
 PROFILE_ERROR_RETURN_CODE = 22
@@ -1416,6 +1419,14 @@ def _load_and_validate_persistent_tuple(
     for key, manifest_key in hash_members:
         if manifest.get(manifest_key) != _tuple_sha256(paths[key]):
             return "invalid", f"Persistent signing tuple hash mismatch for {paths[key]}"
+    parameters = ML_DSA_TUPLE_PARAMETERS.get(expected_algorithm)
+    if parameters:
+        for key in ["private_key", *standby_path_keys]:
+            if paths[key].stat().st_size != parameters[1]:
+                return "incompatible", (
+                    f"Persistent {expected_algorithm} tuple has an incompatible raw key size: {paths[key]}. "
+                    "Preserve this tuple and select a new tuple identity; do not replace its keys."
+                )
     return "complete", None
 
 
@@ -1663,8 +1674,14 @@ def _create_multi_key_persistent_tuple(
         command = [str(keygen), option, "--force", "-g", str(private_dest)]
         for standby in standby_dests:
             command.extend(["-g", str(standby)])
+        keygen_environment = os.environ.copy()
+        parameters = ML_DSA_TUPLE_PARAMETERS.get(str(profile.get("signature_algorithm", "")))
+        if parameters:
+            # The parent Makefile does not export this setting to an independently
+            # invoked keygen. Its default is level 2, even for a level-3 bootloader.
+            keygen_environment["ML_DSA_LEVEL"] = str(parameters[0])
         keygen_result = subprocess.run(
-            command, cwd=source_dir, text=True,
+            command, cwd=source_dir, text=True, env=keygen_environment,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         if keygen_result.returncode != 0:
@@ -1672,6 +1689,8 @@ def _create_multi_key_persistent_tuple(
         if not generated_keystore.is_file():
             return f"wolfBoot keygen did not create keystore: {generated_keystore}"
 
+        if parameters and any(p.stat().st_size != parameters[1] for p in [private_dest, *standby_dests]):
+            return "wolfBoot keygen produced an incompatible ML-DSA raw key size; tuple not published"
         keystore_dest = temp_dir / paths["keystore"].name
         shutil.copyfile(generated_keystore, keystore_dest)
         public_dest = None

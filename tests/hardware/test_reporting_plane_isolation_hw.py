@@ -240,3 +240,17 @@ def test_persistent_esp32_reporting_integrity_under_experiment_impairment(
     energy = _json_file(run_dir / "energy-capture.json")
     assert energy.get("passed") is True and energy.get("capture_received") is True
     assert energy.get("sample_record_bytes") == 20 and energy.get("sample_count", 0) > 0
+
+
+@pytest.mark.parametrize("mtu", [400, 576, 768])
+def test_small_mtu_ipv4_stress_preserves_reporting_and_restores_network(
+    mtu, reporting_file_context, pqc_require_capabilities,
+):
+    pqc_require_capabilities("local_toolchain", "gateway", "flash_helper", "uart_device", strict_mode="hardware")
+    profile_name = f"thesis_mtu_{mtu}"
+    case = reporting_file_context.case(template="mqtt_plaintext_validation",
+        network_condition=profile_name, case_name=profile_name)
+    profile = yaml.safe_load((ROOT / "configs/network_conditions" / (profile_name + ".yaml")).read_text())
+    run_dir, _ = reporting_file_context.run_experiment(case=case, name=profile_name)
+    _assert_impairment(run_dir, "mtu", profile)
+    _assert_reporting(run_dir)

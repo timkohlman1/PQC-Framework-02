@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
+import pytest
+
 
 def load_manifest_module():
     repo_root = Path(__file__).resolve().parents[2]
@@ -247,6 +249,22 @@ def test_next_run_id_uses_date_and_next_sequence(tmp_path):
 
     assert run_id == "2026-06-25_003_baseline_direct_uart"
 
+
+
+@pytest.mark.parametrize("highest_sequence", [998, 999, 1000, 9999, 10000])
+def test_next_run_id_grows_past_three_digits_and_uses_numeric_order(tmp_path, highest_sequence):
+    manifest = load_manifest_module()
+    (tmp_path / "2026-06-25_009_previous").mkdir()
+    (tmp_path / f"2026-06-25_{highest_sequence:03d}_another_experiment").mkdir()
+    (tmp_path / "2026-06-24_999999_previous_day").mkdir()
+    (tmp_path / "2026-06-25_999999_file_not_run").write_text("not a directory")
+
+    run_id = manifest.next_run_id(
+        "baseline_direct_uart", tmp_path,
+        datetime(2026, 6, 25, 10, 30, tzinfo=timezone.utc),
+    )
+
+    assert run_id == f"2026-06-25_{highest_sequence + 1:03d}_baseline_direct_uart"
 
 
 def test_next_run_id_uses_melbourne_calendar_date_across_utc_boundary(tmp_path):

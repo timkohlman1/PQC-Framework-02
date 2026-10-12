@@ -206,7 +206,7 @@ def comparison_axis(reference, treatment):
         return None, 'enabled_boundary_changes_multiple_effective_properties'
     if not configs[0]['enabled']:
         return None, 'disabled_network_values_are_not_effective_conditions'
-    if any(c['rate_kbit'] <= 0 or c['rtt_ms'] < 0 or not 0 <= c['loss_percent'] <= 100 or not 576 <= c['mtu'] <= 9000 for c in configs):
+    if any(c['rate_kbit'] <= 0 or c['rtt_ms'] < 0 or not 0 <= c['loss_percent'] <= 100 or not 400 <= c['mtu'] <= 9000 for c in configs):
         return None, 'invalid_network_units_or_values'
     a, b = configs[:len(reference)], configs[len(reference):]
     if len({json.dumps(c,sort_keys=True) for c in a}) != 1 or len({json.dumps(c,sort_keys=True) for c in b}) != 1:

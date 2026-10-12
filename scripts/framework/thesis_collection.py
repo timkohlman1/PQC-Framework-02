@@ -98,9 +98,10 @@ def annotations(value):
 
 def instrument_campaign(resolver, data):
     """Apply the thesis collector energy policy to a copied campaign."""
-    mode = data.get('execution', {}).get('energy_monitoring', 'auto')
+    mode = data.get('execution', {}).get('energy_monitoring', 'off')
     if mode not in {'auto', 'off'}:
         raise ValueError('execution.energy_monitoring must be auto or off')
+    data.setdefault('execution', {})['energy_monitoring'] = mode
     if mode == 'off':
         data.setdefault('instruments', {}).pop('energy', None)
         return False
@@ -131,7 +132,7 @@ def plan(output, repetitions=10, only=None, include_ota=False):
     for name in names:
         original, data = resolver.load_campaign(name)
         data['execution']['repetitions'] = repetitions
-        # Instrument every supported single-window workload in this collection.
+        # Instrument supported single-window workloads only when explicitly requested.
         # Unsupported boot-only and multi-reset OTA workflows remain explicit gaps.
         energy_supported = instrument_campaign(resolver, data)
         # Explicitly preserve instrumented stack runs separately from normal timing.

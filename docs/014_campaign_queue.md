@@ -70,11 +70,13 @@ jobs only. `N` preserves the old frozen definition but resolves it under current
 source/components, creates a new ID and starts its repetitions again. The original
 plan hashes must still validate; pause active entries first.
 
-Energy defaults to `auto`, which enables the existing instrument for supported
-deferred-reporting workloads. Provisioning, calibration and wiring are external
-prerequisites. Set **Execution → Energy monitoring** to `off` to disable this
-policy; merely clearing the instrument selector does not disable automatic selection.
-Requeueing a frozen definition retains its old energy/failure choices.
+Energy defaults to `off` for new queue plans. Set **Execution → Energy monitoring**
+to `auto` to request the existing instrument for supported deferred-reporting
+workloads. Dedicated energy templates opt in explicitly. Instrument selection alone
+does not override an `off` policy. Provisioning, calibration and wiring remain
+external prerequisites. Frozen jobs retain their recorded energy/failure choices,
+including when legacy jobs are explicitly requeued; they are not rewritten by a
+new default.
 
 Rows distinguish REPS per case, CASES, TOTAL RUNS, OK/ERROR/TOTAL and REPEATS
 (previous attempts). Errors include failed and blocked slots. Accepted failures
@@ -121,6 +123,15 @@ validates old successful captures against their original preparation/image hash,
 so rebuilding does not repeat or relabel those measurements. Source/profile drift
 prevents dispatch; restore the matching source or use `N` for a fresh job. Never
 edit manifests or bypass source checks to manufacture completion.
+
+If a source fix prevents resuming a frozen job, a targeted continuation can use
+new local profiles containing only its unexecuted or acquisition-failed slots.
+Retain the original job and captures, and record the old campaign hash, case and
+repetition alongside each replacement slot and new job ID. Verify the selected
+controls and fixed attempt counts before enqueueing. Keep measured workload
+failures as outcomes; do not replace them merely to reach a success target.
+Continuation captures retain their new source identity and require an explicit
+analysis selection rather than silently pooling them with the old batch.
 
 MQTT clients, remote capture groups, SSH and evidence/control operations have bounded
 deadlines. Each campaign preparation/runtime subprocess also has a 1,800-second

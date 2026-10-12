@@ -45,9 +45,9 @@ def test_full_plan_resolves_all_profiles_without_hardware(workspace):
     assert all(s['kind'] == 'campaign' for s in plan['steps'])
     resolver=collection.ConfigResolver(collection.ROOT)
     for step in plan['steps']:
-        assert step['energy_requested']
+        assert not step['energy_requested']
         for case in resolver.expand_campaign(collection.ROOT/step['source']):
-            assert case['selections']['instruments']=={'energy':'esp32_ina228'}
+            assert case['selections'].get('instruments', {})=={}
     assert collection.check(workspace)==plan
     assert not (workspace/'campaigns').exists()
     with pytest.raises(ValueError,match='new collection'):
@@ -255,3 +255,20 @@ def test_explicit_energy_off_overrides_auto_instrumentation(workspace):
     data['execution']['energy_monitoring'] = 'invalid'
     with pytest.raises(ValueError, match='energy_monitoring'):
         collection.instrument_campaign(resolver, data)
+
+
+def test_energy_is_opt_in_and_policy_ui_agree(workspace):
+    from framework.campaign_executor import ExecutionPolicy
+    from framework.campaign_menu import value_for
+    resolver = collection.ConfigResolver(collection.ROOT)
+    _, data = resolver.load_campaign('thesis_kex')
+    assert ExecutionPolicy.from_mapping(data['execution']).energy_monitoring == 'off'
+    assert value_for(data, ('Execution', 'Energy monitoring', ['execution', 'energy_monitoring'], 'single', [])) == 'off'
+    assert collection.instrument_campaign(resolver, data) is False
+    assert data['execution']['energy_monitoring'] == 'off' and not data['instruments']
+    data['execution']['energy_monitoring'] = 'auto'
+    assert collection.instrument_campaign(resolver, data) is True
+    assert ExecutionPolicy.from_mapping(data['execution']).as_dict()['energy_monitoring'] == 'auto'
+    for name in ('thesis_energy', 'thesis_energy_plaintext', 'ready_metrics_2_energy', 'tls_matrix_energy', 'secure_boot_energy'):
+        _, explicit = resolver.load_campaign(name)
+        assert collection.instrument_campaign(resolver, explicit) is True

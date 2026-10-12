@@ -17,6 +17,7 @@ fixed:
   boot_uart_diagnostics: false
   network_condition: baseline
 execution:
+  energy_monitoring: auto
   repetitions: 10
   reset_between_runs: hardware_reset
   build: once_per_firmware_identity

@@ -65,6 +65,11 @@ def prepare(job, profile=None, repetitions=None, from_job=None):
     template = data.get('queue_profile', {}).get('template')
     if from_job and 'queue_profile' not in data:
         template = plan['steps'][0].get('template', 'Legacy')
+    # Legacy frozen jobs predate the opt-in default. Preserve their recorded
+    # acquisition choice when explicitly requeued; never reinterpret old evidence.
+    if from_job and 'energy_monitoring' not in data['execution']:
+        was_enabled = plan['steps'][0].get('energy_requested', bool(data.get('instruments', {}).get('energy')))
+        data['execution']['energy_monitoring'] = 'auto' if was_enabled else 'off'
     data['execution']['repetitions'] = count
     energy = collection.instrument_campaign(resolver, data)
     frozen = folder / 'profiles/campaign.yaml'

@@ -112,7 +112,7 @@ class ExecutionPolicy:
     reporting_broker: str
     condition: str
     evidence: str
-    energy_monitoring: str = "auto"
+    energy_monitoring: str = "off"
     workload_failures: str = "pause"
 
     @classmethod
@@ -134,7 +134,7 @@ class ExecutionPolicy:
             reporting_broker=str(value.get("reporting_broker", "")),
             condition=str(value.get("condition", "")),
             evidence=str(value.get("evidence", "")),
-            energy_monitoring=str(value.get("energy_monitoring", "auto")),
+            energy_monitoring=str(value.get("energy_monitoring", "off")),
             workload_failures=str(value.get("workload_failures", "pause")),
         )
         expected = {
@@ -167,7 +167,7 @@ class ExecutionPolicy:
             "reporting_broker": self.reporting_broker,
             "condition": self.condition,
             "evidence": self.evidence,
-            **({"energy_monitoring": self.energy_monitoring} if self.energy_monitoring != "auto" else {}),
+            **({"energy_monitoring": self.energy_monitoring} if self.energy_monitoring != "off" else {}),
             **({"workload_failures": self.workload_failures} if self.workload_failures != "pause" else {}),
         }
 

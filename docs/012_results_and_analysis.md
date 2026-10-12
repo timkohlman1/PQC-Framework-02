@@ -112,6 +112,86 @@ cannot supply an attributed domain measurement or controlled completion
 denominator. Compact recipes refuse those attempts where their controls are
 unestablished. Do not filter them away to suggest a complete campaign.
 
+### Chapter 5 table views
+
+An optional `presentation.chapter_tables` object routes the 20 Chapter 5 sections
+to the same domain frames used by the notebook and CLI. This is a publication
+view, not another parser, statistics engine or notebook. Each section must be
+present explicitly; an empty list preserves an evidence gap. Each route contains
+`selection` and optionally `conditions`, a list of exact comparison labels, and a short display `label`. Network routes may additionally set `panel` to `rate`, `rtt`, `loss` or `mtu`; these generate separate axis fragments.
+Compact recipes do not supply domain frames: use a domain recipe or `comparison`
+for chapter views. A selection can serve several sections without duplicating its
+input observations.
+
+For example, after drafting the domain selections `kex` and `boot`:
+
+```python
+from framework.chapter_tables import SECTIONS
+routes = {section: [] for section in SECTIONS}
+routes['dataset-summary'] = [{'selection': 'kex'}, {'selection': 'boot'}]
+routes['kex-timing'] = [{'selection': 'kex'}]
+routes['classical-tls-baseline'] = [
+    {'selection': 'kex', 'conditions': ['tls_kex=secp256r1']}
+]
+routes['secureboot-auth'] = [{'selection': 'boot'}]
+spec['presentation'].update(figures=[], chapter_tables=routes)
+analysis.save_selection(spec, ROOT / 'results/analysis/selections/chapter5.json')
+```
+
+Use the actual condition label in the saved comparison; the example is not an
+automatic baseline selector. Publication uses the existing command:
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py publish   --spec results/analysis/selections/chapter5.json --name chapter5
+```
+
+The fresh report includes `results-<section>.tex`, matching full-precision CSVs,
+and `chapter-tables.json`. LaTeX fragments require `booktabs`, `longtable` and
+`array` (plus `pdflscape` for wide views), retain the `tab:results-<section>` labels, and can span pages. Copy the
+selected revision's fragments into the thesis and use `\input{...}`. Retain its
+selection and report identity alongside the copied tables. Verification and
+strict rebuild cover these files with the other scientific outputs. No report
+or source capture is overwritten.
+
+Dataset views distinguish planned/current attempt inventory, historical attempts
+and attempts without captures from retained-run outcomes. Other views preserve
+conditions, evidence strata and units. Numeric cells omit repeated sample counts;
+postscript notes state eligible runs per condition and separate unique-build/image
+counts. Unequal counts are identified in the notes and preserved exactly in CSV.
+Reliability tables retain attempt, failure and completion columns. The compact
+LaTeX view uses smaller type, balanced numeric columns, milliseconds and KiB;
+full-precision CSV units are unchanged. Mutually exclusive primitive implementations
+may share a labelled role column, but classical and ML-KEM operations remain
+separate and overlapping intervals are never summed. Wholly unavailable columns
+move to explicit notes, retaining their CSV records and measurement requirements.
+Single-condition baselines use measurement/value columns; the ML-KEM reference
+places variants in columns and reports thousands of DWT cycles. TLS views combine
+phase timings and regional resources in landscape. Network views include
+boot-relative delivery, connection-relative delivery, inclusive TLS phases,
+tail/spread statistics and attempt outcomes. Printed rounding does not change CSVs.
+Energy tables include duration and mean energy plus sample SD of per-run medians.
+SD describes repeatability, not calibration or missing-sample uncertainty; invalid
+intervals remain excluded, with reasons. `energy_run_spread` preserves the exact
+sample unit, policy strata and contributing counts.
+
+Optional `presentation.timelines` entries require explicit `id`, `selection`,
+`run_key`, `kind` (`tls` or `application`), `epoch_index`, `iteration_id` and
+`caption`. They produce CSV, PDF, SVG, PNG and LaTeX. TLS examples preserve nested
+invocations on the same TIM2 clock; broker activity is schematic. Application
+examples require all seven markers and a validated boot bridge. The origin is
+operational wolfBoot entry, not uninstrumented startup or wake from retained sleep.
+Payload receipt at the STM32 is not evidence of uplink reception by a mobile
+collector. Never construct a measured timeline by adding condition medians.
+
+Unsupported draft measures
+remain decision notes: whole-device RAM and itemised instrumentation overhead, handshake-only bytes,
+cross-clock recovery delay, usable OTA capacity and regular-boot energy. Primitive
+cycles and nested inclusive timelines meet the agreed D2/D3 scope; OTA energy and
+expanded lifecycle timing are outside the current scope. These
+notes preserve research requirements; generating all fragments does not establish
+complete measurement coverage or completed research questions. Empty or failed
+comparisons are never filled with estimates.
+
 ### Preview and shape the output
 
 The notebook shows the selected attempt audit, frozen comparison, table index,
@@ -201,6 +281,12 @@ acquisition/inspection roles. The obsolete manifest-metric aggregation command
 has been removed; current boot/primitive evidence uses the shared recipes.
 
 ## Capture and provenance
+
+Run folders use `YYYY-MM-DD_<sequence>_<experiment-id>`, with a sequence shared
+across experiments in the selected results root for each Melbourne calendar date.
+The sequence has at least three digits: `999` is followed by `1000`, `1001`, and
+so on. Wider existing sequences are included when allocating the next ID; existing
+result directories are never overwritten to recover a missing acquisition.
 
 Current firmware experiment captures use `pqc-run-evidence` schema v3. `manifest.json` owns execution
 and capture provenance. `resolved-case.json` retains selected profiles,
@@ -695,3 +781,69 @@ The image contains pinned Pandoc/TeX tools. After an image update, save work, st
 the notebook server, rebuild with `./scripts/dev.sh build-image` and relaunch it.
 Restarting only a kernel keeps the old container. PDF export does not rerun hardware
 or establish any new measurement evidence.
+
+## Research-style TLS presentation
+
+`presentation.research_tables` adds opt-in `summary`, `ranking` and `network`
+LaTeX fragments to the existing pinned publisher. Each entry names an exact
+selection and condition plus a display label; unmeasured cells require an explicit
+reason. Network routes must enumerate every algorithm/scenario cell. Rankings
+select `total_ms` or `traffic_bytes`; unavailable values receive no rank.
+
+Fragments require booktabs, longtable, xcolor, graphicx, TikZ and (network tables) pdflscape.
+Entries can name a supported `algorithm` ID; the publisher checks it against the
+selected comparison axis. This supplies the security-level groups, separators,
+classical boldface and ranking colours. Unknown/unlabelled primitives receive no
+inferred security claim. Levels 1/3/5 group PQ categories and classical
+128/192/256-bit strength; hybrids use their PQ component category with an explicit
+component-strength note, not an overall TLS security assertion (FIPS 203/204 and
+NIST SP 800-57 Part 1 Rev. 5).
+
+Summary bars share a left origin, with the latency alongside on the same line;
+blue denotes ClientHello to client Finished. The column is labelled
+`Latency median (ms)`: each complete interval is calculated per capture before
+taking its median, rather than adding separately aggregated phase medians.
+Both the latency and algorithm-family colour schemes have visible legends.
+Ranking diagrams put key agreements above and signatures below a shared drawn
+axis, each normalised independently into five bins (log latency, linear traffic).
+Within each bin values increase away from the axis; exact values remain in CSVs.
+Combine KEx and signature entries in one ranking item for the two-sided layout.
+Summary tables show packet-clock latency only. Firmware TLS elapsed time and
+the separate ClientHello--ServerHello and ServerHello--client Finished intervals
+remain in the companion CSVs for attribution; firmware timing continues to supply
+the latency rankings and network tables. The decoder requires one
+connection with one decoded handshake and the explicit selected endpoints,
+verified PCAP and TLS key-log artifacts, and tshark. Ambiguous handshakes or MQTT
+inside the window remain unavailable; source hash failures abort publication.
+Traffic is transmitted TCP payload from the first client payload packet through
+the decoded client Finished packet, including retransmissions, excluding later
+MQTT and network headers. It is not unique TLS-message bytes or whole-flow traffic.
+The report retains per-run packet boundaries, input hashes, decoder version and
+exclusion reasons in `research-handshake-observations.csv` and
+`research-method.json`; it never exports key-log contents.
+
+Network bars scale independently within each scenario column, with numeric
+millisecond values and explicit missing cells. Each network table also generates
+`<table-id>-coverage.tex`, showing completed/current attempts and eligible timing
+runs for each cell. The same CSV retains accepted captures, failures, unknown
+outcomes, missing captures and handshake quartiles/p95. Missing captures remain
+in the denominator and never provide timings. Keep original and continuation
+batches in separate selections; a cell may explicitly select a continuation
+without pooling the earlier batch. Copy these generated fragments directly;
+network spacing is handled by the renderer, not a thesis-side text replacement.
+Successful latency alone does not establish reliability.
+
+The `research_netem_kex` and `research_netem_auth` templates adapt the TUM TLS
+scenarios to supported current algorithms. Delay is per direction: 100/22/500 ms
+becomes added RTT 200/44/1000 ms. Loss applies in both directions. Rate is
+1000 or 880000 kbit/s where requested; otherwise the existing backend uses an
+explicit 1000000 kbit/s ceiling, not mathematically unlimited bandwidth. MTU is
+1500. These are parameterised scenarios, not claims to reproduce a radio access
+technology. Authentication uses fixed P-256; key establishment uses ECDSA P-256
+server authentication. The authentication template retains its classical reference; the local queued
+authentication profile omits that duplicate because the key-agreement job supplies
+the same P-256/ECDSA cells. Profiles
+request 40 attempts per condition, energy off, and retained valid workload failures.
+A 1024-byte transfer in four 256-byte chunks keeps this handshake-focused grid bounded under
+1-second RTT; baseline is rerun with that same workload. Historical larger-payload
+baselines can be displayed separately but are not matched treatment controls.

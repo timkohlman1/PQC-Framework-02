@@ -290,3 +290,17 @@ def test_remote_retained_state_and_cleanup_scripts_have_valid_shell_syntax(tmp_p
     for script in scripts:
         parsed = subprocess.run(["sh", "-n"], input=script, text=True, capture_output=True)
         assert parsed.returncode == 0, parsed.stderr
+
+
+def test_ipv4_small_mtu_stress_config_is_bounded_and_isolated():
+    import pytest
+    module = _load_module("scripts/framework/network_degradation.py", "small_mtu_validation")
+    for mtu in (400, 576, 768):
+        config = module.network_degradation_config({"experiment": {"network": {"degradation": dict(
+            enabled=True, interface="enp0s31f6", rate_kbit=100000, rtt_ms=0,
+            loss_percent=0, mtu=mtu, management_safe=True)}}})
+        assert config.mtu == mtu
+    with pytest.raises(ValueError, match="400"):
+        module.network_degradation_config({"experiment": {"network": {"degradation": dict(
+            enabled=True, interface="enp0s31f6", rate_kbit=100000, rtt_ms=0,
+            loss_percent=0, mtu=399, management_safe=True)}}})
