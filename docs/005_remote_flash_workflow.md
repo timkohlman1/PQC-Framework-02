@@ -63,6 +63,15 @@ lifecycles: the owning build can restore materializations from a validated tuple
 Partial/mismatched persistent tuples fail; do not delete members or run `keysclean`
 as routine repair. See [signing-state policy](006_security_and_secrets.md#wolfboot-signing-state).
 
+Multi-key ML-DSA generation explicitly passes the selected level to wolfBoot's
+keygen tool and validates the raw key sizes before publishing a tuple. The
+ML-DSA-65/87 profiles use level-qualified `signing.standby_tuple_id` values for
+standby-key configurations, preserving legacy tuples and the normal single-key
+identity. Existing wrong-level tuples are rejected without replacing their keys;
+new identities are created only by the owning build workflow. This fixes the
+standalone keygen default (level 2) without altering retained captures.
+
+
 ## Flash and UART diagnostics
 
 `flash` consumes a recorded application build; `build-flash` builds first. Both

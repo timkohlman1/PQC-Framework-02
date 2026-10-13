@@ -1,0 +1,46 @@
+schema_version: 1
+profile_type: campaign
+id: Research_Netem_Auth
+target: stm32l4r5_st67
+gateway: pqc_gateway1
+services:
+  experiment_broker: experiment_gateway1
+  reporting_broker: reporting_gateway1
+workload: ready_metrics_2
+instruments: {}
+fixed:
+  secure_boot: integrity_sha256
+  firmware_mode: single_bank
+  standby_signing_keys: 0
+  boot_stack_profiling: false
+  boot_uart_diagnostics: false
+  tls_kex: secp256r1
+  auth_mode: server
+execution:
+  repetitions: 40
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  experiment_broker: reuse_if_compatible
+  reporting_broker: always_available
+  condition: retain_within_condition
+  evidence: per_run
+  energy_monitoring: 'off'
+  workload_failures: record
+matrix:
+  workload.transfer.payload_bytes:
+  - 1024
+  workload.transfer.chunk_bytes:
+  - 256
+  tls_auth:
+  - ecdsa-p256
+  - rsa3072
+  - ecdsa-p384
+  - mldsa65
+  network_condition:
+  - baseline
+  - research_combined_loss_delay_rate
+  - research_moderate_loss_delay_rate
+  - research_loss_10
+  - research_rate_1mbit
+  - research_rtt_1000

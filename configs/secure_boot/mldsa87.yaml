@@ -12,3 +12,5 @@ signature_size_bytes: 4627
 signing:
   requires_private_key: true
   tuple_id: mldsa87-development
+  # Preserve legacy standby tuples generated with the keygen default level.
+  standby_tuple_id: mldsa87-development-level5

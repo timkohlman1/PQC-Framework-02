@@ -33,7 +33,7 @@ from framework.run_evidence import (
     write_run_provenance_snapshot,
 )
 
-RUN_ID_PATTERN = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<sequence>\d{3})_(?P<experiment>[A-Za-z0-9_.-]+)$")
+RUN_ID_PATTERN = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<sequence>\d{3,})_(?P<experiment>[A-Za-z0-9_.-]+)$")
 DEFAULT_RESULT_STATUS = "pending"
 DEFAULT_TRANSPORT_MODE = "direct_uart"
 DEFAULT_NETWORK_PROFILE = "none"
@@ -872,7 +872,8 @@ def next_run_id(
         YYYY-MM-DD_NNN_experiment_id
 
     The numeric sequence is allocated per date across all existing result
-    directories under ``results_root``.
+    directories under ``results_root``. It is padded to at least three digits,
+    growing beyond 999 without resetting or reusing an existing directory.
     """
 
     current_timestamp = _coerce_timestamp(timestamp)

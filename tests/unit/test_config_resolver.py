@@ -263,3 +263,19 @@ def test_plaintext_omitted_tls_choices_match_legacy_compatibility_defaults():
         selections=case['selections'], choices=case['choices'],
         workload_overrides=case['overrides'].get('workload', {}), execution=case['execution'])
     assert explicit['provenance']['configuration_identity'] == case['provenance']['configuration_identity']
+
+
+@pytest.mark.parametrize('profile', ['research_netem_kex', 'research_netem_auth'])
+def test_research_campaigns_pass_the_runtime_mqtt_contract(profile, monkeypatch):
+    monkeypatch.setenv("PQC_WIFI_SSID", "test-ssid")
+    monkeypatch.setenv("PQC_WIFI_PSK", "test-psk")
+    from experiment import validate_experiment_config
+    resolver = ConfigResolver(ROOT)
+    cases = resolver.expand_campaign(profile)
+    assert cases
+    for case in cases:
+        bundle = resolver.to_legacy_bundle(case)
+        validate_experiment_config(bundle['experiment'])
+        transfer = bundle['experiment']['mqtt']['transfer']
+        assert transfer['payload_bytes'] == 1024
+        assert transfer['chunk_bytes'] == 256

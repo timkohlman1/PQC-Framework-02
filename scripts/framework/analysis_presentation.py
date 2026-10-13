@@ -7,8 +7,17 @@ from pathlib import Path
 
 
 def validate(options):
-    if not isinstance(options, dict) or set(options) - {'figures', 'labels', 'order', 'width_inches', 'tables', 'captions', 'measurements'}:
+    if not isinstance(options, dict) or set(options) - {'figures', 'labels', 'order', 'width_inches', 'tables', 'captions', 'measurements', 'chapter_tables', 'timelines', 'research_tables'}:
         raise ValueError('unknown presentation options')
+    if 'research_tables' in options:
+        from framework.research_tables import validate as validate_research
+        validate_research(options['research_tables'])
+    if 'timelines' in options:
+        from framework.analysis_timelines import validate as validate_timelines
+        validate_timelines(options['timelines'])
+    if 'chapter_tables' in options:
+        from framework.chapter_tables import validate as validate_chapters
+        validate_chapters(options['chapter_tables'])
     for key in ('figures', 'order', 'tables', 'measurements'):
         values = options.get(key, [])
         if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values) or len(values) != len(set(values)):

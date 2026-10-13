@@ -535,7 +535,11 @@ def prepare(spec_path):
         raise ValueError('generated table identifiers collide')
     from framework.analysis_presentation import prepare as prepare_presentation
     prepare_presentation(tables, metrics, spec)
-    return dict(specification=spec, exports=exports, selected=selected, tables=tables, metrics=metrics, analyses=analyses)
+    prepared = dict(specification=spec, exports=exports, selected=selected, tables=tables, metrics=metrics, analyses=analyses)
+    if 'chapter_tables' in spec.get('presentation', {}):
+        from framework.chapter_tables import collect
+        collect(prepared)  # Fail invalid routes during preview too.
+    return prepared
 
 
 def build(spec_path, output, *, expected_scientific=None):
@@ -665,6 +669,12 @@ def build(spec_path, output, *, expected_scientific=None):
                 data_files.append(filename)
         methods = {name: {k:v for k,v in analysis.items() if k!='frames'} for name, analysis in prepared['analyses'].items()}
         (staging/'methods.json').write_text(canonical(methods))
+        chapter_tables = []
+        if 'chapter_tables' in spec.get('presentation', {}):
+            from framework.chapter_tables import publish as publish_chapters
+            chapter_tables = publish_chapters(staging, prepared)
+        from framework.research_tables import publish as publish_research
+        chapter_tables += publish_research(staging, prepared)
         tex_files=[]
         for table in tables:
             name=table['id']
@@ -680,10 +690,12 @@ def build(spec_path, output, *, expected_scientific=None):
         (staging/'preview.tex').write_text(preamble+'\n\\clearpage\n'.join(tex_files)+'\n\\end{document}\n')
         from framework.analysis_presentation import render, html_figures
         figures=render(staging,tables,metrics,spec.get('presentation', {}))
+        from framework.analysis_timelines import publish as publish_timelines
+        figures += publish_timelines(staging, prepared)
         metadata=dict(schema='pqc-thesis-tables',version=VERSION,specification=spec,exports=exports,
             selections=inventory,method=report_method,tables=tables,provenance=provenance_by_id,figures=figures,
             presentation_sha256=digest(ROOT/'scripts/framework/analysis_presentation.py'),
-            analyses=methods, data_files=data_files,
+            analyses=methods, data_files=data_files, chapter_tables=chapter_tables,
             analysis_sources={p.name:digest(p) for p in sorted((ROOT/'scripts/framework').glob('*.py'))},
             environment=analysis_environment(),
             generator_sha256=digest(__file__),loader_sha256=digest(ROOT/'scripts/framework/archive_table.py'))
@@ -701,6 +713,9 @@ def build(spec_path, output, *, expected_scientific=None):
                 *['<tr>'+''.join('<td>'+html.escape(c)+'</td>' for c in row)+'</tr>' for row in table['rows']],
                 '</table></div><p>'+html.escape(table['notes'])+'</p><details><summary>Draft provenance</summary>'+''.join('<p>'+html.escape(x)+'</p>' for x in provenance_by_id[table['id']])+'</details>']
             body.append(html_figures([f for f in figures if f['table']==table['id']]))
+        if chapter_tables:
+            body.append('<h2>Chapter 5 tables</h2><ul>' + ''.join('<li><a href="' + t['tex'] + '">' + t['section'] + '</a> · <a href="' + t['csv'] + '">CSV</a></li>' for t in chapter_tables) + '</ul><p>Chapter fragments require longtable and array in addition to booktabs. Empty routes and unsupported measurements stay explicit.</p>')
+        body.append(html_figures([f for f in figures if f['table'] == 'timelines']))
         if data_files:
             body.append('<details><summary>Detailed domain data (CSV; &#92;N means unavailable; nested provenance uses JSON)</summary><ul>' + ''.join('<li><a href="'+name+'">'+name+'</a></li>' for name in data_files) + '</ul></details>')
         body.append('<p><a href="metrics.csv">Full-precision statistics and per-metric counts</a> · <a href="observations.csv">Attempt audit</a> · <a href="report.json">Full provenance</a> · <a href="preview.tex">Standalone LaTeX preview</a></p></html>')

@@ -23,7 +23,7 @@ from framework.timing_dataset import verify_source_inputs
 from framework.timing_metrics import decode_epochs
 from framework.timing_summary import digest, summarise
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 SCOPES = ('recorded_interval', 'whole_workload', 'tls_handshake', 'application_transfer')
 
 
@@ -263,6 +263,38 @@ def analyse_run(path, run, timings, boundary):
     return rows, traces
 
 
+def run_spread(observations):
+    """Descriptive energy spread with equal weight per run, never an error bound.
+
+    Repeated intervals are reduced to one median per run. Acquisition/calibration
+    uncertainty is not estimated by this statistic. The usual exclusion policy
+    has already been applied to these observations by the shared summary engine.
+    """
+    from collections import defaultdict
+    from statistics import mean, median, stdev
+    groups = defaultdict(list)
+    for row in observations:
+        if row['unit'] == 'J':
+            groups[tuple(row[k] for k in ('condition', 'capture_class', 'evidence_class', 'metric'))].append(row)
+    result = []
+    for key, rows in groups.items():
+        runs = defaultdict(list)
+        for row in rows:
+            if not row['exclusion_reason'] and row['value'] is not None:
+                runs[row['run_key']].append(row['value'])
+        values = [median(v) for v in runs.values()]
+        result.append(dict(zip(('condition', 'capture_class', 'evidence_class', 'metric'), key),
+            unit='J', mean=mean(values) if values else None,
+            standard_deviation=stdev(values) if len(values) > 1 else None,
+            spread_reason=None if len(values) > 1 else 'fewer_than_two_contributing_runs',
+            n_runs=len(values), n_observations=sum(map(len, runs.values())),
+            excluded_observations=sum(bool(r['exclusion_reason']) for r in rows),
+            sample_unit='run_median', uncertainty='descriptive_sample_standard_deviation_not_measurement_uncertainty'))
+    return pd.DataFrame(result, columns=['condition','capture_class','evidence_class','metric','unit',
+        'mean','standard_deviation','spread_reason','n_runs','n_observations','excluded_observations',
+        'sample_unit','uncertainty'], dtype=object)
+
+
 def summarise_energy(dataset, spec, selection):
     verify_source_inputs(dataset.metadata)
     if set(selection)-{'boundaries','trace_run'}:
@@ -308,7 +340,7 @@ def summarise_energy(dataset, spec, selection):
         policy = json.dumps({'boundary':row['electrical_boundary'],'calibration':row['calibration'],'instrument_firmware_sha256':row['firmware_sha256']},sort_keys=True)
         policy_id = hashlib.sha256(policy.encode()).hexdigest()[:16]
         row['comparison_policy_id'] = policy_id
-        for measure,unit in (('energy_j','J'),('average_power_w','W')):
+        for measure,unit in (('energy_j','J'),('average_power_w','W'),('duration_s','s')):
             metric = row['scope']+'.'+measure+'.'+policy_id
             metrics[metric] = {'unit':unit}
             observations.append(dict(run_key=row['run_key'],run_id=row['run_id'],metric=metric,
@@ -323,6 +355,7 @@ def summarise_energy(dataset, spec, selection):
     result = {'energy_intervals':pd.DataFrame(rows,dtype=object) if rows else pd.DataFrame(columns=['run_key','capture_id','scope','energy_j','reason']),
               'energy_availability':pd.DataFrame(availability,dtype=object),
               'energy_trace':pd.DataFrame(trace_rows,dtype=object) if trace_rows else pd.DataFrame(columns=['run_key','capture_id','timestamp_us','power_w','cumulative_j','segment'])}
+    result['energy_run_spread'] = run_spread(energy_frames['observations'].to_dict('records'))
     result.update({'energy_'+k:v for k,v in energy_frames.items() if k in ('distributions','differences','completeness','observations')})
     verify_source_inputs(dataset.metadata)
     if any(digest(i['path'])!=i['sha256'] for i in inputs):

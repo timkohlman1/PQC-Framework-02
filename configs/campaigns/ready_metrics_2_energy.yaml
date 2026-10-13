@@ -15,6 +15,7 @@ fixed:
   secure_boot: integrity_sha256
   network_condition: baseline
 execution:
+  energy_monitoring: auto
   repetitions: 1
   reset_between_runs: hardware_reset
   build: once_per_firmware_identity

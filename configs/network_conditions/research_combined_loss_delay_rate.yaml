@@ -1,0 +1,13 @@
+schema_version: 1
+profile_type: network_condition
+id: research_combined_loss_delay_rate
+description: 'Research TLS scenario: delay is applied in each direction; RTT is twice
+  one-way delay. Rate-only neutral ceiling is 1 Gbit/s.'
+impairment:
+  enabled: true
+  interface: enp0s31f6
+  management_safe: true
+  rate_kbit: 1000
+  rtt_ms: 200
+  loss_percent: 10
+  mtu: 1500
