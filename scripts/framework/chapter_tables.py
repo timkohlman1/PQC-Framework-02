@@ -236,7 +236,7 @@ LABELS = {
     'mlkem_keygen': 'ML-KEM keygen', 'mlkem_decapsulate': 'ML-KEM decaps.',
     'mlkem_encapsulate': 'ML-KEM encaps.', 'mldsa_keygen': 'ML-DSA keygen',
     'mldsa_sign': 'ML-DSA sign', 'mldsa_verify': 'ML-DSA verify', 'sha256_hash:32_bytes': 'SHA-256 (32 B)',
-    'flash_section_bytes': 'App. Flash', 'ram_static_base_bytes': 'Static RAM',
+    'flash_section_bytes': 'App. Flash', 'ram_static_base_bytes': 'Primary static RAM',
     'freertos_heap_peak_used_bytes': 'Heap peak', 'simultaneous_system_peak_bytes': 'Whole-device peak RAM',
     'integrity': 'Integrity', 'authenticity': 'Authenticate', 'image_verification': 'Image verify',
     'application_start': 'App. start', 'bootloader_flash_bytes': 'Boot Flash',
@@ -545,12 +545,13 @@ def render(section, data, *, table_id=None, caption=None):
     if section == 'energy-tls-mqtt': notes.append('Energy is the mean +/- sample SD of one median per eligible run; SD describes repeatability, not instrument or missing-sample uncertainty. Duration and power are medians. Invalid intervals remain excluded with reasons.')
     if any(r.get('unit') == 'cycles' for r in data['rows']): notes.append('Cycle values are shown in thousands (1 = 1,000 cycles); exact integer counts remain in the CSV.')
     if any(r.get('unit') == 'bytes' for r in data['rows']): notes.append('KiB = 1,024 bytes.')
-    if any(r.get('table') == 'resource_distributions' for r in data['rows']): notes.append('Static memory and regional peaks overlap and must not be added.')
     if any(r.get('table') == 'tls_operation_distributions' for r in data['rows']): notes.append('Primitive columns align observed implementations by role; inclusive intervals are not summed.')
     if omitted: notes.append('Unavailable columns or selection blocks retained in the CSV: ' + '; '.join(omitted) + '.')
     for note in notes: lines.append(r'\noindent ' + esc(note) + r'\par')
     for key, marker in evidence_notes.items(): lines.append(r'\noindent ' + marker + ': ' + esc(', '.join(v for v in key if v)) + r'.\par')
-    for gap in data['gaps']: lines.append(r'\noindent ' + esc(gap) + r'\par')
+    for gap in data['gaps']:
+        if not gap.startswith('D1:'):
+            lines.append(r'\noindent ' + esc(gap) + r'\par')
     lines.append(r'\endgroup')
     if wide: lines.append(r'\end{landscape}')
     return '\n'.join(lines) + '\n'

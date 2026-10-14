@@ -172,3 +172,13 @@ are offline products, not new measurements. The shared analysis notebook lists
 these exports without generating another notebook per export. Flat archives, typed loading, analysis
 controls and frozen report verification are owned by the
 [result reference](012_results_and_analysis.md).
+
+### ML-DSA memory-option pilot
+
+The optional case choice mldsa_memory_mode accepts default, verify_small,
+sign_small and both_small. Nondefault options require ML-DSA TLS authentication;
+signing options require mutual mode. The choice participates in firmware identity
+and retained TLS controls. Omission keeps the previous configuration identity.
+The two focused templates and decision criteria are described in
+[memory-option experiment](mldsa_memory_experiment.md). Their fixed heap/scratch
+reservations make utilisation changes comparable before any capacity reduction.

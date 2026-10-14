@@ -133,6 +133,13 @@ void PQC_WolfSSL_TrackedFree(
 
 #if PQC_TLS_ENABLE_MLDSA_65
 #define WOLFSSL_HAVE_MLDSA
+/* Explicit experiment choices; the maintained default remains unchanged. */
+#if defined(PQC_MLDSA_VERIFY_SMALL_MEM) && PQC_MLDSA_VERIFY_SMALL_MEM
+#define WOLFSSL_MLDSA_VERIFY_SMALL_MEM
+#endif
+#if defined(PQC_MLDSA_SIGN_SMALL_MEM) && PQC_MLDSA_SIGN_SMALL_MEM
+#define WOLFSSL_MLDSA_SIGN_SMALL_MEM
+#endif
 #if !PQC_TLS_ENABLE_MLDSA_65_SIGN
 #define WOLFSSL_MLDSA_VERIFY_ONLY
 #endif

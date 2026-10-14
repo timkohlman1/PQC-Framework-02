@@ -238,6 +238,14 @@ class ConfigResolver:
                 raise ResolutionError("plaintext MQTT transport cannot request mutual TLS authentication")
             if tls_kex.profile_id != "secp256r1" or tls_auth.profile_id != "rsa3072":
                 raise ResolutionError("plaintext MQTT uses inert secp256r1/rsa3072 compatibility selections")
+        memory_mode = choices.get("mldsa_memory_mode", "default")
+        if memory_mode not in {"default", "verify_small", "sign_small", "both_small"}:
+            raise ResolutionError("unsupported mldsa_memory_mode")
+        if memory_mode != "default":
+            if tls_auth.profile_id != "mldsa65" or mqtt_transport != "tls":
+                raise ResolutionError("ML-DSA memory options require ML-DSA TLS authentication")
+            if memory_mode in {"sign_small", "both_small"} and auth_mode != "mutual":
+                raise ResolutionError("small-memory signing requires mutual authentication")
         stack_profiling = choices.get("boot_stack_profiling", False)
         if not isinstance(stack_profiling, bool):
             raise ResolutionError("boot_stack_profiling must be a boolean")
@@ -332,6 +340,8 @@ class ConfigResolver:
             "boot_stack_profiling": stack_profiling,
             "boot_uart_diagnostics": boot_uart_diagnostics,
         }
+        if "mldsa_memory_mode" in choices:
+            public_choices["mldsa_memory_mode"] = memory_mode
         if mqtt_transport == "plaintext":
             public_choices["mqtt_transport"] = "plaintext"
         if transfer:
@@ -364,6 +374,8 @@ class ConfigResolver:
             "boot_stack_profiling": stack_profiling,
             "boot_uart_diagnostics": boot_uart_diagnostics,
         }
+        if "mldsa_memory_mode" in choices:
+            firmware_choices["mldsa_memory_mode"] = memory_mode
         if mqtt_transport == "plaintext":
             firmware_choices["mqtt_transport"] = "plaintext"
         if "energy" in instruments:
@@ -477,6 +489,8 @@ class ConfigResolver:
                     "key_exchange_group": kex["id"]},
             "result_schema": {"unavailable_metrics": {"latency_ms": "No synchronized end-to-end latency metric is recorded."}},
         }
+        if "mldsa_memory_mode" in c:
+            mqtt["tls"]["mldsa_memory_mode"] = c["mldsa_memory_mode"]
         if c.get("mqtt_transport", "tls") == "plaintext":
             mqtt.update({
                 "evidence_class": "stm32_st67_plaintext_e2e",

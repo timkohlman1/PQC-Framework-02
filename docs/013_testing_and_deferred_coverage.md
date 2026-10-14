@@ -153,3 +153,45 @@ Retained for traceability; these rows do not request reimplementation.
 | DTR-001 | M6.1 wolfSSL TLS-context lifecycle marker | Retired local-context UART assertion | The old local wolfSSL context callback/marker was removed. Current TLS workload acceptance is separately tracked. | Current TLS workload capture for any new runtime claim | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | retired: obsolete marker contract; TLS profile acceptance remains under DTR-007/DTR-009/DTR-010 |
 | DTR-004 | M6.3 wolfSSL legacy transport-boundary self-test marker | Retired startup transport-marker assertion | Current startup does not invoke the legacy unavailable-transport self-test; its marker cannot describe live TLS. | Current TLS workload capture for any new runtime claim | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | retired: obsolete startup-marker contract; runtime transport acceptance remains separately tracked |
 | DTR-006 | M10 ST67W61M1 association and DHCP | Hardware coverage | The baseline hardware test now requires association/DHCP pass markers and a nonzero IPv4 address. | Installed ST67W61M1 hardware, configured access point, gateway/UART access, and experiment-supplied credentials | `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | retired: coverage implemented; external TCP/TLS/MQTT remains separately deferred |
+
+### Passive AP diagnostics (14 October 2026)
+
+DTR-AP-RF: unit and process-boundary checks cover safe read-only command selection,
+missing counters, channel changes and counter reset handling. Physical UniFi
+AC-Mesh SSH and legacy driver capability checks passed on 14 October 2026.
+The target station was identified on the selected 2.4 GHz interface. The driver
+reports disabled channel-utilisation/PER fields and native RSSI, so complete
+metric semantics and RF-validity qualification remain open. The `unifi` backend
+retains the supported radio/station evidence without changing radio settings. Run `python3 scripts/wireless_environment.py --ssh-host pqc-ap --samples 12
+--interval 5 --context capability-check --output results/wireless/capability-check`
+from the framework root. Required follow-up: verify radio identity, station MAC,
+counter semantics and temporal overlap with retained experiment runs before any
+RF-validity claim. A successful SSH command is not successful metric acquisition.
+DTR-MLDSA-MEMORY: all six default/small-memory server/mutual configurations passed
+gateway-mediated hardware qualification on 14 October 2026 after adapting scratch
+routing for the experimental modes. Fixed-count pilot analysis and reduced-pool
+validation remain pending. See [the experiment plan](mldsa_memory_experiment.md).
+
+Configured application RAM is now derived offline; reduced-memory runtime,
+startup/boot coverage and production overhead removal remain unvalidated.
+
+
+### Interactive migration CLI
+
+DTR-MIGRATION-AB: unit tests cover profile choices, signed/scaled deltas, missing
+values, control matching, session recovery and isolated queue export. The process
+integration test drives the actual interactive CLI, SQLite queue, helper and
+worker processes with synthetic captures, then verifies export, report and resume.
+`tests/hardware/test_migration_hw.py` prepares fresh plaintext and PQC mutual-TLS
+profiles, runs one attempt each through the gateway and verifies the retained
+comparison. Run `./scripts/dev.sh pytest tests/unit/test_migration.py
+ tests/integration/test_migration_in.py` and `./scripts/dev.sh pytest-hardware
+ tests/hardware/test_migration_hw.py --pqc-require-hardware`. The bounded hardware
+gate passed on 2026-10-14: one fresh plaintext capture and one ML-KEM-768 /
+ML-DSA-65 mutual-authentication capture, with verified RAM, Flash and application
+timing deltas. Evidence is retained in
+`results/migrations/migration_20261014_045939_58b5caa4/`. Process tests also cover
+resume without duplicate jobs, retained failures and output tampering; the LaTeX
+integration test compiles both generated table inputs. This qualifies the A/B
+workflow, not every selectable algorithm/impairment combination or its statistical
+precision. Existing component gates and missing-value policies still apply.

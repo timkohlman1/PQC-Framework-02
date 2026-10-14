@@ -288,6 +288,8 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         "services": {key: _map(selected.get("services")).get(key) for key in ("experiment_broker", "reporting_broker")},
     }
     # Current framework source records use git_commit, not the legacy commit key.
+    if "mldsa_memory_mode" in tls:
+        row["controls"]["tls"]["mldsa_memory_mode"] = tls["mldsa_memory_mode"]
     # Equal HEADs do not establish equal dirty trees. Keep recorded source-state
     # controls, and never manufacture them from today's working tree.
     source = _map(records.get("source"))

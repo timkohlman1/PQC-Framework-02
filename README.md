@@ -59,6 +59,16 @@ Linux host:
 python3 scripts/run_queue.py
 ```
 
+To compare an MQTT migration from current to future crypto/function choices,
+run the [interactive migration tool](docs/014_campaign_queue.md#interactive-mqtt-migration-comparison):
+
+```bash
+python3 scripts/migration_compare.py
+```
+
+It queues both states, waits for completion and produces console and LaTeX
+comparison/selection tables with signed absolute and percentage deltas.
+
 For thesis tables and figures across all supported analysis domains, run `./scripts/dev.sh notebook`
 and open [notebooks/analysis.ipynb](notebooks/analysis.ipynb). Choose a catalogue row and recipe,
 preview the analysis, then save a reproducible revision; see the

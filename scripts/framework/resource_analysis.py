@@ -17,9 +17,13 @@ from framework.run_evidence import sha256_file
 from framework.timing_dataset import DatasetError, _has_symlink, _verify_header, read_json, verify_source_inputs
 from framework.timing_metrics import decode_epochs, uint
 
-VERSION = "1.0.0"
-# metric -> (region, accounting meaning). These categories must never be summed.
+VERSION = "1.1.1"
+# Metric -> (region, accounting meaning). Subsets overlap their backing reservations.
 STATIC = {
+    "configured_application_ram_bytes": ("application", "disjoint_linker_reservations_including_1KiB_L4R5_mailbox"),
+    "mailbox_reserved_bytes": ("RAM2", "maintained_L4R5_handoff_reservation"),
+    "freertos_heap_reserved_bytes": ("RAM/heap_4", "backing_array_subset_of_static_storage"),
+    "tls_instrumentation_reserved_bytes": ("RAM", "identified_instrumentation_objects_subset_of_static_storage"),
     "flash_section_bytes": ("FLASH", "loadable_section_bytes"),
     "application_image_span_bytes": ("FLASH", "image_address_span_including_gaps"),
     "application_binary_bytes": ("FLASH", "retained_binary_file_size"),
@@ -62,7 +66,7 @@ def _union(intervals):
     return total
 
 
-def elf_resources(data):
+def elf_resources(data, *, objects_out=None):
     """Bounded ELF32 little-endian ARM EXEC decoder for maintained L4 layouts.
 
     Count allocated sections by VMA; Flash by section LMA, not segment padding,
@@ -90,6 +94,8 @@ def elf_resources(data):
     names = sections[h[12]]
     names = block(names[4], names[5])
     symbols = {}
+    objects = []
+    owner_file = ""
     for s in sections:
         if s[1] != 2:
             continue
@@ -98,9 +104,14 @@ def elf_resources(data):
         table = sections[s[6]]
         strings = block(table[4], table[5])
         for offset in range(s[4], s[4] + s[5], 16):
-            name, value, _, _, _, index = unpack("<IIIBBH", offset)
+            name, value, size, info, _, index = unpack("<IIIBBH", offset)
+            label = string(strings, name)
+            if info & 15 == 4:
+                owner_file = label
             if index:
-                symbols[string(strings, name)] = value
+                symbols[label] = value
+                if info & 15 == 1 and size:
+                    objects.append((owner_file, label, value, value + size))
     regions = {r: (symbols[f"__{r.lower()}_region_start__"], symbols[f"__{r.lower()}_region_end__"])
                for r in ("RAM", "RAM2", "RAM3")}
     # This decoder intentionally supports only the maintained STM32L4R5 layout.
@@ -135,7 +146,27 @@ def elf_resources(data):
     low, high = regions["RAM"]
     if not low <= symbols["_end"] <= symbols["__user_heap_stack_end__"] <= high:
         raise ValueError("invalid_linker_ram_symbols")
-    return dict(flash_section_bytes=_union(flash), application_image_span_bytes=max(b for a,b in flash)-min(a for a,b in flash),
+    # The maintained relocated L4R5 layout reserves the first 1 KiB of RAM2
+    # for boot/OTA handoff, even when no ELF section occupies it. This explicit
+    # target-layout policy is not inferred from an empty RAM2 section table.
+    mailbox = (regions["RAM2"][0], regions["RAM2"][0] + 1024)
+    primary = symbols["__user_heap_stack_end__"] - low
+    if any(a < low or b > low + primary for a, b in allocated["RAM"]):
+        raise ValueError("ram_section_outside_linker_reservation")
+    heap = [(a,b) for _,n,a,b in objects if n == "ucHeap" and low <= a < b <= symbols["_end"]]
+    instrumentation = [(a,b) for owner,_,a,b in objects
+                       if owner == "pqc_tls_instrumentation.c" and low <= a < b <= symbols["_end"]]
+    if objects_out is not None:
+        # Optional validated object lineage for separately versioned overhead analyses.
+        # Restrict to SRAM; STT_FILE ownership is useful for local objects only.
+        objects_out.extend(dict(owner=owner, name=name, start=a, end=b)
+                           for owner,name,a,b in objects
+                           if any(lo <= a < b <= hi for lo,hi in regions.values()))
+    return dict(configured_application_ram_bytes=primary + _union([mailbox, *allocated["RAM2"]]) + _union(allocated["RAM3"]),
+                mailbox_reserved_bytes=1024,
+                freertos_heap_reserved_bytes=_union(heap) if heap else None,
+                tls_instrumentation_reserved_bytes=_union(instrumentation) if instrumentation else None,
+                flash_section_bytes=_union(flash), application_image_span_bytes=max(b for a,b in flash)-min(a for a,b in flash),
                 ram_static_base_bytes=symbols["_end"]-low,
                 ram_linker_reserved_bytes=symbols["__user_heap_stack_end__"]-low,
                 ram2_section_bytes=_union(allocated["RAM2"]), ram3_section_bytes=_union(allocated["RAM3"]),
@@ -229,6 +260,15 @@ def extract_resources(dataset):
                 fw = records.get("firmware", {})
                 role = fw.get("evidence_role")
                 build_reference = records.get("build_reference")
+                # Hardware-test builds deliberately have no normal-workflow
+                # build_reference. Their hash-verified preparation provenance
+                # records the ELF identity explicitly under records.build.
+                build = records.get("build")
+                if (build_reference is None and isinstance(build, dict)
+                        and build.get("purpose") == "automated_test"
+                        and build.get("artifact_identity_algorithm") == "sha256-elf"
+                        and type(build.get("return_code")) is int and build["return_code"] == 0):
+                    build_reference = {"artifact_sha256": build.get("artifact_identity")}
                 if not isinstance(build_reference, dict):
                     raise ValueError("run_build_reference_unavailable")
                 if (not firmware_id or fw.get("sha256") != firmware_id
@@ -256,7 +296,7 @@ def extract_resources(dataset):
         entry["firmware_identities"].append(firmware_id)
         entry["build_numbers"].append(run.get("build_number"))
         entry["build_references"].append(run["build_references"])
-        candidate = [_row(m, d, values.get(m), reason or (binary_reason if m == "application_binary_bytes" else None),
+        candidate = [_row(m, d, values.get(m), reason or (binary_reason if m == "application_binary_bytes" else ("symbol_evidence_unavailable" if values.get(m) is None else None)),
                           scope="build", build_id=build_id) for m,d in STATIC.items()]
         if not entry["resources"] or (reason is None and entry["resources"][0]["value_bytes"] is None):
             entry["resources"] = candidate
