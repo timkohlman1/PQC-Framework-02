@@ -63,7 +63,7 @@ SUMMARY_TABLES = {
 DIFFERENCE_TABLES = {name.replace('distributions','differences'):domain for name,(_,domain) in SUMMARY_TABLES.items()}
 DIFFERENCE_TABLES['network_comparisons'] = 'network'
 SUMMARY_COLUMNS = ['analysis','security_domain','table','condition','capture_class','evidence_class','metric','unit',
-    'value','q1','q3','iqr','p95','median_ci_low','median_ci_high','median_ci_reason','n_runs','n_observations','sample_unit','region','accounting','estimand','reason']
+    'value','summary_statistic','q1','q3','iqr','p95','median_ci_low','median_ci_high','median_ci_reason','n_runs','n_observations','sample_unit','region','accounting','estimand','reason']
 DIFFERENCE_COLUMNS = ['analysis','security_domain','table','condition','baseline','metric','unit','delta',
     'percent_difference','baseline_runs','treatment_runs','reason','percent_reason']
 
@@ -228,7 +228,8 @@ def project(item,frames):
             continue
         for row in frames[name].to_dict('records'):
             record={k:row.get(k) for k in SUMMARY_COLUMNS if k not in common}
-            record.update(common,table=name,value=row.get(value_col))
+            record.update(common,table=name,value=row.get('summary_bytes') if row.get('metric') == 'peak_based_ram_estimate_bytes' else row.get(value_col))
+            record['summary_statistic'] = row.get('summary_statistic')
             record['n_runs']=row.get('n_runs')
             if record['n_runs'] is None:
                 if row.get('sample_unit') in ('run','run_lifetime'):
@@ -244,7 +245,7 @@ def project(item,frames):
             continue
         for row in frames[name].to_dict('records'):
             record={k:row.get(k) for k in DIFFERENCE_COLUMNS if k not in common}
-            record.update(common,table=name,delta=row.get('delta_median',row.get('delta_median_bytes')))
+            record.update(common,table=name,delta=row.get('delta_summary_bytes') if row.get('metric') == 'peak_based_ram_estimate_bytes' else row.get('delta_median',row.get('delta_median_bytes')))
             differences.append(record)
     for run in frames['inventory'].to_dict('records'):
         inventory.append({**common, **{k:run.get(k) for k in INVENTORY_COLUMNS if k not in common}})

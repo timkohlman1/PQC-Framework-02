@@ -74,7 +74,7 @@ def elapsed_stages(observations):
     t=lambda m,f:int(observations[m][f])
     for m in required:
         r=observations[m]
-        if r['validity']!='valid' or r['unit']!='us' or t(m,'end_us')-t(m,'start_us')!=t(m,'value_us'):
+        if r.get('exclusion_reason') not in NULL or r['validity']!='valid' or r['unit']!='us' or t(m,'end_us')-t(m,'start_us')!=t(m,'value_us'):
             raise ValueError('invalid timing observation')
     if (t('mqtt_readiness','start_us')!=t('ttlb','start_us') or t('ttfb','start_us')!=t('ttlb','start_us') or t('ttfb','end_us')!=t('req_tfb','end_us')
         or t('ttlb','end_us')!=t('req_tlb','end_us') or t('req_tfb','start_us')!=t('req_tlb','start_us')):

@@ -206,7 +206,8 @@ def test_documented_workload_catalog_matches_resolver_profiles():
     for path in (ROOT / "configs/workloads").glob("*.yaml"):
         profile = yaml.safe_load(path.read_text())
         catalog[profile["id"]] = profile["firmware_application"]
-    documented = dict(re.findall(r"(?m)^\| `([\w-]+)` \| `([\w-]+)` \|", read(CONFIGURATION)))
+    workload_table = read(CONFIGURATION).split("| Workload profile | Firmware application |", 1)[1].split("\n\n", 1)[0]
+    documented = dict(re.findall(r"(?m)^\| `([\w-]+)` \| `([\w-]+)` \|", workload_table))
     assert documented == catalog
 
 

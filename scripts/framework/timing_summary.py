@@ -15,7 +15,7 @@ import pandas as pd
 
 from framework.timing_dataset_schema import METRICS, RUN_COLUMNS, TIMING_COLUMNS, ISSUE_COLUMNS
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 CORE_CONTROLS = ("target", "gateway", "workload", "application", "network_condition",
                  "tls_kex", "tls_auth", "auth_mode", "secure_boot", "firmware_mode",
                  "payload_bytes", "chunk_bytes", "boot_stack_profiling", "boot_uart_diagnostics",
@@ -170,6 +170,14 @@ def summarise(dataset, spec, *, metrics=None):
             groups.setdefault(group, []).append((run, reason))
         for obs in timings.get(run["run_key"], []):
             exclusion = reason or obs.get("timing_policy_exclusion")
+            from framework.mqtt_responder import delivery_eligible
+            if (run.get('application') == 'mqtt_ready_metrics_2'
+                    and (obs['metric'] in {'ttfb','ttlb','rtfb','rtlb','req_tfb','req_tlb','application_transfer','payload_throughput'}
+                         or obs['metric'].split('.',1)[0] in {'recorded_interval','whole_workload','application_transfer'})
+                    and not delivery_eligible(field(run, 'controls.mqtt.responder_contract'),
+                                              field(run, 'controls.network_configured.enabled'))):
+                exclusion = exclusion or 'superseded_delivery_responder_startup_confound'
+
             if run.get("selected_input_status") != "verified":
                 exclusion = exclusion or "selected_inputs_not_valid"
             if run["execution_outcome"] != "completed":

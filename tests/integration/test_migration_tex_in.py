@@ -15,7 +15,8 @@ def test_generated_inputs_compile_without_overfull_boxes(tmp_path):
     engine=shutil.which('pdflatex')
     if not engine:pytest.skip('pdflatex unavailable; source projection covered by unit tests')
     state=dict(choices={'from':dict(migration.DEFAULTS),'to':{**migration.DEFAULTS,
-               'tls_auth':'mldsa65','auth_mode':'mutual','network_condition':'research_combined_loss_delay_rate'},'repetitions':10})
+               'tls_auth':'mldsa65','auth_mode':'mutual','mldsa_memory_mode':'both_small',
+               'network_condition':'research_combined_loss_delay_rate'},'repetitions':10})
     rows=[]
     for label,domain,metric,scale,unit in report.METRICS:
         rows.append(dict(label=label,metric=metric,unit=unit,divisor=scale,

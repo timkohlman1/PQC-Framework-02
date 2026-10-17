@@ -41,7 +41,8 @@ def test_selected_application_gates_mqtt_on_shared_fixture_network_readiness():
 def test_network_task_has_extra_stack_and_explicit_fault_diagnostics():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     freertos = Path("Core/Inc/FreeRTOSConfig.h").read_text(encoding="utf-8")
-    assert ".stack_size = 2048 * 4" in main_c
+    assert ".stack_size = PQC_TLS_TASK_STACK_BYTES" in main_c
+    assert "#define PQC_TLS_TASK_STACK_BYTES 8192" in main_c
     assert "networkTask priority=osPriorityNormal stack_words=2048" in main_c
     assert "vApplicationStackOverflowHook" in main_c
     assert "FATAL: FreeRTOS stack overflow task=" in main_c

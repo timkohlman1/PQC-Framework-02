@@ -27,6 +27,7 @@
 #include "pqc_wifi_config.h"
 #include "pqc_network_interface.h"
 #include "pqc_energy_boundary.h"
+#include "pqc_network_phases.h"
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
 #endif
@@ -99,11 +100,14 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+#ifndef PQC_TLS_TASK_STACK_BYTES
+#define PQC_TLS_TASK_STACK_BYTES 8192
+#endif
 static volatile APP_ST67ReadyDiagnosticSnapshot app_st67_ready_diagnostic;
 osThreadId_t networkTaskHandle;
 const osThreadAttr_t networkTask_attributes = {
   .name = "networkTask",
-  .stack_size = 2048 * 4,
+  .stack_size = PQC_TLS_TASK_STACK_BYTES,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE END PV */
@@ -512,6 +516,9 @@ static void APP_UART_WriteInt32(int32_t value)
   }
 }
 
+static volatile bool app_experiment_complete = false;
+
+#if PQC_ST67_WIFI_DIAGNOSTIC_SCAN
 static bool APP_CStringEquals(const uint8_t *left, const char *right)
 {
   uint32_t index = 0U;
@@ -532,7 +539,6 @@ static bool APP_CStringEquals(const uint8_t *left, const char *right)
 #define PQC_WIFI_SCAN_VERBOSE 0
 #endif
 
-static volatile bool app_experiment_complete = false;
 static volatile bool app_wifi_scan_complete = false;
 static volatile int32_t app_wifi_scan_status = (int32_t)W6X_STATUS_ERROR;
 static volatile uint32_t app_wifi_scan_count = 0U;
@@ -646,6 +652,8 @@ static bool APP_RunST67WiFiScan(void)
 
   return app_wifi_scan_status == (int32_t)W6X_STATUS_OK;
 }
+
+#endif /* PQC_ST67_WIFI_DIAGNOSTIC_SCAN */
 
 static void APP_CopyCString(uint8_t *destination, uint32_t capacity, const char *source)
 {
@@ -948,7 +956,9 @@ static bool APP_RunST67WiFiDhcp(void)
 
   char status_buf[32];
 
+  PQC_NetworkPhaseBegin(PQC_NET_WIFI_INIT);
   status = W6X_WiFi_Init();
+  PQC_NetworkPhaseEnd(PQC_NET_WIFI_INIT, (int32_t)status);
 
   snprintf(
       status_buf,
@@ -959,7 +969,14 @@ static bool APP_RunST67WiFiDhcp(void)
 
   APP_UART_WriteString(status_buf);
 
-  if ((status != W6X_STATUS_OK) || (MX_LWIP_Init() != 0))
+  int32_t lwip_result = -1;
+  if (status == W6X_STATUS_OK)
+  {
+    PQC_NetworkPhaseBegin(PQC_NET_LWIP_INIT);
+    lwip_result = MX_LWIP_Init();
+    PQC_NetworkPhaseEnd(PQC_NET_LWIP_INIT, lwip_result);
+  }
+  if ((status != W6X_STATUS_OK) || (lwip_result != 0))
   {
     APP_UART_WriteString(
         "ST67 Wi-Fi association: result=wifi_init_failed ssid=");
@@ -969,8 +986,13 @@ static bool APP_RunST67WiFiDhcp(void)
     return false;
   }
 
-  /* Best-effort RF visibility before association with the experiment AP. */
-  (void)APP_RunST67WiFiScan();
+  /* Diagnostic only: normal experiments connect directly to the configured AP.
+   * When disabled, the deferred scan phase remains not_attempted (state=0). */
+#if PQC_ST67_WIFI_DIAGNOSTIC_SCAN
+  PQC_NetworkPhaseBegin(PQC_NET_WIFI_SCAN);
+  bool scan_success = APP_RunST67WiFiScan();
+  PQC_NetworkPhaseEnd(PQC_NET_WIFI_SCAN, scan_success ? 0 : -1);
+#endif
 
   /*
    * Match the ST MQTT demonstration: zero-initialize the options structure
@@ -1015,7 +1037,9 @@ static bool APP_RunST67WiFiDhcp(void)
   APP_UART_WriteUint32(APP_ST67_ASSOC_POLL_MS);
   APP_UART_WriteString("\r\n");
 
+  PQC_NetworkPhaseBegin(PQC_NET_WIFI_CONNECT);
   status = W6X_WiFi_Connect(&options);
+  PQC_NetworkPhaseEnd(PQC_NET_WIFI_CONNECT, (int32_t)status);
   APP_UART_WriteString("ST67 Wi-Fi association: connect_call_status=");
   APP_UART_WriteInt32((int32_t)status);
   APP_UART_WriteString(" status_name=");
@@ -1050,10 +1074,12 @@ static bool APP_RunST67WiFiDhcp(void)
     return false;
   }
 
+  PQC_NetworkPhaseBegin(PQC_NET_ASSOCIATION_CHECK);
   association_success = APP_WaitForWiFiAssociation(
       &station_state,
       &connection,
       &association_query_status);
+  PQC_NetworkPhaseEnd(PQC_NET_ASSOCIATION_CHECK, association_success ? 0 : -1);
 
   if (!association_success)
   {
@@ -1087,7 +1113,9 @@ static bool APP_RunST67WiFiDhcp(void)
   APP_UART_WriteUint32((uint32_t)connection.Channel);
   APP_UART_WriteString("\r\n");
 
+  PQC_NetworkPhaseBegin(PQC_NET_DHCP_WAIT);
   dhcp_success = APP_WaitForDhcpAddress(ip, gateway, netmask);
+  PQC_NetworkPhaseEnd(PQC_NET_DHCP_WAIT, dhcp_success ? 0 : -1);
   APP_UART_WriteString("ST67 DHCP: result=");
   APP_UART_WriteString(dhcp_success ? "passed ipv4=" : "failed ipv4=");
   APP_UART_WriteIPv4(ip);
@@ -1185,7 +1213,9 @@ static void APP_RunST67SPIBringup(void)
 
   APP_EnableST67EXTIInterrupt();
   APP_UART_WriteString("ST67 SPI bring-up: W6X_Init begin\r\n");
+  PQC_NetworkPhaseBegin(PQC_NET_MODULE_INIT);
   status = W6X_Init();
+  PQC_NetworkPhaseEnd(PQC_NET_MODULE_INIT, (int32_t)status);
 
   APP_UART_WriteString("ST67 SPI bring-up: W6X_Init result=");
   APP_UART_WriteUint32((uint32_t)status);
@@ -2894,6 +2924,7 @@ void StartNetworkTask(void *argument)
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_ResultBufferReset();
 #endif
+  PQC_NetworkPhasesReset();
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryInitialize();
@@ -2924,6 +2955,7 @@ void StartNetworkTask(void *argument)
         metrics != NULL && metrics->application_request_us != 0U ? 1U : 0U);
     (void)PQC_ResultBufferAppendText(0U, "workload_outcome", outcome);
   }
+  PQC_NetworkPhasesAppend(0U);
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);

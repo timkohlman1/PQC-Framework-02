@@ -238,6 +238,14 @@ class ConfigResolver:
                 raise ResolutionError("plaintext MQTT transport cannot request mutual TLS authentication")
             if tls_kex.profile_id != "secp256r1" or tls_auth.profile_id != "rsa3072":
                 raise ResolutionError("plaintext MQTT uses inert secp256r1/rsa3072 compatibility selections")
+        from framework import tls_optimizations
+        try:
+            tls_options = tls_optimizations.resolve(choices, transport=mqtt_transport,
+                mlkem='mlkem' in tls_kex.profile_id.lower() or 'ml_kem' in tls_kex.profile_id.lower(),
+                mldsa=tls_auth.profile_id == 'mldsa65',
+                application=workload.profile_id in {'mqtt_validation', 'ready_metrics', 'ready_metrics_2', 'tls_handshake_repeat'})
+        except ValueError as exc:
+            raise ResolutionError(str(exc)) from exc
         memory_mode = choices.get("mldsa_memory_mode", "default")
         if memory_mode not in {"default", "verify_small", "sign_small", "both_small"}:
             raise ResolutionError("unsupported mldsa_memory_mode")
@@ -340,6 +348,7 @@ class ConfigResolver:
             "boot_stack_profiling": stack_profiling,
             "boot_uart_diagnostics": boot_uart_diagnostics,
         }
+        public_choices.update({k: tls_options[k] for k in tls_options if k in choices})
         if "mldsa_memory_mode" in choices:
             public_choices["mldsa_memory_mode"] = memory_mode
         if mqtt_transport == "plaintext":
@@ -374,6 +383,7 @@ class ConfigResolver:
             "boot_stack_profiling": stack_profiling,
             "boot_uart_diagnostics": boot_uart_diagnostics,
         }
+        firmware_choices.update({k: tls_options[k] for k in tls_options if k in choices})
         if "mldsa_memory_mode" in choices:
             firmware_choices["mldsa_memory_mode"] = memory_mode
         if mqtt_transport == "plaintext":
@@ -489,6 +499,8 @@ class ConfigResolver:
                     "key_exchange_group": kex["id"]},
             "result_schema": {"unavailable_metrics": {"latency_ms": "No synchronized end-to-end latency metric is recorded."}},
         }
+        from framework.tls_optimizations import DEFAULTS as TLS_OPTION_DEFAULTS
+        mqtt["tls"].update({k: c[k] for k in TLS_OPTION_DEFAULTS if k in c})
         if "mldsa_memory_mode" in c:
             mqtt["tls"]["mldsa_memory_mode"] = c["mldsa_memory_mode"]
         if c.get("mqtt_transport", "tls") == "plaintext":

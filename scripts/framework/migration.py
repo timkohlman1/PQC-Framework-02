@@ -13,19 +13,37 @@ import uuid
 
 from framework.run_queue import Queue, ACTIVE, DONE, digest, owned_path, read
 
+from framework import tls_optimizations
+
 VERSION = 1
 SIDES = ('from', 'to')
 LABELS = {
+    **tls_optimizations.LABELS,
     'mqtt_transport': 'MQTT transport', 'tls_kex': 'TLS key exchange',
     'tls_auth': 'TLS certificate/signature', 'auth_mode': 'TLS authentication',
+    'mldsa_memory_mode': 'ML-DSA-65 TLS memory mode',
     'secure_boot': 'Firmware authentication', 'firmware_mode': 'Firmware layout / OTA support',
     'standby_signing_keys': 'Standby firmware signing keys',
     'network_condition': 'Network condition', 'payload_bytes': 'Response payload (bytes)',
     'chunk_bytes': 'MQTT chunk (bytes)',
 }
 DEFAULTS = dict(mqtt_transport='tls', tls_kex='secp256r1', tls_auth='ecdsa-p256',
-    auth_mode='server', secure_boot='integrity_sha256', firmware_mode='single_bank',
+    auth_mode='server', mldsa_memory_mode=None, secure_boot='integrity_sha256', firmware_mode='single_bank',
     standby_signing_keys=0, network_condition='baseline', payload_bytes=204800, chunk_bytes=400)
+
+
+def choice_value(choices, key):
+    """Read the optional mode without rewriting identities of saved sessions."""
+    if key in tls_optimizations.DEFAULTS:
+        applicable = tls_optimizations.applicable(key, transport=choices.get('mqtt_transport','tls'),
+            mlkem='mlkem' in str(choices.get('tls_kex')).lower() or 'ml_kem' in str(choices.get('tls_kex')).lower(),
+            mldsa=choices.get('tls_auth') == 'mldsa65')
+        return choices.get(key, tls_optimizations.DEFAULTS[key]) if applicable else None
+    if key == 'mldsa_memory_mode':
+        if choices.get('mqtt_transport') == 'tls' and choices.get('tls_auth') == 'mldsa65':
+            return choices.get(key) or 'default'
+        return choices.get(key)
+    return choices[key]
 
 
 def atomic_json(path, value):
@@ -109,6 +127,32 @@ def wizard(catalogue, *, ask=input, tell=print):
         else:
             chosen.update(tls_kex=None, tls_auth=None, auth_mode=None)
             tell('TLS key exchange and authentication do not apply to plaintext.')
+        if chosen['mqtt_transport'] == 'tls' and chosen['tls_auth'] == 'mldsa65':
+            modes = catalogue['options']['mldsa_memory_mode']
+            if chosen['auth_mode'] != 'mutual':
+                modes = [v for v in modes if v in {'default', 'verify_small'}]
+            select('mldsa_memory_mode', modes)
+        else:
+            chosen['mldsa_memory_mode'] = None
+        if chosen['mqtt_transport'] == 'tls':
+            keys = [key for key in tls_optimizations.DEFAULTS if tls_optimizations.applicable(key,
+                mlkem='mlkem' in chosen['tls_kex'].lower() or 'ml_kem' in chosen['tls_kex'].lower(),
+                mldsa=chosen['tls_auth'] == 'mldsa65')]
+            inherited = {k: choice_value(prior, k) if choice_value(prior, k) is not None else tls_optimizations.DEFAULTS[k] for k in keys}
+            tune = choose('TLS implementation options', ['Keep current settings', 'Customise'],
+                'Keep current settings', unchanged=False, ask=ask, tell=tell)
+            for key in keys:
+                chosen[key] = inherited[key] if tune == 'Keep current settings' else choose(
+                    LABELS[key], catalogue['options'][key], inherited[key],
+                    unchanged=side == 'to', ask=ask, tell=tell)
+            if not chosen['tls_small_stack'] and chosen['tls_task_stack_bytes'] < 49152:
+                tell('Small-stack off requires a larger task stack. Hold this allocation fixed on both sides to isolate the implementation option.')
+                chosen['tls_task_stack_bytes'] = choose(LABELS['tls_task_stack_bytes'], [49152, 65536],
+                    49152, ask=ask, tell=tell)
+            if chosen['tls_task_stack_bytes'] >= 49152 and chosen['tls_heap_bytes'] < 131072:
+                tell('The selected task stack needs the 128 KiB FreeRTOS pool on this testbed; keep both allocations fixed when isolating small-stack behaviour.')
+                chosen['tls_heap_bytes'] = 131072
+        chosen = {k: v for k, v in chosen.items() if k not in tls_optimizations.DEFAULTS or v != tls_optimizations.DEFAULTS[k]}
         select('secure_boot'); select('firmware_mode')
         if chosen['secure_boot'] in catalogue['signed_boot']:
             select('standby_signing_keys')
@@ -138,6 +182,12 @@ def profile(base, choices, name, repetitions):
     data['fixed'].update(boot_stack_profiling=False, boot_uart_diagnostics=False)
     if choices['mqtt_transport'] == 'tls':
         data['fixed'].update({k: choices[k] for k in ('tls_kex', 'tls_auth', 'auth_mode')})
+    # Omission retains the established firmware identity. Non-default modes are
+    # validated by the resolver, including incompatible transport/auth choices.
+    if choices.get('mldsa_memory_mode') not in (None, 'default'):
+        data['fixed']['mldsa_memory_mode'] = choices['mldsa_memory_mode']
+    data['fixed'].update({k: choices[k] for k, v in tls_optimizations.DEFAULTS.items()
+                          if k in choices and choices[k] != v})
     data['matrix'] = {'workload.transfer.' + k: [choices[k]] for k in ('payload_bytes', 'chunk_bytes')}
     data['execution'].update(repetitions=repetitions, energy_monitoring='off', workload_failures='record')
     return data

@@ -67,7 +67,7 @@ METRICS = {
     'sign': ('tls__aggregate__signature_sign__elapsed_us', 1000, 'ms', 'timing'),
     'verify': ('tls__aggregate__signature_verify__elapsed_us', 1000, 'ms', 'timing'),
     'app_flash': ('resource__flash_section_bytes', 1024, 'KiB', 'static'),
-    'app_ram': ('resource__ram_static_base_bytes', 1024, 'KiB', 'static'),
+    'app_ram': ('resource__peak_based_ram_estimate_bytes', 1024, 'KiB', 'runtime'),
     'heap': ('resource__freertos_heap_peak_used_bytes', 1024, 'KiB', 'runtime'),
     'workspace': ('resource__workspace_peak_used_bytes', 1024, 'KiB', 'runtime'),
 }
@@ -242,6 +242,12 @@ def metric(group, name):
     g = eligible(group)
     if scope == 'timing':
         g = g[g.timing_policy_exclusion.isna()]
+    if name == 'completion' and 'application' in g:
+        contract = g.get('control__mqtt__responder_contract', pd.Series(index=g.index, dtype=object))
+        from framework.mqtt_responder import delivery_eligible
+        enabled = g.get('control__network_configured__enabled', pd.Series(None, index=g.index, dtype=object))
+        matched = pd.Series([delivery_eligible(c, None if pd.isna(e) else bool(e)) for c,e in zip(contract,enabled)], index=g.index)
+        g = g.loc[~g.application.eq('mqtt_ready_metrics_2') | matched]
     values = g[col] / divisor if col in g else pd.Series(dtype=float)
     result = statistics(values)
     if name in ('auth','signature') and group.secure_boot.eq('integrity_sha256').all():
@@ -407,22 +413,20 @@ def make_tables(spec, selected):
                      + notes + 'Identical recorded values do not establish zero physical variation or independent mailbox freshness.')
         elif kind in ('tls_auth','tls_kex'):
             headers = ['Authentication / mode' if kind=='tls_auth' else 'Key exchange','n','Handshake ms',
-                       'App. Flash KiB','Static RAM KiB','Heap max KiB','Workspace max KiB']
+                       'App. Flash KiB','RAM estimate KiB']
             caption = ('TLS authentication' if kind=='tls_auth' else 'TLS key exchange') + ': handshake timing and application resources.'
             notes = ('Handshake is mean (sample SD), measured on the device; n counts eligible current successful captures. '
-                     '1 KiB = 1024 bytes. Flash/static RAM are observed application build sizes. '
-                     'Heap is the maximum observed FreeRTOS heap usage (including dynamic task stacks); workspace is a separate regional peak. '
-                     'Static RAM already contains reserved backing storage. These columns overlap and must not be summed into total RAM. '
-                     'Runtime maxima are observed values, not worst-case guarantees.')
+                     '1 KiB = 1024 bytes. Flash is the application build size. '
+                     'RAM estimate is the largest per-run sum of application static demand and regional peaks, excluding identified experiment storage. '
+                     'It is not a simultaneous watermark or a validated production minimum.')
             notes += (' Fixed key exchange: '+condition((current.tls_kex.iloc[0],))+'.') if kind=='tls_auth' else (
                 ' Fixed authentication: '+condition((current.tls_auth.iloc[0],current.auth_mode.iloc[0]))+'.')
             for key,group in grouped(current,kind):
                 key=key if isinstance(key,tuple) else (key,)
                 n=len(eligible(group))
-                measurements={m:metric(group,m) for m in ['handshake','app_flash','app_ram','heap','workspace']}
+                measurements={m:metric(group,m) for m in ['handshake','app_flash','app_ram']}
                 cells=[condition(key),str(n),display_metric(measurements['handshake'],n),
-                    display_metric(measurements['app_flash'],n,'static'),display_metric(measurements['app_ram'],n,'static'),
-                    display_metric(measurements['heap'],n,'maximum'),display_metric(measurements['workspace'],n,'maximum')]
+                    display_metric(measurements['app_flash'],n,'static'),display_metric(measurements['app_ram'],n,'maximum')]
                 rows.append(cells)
                 for r in measurements.values():detail.append(dict(table=name,condition=condition(key),selection=name,**r))
         else:

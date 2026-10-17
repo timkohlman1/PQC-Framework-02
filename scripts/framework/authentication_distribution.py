@@ -96,14 +96,16 @@ xlabel={Deviation from condition median (\%)},xmajorgrids=true,grid style={gray!
 \caption{Relative handshake variability with P-256 key establishment fixed.
 Each observation is $100(t/\widetilde{t}-1)$, using its condition median;
 both panels have the same scale and median at zero. Blue is classical authentication;
-orange is ML-DSA-65. Boxes show Q1--Q3; whiskers use 1.5 IQR and all 30 run observations
-remain visible. The separate signing follow-up is not pooled.}
+orange is ML-DSA-65. Boxes show Q1--Q3; whiskers use 1.5 IQR and all eligible run
+observations remain visible (@@COUNTS@@ per condition). The separate signing follow-up is not pooled.}
 \label{fig:authentication-variability}
 \end{figure}
 """
-    # Caption count must be true for every condition, not a silent template assumption.
-    if {v["n"] for v in stats.values()}!={30}:
-        raise ValueError("this presentation expects the selected 30-run comparison")
+    # Fixed attempts and metric eligibility are distinct; retain every eligible
+    # point and state its actual count instead of requiring all attempts to pass.
+    counts = [v["n"] for v in stats.values()]
+    count_label = str(min(counts)) if min(counts) == max(counts) else f"{min(counts)}--{max(counts)}"
+    code = code.replace("@@COUNTS@@", count_label)
     output.mkdir(parents=True)
     (output/"authentication-variability.tex").write_text(code)
     for name,rows in [("authentication-run-latencies.csv",points),

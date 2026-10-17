@@ -109,3 +109,9 @@ def test_loss_view_keeps_known_failure_separate_from_missing_evidence(tmp_path):
     rows=list(csv.DictReader((tmp_path/'loss-outcomes.csv').open()))
     assert len(rows)==9
     assert all((r['handshake_success'],r['handshake_failed'],r['handshake_unclassified'])==('1','1','1') for r in rows)
+
+
+def test_elapsed_stages_respects_retired_delivery_evidence():
+    obs=observations()
+    obs['ttlb']['exclusion_reason']='superseded_delivery_responder_startup_confound'
+    with pytest.raises(ValueError,match='invalid timing'): elapsed_stages(obs)

@@ -188,7 +188,7 @@ def test_distinct_signed_images_map_to_one_explicit_elf_build(tmp_path):
     build=result['builds'][0]
     assert len(set(build['firmware_identities']))==2
     assert build['build_id']==hashlib.sha256(synthetic_elf()).hexdigest()
-    assert all(r['validity']=='valid' for r in build['resources'] if r['metric'] not in ('freertos_heap_reserved_bytes','tls_instrumentation_reserved_bytes'))
+    assert all(r['validity']=='valid' for r in build['resources'] if r['metric'] not in ('freertos_heap_reserved_bytes','tls_instrumentation_reserved_bytes','application_static_demand_bytes','excluded_experiment_storage_bytes'))
 
 
 def test_signed_image_without_correct_build_link_stays_unavailable(tmp_path):
@@ -315,3 +315,32 @@ def test_automated_build_elf_link_requires_explicit_matching_identity(tmp_path, 
     resources = extract_resources(load_dataset(output))['builds'][0]['resources']
     flash = next(r for r in resources if r['metric']=='flash_section_bytes')
     assert flash['value_bytes'] == (24 if usable else None)
+
+
+def test_peak_based_ram_is_maximum_of_complete_per_run_sums(tmp_path,monkeypatch):
+    import framework.resource_analysis as module
+    original=module.elf_resources
+    def decode(*args,**kwargs):
+        values=original(*args,**kwargs)
+        values['freertos_heap_reserved_bytes']=64
+        return values
+    # The synthetic ELF deliberately lacks a heap symbol; supply only that
+    # fixture fact to exercise the verified-run aggregation and exclusion path.
+    monkeypatch.setattr(module,'elf_resources',decode)
+    d,runs=fixture(tmp_path,count=2)
+    frames,_=summarise_resources(d,{'conditions':{'base':{}},'baseline':'base'})
+    row=frames['resource_distributions'].query("metric == 'peak_based_ram_estimate_bytes'").iloc[0]
+    assert row.summary_bytes == (80-64)+40+32+16+24
+    assert row.n_observations==2 and row.summary_statistic=='maximum_per_run_estimate'
+    assert row.sample_unit=='run_lifetime'
+    extracted=module.extract_resources(d)
+    assert all(r['build_id'] for r in extracted['runtime'] if r['metric']=='peak_based_ram_estimate_bytes')
+    saturated,_=fixture(tmp_path/'saturated',count=1,records=[*rm2_records(),memory(saturated=1)])
+    bad,_=summarise_resources(saturated,{'conditions':{'base':{}},'baseline':'base'})
+    assert bad['resource_distributions'].query("metric == 'peak_based_ram_estimate_bytes'").iloc[0].n_observations==0
+
+
+def test_network_phase_scratch_storage_is_identified_experiment_storage():
+    from framework.resource_analysis import experiment_object
+    assert experiment_object(dict(owner='pqc_network_phases.c',name='s_network_phases'))
+    assert not experiment_object(dict(owner='w6x_wifi.c',name='p_wifi_ctx'))

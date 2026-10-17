@@ -46,6 +46,80 @@ def test_wizard_unchanged_does_not_request_device_constraints():
     assert not any('capacity' in s or 'Device model' in s for s in messages)
 
 
+@pytest.mark.parametrize('role,mode', [('server','verify_small'), ('mutual','sign_small'), ('mutual','both_small')])
+def test_wizard_memory_choices_are_applicable_and_can_be_unchanged(monkeypatch, role, mode):
+    calls = []
+    original = m.choose
+    def choose(title, values, default, **kwargs):
+        wanted = {'TLS certificate/signature':'mldsa65', 'TLS authentication':role,
+                  'ML-DSA-65 TLS memory mode':mode}.get(title, default)
+        values = list(values)
+        options = [default, *[v for v in values if v != default]] if kwargs['unchanged'] and default in values else values
+        calls.append((title, values, kwargs['unchanged']))
+        return original(title, values, default, **{**kwargs, 'ask':lambda _:str(options.index(wanted)+1)})
+    monkeypatch.setattr(m, 'choose', choose)
+    result = m.wizard(catalogue(ROOT), ask=lambda _:'', tell=lambda _:None)
+    assert result['from'] == result['to']
+    assert result['from']['mldsa_memory_mode'] == mode
+    prompts = [c for c in calls if c[0] == m.LABELS['mldsa_memory_mode']]
+    assert len(prompts) == 2 and prompts[1][2]
+    assert prompts[0][1] == (['default','verify_small'] if role=='server' else ['default','verify_small','sign_small','both_small'])
+
+
+@pytest.mark.parametrize('target', ['server', 'classical', 'plaintext'])
+def test_wizard_does_not_inherit_inapplicable_small_signing(monkeypatch, target):
+    original = m.choose
+    side = -1
+    def choose(title, values, default, **kwargs):
+        nonlocal side
+        if title == m.LABELS['mqtt_transport']: side += 1
+        wanted = {m.LABELS['tls_auth']:'mldsa65', m.LABELS['auth_mode']:'mutual',
+                  m.LABELS['mldsa_memory_mode']:'both_small'}
+        if side == 1:
+            wanted = {m.LABELS['auth_mode']:'server'} if target=='server' else {
+                m.LABELS['tls_auth']:'ecdsa-p256'} if target=='classical' else {m.LABELS['mqtt_transport']:'plaintext'}
+        values = list(values)
+        options = [default, *[v for v in values if v != default]] if kwargs['unchanged'] and default in values else values
+        reply = str(options.index(wanted[title])+1) if title in wanted else ''
+        return original(title, values, default, **{**kwargs, 'ask':lambda _:reply})
+    monkeypatch.setattr(m, 'choose', choose)
+    result = m.wizard(catalogue(ROOT), ask=lambda _:'', tell=lambda _:None)
+    assert result['from']['mldsa_memory_mode'] == 'both_small'
+    assert result['to']['mldsa_memory_mode'] == ('default' if target=='server' else None)
+
+
+@pytest.mark.parametrize('role,modes', [('server',['default','verify_small']),
+    ('mutual',['default','verify_small','sign_small','both_small'])])
+def test_memory_profiles_resolve_to_selected_build_options(tmp_path, role, modes):
+    import yaml
+    from framework.config_resolver import ConfigResolver
+    from framework.build import _write_tls_algorithm_selection
+    cat = catalogue(ROOT)
+    base = {**m.DEFAULTS, 'tls_auth':'mldsa65', 'auth_mode':role}
+    omitted = dict(base); omitted.pop('mldsa_memory_mode')
+    for mode in modes:
+        choices = {**base, 'mldsa_memory_mode':mode}
+        profile = m.profile(cat['base'], choices, 'memory', 10)
+        if mode == 'default':
+            assert profile == m.profile(cat['base'], omitted, 'memory', 10)
+            assert 'mldsa_memory_mode' not in profile['fixed']
+        path = tmp_path/'campaign.yaml'; path.write_text(yaml.safe_dump(profile))
+        resolver = ConfigResolver(ROOT)
+        cases = resolver.expand_campaign(path)
+        assert len(cases) == 1
+        _, settings = _write_tls_algorithm_selection(resolver.to_legacy_bundle(cases[0], resolve_secrets=False), tmp_path/mode)
+        assert settings['mldsa_verify_small_mem'] == (mode in ('verify_small','both_small'))
+        assert settings['mldsa_sign_small_mem'] == (mode in ('sign_small','both_small'))
+
+
+@pytest.mark.parametrize('choices', [{**m.DEFAULTS,'mldsa_memory_mode':'verify_small'},
+    {**m.DEFAULTS,'tls_auth':'mldsa65','mldsa_memory_mode':'sign_small'},
+    {**m.DEFAULTS,'mqtt_transport':'plaintext','mldsa_memory_mode':'verify_small'}])
+def test_invalid_memory_session_choices_fail_profile_validation(tmp_path, choices):
+    with pytest.raises(ValueError, match='ML-DSA|mutual authentication'):
+        validate(ROOT, m.profile(catalogue(ROOT)['base'], choices, 'invalid_memory', 1), tmp_path)
+
+
 def test_choose_validation_and_incompatible_unchanged():
     replies = iter(['0','garbage','3','2'])
     assert m.choose('mode',['server','mutual'],'absent', unchanged=True,
@@ -169,15 +243,17 @@ def test_plaintext_handshake_never_becomes_zero_cost():
     assert row['side_reasons']['from']=='not_applicable_to_plaintext'
 
 
-def test_resource_absolute_delta_and_multiple_builds_are_not_averaged():
-    frames={'resource_distributions':[dict(condition=s,metric='configured_application_ram_bytes',median_bytes=v,n_observations=1)
+def test_ram_estimate_absolute_delta_and_flash_build_guard():
+    frames={'resource_distributions':[dict(condition=s,metric='peak_based_ram_estimate_bytes',summary_bytes=v,n_observations=30)
         for s,v in [('from',1024),('to',3072)]],
-        'resource_differences':[dict(condition='to',metric='configured_application_ram_bytes',delta_median_bytes=2048,reason=None)]}
+        'resource_differences':[dict(condition='to',metric='peak_based_ram_estimate_bytes',delta_summary_bytes=2048,reason=None)]}
     row=report.project(frames,session())[0]
-    assert report.table_rows([row])[0]==['Configured application RAM (KiB)','1.000','3.000','+2.000','+200.000']
-    frames['resource_distributions'][1]['n_observations']=2
-    row=report.project(frames,session())[0]
-    assert row['values']['to'] is None and row['delta'] is None
+    assert report.table_rows([row])[0]==['RAM estimate (KiB)','1.000','3.000','+2.000','+200.000']
+    frames['resource_distributions'] += [dict(condition=s,metric='flash_section_bytes',median_bytes=v,n_observations=n)
+        for s,v,n in [('from',1024,1),('to',3072,2)]]
+    frames['resource_differences'].append(dict(condition='to',metric='flash_section_bytes',delta_median_bytes=2048))
+    flash=next(r for r in report.project(frames,session()) if r['metric']=='flash_section_bytes')
+    assert flash['values']['to'] is None and flash['delta'] is None
 
 
 def test_treatment_is_predeclared_from_user_changes_not_observed_conflicts():
@@ -194,6 +270,45 @@ def test_treatment_is_predeclared_from_user_changes_not_observed_conflicts():
     d.runs[2]['controls']['source']['state_identity']='drift'
     frames,_=summarise(d,spec)
     assert all('conflicting_control:controls.source.state_identity' in r['reason'] for r in frames['differences'].to_dict('records'))
+
+
+def test_memory_change_is_a_treatment_but_source_drift_is_not():
+    from test_timing_summary import data
+    from framework.timing_summary import summarise
+    d = data(); s = session()
+    for side in m.SIDES:
+        s['choices'][side].update(tls_kex='secp256r1', tls_auth='mldsa65', auth_mode='mutual')
+    s['choices']['from'].pop('mldsa_memory_mode')  # Legacy default, omitted in capture too.
+    s['choices']['to']['mldsa_memory_mode'] = 'both_small'
+    for i, r in enumerate(d.runs):
+        r.update(campaign_id='a' if i < 2 else 'b', tls_kex='secp256r1')
+        tls = {'key_exchange_group':'secp256r1'}
+        if i >= 2: tls['mldsa_memory_mode'] = 'both_small'
+        r['controls'].update(tls=tls, source={'state_identity':'fixed'})
+    spec = report.specification(d,s)
+    assert spec['treatment'] == ['controls.tls.mldsa_memory_mode']
+    frames,_ = summarise(d,spec)
+    delta = frames['differences'].to_dict('records')[0]
+    assert delta['reason'] is None and delta['delta_median'] == 20
+    d.runs[2]['controls']['source']['state_identity'] = 'drift'
+    frames,_ = summarise(d,spec)
+    assert 'conflicting_control:controls.source.state_identity' in frames['differences'].iloc[0]['reason']
+
+
+def test_legacy_choices_are_not_modified_or_added_to_the_selections_report():
+    from test_timing_summary import data
+    s = session()
+    for side in m.SIDES:
+        s['choices'][side].pop('mldsa_memory_mode')
+        s['choices'][side]['tls_auth'] = 'mldsa65'
+    before = deepcopy(s)
+    report.specification(data(), s)
+    counts={side:dict(completed=10,failed=0,blocked=0,without_capture=0,planned=10) for side in m.SIDES}
+    old = report.render(report.project(timing_frames(),s),s,counts)['selections.tex']
+    assert 'memory mode' not in old and s == before
+    s['choices']['to']['mldsa_memory_mode'] = 'verify_small'
+    new = report.render(report.project(timing_frames(),s),s,counts)['selections.tex']
+    assert 'ML-DSA-65 TLS memory mode & default & verify small' in new
 
 
 def test_tex_escapes_and_outputs_signed_cells():

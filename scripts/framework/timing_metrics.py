@@ -95,6 +95,7 @@ def decode_epochs(path: Path, run_id: str) -> tuple[list[Epoch], list[str]]:
                         "PQC_RM2_METRICS": "rm2_metrics", "PQC_RM2_COMPLETE": "rm2_complete",
                         "PQC_TLS_HANDSHAKE_TIMING": "tls", "PQC_TLS_EVENT_BUFFER": "tls",
                         "PQC_TLS_EVENT": "tls", "PQC_TLS_REPEAT_ITERATION": "tls_handshake_repeat",
+                        "PQC_NETWORK_PHASES": "network_phases", "PQC_NETWORK_PHASE": "network_phases",
                     }.get(marker)
                     if expected_context and obj["context"] != expected_context:
                         raise ValueError("logical_context_mismatch")

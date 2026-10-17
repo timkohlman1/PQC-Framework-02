@@ -7,14 +7,13 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from framework.migration import SIDES, LABELS, atomic_json
+from framework.migration import SIDES, LABELS, atomic_json, choice_value
 from framework.run_queue import owned_path, digest, read
 
-VERSION = '1.0.0'
+VERSION = '1.2.0'
 # Original scientific units are retained in JSON; only presentation is scaled.
 METRICS = [
-    ('Configured application RAM', 'resources', 'configured_application_ram_bytes', 1024, 'KiB'),
-    ('Observed heap peak', 'resources', 'freertos_heap_peak_used_bytes', 1024, 'KiB'),
+    ('RAM estimate', 'resources', 'peak_based_ram_estimate_bytes', 1024, 'KiB'),
     ('Application Flash', 'resources', 'flash_section_bytes', 1024, 'KiB'),
     ('Bootloader Flash', 'secure_boot', 'bootloader_flash_bytes', 1024, 'KiB'),
     ('Packaged application image', 'secure_boot', 'packaged_image_bytes', 1024, 'KiB'),
@@ -33,19 +32,22 @@ NOTES = (
     'The measured MQTT request/response workload delivers the response payload from gateway to device. '
     'TTFB/TTLB begin at TCP-connect start; RTFB/RTLB begin at operational wolfBoot entry; '
     'ReqTFB/ReqTLB begin at the payload request. Each ends at the first/last application payload byte. '
-    'Configured application RAM includes disjoint linker reservations and the 1 KiB handoff region, including instrument storage. '
-    'Heap peak is already inside that reservation and must not be added to it. '
-    'This is the configured testbed requirement, not a validated minimum or a prediction for another device. '
+    'RAM is the maximum per-run estimate: retained application static storage plus heap, scratch, newlib and main-stack peaks, '
+    'excluding identified experiment storage and avoiding double counting pool backing arrays. '
+    'Regional peaks need not be simultaneous; this is not a validated production minimum or a prediction for another device. '
     'Application Flash excludes the bootloader. The packaged image includes the application and its image header; '
     'do not add it to application Flash. These sizes do not establish complete dual-bank/OTA slot capacity. '
     'All chosen changes are evaluated together; differences do not isolate individual causes. '
     'From is queued before To; order is not randomised and environmental drift remains a limitation. '
     'Ten attempts are a pilot default, not a precision guarantee. NA retains missingness, never zero.'
 )
+from framework.tls_optimizations import DEFAULTS as TLS_OPTION_DEFAULTS
 TREATMENTS = {
+    **{k: ['controls.tls.' + k] for k in TLS_OPTION_DEFAULTS},
     'tls_kex': ['tls_kex', 'controls.tls.mode', 'controls.tls.key_exchange_group'],
     'tls_auth': ['tls_auth', 'controls.tls.certificate_profile', 'controls.tls.server_signature_algorithm'],
     'auth_mode': ['auth_mode', 'controls.tls.mode', 'controls.tls.authentication'],
+    'mldsa_memory_mode': ['controls.tls.mldsa_memory_mode'],
     'secure_boot': ['secure_boot', 'controls.choices.secure_boot'],
     'firmware_mode': ['firmware_mode', 'controls.firmware.firmware_mode',
                       'controls.firmware.dual_bank_enabled', 'controls.firmware.ota_enabled'],
@@ -68,7 +70,7 @@ def specification(dataset, session):
     from framework.timing_summary import leaves
     from framework.timing_dataset_schema import RUN_COLUMNS
     known = set(RUN_COLUMNS) | set().union(*(leaves(r.get('controls', {})) for r in dataset.runs))
-    changed = {key for key in LABELS if session['choices']['from'][key] != session['choices']['to'][key]}
+    changed = {key for key in LABELS if choice_value(session['choices']['from'], key) != choice_value(session['choices']['to'], key)}
     treatment = set()
     for key in changed:
         treatment.update(TREATMENTS.get(key, ()))
@@ -93,7 +95,7 @@ def project(frames, session):
     for title, domain, metric, scale, unit in METRICS:
         prefix = '' if domain == 'timing' else 'resource_' if domain == 'resources' else 'secure_boot_'
         rows = frames.get(prefix + 'distributions', [])
-        value_key = 'median_bytes' if domain == 'resources' else 'median'
+        value_key = 'summary_bytes' if metric == 'peak_based_ram_estimate_bytes' else 'median_bytes' if domain == 'resources' else 'median'
         pair = {s: one(rows, condition=s, metric=metric) for s in SIDES}
         values = {s: pair[s].get(value_key) for s in SIDES}
         reason = next((pair[s].get('reason') or 'no_eligible_measurements' for s in SIDES if values[s] is None), None)
@@ -106,9 +108,9 @@ def project(frames, session):
             change = values['to'] - values['from'] if not reason else None
         else:
             reason = reason or delta.get('reason')
-            change = delta.get('delta_median_bytes' if domain == 'resources' else 'delta_median')
+            change = delta.get('delta_summary_bytes' if metric == 'peak_based_ram_estimate_bytes' else 'delta_median_bytes' if domain == 'resources' else 'delta_median')
         # Resource capacity summaries may not average distinct compiled layouts.
-        if domain != 'timing' and metric != 'freertos_heap_peak_used_bytes':
+        if domain != 'timing' and metric not in ('freertos_heap_peak_used_bytes', 'peak_based_ram_estimate_bytes'):
             if any(pair[s].get('n_observations', 0) != 1 for s in SIDES):
                 reason = reason or 'requires_one_verified_build_or_image_per_state'
                 change = None
@@ -165,8 +167,13 @@ def render(rows, session, counts):
             '\n'.join(' & '.join(map(tex,row)) + r' \\' for row in body) + '\n\\bottomrule\n\\end{tabularx}\n\\endgroup\n'
     comparison = latex(headers, body, '@{}Xrrrr@{}')
     comparison += '\\par\\smallskip{\\footnotesize ' + tex(count_note + ' ' + sample_note + ' ' + NOTES + (' Unavailable reasons and eligibility details are retained in comparison.json.' if reasons else '')) + '\\par}\n'
-    selections = [[label, *[str(session['choices'][s][key] if session['choices'][s][key] is not None else 'Not applicable').replace('_',' ') for s in SIDES]]
-                  for key,label in LABELS.items()]
+    # Keep legacy selections reproducible when neither side recorded this field.
+    selections = []
+    for key, label in LABELS.items():
+        if key == 'mldsa_memory_mode' and not any(key in session['choices'][s] for s in SIDES):
+            continue
+        values = [choice_value(session['choices'][s], key) for s in SIDES]
+        selections.append([label, *[str(v if v is not None else 'Not applicable').replace('_', ' ') for v in values]])
     selections += [['Attempts (fixed)', *[str(session['choices']['repetitions'])]*2],
                    ['Workload', 'Fresh connection, MQTT wake-and-transfer', 'Fresh connection, MQTT wake-and-transfer'],
                    ['Energy measurement', 'Off', 'Off']]
@@ -274,7 +281,7 @@ def publish(root, session):
             archive_files=archive_files, frozen_profiles=frozen, dataset_id=dataset.metadata['dataset_id'],
             files={p.name:file_digest(p) for p in temporary.iterdir()},
             analysis_sources={name:file_digest(Path(__file__).with_name(name)) for name in
-                ('migration_report.py','timing_summary.py','resource_analysis.py','secure_boot_analysis.py')}))
+                ('migration.py','migration_report.py','timing_summary.py','resource_analysis.py','secure_boot_analysis.py')}))
         verify_source_inputs(dataset.metadata)
         temporary.rename(folder)
     finally:

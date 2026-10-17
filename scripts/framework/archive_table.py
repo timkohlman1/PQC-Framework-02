@@ -270,7 +270,7 @@ def _extract(dataset, annotations, observations, rows, inputs):
     for role,_,operation in PRIMITIVES.values():
         observations.define(f'primitive__{role}_{operation}_median_cycles','cycles','within_run_benchmark_median')
     for metric in METRICS: observations.define('timing__'+metric+'_us','us','derived_timing')
-    for metric in (*STATIC, *RUNTIME, *TLS, 'simultaneous_system_peak_bytes'):
+    for metric in (*STATIC, *RUNTIME, *TLS, 'simultaneous_system_peak_bytes', 'peak_based_ram_estimate_bytes'):
         observations.define(_resource_name(metric),'bytes','derived_resource','unique')
     for metric in BOUNDARIES: observations.define('boot__'+metric+'_ms','ms','derived_boot','unique')
     for metric in RESOURCE_DEFINITIONS: observations.define('boot__'+metric,'bytes','derived_boot','unique')
@@ -306,7 +306,7 @@ def _extract(dataset, annotations, observations, rows, inputs):
             rows[t['run_key']]['workspace_implementation']='mldsa_workspace'
         # Task/checkpoint identities are separate columns, never pooled RAM peaks.
         for k in ('task','checkpoint','region'):
-            if t.get(k) and t['metric'] not in RUNTIME and t['metric'] not in TLS:
+            if t.get(k) and t['metric'] not in RUNTIME and t['metric'] not in TLS and t['metric'] != 'peak_based_ram_estimate_bytes':
                 metric+='__'+_name(t[k])
         observations.add(t['run_key'],metric,t['value_bytes'],t['validity']=='valid',t['reason'],
             unit='bytes',origin='derived_resource',aggregation='unique',reference=t.get('source_records'),epoch=t.get('epoch_index'),iteration=t.get('iteration_id'),scope='iteration' if t.get('iteration_id') is not None else 'run')

@@ -69,6 +69,41 @@ The maintained secure-boot flash test has focused positive/negative/restoration
 coverage; the plaintext MQTT test owns a focused exchange. Neither represents the
 retired full algorithm/MQTT matrix. See the register before claiming broad coverage.
 
+## Network startup phase markers
+
+`tests/unit/test_network_phases.py` checks historical absence, failed-call
+intervals and malformed trace rejection. The real native integration in
+`tests/integration/test_network_phases_in.py` compiles the marker module with the
+maintained result buffer and checks deferred serialization, 64-bit timestamps,
+reset isolation, partial intervals and invalid call sequences. The existing
+energy firmware build cases compile the hooks in normal and repeated workloads.
+
+Physical phase attribution requires a newly instrumented capture from the
+normal gateway-mediated campaign workflow. Old captures cannot gain missing
+network markers. Inspect the retained MQTT records, GPIO alignment, pre-trigger
+coverage and each attempted phase before attributing a plotted feature. Native
+compilation alone does not establish ST67 runtime behavior.
+
+Bounded hardware evidence (2026-10-16): queue job `b53546c9d3b6` repeated the
+four original power configurations with ten fixed attempts each. All 40 attempts
+completed and retained all seven completed network spans in deferred MQTT data;
+sealed UART logs contain none of the new markers. The exported batch is
+`results/queue/exports/20261016-170220-a8d6cb`. One capture retains only 315 ms of
+pre-trigger samples and is excluded from full boot/phase-display eligibility;
+the other 39 support that display. No replacement attempt was added. This checks
+normal startup and transport in those four configurations, not hardware fault
+paths or exclusive CPU/radio-state attribution.
+
+
+The scan-default change (2026-10-17) is not covered by that earlier hardware
+batch, which had the scan enabled. The local energy-build gate also compiles
+`main.c` with both scan settings and checks the ARM object: the default has no
+reference to `W6X_WiFi_Scan`, the diagnostic option retains it, and both retain
+`W6X_WiFi_Connect`. The native buffered-marker test checks an unattempted scan
+followed by a completed connection. Runtime confirmation is deferred: the user
+has requested no new experiments before rebooting the PC and reconnecting the
+ESP32 recorder. Retained captures and published energy values are unchanged.
+
 ## Documentation checks
 
 For documentation changes run:
@@ -109,6 +144,7 @@ Historical observations are bounded to their recorded date/scenario.
 | DTR-MLDSA-STANDBY | Correct ML-DSA parameter level in multi-key boot tuples | Full standby-key update/recovery transition matrix | Local real keygen/sign checks do not establish standby-key activation or authenticated rollback. | Gateway, STM32/ST67 and selected OTA profiles | `tests/integration/test_mldsa_standby_in.py`; `tests/hardware/test_ota_dualbank_hw.py` | `./scripts/dev.sh pytest tests/integration/test_mldsa_standby_in.py -m integration --pqc-require-local-build`; `./scripts/dev.sh pytest-hardware tests/hardware/test_ota_dualbank_hw.py --pqc-require-hardware` | partial: real ML-DSA-44/65/87 multi-key generation and signing pass; six ML-DSA-65 zero/one/two-standby-key build/boot cases completed with verified cleanup (queue job `56dc761d3d67`); complete standby-key transitions remain unqualified |
 | DTR-HOST-USER | Host-user runtime identity and output ownership | Remaining local firmware/wolfBoot build regression | Recorded host ownership and certificate gates do not qualify local firmware/wolfBoot builds. | Non-root Linux user, local non-remapped Docker daemon, development image and complete checkout | `tests/integration/test_container_host_user_in.py`, `tests/integration/test_certificate_ownership_in.py`, `tests/integration/test_local_build_in.py`, `tests/integration/test_wolfboot_build_integration_in.py` | `./scripts/dev.sh check-host-user`; `python3 scripts/check_certificate_ownership.py`; `./scripts/dev.sh pytest tests/unit`; `./scripts/dev.sh pytest tests/integration/test_local_build_in.py tests/integration/test_wolfboot_build_integration_in.py -m integration --pqc-require-local-build` | partial: host ownership and disposable RSA-3072/ML-DSA-65 provisioning passed 2026-09-29; firmware build gates pending |
 | DTR-HOST-USER-GATEWAY | Non-root gateway wrapper and isolated hardware outputs | Live SSH/gateway and representative hardware regression after identity change | Synthetic SSH/volume tests do not exercise real authentication, remote helper permissions or board operation. | Rebuilt development image, runtime SSH credentials, gateway and STM32 where required | Existing `tests/integration/test_gateway_flash_helper_in.py` and `tests/hardware/test_baseline_uart_hw.py` | `./scripts/dev.sh pytest-gateway tests/integration/test_gateway_flash_helper_in.py -m integration --pqc-require-gateway`; `./scripts/dev.sh pytest-hardware tests/hardware/test_baseline_uart_hw.py -m hardware --pqc-require-hardware` | deferred; these commands can build/flash hardware and require retained evidence |
+| DTR-WIFI-SCAN-DEFAULT | Disable diagnostic AP scan in normal experiments | STM32 association, deferred phase record and measured startup/power with scan omitted | User deferred new experiments; ESP32 recorder disconnected | Reconnected ESP32/INA228, gateway, STM32/ST67 and later user authorization | Existing `tests/hardware/test_energy_capture_hw.py` and normal campaign workflow; extend retained-phase assertions for the omitted scan | After authorization only: `python3 scripts/run_queue.py add <approved-profile>` and `python3 scripts/run_queue.py start`; inspect `wifi_scan` not attempted and connection/DHCP completed | deferred; local compilation and native-buffer checks do not establish runtime or energy improvement |
 | DTR-RUN-QUEUE | Persistent terminal queue, cooperative pause/failure decisions and selected CSV/archive export | Live different-configuration interleaving, abrupt worker interruption, control-plane timeout and physical fault recovery | Two recorded live tests preserved a capture across pause/resume and continued after injected host rejection. Different-firmware interleaving and physical faults remain unqualified. | Gateway, STM32/ST67, brokers and energy recorder for selected profiles | `tests/hardware/test_run_queue_hw.py`; existing `tests/hardware/test_campaign_executor_hw.py` for different-firmware restoration extension | `./scripts/dev.sh pytest-hardware tests/hardware/test_run_queue_hw.py --pqc-require-hardware`, then controlled queue/fault scenarios with retained manifests | partial: 2 live tests recorded 2026-10-04; different-configuration/physical fault qualification pending |
 | DTR-CAPTURE-DEADLINE | Bounded MQTT/capture/control operations and campaign watchdog | Live SSH loss, Docker-daemon stalls and OQS container cleanup under forced termination | Recorded gateway stalled-child and plaintext/classical total-loss recovery passed. Local process termination tests do not prove remote SSH/Docker/OQS cleanup. | Gateway, STM32/ST67, OQS broker and controlled control-plane fault injection | `tests/hardware/test_capture_deadline_hw.py`; `tests/hardware/test_negative_trial_hw.py`; `tests/integration/test_operation_timeout_in.py` | `./scripts/dev.sh pytest-hardware tests/hardware/test_capture_deadline_hw.py tests/hardware/test_negative_trial_hw.py --pqc-require-hardware` | partial: 3 live tests recorded 2026-10-06, stalled-child return 1.22 s; disruptive SSH/Docker/OQS faults pending |
 | DTR-CAMPAIGN-RESUME-FLASH | Restore expected firmware on campaign resume | Live resume after an intervening different firmware flash | Subprocess tests cannot prove expected firmware was restored after an intervening different image. | Gateway, STM32/ST67, build/sign prerequisites and brokers | `tests/hardware/test_campaign_executor_hw.py` (extend with intervening flash and resume) | `./scripts/dev.sh pytest-hardware tests/hardware/test_campaign_executor_hw.py -m hardware --pqc-require-hardware` after extending the live resume scenario | pending live intervening-flash/resume validation |
@@ -172,7 +208,7 @@ gateway-mediated hardware qualification on 14 October 2026 after adapting scratc
 routing for the experimental modes. Fixed-count pilot analysis and reduced-pool
 validation remain pending. See [the experiment plan](mldsa_memory_experiment.md).
 
-Configured application RAM is now derived offline; reduced-memory runtime,
+The regional RAM-demand estimate and separate configured reservations are derived offline; reduced-memory runtime,
 startup/boot coverage and production overhead removal remain unvalidated.
 
 
@@ -195,3 +231,75 @@ resume without duplicate jobs, retained failures and output tampering; the LaTeX
 integration test compiles both generated table inputs. This qualifies the A/B
 workflow, not every selectable algorithm/impairment combination or its statistical
 precision. Existing component gates and missing-value policies still apply.
+
+Optional ML-DSA memory choices are covered by campaign-editor save/validation tests,
+wizard applicability and unchanged-choice tests, resolved compiler-option checks,
+legacy-session handling and treatment matching. The CLI process test also compares
+default mutual ML-DSA against `both_small` and checks the frozen profiles and report.
+Run the focused hardware gate with `./scripts/dev.sh pytest-hardware
+tests/hardware/test_migration_hw.py -k mldsa_memory --pqc-require-hardware`.
+This gate passed on 14 October 2026: one default and one `both_small` mutual-TLS
+attempt completed, with verified export, LaTeX output and RAM/Flash/timing deltas.
+Evidence is retained in `results/migrations/migration_20261014_103840_bf00ae72/`.
+The existing 30-attempt-per-state session
+`results/migrations/migration_20261014_161018_e25c174a/` also passed read-only
+verification with the updated tool. These checks qualify selection/report plumbing;
+they do not replace the fixed-count memory-option pilot or reduced-pool validation.
+
+### Preconnected workload responder and TLS implementation factors
+
+The `preconnected_broker_namespace_mosquitto_v2` responder uses the same native
+gateway MQTT clients inside the selected broker network namespace for every
+target protocol. A loopback ACL probe and three acknowledged connections precede
+target reset. `tests/integration/test_mqtt_responder_in.py` checks persistent
+publishing and absent-message outcomes against an isolated gateway broker;
+`tests/unit/test_responder_eligibility.py` checks the comparison rules. Earlier
+process-startup delivery measurements and impaired v1 host-loopback captures
+remain excluded, while qualified unimpaired v1 and pre-request observations
+retain their stated boundaries.
+
+On 14 October, the updated hardware gate completed plaintext and ML-KEM-768 /
+ML-DSA-65 mutual-TLS captures in
+`results/migrations/migration_20261014_112619_73cf74c7/`. Earlier bounded gates
+completed default versus compact/small signing-and-verification ML-DSA mutual
+authentication (`migration_20261014_111255_133c5637`) and ML-KEM compact/memory
+options (`migration_20261014_111704_616ae020`). These are functionality checks,
+not performance estimates or qualification of every grid combination.
+
+The enlarged 48 KiB task stack could not start with the original 96 KiB shared
+heap (`migration_20261014_113001_58d7b19f`). Large-stack selections therefore
+require an explicit 128 KiB heap; both allocations must be held constant to
+isolate the small-stack implementation flag. Defaults remain 8 KiB and 96 KiB.
+Link-time fit and runtime watermarks are still required for each new configuration.
+Run `./scripts/dev.sh pytest-hardware tests/hardware/test_migration_hw.py
+-k stack_options --pqc-require-hardware` for that bounded comparison. It passed
+with the 128 KiB pool on 14 October: one attempt per setting, including preparation,
+export and RAM/Flash/timing deltas, retained in
+`results/migrations/migration_20261014_113820_2c114abd/`.
+
+Replacement collection is recorded in
+`results/analysis/plans/responder-remediation-20261014/plan.json`. It preserves
+raw captures, links selected batches to fixed-count replacements and retains
+unaffected boot, primitive and pre-request evidence. Publication must use a new
+report revision and must not subtract an estimated Docker startup constant.
+
+
+The v1 host-loopback responder did not isolate local clients from the experiment
+veth during impairment. The v2 correction passed three isolated gateway cases
+(success, no request and missing workload-ready message) with 100% loss and MTU
+400 on the broker's external interface. Payload delivery over namespace loopback
+remained intact. Run this gate with `./scripts/dev.sh pytest-gateway
+tests/integration/test_mqtt_responder_in.py --pqc-require-gateway`.
+
+On 15 October, both plaintext and TLS total-loss/reference recovery hardware
+cases passed in `tests/hardware/test_negative_trial_hw.py`, retaining valid
+negative trials and successful reference attempts in
+`results/automated-tests/pytest-2026-10-14T232846Z-1/`. A fresh plaintext-to-PQ
+mutual-authentication A/B gate also passed, including export and comparison
+verification, in `results/migrations/migration_20261014_234003_f1ca120e/`.
+These checks distinguish cleanup safety, feeder completion and firmware-reported
+failure; they do not qualify every impairment or algorithm combination. An earlier
+A/B test stopped before flashing when a concurrent pytest session cleaned signing
+objects; its preparation evidence remains retained. Run pytest sessions serially
+when one owns firmware preparation, because session-start cleanup affects shared
+generated build objects.

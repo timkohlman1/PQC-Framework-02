@@ -194,6 +194,18 @@ are no device-capacity questions, and the results are not predictions for anothe
 MCU. Missing supported configurations need normal profile implementation and
 qualification first.
 
+For ML-DSA-65 TLS authentication, the wizard also offers `default` or `verify_small`.
+Mutual authentication additionally offers `sign_small` and `both_small`. These
+settings apply to the STM32's TLS signing/verification, with **Unchanged** available
+when the From choice is still applicable. Other authentication families and plaintext
+skip this question. Leaving the choice at `default` preserves the existing build
+configuration; selecting a small-memory mode does not resize the reserved memory pools.
+The campaign editor exposes the same optional factor under **Factors / matrix**.
+The **TLS implementation options** menu also exposes compact-code and ML-KEM
+memory controls, small-stack implementation, and explicit task/heap reservations.
+See [the application TLS controls](011_experiment_configuration.md#optional-tls-implementation-controls)
+for defaults and applicability. The same fields can be campaign matrix factors.
+
 Both states use Ready Metrics 2, a fresh connection following a hardware reset,
 normal boot without stack profiling, and energy monitoring off. Payload sizes
 describe the measured gateway-to-device response after an MQTT request, rather

@@ -15,6 +15,7 @@
 #include "pqc_tls_instrumentation.h"
 #include "pqc_timebase.h"
 #include "pqc_result_buffer.h"
+#include "pqc_network_phases.h"
 #include "pqc_energy_boundary.h"
 #include "pqc_boot_evidence.h"
 #include "pqc_wolfssl_memory.h"
@@ -2061,6 +2062,7 @@ int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
         /* Publish the persistent boot record only in the first reporting epoch. */
         if (iteration == 0U) {
             PQC_BootEvidenceAppendToResultBuffer(iteration);
+            PQC_NetworkPhasesAppend(iteration);
         }
         (void)PQC_ResultBufferAppendText(iteration, "application", "handshake_iteration_complete");
         PQC_ResultBufferStatusGet(&result_status);

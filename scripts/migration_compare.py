@@ -30,7 +30,7 @@ def main(argv=None):
             catalogue = migration.helper(queue, 'catalogue')
             choices = migration.wizard(catalogue)
             for key, label in migration.LABELS.items():
-                print(f"{label}: {choices['from'][key]} -> {choices['to'][key]}")
+                print(f"{label}: {migration.choice_value(choices['from'], key)} -> {migration.choice_value(choices['to'], key)}")
             print(f"{choices['repetitions']} attempts per state; {2*choices['repetitions']} total. "
                   'All changed choices are evaluated together.')
             decision = migration.choose('Create the two profiles and queue the comparison?', ['Run', 'Cancel'], 'Run')

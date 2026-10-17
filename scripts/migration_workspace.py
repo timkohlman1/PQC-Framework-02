@@ -34,6 +34,12 @@ def catalogue(root):
                 text = data.get('description', name)
             descriptions[kind][name] = text
     descriptions['mqtt_transport'] = {'tls': 'MQTT over TLS 1.3', 'plaintext': 'MQTT without transport encryption or authentication'}
+    descriptions['mldsa_memory_mode'] = {
+        'default': 'Current signing and verification implementation',
+        'verify_small': 'Small-memory verification on the STM32',
+        'sign_small': 'Small-memory signing on the STM32 (mutual authentication)',
+        'both_small': 'Small-memory signing and verification on the STM32 (mutual authentication)',
+    }
     descriptions['firmware_mode'] = {'single_bank': 'Single application bank; OTA disabled',
         'dual_bank_no_ota': 'Dual-bank layout; OTA disabled',
         'dual_bank_ota': 'Dual-bank layout; OTA support compiled in'}

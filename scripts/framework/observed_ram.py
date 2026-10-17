@@ -12,30 +12,7 @@ from framework.resource_analysis import elf_resources, _union
 from framework.analysis_paths import result_path
 from framework.run_evidence import sha256_file
 
-PEAKS=('freertos_heap_peak_used_bytes','mldsa_workspace_peak_used_bytes','sbrk_peak_used_bytes','msp_peak_used_bytes')
-
-
-def experiment_object(obj):
-    owner,name=obj['owner'],obj['name']
-    return (owner in ('pqc_tls_instrumentation.c','pqc_result_buffer.c','pqc_timebase.c')
-        or owner=='pqc_wolfmqtt_build_only.c' and name=='s_ready_metrics_2_snapshot'
-        or owner=='main.c' and (name.startswith(('app_uart_line_','smoke_line.','status_line.'))))
-
-
-def components(values,objects):
-    if values['freertos_heap_reserved_bytes'] is None:raise ValueError('heap backing symbol required')
-    removed=[o for o in objects if experiment_object(o) and 0x20000000<=o['start']<o['end']<=0x20030000]
-    overhead=_union([(o['start'],o['end']) for o in removed])
-    static=(values['ram_static_base_bytes']-values['freertos_heap_reserved_bytes']-overhead+
-        values['ram2_section_bytes']+values['ram3_section_bytes']-values['result_buffer_reserved_bytes']-values['workspace_reserved_bytes'])
-    if static<0:raise ValueError('negative disjoint static demand')
-    return dict(application_static_bytes=static,excluded_experiment_bytes=overhead+values['result_buffer_reserved_bytes']+values['mailbox_reserved_bytes'],
-        primary_instrumentation_bytes=overhead,removed_objects=removed)
-
-
-def run_estimate(static,peaks):
-    if any(type(peaks.get(k)) is not int or peaks[k]<0 for k in PEAKS):raise ValueError('valid unsaturated regional peaks required')
-    return static+sum(peaks[k] for k in PEAKS)
+from framework.resource_analysis import PEAKS, experiment_object, ram_estimate_components as components, ram_run_estimate as run_estimate
 
 
 def analyse(inputs,report,selections):

@@ -1,3 +1,7 @@
+# Anonymous workload clients are reachable only through gateway loopback.
+# The network-facing mutual-TLS listener still requires a client certificate.
+topic readwrite pqc/experiments/#
+
 user stm32-mqtt-client
 topic readwrite pqc/#
 topic read $SYS/#

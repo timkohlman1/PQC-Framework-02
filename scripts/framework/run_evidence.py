@@ -630,6 +630,11 @@ def compact_final_manifest(manifest: dict[str, Any]) -> None:
         "retained_files": manifest.get("retained_files", []),
         "final_index": manifest.get("final_index"),
     }
+    # Queue orchestration reads this after finalisation. Dropping an unverified
+    # cleanup status would permit another hardware run despite an unsafe exit.
+    safety = manifest.get("execution_safety")
+    if isinstance(safety, dict):
+        compact["execution_safety"] = {k: safety[k] for k in ("status", "reason") if k in safety}
     manifest.clear()
     manifest.update(compact)
 

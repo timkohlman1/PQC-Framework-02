@@ -31,6 +31,11 @@
 #  define PQC_MQTT_CORRELATION_PAYLOAD "pqc-e2e"
 #endif
 
+/* Optional AP inventory scan; association to the configured SSID does not need it. */
+#ifndef PQC_ST67_WIFI_DIAGNOSTIC_SCAN
+#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN 0
+#endif
+
 #ifndef PQC_MQTT_TLS_MODE
 #define PQC_MQTT_TLS_MODE "plaintext"
 #endif

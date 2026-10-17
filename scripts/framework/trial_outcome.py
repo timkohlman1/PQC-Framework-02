@@ -58,6 +58,11 @@ def observer_checks(stream: Path, run_id: str, marker: dict, errors: dict | None
     allowed = {0}
     if outcome is not None and not outcome['application_requested']:
         allowed |= {4, 7, 8, 14, 27}
+    # v2 code28 means the feeder completed normally but no workload-ready
+    # message arrived. Accept only alongside an intact firmware network failure
+    # after its recorded request; experiment.py also verifies the v2 event proof.
+    if outcome is not None and outcome['application_requested']:
+        allowed.add(28)
     checks = {}
     for name, key in [('subscriber', 'subscriber_rc'), ('responder', 'transfer_responder_rc')]:
         code = marker.get(key)

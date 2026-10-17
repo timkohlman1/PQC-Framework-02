@@ -26,7 +26,7 @@ RECIPES = {
 FIELDS = {'comparison', 'domains', 'network', 'energy'}
 PRIMARY = {
     'timing': ['tls_handshake', 'mqtt_readiness', 'ttlb', 'payload_throughput'],
-    'resources': ['flash_section_bytes', 'ram_static_base_bytes', 'freertos_heap_peak_used_bytes'],
+    'resources': ['flash_section_bytes', 'peak_based_ram_estimate_bytes'],
     'tls': ['tls_handshake'],
     'network': ['*.wire_bytes', '*.tcp_payload_bytes', '*.packets'],
     'energy': ['whole_workload.energy_j.*', 'tls_handshake.energy_j.*', 'application_transfer.energy_j.*'],

@@ -43,10 +43,13 @@ for i in range(profile['execution']['repetitions']):
   runs.append({'case_id':'synthetic-case','repetition_index':i+1,'state':'failed','manifest':None,
                'accepted_failure':{'decision':'policy_record_valid_failure'}})
   continue
- capture=make_run(folder/'runs'/('run-'+str(i)),run_id=profile['id']+'-'+str(i))
+ capture=make_run(folder/'runs'/('run-'+str(i)),run_id=profile['id']+'-'+str(i),choices=profile['fixed'])
  for file,key in [('resolved-case.json','configuration'),('manifest.json','configuration')]:
   path=capture/file;data=json.loads(path.read_text())
-  data[key]['campaign_execution']['campaign_id']=profile['id'];path.write_text(json.dumps(data))
+  data[key]['campaign_execution']['campaign_id']=profile['id']
+  if file=='resolved-case.json' and 'mldsa_memory_mode' in profile['fixed']:
+   data['effective_non_secret_parameters']['mqtt']['tls']['mldsa_memory_mode']=profile['fixed']['mldsa_memory_mode']
+  path.write_text(json.dumps(data))
  reseal(capture)
  runs.append({'case_id':'synthetic-case','repetition_index':i+1,'state':'completed','manifest':str(capture/'manifest.json')})
  time.sleep(.1)
@@ -61,13 +64,19 @@ data['final_index']={'status':'finalized','sha256':canonical_sha256(data)}
     return tmp_path
 
 
-@pytest.mark.parametrize('failed',[False,True])
-def test_real_interactive_process_creates_pair_waits_exports_and_resumes(process_repository,failed):
+@pytest.mark.parametrize('failed,memory',[(False,False),(True,False),(False,True)])
+def test_real_interactive_process_creates_pair_waits_exports_and_resumes(process_repository,failed,memory):
     root=process_repository
     if failed:(root/'all-failed').touch()
     # 9 fields per TLS side (unsigned boot skips standby keys), repetitions=1,
     # confirm Run, then confirm starting the shared queue.
-    answers='\n'*18+'1\n\n\n'
+    answers='\n'*20+'1\n\n\n'
+    if memory:
+        from migration_workspace import catalogue
+        auth = str(catalogue(root)['options']['tls_auth'].index('mldsa65')+1)
+        # From: ML-DSA mutual/default. To: unchanged except both small modes.
+        answers='\n'.join(['','',auth,'2','','','','','','','',
+                          '','','','','4','','','','','','','1','',''])+'\n'
     env=dict(os.environ);env.pop('PQC_CONTAINER',None)
     command=[sys.executable,str(root/'scripts/migration_compare.py')]
     q=Queue(root)
@@ -83,6 +92,15 @@ def test_real_interactive_process_creates_pair_waits_exports_and_resumes(process
         assert all((folder/f).is_file() for f in ['comparison.tex','selections.tex','comparison.json','provenance.json'])
         data=json.loads((folder/'comparison.json').read_text())
         assert data['counts']['from']['planned']==data['counts']['to']['planned']==1
+        if memory:
+            import yaml
+            assert state['choices']['from']['mldsa_memory_mode']=='default'
+            assert state['choices']['to']['mldsa_memory_mode']=='both_small'
+            assert data['specification']['treatment']==['controls.tls.mldsa_memory_mode']
+            for side,job in state['jobs'].items():
+                profile=yaml.safe_load((q.folder(job)/'profiles/input.yaml').read_text())
+                assert profile['fixed'].get('mldsa_memory_mode')==(None if side=='from' else 'both_small')
+            assert 'default & both small' in (folder/'selections.tex').read_text()
         if failed:
             assert data['counts']['from']['without_capture']==1
             assert all(r['values']=={'from':None,'to':None} and r['delta'] is None for r in data['rows'])
@@ -103,7 +121,7 @@ def test_real_interactive_process_creates_pair_waits_exports_and_resumes(process
 
 def test_cli_cancel_creates_no_profiles_or_jobs(process_repository):
     root=process_repository; env=dict(os.environ);env.pop('PQC_CONTAINER',None)
-    result=subprocess.run([sys.executable,str(root/'scripts/migration_compare.py')],input='\n'*19+'2\n',
+    result=subprocess.run([sys.executable,str(root/'scripts/migration_compare.py')],input='\n'*21+'2\n',
         cwd=root,env=env,capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stdout+result.stderr
     assert not Queue(root).jobs()

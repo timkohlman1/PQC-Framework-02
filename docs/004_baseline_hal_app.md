@@ -51,9 +51,15 @@ loopback observation and fake/no-network wolfMQTT initialization similarly prove
 only their stated local boundary. Historical `build_only` filenames do not limit
 the separately implemented socket/TLS path.
 
-Normal ST67 startup initializes the module, Wi-Fi and lwIP, performs a bounded
-best-effort scan, associates with the configured AP and waits for DHCP. A scan
-failure does not itself cancel the configured association attempt. Later live
+Normal ST67 startup initializes the module, Wi-Fi and lwIP, then associates with
+the configured AP and waits for DHCP. The optional AP-inventory scan is disabled
+by default (`PQC_ST67_WIFI_DIAGNOSTIC_SCAN=0`). An explicit diagnostic CMake build
+can enable it with `-DPQC_ST67_WIFI_DIAGNOSTIC_SCAN=ON`; this adds scan time and
+energy before association and must be kept separate from normal experiments.
+It does not disable any discovery internal to `W6X_WiFi_Connect`. When the explicit
+scan is disabled, its deferred phase record remains `state=0` (`not_attempted`),
+with no invented zero-duration measurement or added UART message. In diagnostic
+mode, a scan failure does not itself cancel the configured association attempt. Later live
 network evidence comes from the actual station netif, including its assigned
 IPv4 address; pre-network unavailable markers do not override it.
 
