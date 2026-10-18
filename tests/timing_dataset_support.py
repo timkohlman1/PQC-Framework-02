@@ -89,6 +89,13 @@ def make_run(root: Path, *, run_id: str = "synthetic-0001", records: list[dict] 
         "configuration": config, "capture_contract": contract, "artifacts": initial_capture_index(contract),
         "retained_files": [], "execution_outcome": {"status": "failed" if failed else "completed",
              "result": "synthetic_failure" if failed else "synthetic_success", "failure_stage": "broker_readiness" if failed else None}}
+    if application == 'mqtt_ready_metrics_2':
+        events=[dict(event='client_started',role=role) for role in ('observer','request','publisher')]
+        events += [dict(event='ready',connections=3,payload_prepared=True),dict(event='request_received'),
+            dict(event='payload_enqueued'),dict(event='complete'),dict(event='cleanup',verified=True,return_code=0)]
+        (root/'mqtt-publisher.log').write_text(''.join('PQC_MQTT_RESPONDER_EVENT '+json.dumps(dict(e,
+            contract='preconnected_loopback_mosquitto_v1',monotonic_ns=i+1))+'\n' for i,e in enumerate(events)))
+        register_artifact(manifest, result_dir=root, role='mqtt_publisher_log', path=root/'mqtt-publisher.log', stage='synthetic_fixture', tool=__name__)
     for role, name in (("resolved_case_snapshot", "resolved-case.json"), ("run_provenance", "run-provenance.json"), ("stm32_result_stream", "mqtt-reporting-raw.ndjson")):
         if (root / name).exists():
             register_artifact(manifest, result_dir=root, role=role, path=root / name, stage="synthetic_fixture", tool=__name__)

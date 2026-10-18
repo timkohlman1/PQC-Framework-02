@@ -214,3 +214,44 @@ Root-owned generated files outside those paths, hard-linked/special files and
 pre-existing ACL/setgid policies require separate inspection, not a broader
 automatic ownership sweep. In particular, review old in-source wolfBoot tools
 or keystore outputs by exact filename rather than changing its whole source tree.
+
+## Optional UniFi access-point telemetry
+
+Provision the AP separately from the experiment gateway. This collector runs on
+linuxdev1 using an SSH alias; no AP credentials belong in a campaign profile.
+The controller provisions public keys persistently: see [Ubiquiti's SSH-key
+instructions](https://help.ui.com/hc/en-us/articles/235247068-Adding-SSH-Keys-to-UniFi-Devices).
+
+1. Generate a dedicated key without overwriting an existing file:
+   `ssh-keygen -t rsa -b 3072 -f ~/.ssh/pqc_ap -C pqc-ap-telemetry`.
+   For unattended collection, use a dedicated unencrypted key or load a protected
+   key into the SSH agent available to the collector.
+2. Display `cat ~/.ssh/pqc_ap.pub` and add the complete public-key line in UniFi
+   Network's Device SSH Settings / SSH Keys. Depending on application version,
+   this appears under Devices / Device Updates and Settings, or Settings /
+   System / Advanced / Device Authentication. Enable device SSH, save, and note
+   the AP address and device SSH username (separate from console SSH access).
+3. Add the following host block to `~/.ssh/config`, replacing both placeholders:
+
+   ```sshconfig
+   Host pqc-ap
+       HostName AP_IP_ADDRESS
+       User DEVICE_SSH_USERNAME
+       IdentityFile ~/.ssh/pqc_ap
+       IdentitiesOnly yes
+       StrictHostKeyChecking ask
+   ```
+
+4. Run `ssh pqc-ap true` once. Confirm the address identifies the intended AP
+   before accepting its host key; compare a trusted fingerprint where available.
+5. Verify unattended access:
+
+   ```bash
+   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes pqc-ap \
+       'uname -a; command -v iw; cat /proc/net/wireless'
+   ```
+
+6. Use the capability-check collection command in the
+   [analysis reference](012_results_and_analysis.md). Unsupported driver counters
+   remain unavailable. This step does not scan, reconfigure channels or generate
+   experiment traffic; it does not by itself establish a low-interference link.

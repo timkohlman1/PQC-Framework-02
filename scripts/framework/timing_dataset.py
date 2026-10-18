@@ -24,7 +24,7 @@ from framework.timing_dataset_schema import (ISSUE_COLUMNS, METRICS, NULL, PARSE
 from framework.timing_metrics import decode_epochs, extract_timings
 
 ROLES = {"resolved_case_snapshot": "resolved-case.json", "run_provenance": "run-provenance.json",
-         "stm32_result_stream": "mqtt-reporting-raw.ndjson"}
+         "stm32_result_stream": "mqtt-reporting-raw.ndjson", "mqtt_publisher_log": "mqtt-publisher.log"}
 # Discovery never sweeps keys, build/preparation material or earlier derivatives.
 PRUNED = {"analysis", "preparations", "prerequisites", "cryptographic-material", "builds",
           "secrets", ".git", ".venv", "__pycache__", ".pqc-generated-state"}
@@ -288,6 +288,10 @@ def _inventory_fields(row: dict, manifest: dict, snapshot: dict, provenance: dic
         "services": {key: _map(selected.get("services")).get(key) for key in ("experiment_broker", "reporting_broker")},
     }
     # Current framework source records use git_commit, not the legacy commit key.
+    from framework.tls_optimizations import DEFAULTS as TLS_OPTION_DEFAULTS
+    row['controls']['tls'].update({k: tls[k] for k in TLS_OPTION_DEFAULTS if k in tls})
+    if "mldsa_memory_mode" in tls:
+        row["controls"]["tls"]["mldsa_memory_mode"] = tls["mldsa_memory_mode"]
     # Equal HEADs do not establish equal dirty trees. Keep recorded source-state
     # controls, and never manufacture them from today's working tree.
     source = _map(records.get("source"))
@@ -409,6 +413,14 @@ def inspect_run(root: Path) -> tuple[dict, list[dict], list[dict], list[dict]]:
         blockers.extend(_inventory_fields(row, manifest, snapshot, snapshots["run_provenance"]))
         if not blockers:
             _linked_preparation_source(row, inputs)
+        if row.get('application') == 'mqtt_ready_metrics_2':
+            from framework.mqtt_responder import evidence as responder_evidence
+            observer, observer_status = _artifact(root, manifest, 'mqtt_publisher_log', inputs)
+            details = responder_evidence(observer.decode('utf-8', errors='replace')) if observer is not None else {}
+            verified = details.get('verified', False)
+            row['controls']['mqtt']['responder_contract'] = details['contract'] if verified else 'legacy_or_unverified_on_request'
+            if not verified:
+                row['inventory_reasons'].append('delivery_responder_unverified:' + observer_status)
         raw, state = _artifact(root, manifest, "stm32_result_stream", inputs)
         epochs, decode_errors = [], []
         if raw is None:

@@ -1,0 +1,41 @@
+schema_version: 1
+profile_type: campaign
+id: mldsa_memory_server
+target: stm32l4r5_st67
+gateway: pqc_gateway1
+services:
+  experiment_broker: experiment_gateway1
+  reporting_broker: reporting_gateway1
+workload: ready_metrics_2
+fixed:
+  secure_boot: integrity_sha256
+  firmware_mode: single_bank
+  standby_signing_keys: 0
+  boot_stack_profiling: false
+  boot_uart_diagnostics: false
+  network_condition: baseline
+  tls_kex: secp256r1
+  tls_auth: mldsa65
+  auth_mode: server
+execution:
+  repetitions: 10
+  reset_between_runs: hardware_reset
+  build: once_per_firmware_identity
+  flash: once_per_firmware_identity
+  experiment_broker: reuse_if_compatible
+  reporting_broker: always_available
+  condition: retain_within_condition
+  evidence: per_run
+  energy_monitoring: 'off'
+analysis_baselines:
+  mldsa_memory_mode: default
+matrix:
+  workload.transfer.payload_bytes:
+  - 204800
+  workload.transfer.chunk_bytes:
+  - 400
+  mldsa_memory_mode:
+  - default
+  - verify_small
+description: Matched ML-DSA memory-option pilot; fixed pools, no allocation tracing
+  or energy. Keep failures.

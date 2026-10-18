@@ -17,6 +17,7 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include "w61_at_api.h"
@@ -334,7 +335,9 @@ W61_Status_t W61_WaitForReady(W61_Object_t *Obj, uint32_t time_ms)
   W61_NULL_ASSERT_STR(Obj, W61_Obj_Null_str);
 
   /* Wait for the module to be ready */
+  uint16_t trace = PQC_ActivityBegin(PQC_ACT_READY_WAIT, 0);
   xReturned = xSemaphoreTake(mdm->sem_if_ready, pdMS_TO_TICKS(time_ms));
+  PQC_ActivityEnd(trace, xReturned == pdPASS ? 0 : -1);
   if (xReturned != pdPASS)
   {
     SYS_LOG_ERROR("sem_if_ready not received\n");
@@ -343,7 +346,9 @@ W61_Status_t W61_WaitForReady(W61_Object_t *Obj, uint32_t time_ms)
   else
   {
     /** Need to wait after catching ready event to ensure module is fully operational .*/
+    trace = PQC_ActivityBegin(PQC_ACT_READY_GUARD, 100);
     vTaskDelay(pdMS_TO_TICKS(100));
+    PQC_ActivityEnd(trace, 0);
     return W61_STATUS_OK;
   }
 }

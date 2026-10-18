@@ -37,7 +37,7 @@ TITLES = {
 TIMING = [('distributions', m) for m in ('rtfb', 'rtlb', 'ttfb', 'ttlb', 'req_tfb', 'req_tlb', 'mqtt_readiness')]
 TLS = [('tls_run_distributions', 'tls_handshake')]
 RESOURCE = [('resource_distributions', m) for m in
-            ('flash_section_bytes', 'ram_static_base_bytes', 'freertos_heap_peak_used_bytes', 'simultaneous_system_peak_bytes')]
+            ('flash_section_bytes', 'peak_based_ram_estimate_bytes')]
 BOOT = [('secure_boot_distributions', m) for m in
         ('integrity', 'authenticity', 'image_verification', 'application_start', 'bootloader_flash_bytes',
          'bootloader_static_ram_bytes', 'boot_stack_high_water_bytes', 'image_header_reserved_bytes', 'image_signature_used_bytes')]
@@ -90,7 +90,7 @@ SECTION_GAPS = {
 }
 METHOD = ('Values are descriptive medians unless identified as counts, fractions, percentiles or matched differences. '
           'Repeated TLS and primitive operations are reduced within each run first. '
-          'Static resources use unique builds; regional peaks are not additive. '
+          'Static resources use unique builds; RAM estimate is the maximum per-run regional-demand estimate with identified experiment storage excluded. '
           'Runs and observations are distinct counts; a dash means unavailable or inapplicable, never zero. '
           'Full precision, quartiles, p95, sample units, controls and evidence strata remain in the companion CSV and report. '
           'Execution completion is separate from capture acceptance and metric validity.')
@@ -174,7 +174,7 @@ def collect(prepared):
                     if r['condition'] in allowed and not r['metric'].startswith('recorded_interval.'):
                         rows.append(dict(r, analysis=name, table='energy_run_spread', value=r['mean'],
                                          statistic='mean_sd', reason=r.get('spread_reason')))
-            rows.extend(dict(r, statistic='median') for r in candidates)
+            rows.extend(dict(r, statistic='maximum_per_run_estimate' if r['metric'] == 'peak_based_ram_estimate_bytes' else 'median') for r in candidates)
             if section in ('repeated-tls', 'network-impairment-summary'):
                 rows.extend(dict(r, value=r.get('p95'), statistic='p95',
                     reason=None if r.get('p95') is not None else 'no_eligible_measurements') for r in candidates if section == 'repeated-tls' or r['metric'] == 'ttlb')
@@ -185,7 +185,7 @@ def collect(prepared):
                     for r in differences if r['table'] == 'network_comparisons' and r['metric'] == 'ttlb' and r['condition'] in allowed)
             if section == 'cross-domain-summary':
                 representative = {'tls_handshake', 'ttlb', 'image_verification', 'flash_section_bytes',
-                                  'ram_static_base_bytes', 'freertos_heap_peak_used_bytes'}
+                                  'peak_based_ram_estimate_bytes'}
                 rows.extend(dict(r, value=r['delta'], statistic='delta_median', n_runs=r.get('treatment_runs'),
                     n_observations=None, reason=r.get('reason')) for r in differences if r['condition'] in allowed and
                     (r['metric'] in representative or fnmatchcase(r['metric'], 'whole_workload.energy_j.*')))
@@ -236,7 +236,8 @@ LABELS = {
     'mlkem_keygen': 'ML-KEM keygen', 'mlkem_decapsulate': 'ML-KEM decaps.',
     'mlkem_encapsulate': 'ML-KEM encaps.', 'mldsa_keygen': 'ML-DSA keygen',
     'mldsa_sign': 'ML-DSA sign', 'mldsa_verify': 'ML-DSA verify', 'sha256_hash:32_bytes': 'SHA-256 (32 B)',
-    'flash_section_bytes': 'App. Flash', 'ram_static_base_bytes': 'Static RAM',
+    'peak_based_ram_estimate_bytes': 'RAM estimate',
+    'flash_section_bytes': 'App. Flash', 'ram_static_base_bytes': 'Primary static RAM',
     'freertos_heap_peak_used_bytes': 'Heap peak', 'simultaneous_system_peak_bytes': 'Whole-device peak RAM',
     'integrity': 'Integrity', 'authenticity': 'Authenticate', 'image_verification': 'Image verify',
     'application_start': 'App. start', 'bootloader_flash_bytes': 'Boot Flash',
@@ -434,7 +435,7 @@ def render(section, data, *, table_id=None, caption=None):
                         'rtfb', 'rtlb', 'ttfb', 'ttlb', 'req_tfb', 'req_tlb', 'mqtt_readiness', 'tls_handshake',
                         'server_hello', 'encrypted_extensions', 'certificate', 'certificate_verify', 'finished',
                         'ecdhe_keygen', 'ecdhe_shared_secret', 'mlkem_keygen', 'mlkem_decapsulate',
-                        'flash_section_bytes', 'ram_static_base_bytes', 'freertos_heap_peak_used_bytes']
+                        'flash_section_bytes', 'peak_based_ram_estimate_bytes']
             available.sort(key=lambda c: priority.index(c[0]) if c[0] in priority else len(priority))
         missing = [c for c in columns if c not in available]
         if missing:
@@ -545,12 +546,13 @@ def render(section, data, *, table_id=None, caption=None):
     if section == 'energy-tls-mqtt': notes.append('Energy is the mean +/- sample SD of one median per eligible run; SD describes repeatability, not instrument or missing-sample uncertainty. Duration and power are medians. Invalid intervals remain excluded with reasons.')
     if any(r.get('unit') == 'cycles' for r in data['rows']): notes.append('Cycle values are shown in thousands (1 = 1,000 cycles); exact integer counts remain in the CSV.')
     if any(r.get('unit') == 'bytes' for r in data['rows']): notes.append('KiB = 1,024 bytes.')
-    if any(r.get('table') == 'resource_distributions' for r in data['rows']): notes.append('Static memory and regional peaks overlap and must not be added.')
     if any(r.get('table') == 'tls_operation_distributions' for r in data['rows']): notes.append('Primitive columns align observed implementations by role; inclusive intervals are not summed.')
     if omitted: notes.append('Unavailable columns or selection blocks retained in the CSV: ' + '; '.join(omitted) + '.')
     for note in notes: lines.append(r'\noindent ' + esc(note) + r'\par')
     for key, marker in evidence_notes.items(): lines.append(r'\noindent ' + marker + ': ' + esc(', '.join(v for v in key if v)) + r'.\par')
-    for gap in data['gaps']: lines.append(r'\noindent ' + esc(gap) + r'\par')
+    for gap in data['gaps']:
+        if not gap.startswith('D1:'):
+            lines.append(r'\noindent ' + esc(gap) + r'\par')
     lines.append(r'\endgroup')
     if wide: lines.append(r'\end{landscape}')
     return '\n'.join(lines) + '\n'

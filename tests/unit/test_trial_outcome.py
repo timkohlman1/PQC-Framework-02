@@ -60,6 +60,7 @@ def test_sealed_capture_binding_and_artifact_hashes(tmp_path):
     (0,(14,14),True), (0,(27,27),True), (0,(0,0),True),
     (1,(14,14),False), (1,(0,0),True), (0,(127,127),False),
     (0,(0,41),False), (0,(0,None),False), (0,(5,5),False),
+    (1,(28,28),True), (0,(28,28),False),
 ])
 def test_observer_network_errors_only_before_a_device_request(tmp_path, requested, codes, accepted):
     from framework.trial_outcome import observer_checks
@@ -83,3 +84,23 @@ def test_generic_observer_exit_needs_its_own_network_diagnostic(tmp_path, error,
                              {'subscriber':error,'responder':'Error: Out of memory'})
     assert checks['subscriber'] is accepted
     assert checks['responder'] is False
+
+
+def test_missing_ready_code_cannot_make_a_success_or_missing_report_a_negative(tmp_path):
+    from framework.trial_outcome import observer_checks
+    stream=tmp_path/'stream'
+    for records in ([],[outcome(0,status='success',application_requested=1)]):
+        stream.write_text(wire('trial',[records]))
+        assert not any(observer_checks(stream,'trial',{'subscriber_rc':28,'transfer_responder_rc':28}).values())
+
+
+@pytest.mark.parametrize('code', [-1, -2])
+def test_overlapping_tls_mqtt_codes_remain_unclassified(tmp_path, code):
+    # Even a measured handshake and complete infrastructure proof cannot make
+    # these overlapping namespaces identify the application failure mechanism.
+    stream = tmp_path/'stream'
+    stream.write_text(wire('trial', [[outcome(code),
+        logical('PQC_TLS_HANDSHAKE_TIMING start_us=100 end_us=200 result=-1')]]))
+    result = classify(stream, 'trial', dict.fromkeys(CHECKS, True))
+    assert not result['eligible'] and result['kind'] == 'unclassified'
+    assert result['workload'] is None

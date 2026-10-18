@@ -484,7 +484,11 @@ All domains use the shared notebook or `analyse_results.py --recipe` selection.
 
 Static observations deduplicate by application ELF SHA-256. Signed-image identity
 must be explicitly associated with its ELF through verified preparation provenance;
-a build number alone is insufficient. The supported ELF32 ARM decoder counts
+a build number alone is insufficient. Resource analyser 1.1.1 also accepts the
+explicit `sha256-elf` identity in a successful `automated_test` build record when
+the normal `build_reference` is absent. Both routes require the exact retained
+ELF and signed-image hashes; conflicting references remain unavailable.
+The supported ELF32 ARM decoder counts
 allocated file-backed load-address ranges for Flash, separately from image span
 and retained binary length. Debug data and NOBITS reservations are not Flash.
 Unknown layouts remain unavailable. 1 KiB = 1024 bytes.
@@ -496,6 +500,147 @@ excludes startup before `main()`; saturation is a lower bound and excluded from
 exact-peak summaries. Independent regional peaks are not simultaneous demand:
 `simultaneous_system_peak_bytes` remains unavailable. TLS before/after checkpoints
 are not reset per-handshake peaks. Lifetime records have no invented iteration.
+
+### Configured application RAM and sizing
+
+`configured_application_ram_bytes` (resource metric version 1.1.0) sums disjoint
+application reservations: primary static storage plus linker minimum newlib/MSP
+allowances, RAM2 allocated sections unioned with the maintained L4R5 1 KiB
+boot/OTA handoff reservation, and RAM3 allocated sections. The mailbox is an
+explicit target-layout policy because it need not emit an ELF section. Unsupported
+layouts remain unavailable. Heap backing, dynamic task stacks, result buffers
+and ML-DSA scratch must not be counted twice. This is configured application
+storage, not an observed simultaneous peak or a validated minimum MCU capacity.
+Check bank placement, startup/boot demand and workload-specific headroom separately.
+
+`freertos_heap_reserved_bytes` identifies `ucHeap`; the instrumentation metric
+identifies RAM objects owned by `pqc_tls_instrumentation.c`. Together with the
+result-buffer section they itemise known measurement storage. Unattributed static
+storage can still include reporting support. Subtracting those objects does not
+validate an uninstrumented build. Missing symbol evidence is unavailable, not zero.
+
+Existing immutable reports can be supplemented without recollecting experiments:
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py ram-budget \
+  --report results/analysis/reports/thesis-chapter5/20261011-final \
+  --selection kex --selection authentication --selection ota_overhead \
+  --output results/analysis/reports/ram-budget/20261014-review
+```
+
+This requires one verified build per selected condition, rechecks published CSV
+hashes and retained ELF identities, and writes CSV, LaTeX and source provenance
+into a fresh directory. Old reports remain unchanged. Regional runtime maxima
+remain available for headroom assessment; medians are not sizing bounds.
+
+### Peak-based application RAM estimate
+
+`observed-ram` supplements an existing report using one verified ELF per condition
+and valid run-lifetime heap, ML-DSA scratch, newlib and MSP observations. It removes
+pool backing arrays and identifiable experiment-only static objects, retains other
+application/network arrays at compiled size, then adds each run's regional peaks
+once. The condition result is the largest **per-run sum**, not a median and not a
+sum of maxima from different runs. Dynamic task stacks already belong to the heap.
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py observed-ram \
+  --report results/analysis/reports/thesis-chapter5/20261011-final \
+  --selection kex --selection authentication --selection ota_overhead \
+  --output results/analysis/reports/observed-ram/REVIEW_REVISION
+```
+
+Outputs include per-run estimates, condition summaries and an ELF exclusion audit.
+The estimate excludes identified result, mailbox, trace, timer, readiness and UART
+formatting storage. Unidentified reporting support remains included. Regional peaks
+can occur at different times; MSP recording starts in `main`. This is neither a
+simultaneous whole-device watermark nor a validated minimum uninstrumented build.
+Boot/startup demand, contiguous bank placement and workload headroom still need
+separate checks. The `ram-budget` view remains useful for explaining actual linked
+reservations, rather than as the headline observed-demand metric.
+
+### Delivery stages, loss outcomes and power samples
+
+The maintained Chapter 5 diagnostic action consumes the pinned baseline report;
+it requires its named KEx, energy and loss selections rather than guessing a batch:
+
+```bash
+./scripts/dev.sh python scripts/analyse_results.py chapter5-review \
+  --report results/analysis/reports/thesis-chapter5/20261011-final \
+  --output results/analysis/reports/chapter5-review/REVIEW_REVISION
+```
+
+It checks common timing origins and reconstructs TTLB from disjoint per-run stages,
+then reports stage medians without claiming they add to the median TTLB. Nested
+primitive/phase summaries remain inclusive. The retained implementation launches a
+native publisher for classical cases and a Docker publisher for PQ cases after the
+request; this startup lies inside request-to-first-payload timing. Its contribution
+is not isolated by the existing timestamps, so application deltas are not solely
+cryptographic costs. The separately bounded device handshake precedes this startup.
+
+The loss view distinguishes valid observed handshake completion from whole-run
+completion. Missing or unusable handshake evidence remains unclassified, not a TLS
+failure. Power curves average each valid run's empirical CDF, giving equal total
+weight to each run regardless of sample count. Quantiles use that weighted mixture;
+full acquired windows include lead-in/tail. This removes duration weighting, not
+phase-mixture differences, and supplies no independence or equivalence claim.
+All consumed report/raw inputs and generated outputs retain hashes. Fresh output
+directories are required; failed publication carries an `INCOMPLETE` marker.
+
+### Wireless environment validity
+
+The current gateway profile captures Ethernet (`enp0s31f6`); TCP retransmissions
+there cannot identify Wi-Fi retries or distinguish RF interference from configured
+netem loss. The ST67 startup scan can record RSSI/channel for a matching SSID, but
+that is not continuous interference evidence or proof of the associated BSSID.
+
+A supplementary passive AP collector uses an existing, verified SSH alias with
+key authentication. It stores raw command outputs, failures, host timing and
+available in-use-channel survey counters. It changes no AP settings and sends no
+scan or test traffic. The UniFi AC-Mesh uses the legacy `apstats` driver tools;
+the optional `unifi` backend retains radio and selected-station fields, association
+listing, channel identity and uptime. Unsupported commands/counters stay unavailable. This host-side launcher needs the
+user's SSH configuration, so it is run directly like the queue launcher:
+
+```bash
+python3 scripts/wireless_environment.py --ssh-host pqc-ap \
+  --samples 12 --interval 5 --context capability-check \
+  --output results/wireless/capability-check
+```
+
+For the verified legacy driver, provide the radio, wireless interface and target
+MAC explicitly. `wlanconfig <interface> list sta` identifies the associated target;
+`iwlist <interface> channel` reads the current channel without a scan.
+
+```bash
+python3 scripts/wireless_environment.py --ssh-host pqc-ap --backend unifi \
+  --radio wifi0 --interface wifi0ap2 --station 40:82:7b:02:60:0a \
+  --samples 91 --interval 10 --context idle-baseline \
+  --output results/wireless/idle-baseline
+```
+
+Driver-native RSSI is not labelled dBm. Disabled utilisation/PER fields remain
+null; self/other-BSS utilisation retains its raw units and unspecified averaging
+window. Association can reset station counters, so the collector does not infer
+cross-association retry rates. Radio statistics include all stations. A dedicated SSH transport is reused to reduce repeated key-exchange load. Command
+start times and durations bound each asynchronous snapshot; interrupted legacy
+collections retain an explicit status and completed-sample count.
+
+After capability review, use an idle baseline (for example 15 minutes) and passive
+sampling during fixed, interleaved reference/changed-condition blocks. Record AP
+firmware, radio/channel/width, target MAC/BSSID, locations and collection/run IDs.
+Inspect signal, station retries/failures and channel-busy counter deltas alongside
+run latency, p95 and completion. Busy airtime includes desired traffic; RSSI is
+signal strength, not interference; counter resets/channel changes invalidate a
+delta. The collector computes busy fractions only for valid same-channel counters,
+and retains station output for driver-specific interpretation. It does not yet
+attach an AP capture automatically to each queue run or produce an interference
+risk verdict. That requires validated AP metrics and timestamp/run alignment.
+
+A diagnostic collection qualifies only its recorded observation window, not
+historical runs. Collector availability alone is not an RF baseline or a
+validity assessment. A low-risk conclusion requires
+an explicit material-effect threshold and enough contemporaneous evidence to
+bound it; absence of a significant association is not proof of negligible impact.
 
 ### TLS attribution
 
@@ -847,3 +992,232 @@ request 40 attempts per condition, energy off, and retained valid workload failu
 A 1024-byte transfer in four 256-byte chunks keeps this handshake-focused grid bounded under
 1-second RTT; baseline is rerun with that same workload. Historical larger-payload
 baselines can be displayed separately but are not matched treatment controls.
+
+### Authentication variability plot
+
+The authentication-distribution action reads the pinned authentication inventory,
+run observations and published quartiles from an existing report. It requires
+P-256 key establishment, one eligible framework-run handshake per run, all four
+authentication families in both modes, and agreement with the published quartiles
+and counts. It emits LaTeX boxplots, every plotted run value, summary CSV and
+provenance into a new directory. Tukey whiskers do not remove outliers; dots retain
+all observations. Two aligned server/mutual panels use percentage deviation
+`100 * (latency / condition_median - 1)`, with a common axis and median at zero. The caption reports the actual eligible observation count or count range. Failed and excluded slots remain in the source inventory and are not replaced to reach a plotting sample size.
+
+    ./scripts/dev.sh python scripts/analyse_results.py authentication-distribution --report results/analysis/reports/thesis-chapter5/20261011-final --output results/analysis/reports/authentication-distribution/20261014-review
+
+Requires the PGFPlots statistics library in the including LaTeX document. New
+supplementary renderings do not rewrite old immutable report checksums. Repeated
+memory caveats are omitted from individual chapter-table fragments; their metric
+labels and the resource-accounting method define the observation boundary.
+
+## Interactive migration comparisons
+
+The [migration CLI](014_campaign_queue.md#interactive-mqtt-migration-comparison)
+uses the verified queue archive, current attempt selection and existing timing,
+resource and secure-boot analysers. It does not parse UART data separately or
+introduce another statistical engine. One From state and one To state describe
+the complete selected migration; changing several controls does not identify an
+individual algorithm's causal contribution. From is queued before To, without
+randomised/interleaved ordering; elapsed environmental drift remains a limitation.
+Source state, testbed and unselected
+controls must remain compatible. Missing/conflicting controls suppress matched
+deltas while retaining available absolute measurements and the reason.
+
+An explicitly changed ML-DSA memory mode is recorded as a comparison treatment;
+other controls still have to match. The selected signing/verification mode appears
+in `selections.tex`. Omitted modes retain the existing default, and older saved
+sessions and published reports remain verifiable without rewriting their identities.
+
+Every row reports **From**, **To**, **Change = To − From** in its stated units,
+and **100 × Change / From**. Costs use KiB (1,024 bytes) and ms, including signed
+absolute resource differences. A zero baseline leaves percentage change
+unavailable. Plaintext has no TLS-handshake measurement: it is unavailable,
+not a synthetic zero. Original bytes/µs and quartiles are retained in JSON.
+
+The headline RAM row is the **RAM estimate** defined above: the maximum per-run
+sum of application static demand and observed regional peaks, excluding identified
+experiment storage. The shared resource analyser supplies this metric to both
+chapter tables and A/B reports. It requires one verified build per condition and
+complete, unsaturated regional observations; unavailable evidence remains NA.
+Configured linker capacity and individual peaks remain diagnostic data, rather
+than the headline sizing metric. Deltas describe the observed implementation
+change; neither absolute demand nor a delta predicts a different board exactly.
+Static capacity rows require one verified build/image per state; distinct builds
+are not averaged into a device-capacity recommendation. Application Flash,
+bootloader Flash and the packaged application image are itemised. The packaged
+image contains the application, so those two rows must not be summed; complete
+OTA slot/recovery capacity is not inferred from image sizes.
+
+Timing values are medians of eligible successful runs. TTFB/TTLB use TCP-connect
+start; RTFB/RTLB use operational wolfBoot entry; ReqTFB/ReqTLB use the application
+request. All end at the first/last payload byte. TLS handshake and MQTT readiness
+retain their established boundaries. Completion, failed/blocked slots, captures
+and metric sample counts are retained separately. Missing captures cannot supply
+measurements. Ten attempts per state remain a pilot default. No independence,
+confidence interval or sufficient precision is inferred from that default.
+
+Resume verifies the frozen profile selections, archive sources and report hashes.
+Edited outputs or changed inputs are rejected. Tables describe this instrumented
+fresh-connection MQTT testbed; they do not model other devices, session resumption,
+persistent connections or an actual OTA transfer.
+
+
+### Gateway response timing contract
+
+Ready Metrics 2 uses one native gateway MQTT client stack for all STM32 transport
+choices. Its observer, request subscriber and payload publisher connect to a
+broker listener at `127.0.0.1:1884` inside the experiment broker network namespace.
+The native gateway binaries enter that namespace before reset and retain the
+gateway user identity for cleanup. Local feeder and observer traffic stays on
+namespace loopback, outside the impaired veth and its MTU. Target
+connections continue to use their selected plaintext, TLS or mutual-TLS listener.
+This separates host workload delivery from the target's selected cryptography.
+Payload preparation, client startup and CONNACK/SUBACK readiness finish before
+reset. The publisher keeps that connection until the request, then sends the
+prepared chunks. No Docker startup or new MQTT/TLS connection occurs in response
+to the target request. The indexed publisher log retains readiness, request,
+publication and cleanup events; gateway timestamps are diagnostics, not STM32
+latency measurements. Missing readiness prevents reset; unverified cleanup stops
+collection for inspection. Cleanly terminated acquisition failures remain failed
+attempts without falsely declaring unsafe cleanup. A missing ready response after
+verified feeder completion can count as a negative trial only with an intact,
+matching firmware network-failure record and all other capture checks.
+The broker loopback listener is a test harness input,
+not an unencrypted alternative exposed to the STM32 network.
+
+A numeric application return code does not by itself identify a failure mechanism.
+The custom TLS adapter can return a negated `wolfSSL_get_error` value after a
+failed handshake, or propagate a raw `wolfSSL_read`/`wolfSSL_write` result. These
+values overlap wolfMQTT errors: for example, `-2` can describe `WANT_READ` at
+the TLS boundary as well as wolfMQTT out-of-buffer, and `-1` is not uniquely an
+argument error. Use the recorded operation, structured diagnostics and intact
+result stream together. Generic `-1`/`-2` outcomes remain unclassified by the
+automatic negative-trial policy; accepting a retained failed queue slot does not
+change that scientific classification. Missing result streams remain unknown.
+
+Historical RM2 captures using the on-request publisher remain immutable. Their
+post-request latency and transfer/whole-flow measurements include native versus
+Docker launch differences and must be superseded for migration comparisons.
+TLS handshake timing and handshake-only byte counts end before that launch;
+they are not invalidated solely by the publisher defect. Replacement selections
+must use fresh, matched batches and retain a supersession audit rather than pool
+old and new measurements. Energy intervals spanning delivery also need replacement.
+
+The earlier `preconnected_loopback_mosquitto_v1` implementation used a Docker
+published port on host loopback. Its traffic still crossed the experiment veth,
+so v1 captures with controlled impairment cannot supply delivery or completion
+comparisons. Unimpaired v1 captures retain their original identity and eligibility.
+The `preconnected_broker_namespace_mosquitto_v2` contract records namespace identity,
+readiness and cleanup separately from trial validity. Source changes require fresh
+queue plans; preserve original failed attempts and fixed repetition counts.
+
+
+## Deferred network startup phases
+
+Normal MQTT workloads retain a bounded, single-startup-pass trace in
+`Core/Src/pqc_network_phases.c`. The network task brackets `W6X_Init`,
+`W6X_WiFi_Init`, `MX_LWIP_Init`, the scan call and completion wait,
+`W6X_WiFi_Connect`, association confirmation and IP-address readiness.
+Begin/end hooks only store TIM2 timestamps and the returned result in fixed
+memory. They add no UART or MQTT output. Formatting into the existing result
+buffer occurs after the workload boundary; repeated TLS includes the startup
+trace once in its first deferred result epoch.
+
+`PQC_NETWORK_PHASES` schema 1 declares the TIM2 1 MHz application-timebase origin,
+seven phase slots and misuse errors. Each `PQC_NETWORK_PHASE` retains its name,
+start/end microseconds, result and state: 0 not attempted, 1 incomplete, 2 ended,
+3 invalid. An ended call with a nonzero result is still a measured interval,
+not a successful connection. Missing or incomplete phases are not zero-duration
+measurements. `framework.network_phases.extract_network_phases` rejects malformed,
+duplicated, overlapping or invalid traces. Historical captures remain without
+these phases. The marker scratch storage is identified experiment storage in the
+regional RAM-demand audit.
+
+These spans are elapsed software-call/wait intervals, including pre-emption and
+module/network work. Wi-Fi connect can wait synchronously for association; DHCP
+may run concurrently, so the later DHCP span measures only the remaining wait
+until the application observes an address. It is not total DHCP transaction time.
+A phase annotation associates a power feature with an observed operation interval;
+it does not identify exclusive CPU or radio activity.
+
+Power plots may retain pre-trigger samples rather than crop at the rising GPIO
+edge. The GPIO edge is directly recorded on both clocks. Boot mailbox/DWT and
+LPTIM2 bridge data locate the wolfBoot-entry reset reference and handoff reference
+relative to application TIM2. Mapping these earlier events onto recorder time
+extends the two-edge clock fit before its anchors and must be labelled accordingly.
+WolfBoot entry is not a directly observed NRST pin transition. Only retained
+sample coverage and valid timing records support a pre-trigger annotation; boot
+energy and precise integrity/authenticity subphase placement need their own
+qualified boundaries.
+
+### Buffered host activity in energy captures
+
+Energy-enabled network workloads (excluding repeated TLS and bare-metal mode)
+record a bounded `PQC_ACTIVITY_TRACE` schema 2 (the decoder also preserves
+schema 1 pilot captures). Hooks record TIM2 timestamps in
+RAM; formatting and MQTT reporting occur after the measurement ends. This adds
+measurement overhead and is identified separately from earlier captures. It does
+not change the diagnostic scan default, driver delays, power policy or retries.
+
+`PQC_ACTIVITY_DATA` carries base64 chunks with contiguous byte offsets. The
+`events` stream has 12-byte little-endian records: elapsed microseconds (u32),
+kind/code (u16: top two bits instant/begin/end = 0/1/2), span token (u16), and
+value/result (i32). A begin token is its one-based record index, allowing overlapping
+task callbacks without pairing unrelated events. The codebook is in
+`scripts/framework/activity_trace.py`. AT records contain command classes and
+query/set form, never SSIDs, passwords or command arguments. Explicit markers
+cover module-reset assertion and CHIP_EN (before the writes), ready reception/wait
+and 100 ms guard, network-interface startup guard, connection
+events/wait and 100 ms guard, host link-up, DHCP start, IPv4 readiness, and power-mode
+requests. Existing boot, network, TLS and workload records provide other boundaries.
+
+The `spi` stream contains two unsigned 16-bit transfer-start counts per 10 ms bin
+(host write, host read), encoded as canonical unsigned LEB128; these are SPI calls, including DMA submissions, not radio TX/RX or bus
+occupancy. Storage is limited to 128 events and 1024 bins (10.24 s). Header counters
+expose dropped events, timing/misuse errors, saturated bins and clipped transfers.
+Serialization is capped at 3072 SPI bytes; `wire_clipped_bins` explicitly reports
+any omitted tail bins. Schema 1 used u8 counters and its saturated bins are lower
+bounds. An unfinished span or missing/corrupt chunk cannot be interpreted as a
+complete trace. The final bin can be partial. Timestamp origin is the header's application
+TIM2 `origin_us`; add the retained boot-to-application offset for a boot-relative
+plot. No task/interrupt traces or radio-internal states are inferred. A wait or a
+zero SPI count does not establish CPU idle or module sleep. The activity scratch
+object is identified experiment storage in regional RAM-demand analysis.
+
+Validation: `./scripts/dev.sh pytest tests/unit/test_activity_trace.py
+ tests/integration/test_activity_trace_in.py` exercises real C serialization,
+64-bit origins, overlapping spans, overflow, saturation, time errors, stop/reset,
+secret omission and result-buffer headroom. Use the normal energy build integration
+and a separately identified hardware capture for runtime evidence.
+
+### ML-DSA signing rejection counts
+
+Instrumented application wolfSSL software signing records the number of outer
+`ML-DSA.Sign_internal` candidate iterations. Each invocation reports `attempts`,
+`rejected`, `accepted` and `aborted`; a helper error is an aborted attempt, not a
+normal rejection. The counts satisfy `attempts = rejected + accepted + aborted`.
+A successful invocation has one accepted candidate, no aborted candidate and
+`rejected = attempts - 1`. A failure before the loop can have zero attempts.
+These counters do not count inner coefficient/XOF rejection samplers or identify
+the individual rejection predicate. Normal and small-memory signing paths share
+the contract. Cryptographic inputs, decisions and output bytes are unchanged.
+
+`PQC_MLDSA_SAMPLING_BUFFER schema=1` declares iteration, handshake, capacity and
+dropped summaries. Each `PQC_MLDSA_SAMPLING` record identifies its ordered TLS
+`event_sequence`, `backend=wolfcrypt_software`, counts and return code. Four
+summaries fit in the bounded recorder. Formatting and MQTT reporting occur after
+the measured workload; the library hook only copies counters during an active
+ML-DSA signing event. The bootloader library is unchanged. Timing/counter costs
+remain part of the instrumented measurement and have not been independently
+calibrated. The explicit result-buffer overflow policy still applies.
+
+`scripts/framework/mldsa_sampling.py` joins counts to the exact signing event and
+validates identities, outcomes, context and completeness. Historical records,
+unobserved alternate backends, missing summaries and truncation are unavailable,
+not zero retries. Bucket plots must use new same-configuration captures, state
+sample sizes and retain within-bucket spread and failed attempts. A singleton
+bucket cannot establish repeatability. Counts alone do not establish that all
+remaining timing variation comes from scheduling, nor do they reconstruct old
+counts from elapsed time. Native integration checks compare deterministic
+signature bytes with hooks enabled/disabled for both software signing paths.

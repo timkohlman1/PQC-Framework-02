@@ -510,6 +510,28 @@ static const char *PQC_TLS_EventKind(uint8_t level)
     }
 }
 
+void PQC_TLS_InstrumentationMLDSASampling(
+    uint32_t attempts, uint32_t rejected, uint32_t accepted,
+    uint32_t aborted, int32_t result)
+{
+    PQC_TLSSpan *span = &s_event_spans[PQC_TLS_PRIMITIVE_MLDSA65_SIGN];
+    PQC_TLSMLDSASamplingRecord *record;
+    if (!s_handshake_active || !span->active) return;
+    if (span->record_index == PQC_TLS_EVENT_PARENT_NONE ||
+        s_snapshot.mldsa_sampling_count >= PQC_TLS_MLDSA_SAMPLING_CAPACITY) {
+        if (s_snapshot.mldsa_sampling_dropped != UINT16_MAX)
+            s_snapshot.mldsa_sampling_dropped++;
+        return;
+    }
+    record = &s_snapshot.mldsa_sampling[s_snapshot.mldsa_sampling_count++];
+    record->event_sequence = s_snapshot.events[span->record_index].sequence;
+    record->attempts = attempts;
+    record->rejected = rejected;
+    record->accepted = accepted;
+    record->aborted = aborted;
+    record->result = result;
+}
+
 void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
 {
     char line[384];
@@ -565,6 +587,25 @@ void PQC_TLS_InstrumentationReport(void (*write_line)(const char *text))
         (unsigned int)s_snapshot.hierarchy_incomplete,
         (unsigned int)s_snapshot.invalid_sequence_count);
     write_line(line);
+
+    (void)snprintf(line, sizeof(line),
+        "PQC_MLDSA_SAMPLING_BUFFER schema=1 iteration=%lu handshake=%lu count=%u capacity=%u dropped=%u\r\n",
+        (unsigned long)s_snapshot.iteration, (unsigned long)s_snapshot.handshake_index,
+        (unsigned int)s_snapshot.mldsa_sampling_count,
+        (unsigned int)PQC_TLS_MLDSA_SAMPLING_CAPACITY,
+        (unsigned int)s_snapshot.mldsa_sampling_dropped);
+    write_line(line);
+    for (i = 0U; i < (unsigned int)s_snapshot.mldsa_sampling_count; ++i) {
+        const PQC_TLSMLDSASamplingRecord *record = &s_snapshot.mldsa_sampling[i];
+        (void)snprintf(line, sizeof(line),
+            "PQC_MLDSA_SAMPLING schema=1 index=%u event_sequence=%u backend=wolfcrypt_software "
+            "attempts=%lu rejected=%lu accepted=%lu aborted=%lu result=%ld\r\n",
+            i, (unsigned int)record->event_sequence,
+            (unsigned long)record->attempts, (unsigned long)record->rejected,
+            (unsigned long)record->accepted, (unsigned long)record->aborted,
+            (long)record->result);
+        write_line(line);
+    }
 
     for (i = 0U; i < (unsigned int)s_snapshot.event_record_count; ++i) {
         const PQC_TLSInstrumentationRecord *record = &s_snapshot.events[i];

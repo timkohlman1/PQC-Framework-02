@@ -417,6 +417,23 @@ def _write_application_selection(
 def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root: Path, configure_preset: str = "Release") -> tuple[Path, dict[str, Any]]:
     """Write the resolved profile-specific CMake algorithm selection."""
     selected = dict(resolve_tls_algorithm_set(bundle))
+    memory_mode = bundle.get("experiment", {}).get("mqtt", {}).get("tls", {}).get("mldsa_memory_mode", "default")
+    if memory_mode not in {"default", "verify_small", "sign_small", "both_small"}:
+        raise ValueError("unsupported mldsa_memory_mode")
+    if memory_mode != "default" and not selected["mldsa_65"]:
+        raise ValueError("ML-DSA memory options require ML-DSA")
+    if memory_mode in {"sign_small", "both_small"} and not selected["mldsa_65_sign"]:
+        raise ValueError("small-memory signing requires mutual authentication")
+    from framework import tls_optimizations
+    tls = bundle.get("experiment", {}).get("mqtt", {}).get("tls", {})
+    options = tls_optimizations.resolve(tls,
+        transport='plaintext' if tls.get('mode') == 'plaintext' else 'tls',
+        mlkem=any(selected[k] for k in ('mlkem_512', 'mlkem_768', 'mlkem_1024')),
+        mldsa=selected['mldsa_65'])
+    selected.update(options)
+    selected["mldsa_memory_mode"] = memory_mode
+    selected["mldsa_verify_small_mem"] = memory_mode in {"verify_small", "both_small"}
+    selected["mldsa_sign_small_mem"] = memory_mode in {"sign_small", "both_small"}
     selected["certificate_ecc"] = _certificate_requires_ecc(bundle)
     selected["sha384"] = _certificate_requires_sha384(bundle)
     # Only the benchmark image enables full ML-DSA signing; normal TLS
@@ -452,8 +469,10 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_MLKEM_STANDALONE {cmake_boolean(selected["mlkem_standalone"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65 {cmake_boolean(selected["mldsa_65"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65_SIGN {cmake_boolean(selected["mldsa_65_sign"])})\n'
+        f'set(PQC_MLDSA_VERIFY_SMALL_MEM {cmake_boolean(selected["mldsa_verify_small_mem"])})\n'
+        f'set(PQC_MLDSA_SIGN_SMALL_MEM {cmake_boolean(selected["mldsa_sign_small_mem"])})\n'
         f'set(PQC_TLS_GROUP_ID {selected["group_token"]})\n'
-        f'set(PQC_TLS_GROUP_NAME "{selected["group_name"]}")\n',
+        f'set(PQC_TLS_GROUP_NAME "{selected["group_name"]}")\n' + tls_optimizations.cmake(options),
         encoding="utf-8",
     )
     return path, selected

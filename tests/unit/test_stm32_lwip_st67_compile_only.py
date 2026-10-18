@@ -352,14 +352,16 @@ def test_wifi_config_selection_uses_compile_time_header_detection():
     assert '#define PQC_MQTT_TLS_SERVER_SIGNATURE_ALGORITHM ""' in wrapper
 
 
-def test_st67_normal_startup_scans_before_association_and_reports_live_t02_state() -> None:
+def test_st67_diagnostic_scan_is_opt_in_and_preserves_live_t02_state() -> None:
     main_c = _read("Core/Src/main.c")
 
-    scan_call = main_c.index("(void)APP_RunST67WiFiScan();")
+    scan_call = main_c.index("APP_RunST67WiFiScan();")
     connect_call = main_c.index("status = W6X_WiFi_Connect(&options);")
     assert scan_call < connect_call
-    assert "PQC_ST67_WIFI_DIAGNOSTIC_SCAN" not in main_c
-    assert "diagnostic_scan=disabled" not in main_c
+    guard = main_c.rindex("#if PQC_ST67_WIFI_DIAGNOSTIC_SCAN", 0, scan_call)
+    assert guard < scan_call < main_c.index("#endif", guard) < connect_call
+    assert '#define PQC_ST67_WIFI_DIAGNOSTIC_SCAN 0' in _read('Core/Inc/pqc_wifi_config.h')
+    assert '"Run a diagnostic AP scan before association (changes startup time and energy)" OFF)' in _read('CMakeLists.txt')
     assert "evidence=stm32-st67-t02-live-state" in main_c
     assert "network=available wifi=connected link=up ip=" in main_c
 

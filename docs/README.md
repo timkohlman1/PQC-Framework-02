@@ -60,6 +60,7 @@ are historical and do not instruct agents to implement old phases again.
 | [docs/decisions/0001_keep_cubemx_project_at_repo_root.md](decisions/0001_keep_cubemx_project_at_repo_root.md) | Rationale for retaining the CubeMX project at repository root | Decision record |
 | [docs/decisions/0002_wolfboot_stm32l4_target_support_assessment.md](decisions/0002_wolfboot_stm32l4_target_support_assessment.md) | wolfBoot STM32L4 target support assessment and accepted direction | Decision record |
 | [docs/decisions/0003_secure_boot_flash_layout.md](decisions/0003_secure_boot_flash_layout.md) | STM32L4R5 secure-boot flash layout decision and rationale | Decision record |
+| [docs/mldsa_memory_experiment.md](mldsa_memory_experiment.md) | Matched pilot for ML-DSA small-memory signing/verification options; default-selection boundary | Operational guide |
 | [experiment/mqtt-broker/README.md](../experiment/mqtt-broker/README.md) | Canonical MQTT broker Compose profiles, provisioning, deployment, validation, and broker evidence limits | Operational guide |
 | [experiment/mqtt-broker/config/oqs-mtls/README.md](../experiment/mqtt-broker/config/oqs-mtls/README.md) | Mutual-TLS profile entry point and certificate/KEX separation | Operational guide |
 | [experiment/mqtt-broker/config/oqs/README.md](../experiment/mqtt-broker/config/oqs/README.md) | OQS Mosquitto profile algorithms, generated certificate material, and runtime diagnostic limits | Operational guide |

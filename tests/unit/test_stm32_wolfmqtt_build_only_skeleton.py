@@ -155,7 +155,8 @@ def test_mqtt_tls_build_keeps_mldsa_profile_selective_and_retains_pqc_group_stat
 def test_handshake_instrumentation_does_not_change_network_task_size():
     main_c = Path("Core/Src/main.c").read_text(encoding="utf-8")
     mqtt_source = Path("Core/Src/pqc_wolfmqtt_build_only.c").read_text(encoding="utf-8")
-    assert ".stack_size = 2048 * 4" in main_c
+    assert ".stack_size = PQC_TLS_TASK_STACK_BYTES" in main_c
+    assert "#define PQC_TLS_TASK_STACK_BYTES 8192" in main_c
     assert "PQC_TLS_InstrumentationBegin(PQC_TLS_EVENT_HANDSHAKE);" in mqtt_source
     assert "PQC_TLS_InstrumentationEnd(PQC_TLS_EVENT_HANDSHAKE, result);" in mqtt_source
 

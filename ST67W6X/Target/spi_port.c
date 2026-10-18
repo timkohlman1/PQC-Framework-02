@@ -26,6 +26,7 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -80,6 +81,7 @@ enum
 
 static void spi_port_diag_begin(uint16_t len, uint8_t dma, uint8_t tx_present)
 {
+  PQC_ActivitySPI(tx_present);
   spi_port_diag.sequence++;
   spi_port_diag.started_tick = (uint32_t)xTaskGetTickCount();
   spi_port_diag.completed_tick = 0U;
@@ -177,6 +179,7 @@ int32_t spi_port_init(spi_transaction_complete_t transaction_complete_cb)
   }
 
   /* Powering up the NCP using GPIO CHIP_EN */
+  PQC_ActivityEvent(PQC_ACT_CHIP_ENABLE, 1); /* timestamp before GPIO write */
   HAL_GPIO_WritePin(CHIP_EN_GPIO_Port, CHIP_EN_Pin, GPIO_PIN_SET);
 
   if (transaction_complete_cb != NULL)

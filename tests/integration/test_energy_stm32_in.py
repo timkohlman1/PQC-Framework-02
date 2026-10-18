@@ -1,5 +1,6 @@
 """Compile the new STM32 path; native doubles establish software semantics only."""
 import json
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -121,3 +122,23 @@ def test_real_energy_stm32_build(tmp_path, pqc_require_capabilities, pytestconfi
     assert completed.returncode == 0, "\n".join(errors)+completed.stdout+completed.stderr
     manifest = json.loads(next(results.glob("*/manifest.json")).read_text())
     assert manifest["capture_acceptance"]["accepted"]
+
+    commands = json.loads((ROOT/"build/Release/compile_commands.json").read_text())
+    enabled = int(workload not in ("tls_handshake_repeat", "baremetal_benchmark"))
+    for name in ("main.c", "pqc_activity_trace.c", "spi_port.c", "lwip.c", "lwip_netif.c", "w6x_wifi.c", "w6x_sys.c", "w61_at_common.c", "w61_at_sys.c"):
+        entry = next(c for c in commands if Path(c["file"]).name == name)
+        assert f"-DPQC_ACTIVITY_TRACE_ENABLED={enabled}" in shlex.split(entry["command"]), name
+
+    if workload == "ready_metrics":
+        commands = json.loads((ROOT/"build/Release/compile_commands.json").read_text())
+        main = next(c for c in commands if Path(c["file"]).resolve()==ROOT/"Core/Src/main.c")
+        command = shlex.split(main["command"])
+        assert "-DPQC_ST67_WIFI_DIAGNOSTIC_SCAN=0" in command
+        for enabled in (0, 1):
+            obj = tmp_path/f"main-scan-{enabled}.o"
+            args = [f"-DPQC_ST67_WIFI_DIAGNOSTIC_SCAN={enabled}" if x=="-DPQC_ST67_WIFI_DIAGNOSTIC_SCAN=0" else x for x in command]
+            args[args.index("-o")+1] = str(obj)
+            subprocess.run(args, cwd=main["directory"], check=True, capture_output=True, text=True)
+            symbols = subprocess.check_output(["arm-none-eabi-nm", "-u", str(obj)], text=True)
+            assert ("W6X_WiFi_Scan" in symbols) == bool(enabled)
+            assert "W6X_WiFi_Connect" in symbols

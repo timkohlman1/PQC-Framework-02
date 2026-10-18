@@ -459,14 +459,24 @@ class Queue:
             raise ValueError('ambiguous campaign history')
         return paths[0] if paths else None
 
-    def export(self):
+    def export(self, *, identifiers=None):
         with ExitStack() as locks:
-            return self._export(locks)
+            return self._export(locks, identifiers)
 
-    def _export(self, locks):
+    def _export(self, locks, identifiers=None):
         # Freeze only the selected entries; reads and new queue operations stay responsive.
         with self.connect() as db:
-            rows = [dict(r) for r in db.execute('SELECT * FROM jobs WHERE selected=1 ORDER BY position')]
+            if identifiers is None:
+                rows = [dict(r) for r in db.execute('SELECT * FROM jobs WHERE selected=1 ORDER BY position')]
+            else:
+                if not identifiers or len(set(identifiers)) != len(identifiers):
+                    raise ValueError('select distinct completed queue IDs')
+                rows = []
+                for identifier in identifiers:
+                    row = db.execute('SELECT * FROM jobs WHERE id=?', (identifier,)).fetchone()
+                    if row is None:
+                        raise ValueError('unknown queue entry: ' + str(identifier))
+                    rows.append(dict(row))
             if not rows or any(r['status'] not in DONE for r in rows):
                 raise ValueError('mark one or more completed entries first')
             selected = []

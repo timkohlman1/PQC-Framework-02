@@ -167,6 +167,11 @@ standard names. */
 #define USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION 0
 
 /* USER CODE BEGIN Defines */
+/* Optional experiment pool size; the CubeMX default remains 96 KiB. */
+#ifdef PQC_TLS_HEAP_BYTES
+#undef configTOTAL_HEAP_SIZE
+#define configTOTAL_HEAP_SIZE ((size_t)PQC_TLS_HEAP_BYTES)
+#endif
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 /* USER CODE END Defines */
 

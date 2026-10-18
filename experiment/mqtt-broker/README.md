@@ -165,3 +165,19 @@ The local gate uses disposable RSA-3072/ML-DSA-65 containers and does not establ
 STM32 compatibility. Read the selected test's retained outputs before claiming
 success. Profile-matrix and fault qualification remain in the
 [test register](../../docs/013_testing_and_deferred_coverage.md).
+
+
+The four experiment broker profiles provide a workload-feeder listener on port
+1884. Before target reset, the responder enters the selected broker's network
+namespace and preconnects the same native gateway MQTT clients to its loopback
+address. Local request, payload and observer traffic therefore bypasses the
+external veth where the framework applies impairment and MTU changes. The
+responder verifies its namespace and MQTT acknowledgements before target reset.
+It requires gateway `nsenter` and non-interactive sudo, and returns to the owning
+user's uid/gid after entering the namespace.
+
+The host's compatibility mapping remains **gateway loopback only**,
+`127.0.0.1:1884`; the responder does not use that mapping. This listener must not
+be published on `0.0.0.0`. The STM32 uses its selected network-facing transport
+and certificate policy. Only one experiment profile owns the feeder endpoint at
+a time, under the framework gateway lease.

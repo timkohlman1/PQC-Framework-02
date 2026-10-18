@@ -2005,32 +2005,34 @@ def _execute_mqtt_e2e_uart_capture(
     transfer_request_file = "/tmp/pqc-rm2-transfer-request.$$"
     transfer_responder_log = "/tmp/pqc-rm2-transfer-responder.$$"
     transfer_responder_rc_file = "/tmp/pqc-rm2-transfer-responder-rc.$$"
-    transfer_python = (
-        "import sys; n=int(sys.argv[1]); c=int(sys.argv[2]); "
-        "q,r=divmod(n,c); block='A'*c; "
-        "[sys.stdout.write(block+'\\n') for _ in range(q)]; "
-        "sys.stdout.write(('A'*r)+'\\n') if r else None"
-    )
     transfer_responder_command = ""
+    responder_token = hashlib.sha256(result_dir.name.encode()).hexdigest()[:16]
+    responder_ready_file = "/tmp/pqc-rm2-ready-" + responder_token
     if ready_metrics_2_application:
+        from framework import mqtt_responder
+        from framework.network_degradation import BROKER_SERVICE_BY_PROFILE
+        responder_service = BROKER_SERVICE_BY_PROFILE[str(mqtt.get('broker_profile', 'classical'))]
+        responder_config = dict(token=responder_token,
+            host='127.0.0.1', port=1884, tls_args=[], oqs=False,
+            response_topic=str(topics["response"]), request_topic=str(transfer["request_topic"]),
+            payload_topic=str(transfer["response_topic"]), request_payload=str(transfer.get("request_payload", "send")),
+            payload_bytes=transfer_payload_bytes, chunk_bytes=transfer_chunk_bytes, timeout=hard_limit_seconds)
+        responder_source = Path(mqtt_responder.__file__).read_text()
+        # One coordinator owns all three persistent clients and their readiness
+        # barrier. All algorithms use the same native clients and loopback listener.
+        subscriber_command = ''
         transfer_responder_command = (
-            f'rm -f "{transfer_request_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
-            '( '
-            f'{transfer_mqtt_sub} -h {client_host} -p {client_port} {tls_args} '
-            f'-i pqc-host-rm2-transfer-request -t {transfer_request_topic} '
-            f'-C 1 -W {hard_limit_seconds} >"{transfer_request_file}" 2>>"{transfer_responder_log}"; '
-            'request_rc=$?; '
-            'if [ "$request_rc" -ne 0 ]; then echo "$request_rc" >'
-            f'"{transfer_responder_rc_file}"; exit "$request_rc"; fi; '
-            f'if [ "$(cat "{transfer_request_file}")" != {transfer_request_payload} ]; then '
-            f'echo "unexpected transfer request payload" >>"{transfer_responder_log}"; '
-            f'echo 41 >"{transfer_responder_rc_file}"; exit 41; fi; '
-            f'python3 -c {shlex.quote(transfer_python)} {transfer_payload_bytes} {transfer_chunk_bytes} | '
-            f'{mqtt_pub_stdin} -h {client_host} -p {client_port} {tls_args} '
-            f'-i pqc-host-rm2-transfer-publisher -q 0 -t {transfer_response_topic} -l '
-            f'>>"{transfer_responder_log}" 2>&1; responder_rc=$?; '
-            f'echo "$responder_rc" >"{transfer_responder_rc_file}"; exit "$responder_rc"; '
-            ') & transfer_responder_pid=$!; '
+            mqtt_responder.namespace_prefix(responder_service)
+            + f'rm -f "{responder_ready_file}" "{transfer_responder_log}" "{transfer_responder_rc_file}"; '
+            'sudo -n "$responder_nsenter" -t "$responder_pid" -n --setgid "$(id -g)" --setuid "$(id -u)" '
+            f'python3 -u -c {shlex.quote(responder_source)} {shlex.quote(json.dumps(responder_config))} '
+            f'"$response_file" "{responder_ready_file}" "{transfer_responder_rc_file}" "$responder_netns" '
+            f'>"{transfer_responder_log}" 2>&1 & transfer_responder_pid=$!; subscriber_pid=$transfer_responder_pid; '
+            'ready_attempt=0; '
+            f'while [ ! -s "{responder_ready_file}" ] && kill -0 "$transfer_responder_pid" 2>/dev/null && [ "$ready_attempt" -lt 350 ]; do '
+            'sleep 0.1; ready_attempt=$((ready_attempt + 1)); done; '
+            f'if [ ! -s "{responder_ready_file}" ]; then cat "{transfer_responder_log}" 1>&2; '
+            'echo "MQTT responder was not ready; target reset refused" 1>&2; exit 72; fi; '
         )
     uart_output_mode = str(experiment.get("firmware", {}).get("uart_output_mode", "minimal")).lower()
     if uart_output_mode == "disabled" and energy is None:
@@ -2062,20 +2064,15 @@ def _execute_mqtt_e2e_uart_capture(
     )
     transfer_responder_cleanup = ""
     if ready_metrics_2_application:
-        transfer_container_cleanup = (
-            f'docker rm -f "{transfer_responder_subscriber_name}" >/dev/null 2>&1 || true; '
-            if pqc_oqs
-            else ""
-        )
         transfer_responder_cleanup = (
-            'if kill -0 "$transfer_responder_pid" 2>/dev/null; then wait "$transfer_responder_pid"; '
-            'transfer_responder_wait_rc=$?; else transfer_responder_wait_rc=$(cat '
-            f'"{transfer_responder_rc_file}" 2>/dev/null || echo 1); fi; '
-            + transfer_container_cleanup
-            + f'transfer_responder_rc=$(cat "{transfer_responder_rc_file}" 2>/dev/null || echo "$transfer_responder_wait_rc"); '
-            + f'echo "PQC_RM2_TRANSFER_RESPONDER rc=$transfer_responder_rc payload_bytes={transfer_payload_bytes} chunk_bytes={transfer_chunk_bytes}" 1>&2; '
-            + f'if [ -s "{transfer_responder_log}" ]; then echo "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN" 1>&2; '
-            + f'cat "{transfer_responder_log}" 1>&2; echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; fi; '
+            'wait "$transfer_responder_pid"; transfer_responder_wait_rc=$?; '
+            f'transfer_responder_rc=$(cat "{transfer_responder_rc_file}" 2>/dev/null || echo "$transfer_responder_wait_rc"); '
+            f'echo "PQC_RM2_TRANSFER_RESPONDER rc=$transfer_responder_rc payload_bytes={transfer_payload_bytes} chunk_bytes={transfer_chunk_bytes}" 1>&2; '
+            f'echo "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN" 1>&2; cat "{transfer_responder_log}" 1>&2; '
+            'echo "PQC_RM2_TRANSFER_RESPONDER_LOG_END" 1>&2; '
+            # The coordinator has already reaped its clients. A missing transfer
+            # request is still an accepted observer timeout for a device failure.
+            'subscriber_rc=$transfer_responder_wait_rc; '
         )
     if ota_wait_mode == "confirmed":
         ota_terminal_probe = (
@@ -2125,7 +2122,7 @@ def _execute_mqtt_e2e_uart_capture(
         + 'if kill -0 "$subscriber_pid" 2>/dev/null; then kill "$subscriber_pid" 2>/dev/null || true; fi; '
         + subscriber_cleanup
         + transfer_responder_cleanup
-        + 'wait "$subscriber_pid"; subscriber_rc=$?; '
+        + ('' if ready_metrics_2_application else 'wait "$subscriber_pid"; subscriber_rc=$?; ')
         + f"printf '\nPQC_MQTT_SUBSCRIBER_ERROR_BEGIN\n' 1>&2; if [ -f \"{subscriber_error_file}\" ]; then cat \"{subscriber_error_file}\" 1>&2; fi; printf 'PQC_MQTT_SUBSCRIBER_ERROR_END\n' 1>&2; "
         + 'wait "$capture_pid"; capture_rc=$?; '
         + f'if [ "$expected_reporting_completions" -eq 1 ] && grep -Fq "$reporting_completion_topic" {reporting_stream} 2>/dev/null; then reporting_complete_seen=1; fi; '
@@ -2174,11 +2171,16 @@ def _execute_mqtt_e2e_uart_capture(
         )
     # The UART timer does not bound shell waits or a publisher blocked by loss.
     # timeout owns the remote process group, including pipeline descendants.
-    if pqc_oqs:
+    if ready_metrics_2_application:
+        cleanup = ('if [ -n "${transfer_responder_pid:-}" ] && kill -0 "$transfer_responder_pid" 2>/dev/null; then '
+                   'kill "$transfer_responder_pid" 2>/dev/null; wait "$transfer_responder_pid"; fi; '
+                   f'rm -f "{responder_ready_file}"; ')
+        script = "trap " + shlex.quote(cleanup) + " EXIT; " + script
+    elif pqc_oqs:
         owned_containers = f'"{oqs_subscriber_name}" "{transfer_responder_subscriber_name}" "pqc-mqtt-rm2-transfer-pub-$$"'
         cleanup = f'timeout --kill-after=5s 10s docker rm -f {owned_containers} >/dev/null 2>&1 || true'
         script = "trap " + shlex.quote(cleanup) + " EXIT; " + script
-    remote_deadline = hard_limit_seconds + 30
+    remote_deadline = hard_limit_seconds + (90 if ready_metrics_2_application else 30)
     from framework.bounded_command import capture_command
     ssh_command = capture_command(gateway_target, script, remote_deadline)
 
@@ -2186,7 +2188,7 @@ def _execute_mqtt_e2e_uart_capture(
         start = time.perf_counter()
         from framework.bounded_command import run as bounded_run
         completed = bounded_run(ssh_command, cwd=cwd, timeout=remote_deadline + 30)
-        if completed.returncode in {125, 137, 255} or (pqc_oqs and completed.returncode == 124):
+        if completed.returncode in {125, 137, 255} or ((pqc_oqs or ready_metrics_2_application) and completed.returncode == 124):
             update_manifest(result_dir / "manifest.json", {"execution_safety": {
                 "status": "unverified", "reason": "Capture SSH command timed out; remote completion unverified"}})
         if completed.returncode in {124, 137}:
@@ -2293,7 +2295,7 @@ def _execute_mqtt_e2e_uart_capture(
                 marker.get("subscriber_rc") == 0
                 and marker.get("response_count") == expected_response_count
                 and marker.get("expected_response_count") == expected_response_count
-                and (marker.get("transfer_responder_rc") == 0 if ready_metrics_2_application else True)
+                and (marker.get("transfer_responder_rc") == 0 and mqtt_responder.evidence(uart_result.capture.stderr)["verified"] if ready_metrics_2_application else True)
                 and bool(ready_metrics_evidence.get("passed"))
                 and bool(subscriber_evidence_integrity.get("passed"))
             )
@@ -2511,6 +2513,7 @@ def _execute_mqtt_e2e_uart_capture(
             "return_code": 0 if passed else MQTT_E2E_FAILURE_RETURN_CODE,
             "failure_stage": failure_stage,
             "application": _mqtt_application(bundle),
+            "responder": mqtt_responder.evidence(uart_result.capture.stderr) if ready_metrics_2_application and uart_result is not None else None,
             "validation_contract": (
                 "ready_metrics_2_paper_ttfb_tls_primitive_bundle"
                 if ready_metrics_2_application
@@ -2562,7 +2565,13 @@ def _execute_mqtt_e2e_uart_capture(
                 "responder": _extract_marked_text(uart_result.capture.stderr,
                     "PQC_RM2_TRANSFER_RESPONDER_LOG_BEGIN", "PQC_RM2_TRANSFER_RESPONDER_LOG_END"),
             }),
+            "responder": marker.get("transfer_responder_rc") in {0, 27, 28}
+                and mqtt_responder.evidence(uart_result.capture.stderr)["verified"]
+                and observer_checks(result_dir / "mqtt-reporting-raw.ndjson", result_dir.name, marker)["responder"],
         })
+        if not mqtt_responder.evidence(uart_result.capture.stderr)["cleanup_verified"]:
+            update_manifest(result_dir / "manifest.json", {"execution_safety": {
+                "status": "unverified", "reason": "MQTT responder readiness or cleanup could not be verified"}})
         (result_dir / "trial-outcome.json").write_text(json.dumps(trial, indent=2, sort_keys=True) + "\n")
         if trial["eligible"]:
             passed = False

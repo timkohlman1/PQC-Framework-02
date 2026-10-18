@@ -172,3 +172,84 @@ are offline products, not new measurements. The shared analysis notebook lists
 these exports without generating another notebook per export. Flat archives, typed loading, analysis
 controls and frozen report verification are owned by the
 [result reference](012_results_and_analysis.md).
+
+### ML-DSA TLS memory options
+
+The optional case choice `mldsa_memory_mode` accepts `default`, `verify_small`,
+`sign_small` and `both_small`. Nondefault options require ML-DSA-65 TLS authentication;
+signing options require mutual mode. These options affect the STM32 TLS implementation,
+not the broker or firmware-signature verification. The choice participates in firmware identity
+and retained TLS controls. Omission keeps the previous configuration identity.
+In the campaign editor, select **Factors / matrix → ML-DSA-65 TLS memory mode**:
+one selection becomes a fixed choice; several become a matrix. **Use default / omit**
+leaves the setting absent. Invalid combinations are rejected during validation;
+use a separate ML-DSA campaign when other authentication families are in the grid.
+
+For example, a mutual-authentication profile can contain:
+
+```yaml
+fixed:
+  tls_auth: mldsa65
+  auth_mode: mutual
+  mldsa_memory_mode: both_small
+```
+
+Server authentication supports `default` and `verify_small`; mutual authentication
+supports all four modes. Existing profiles and defaults are unchanged. These modes
+do not automatically reduce the configured heap or scratch reservation.
+The two focused templates and decision criteria are described in
+[memory-option experiment](mldsa_memory_experiment.md). Their fixed heap/scratch
+reservations make utilisation changes comparable before any capacity reduction.
+
+
+### Optional TLS implementation controls
+
+Campaign `fixed` choices and `matrix` factors also accept the following application
+wolfSSL controls. They appear under **Factors / matrix** in the campaign editor;
+the migration wizard offers **TLS implementation options → Customise**.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `tls_small_stack` | `true` | Move selected temporary arrays from stack to allocator storage. |
+| `tls_task_stack_bytes` | `8192` | Network task allocation; supported alternatives are 49152 and 65536 bytes. |
+| `tls_heap_bytes` | `98304` | Shared FreeRTOS pool reservation; optional 131072 bytes supports the larger task stack. |
+| `mlkem_small_code` | `false` | Select wolfSSL's compact ML-KEM implementation. |
+| `mlkem_makekey_small_mem` | `true` | Reduce ML-KEM key-generation temporary storage. |
+| `mlkem_encapsulate_small_mem` | `false` | Reduce encapsulation/re-encapsulation storage; this also affects decapsulation. |
+| `mldsa_small_code` | `false` | Select wolfSSL's compact ML-DSA implementation. |
+| `mldsa_memory_mode` | `default` | Independently select small signing and/or verification, as described above. |
+
+Defaults are unchanged. An omitted choice preserves the existing case identity;
+an explicitly selected campaign value is retained in case/build identity and TLS
+analysis controls. A/B profiles omit default values for compatibility with saved
+sessions. Invalid types and inapplicable algorithm/transport choices are rejected.
+Use separate grids for ML-KEM and classical KEX when a factor only applies to ML-KEM.
+
+Disabling `tls_small_stack` requires `tls_task_stack_bytes` of at least 49152.
+Large task stacks also require the explicitly recorded 131072-byte FreeRTOS pool;
+the 96 KiB default could not start the enlarged-stack hardware qualification.
+That validation floor is not a guarantee of stack/heap sufficiency for every grid
+point: retain allocation failures and inspect measured watermarks. To compare the
+implementation flag alone, hold the larger task and heap allocations fixed on both sides.
+The task allocation belongs to the FreeRTOS heap and must not be added twice in
+RAM accounting. The wizard records the required heap choice when a larger stack is selected;
+no option resizes the ML-DSA scratch pool.
+
+For example, a focused ML-KEM experiment can use:
+
+```yaml
+fixed:
+  tls_kex: ML_KEM_768
+  tls_auth: ecdsa-p256
+  auth_mode: server
+matrix:
+  mlkem_small_code: [false, true]
+  mlkem_encapsulate_small_mem: [false, true]
+```
+
+These controls apply to the MQTT/TLS application and repeated-handshake workload,
+not wolfBoot or the isolated primitive benchmark. ML-DSA TLS credentials are
+provisioned before collection, so its key-generation small-memory flag has no
+on-device TLS operation to benchmark and is not exposed as an inert grid factor.
+The options follow [wolfSSL's memory trade-off study](https://www.wolfssl.com/optimizing-post-quantum-algorithm-memory-usage-on-embedded-systems/);
+its Raspberry Pi measurements do not establish memory or latency on the STM32.

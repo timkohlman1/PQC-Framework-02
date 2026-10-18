@@ -15,7 +15,10 @@ from framework.config_resolver import ConfigResolver, PROFILE_DIRS
 from framework.campaign_executor import ExecutionPolicy, validate_policy_against_case
 
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]*')
+from framework.tls_optimizations import OPTIONS as TLS_OPTIONS
 FACTOR_CHOICES = {
+    **TLS_OPTIONS,
+    'mldsa_memory_mode': ['default', 'verify_small', 'sign_small', 'both_small'],
     'auth_mode': ['server', 'mutual'],
     'mqtt_transport': ['tls', 'plaintext'],
     'firmware_mode': ['single_bank', 'dual_bank_no_ota', 'dual_bank_ota'],

@@ -17,9 +17,15 @@ from framework.run_evidence import sha256_file
 from framework.timing_dataset import DatasetError, _has_symlink, _verify_header, read_json, verify_source_inputs
 from framework.timing_metrics import decode_epochs, uint
 
-VERSION = "1.0.0"
-# metric -> (region, accounting meaning). These categories must never be summed.
+VERSION = "1.2.0"
+# Metric -> (region, accounting meaning). Subsets overlap their backing reservations.
 STATIC = {
+    "application_static_demand_bytes": ("application", "static_storage_minus_pool_backing_and_identified_experiment_storage"),
+    "excluded_experiment_storage_bytes": ("instrumentation", "identified_experiment_storage_excluded_from_ram_estimate"),
+    "configured_application_ram_bytes": ("application", "disjoint_linker_reservations_including_1KiB_L4R5_mailbox"),
+    "mailbox_reserved_bytes": ("RAM2", "maintained_L4R5_handoff_reservation"),
+    "freertos_heap_reserved_bytes": ("RAM/heap_4", "backing_array_subset_of_static_storage"),
+    "tls_instrumentation_reserved_bytes": ("RAM", "identified_instrumentation_objects_subset_of_static_storage"),
     "flash_section_bytes": ("FLASH", "loadable_section_bytes"),
     "application_image_span_bytes": ("FLASH", "image_address_span_including_gaps"),
     "application_binary_bytes": ("FLASH", "retained_binary_file_size"),
@@ -62,7 +68,7 @@ def _union(intervals):
     return total
 
 
-def elf_resources(data):
+def elf_resources(data, *, objects_out=None):
     """Bounded ELF32 little-endian ARM EXEC decoder for maintained L4 layouts.
 
     Count allocated sections by VMA; Flash by section LMA, not segment padding,
@@ -90,6 +96,8 @@ def elf_resources(data):
     names = sections[h[12]]
     names = block(names[4], names[5])
     symbols = {}
+    objects = []
+    owner_file = ""
     for s in sections:
         if s[1] != 2:
             continue
@@ -98,9 +106,14 @@ def elf_resources(data):
         table = sections[s[6]]
         strings = block(table[4], table[5])
         for offset in range(s[4], s[4] + s[5], 16):
-            name, value, _, _, _, index = unpack("<IIIBBH", offset)
+            name, value, size, info, _, index = unpack("<IIIBBH", offset)
+            label = string(strings, name)
+            if info & 15 == 4:
+                owner_file = label
             if index:
-                symbols[string(strings, name)] = value
+                symbols[label] = value
+                if info & 15 == 1 and size:
+                    objects.append((owner_file, label, value, value + size))
     regions = {r: (symbols[f"__{r.lower()}_region_start__"], symbols[f"__{r.lower()}_region_end__"])
                for r in ("RAM", "RAM2", "RAM3")}
     # This decoder intentionally supports only the maintained STM32L4R5 layout.
@@ -135,12 +148,58 @@ def elf_resources(data):
     low, high = regions["RAM"]
     if not low <= symbols["_end"] <= symbols["__user_heap_stack_end__"] <= high:
         raise ValueError("invalid_linker_ram_symbols")
-    return dict(flash_section_bytes=_union(flash), application_image_span_bytes=max(b for a,b in flash)-min(a for a,b in flash),
+    # The maintained relocated L4R5 layout reserves the first 1 KiB of RAM2
+    # for boot/OTA handoff, even when no ELF section occupies it. This explicit
+    # target-layout policy is not inferred from an empty RAM2 section table.
+    mailbox = (regions["RAM2"][0], regions["RAM2"][0] + 1024)
+    primary = symbols["__user_heap_stack_end__"] - low
+    if any(a < low or b > low + primary for a, b in allocated["RAM"]):
+        raise ValueError("ram_section_outside_linker_reservation")
+    heap = [(a,b) for _,n,a,b in objects if n == "ucHeap" and low <= a < b <= symbols["_end"]]
+    instrumentation = [(a,b) for owner,_,a,b in objects
+                       if owner == "pqc_tls_instrumentation.c" and low <= a < b <= symbols["_end"]]
+    if objects_out is not None:
+        # Optional validated object lineage for separately versioned overhead analyses.
+        # Restrict to SRAM; STT_FILE ownership is useful for local objects only.
+        objects_out.extend(dict(owner=owner, name=name, start=a, end=b)
+                           for owner,name,a,b in objects
+                           if any(lo <= a < b <= hi for lo,hi in regions.values()))
+    return dict(configured_application_ram_bytes=primary + _union([mailbox, *allocated["RAM2"]]) + _union(allocated["RAM3"]),
+                mailbox_reserved_bytes=1024,
+                freertos_heap_reserved_bytes=_union(heap) if heap else None,
+                tls_instrumentation_reserved_bytes=_union(instrumentation) if instrumentation else None,
+                flash_section_bytes=_union(flash), application_image_span_bytes=max(b for a,b in flash)-min(a for a,b in flash),
                 ram_static_base_bytes=symbols["_end"]-low,
                 ram_linker_reserved_bytes=symbols["__user_heap_stack_end__"]-low,
                 ram2_section_bytes=_union(allocated["RAM2"]), ram3_section_bytes=_union(allocated["RAM3"]),
                 result_buffer_reserved_bytes=sizes.get(".pqc_result_buffer", 0),
                 workspace_reserved_bytes=sizes.get(".pqc_mldsa_workspace", 0))
+
+
+PEAKS=('freertos_heap_peak_used_bytes','mldsa_workspace_peak_used_bytes','sbrk_peak_used_bytes','msp_peak_used_bytes')
+
+
+def experiment_object(obj):
+    owner,name=obj['owner'],obj['name']
+    return (owner in ('pqc_tls_instrumentation.c','pqc_result_buffer.c','pqc_timebase.c','pqc_network_phases.c','pqc_activity_trace.c')
+        or owner=='pqc_wolfmqtt_build_only.c' and name=='s_ready_metrics_2_snapshot'
+        or owner=='main.c' and (name.startswith(('app_uart_line_','smoke_line.','status_line.'))))
+
+
+def ram_estimate_components(values,objects):
+    if values['freertos_heap_reserved_bytes'] is None:raise ValueError('heap backing symbol required')
+    removed=[o for o in objects if experiment_object(o) and 0x20000000<=o['start']<o['end']<=0x20030000]
+    overhead=_union([(o['start'],o['end']) for o in removed])
+    static=(values['ram_static_base_bytes']-values['freertos_heap_reserved_bytes']-overhead+
+        values['ram2_section_bytes']+values['ram3_section_bytes']-values['result_buffer_reserved_bytes']-values['workspace_reserved_bytes'])
+    if static<0:raise ValueError('negative disjoint static demand')
+    return dict(application_static_bytes=static,excluded_experiment_bytes=overhead+values['result_buffer_reserved_bytes']+values['mailbox_reserved_bytes'],
+        primary_instrumentation_bytes=overhead,removed_objects=removed)
+
+
+def ram_run_estimate(static,peaks):
+    if any(type(peaks.get(k)) is not int or peaks[k]<0 for k in PEAKS):raise ValueError('valid unsaturated regional peaks required')
+    return static+sum(peaks[k] for k in PEAKS)
 
 
 def _read(path, inputs, expected=None, size=None):
@@ -229,6 +288,15 @@ def extract_resources(dataset):
                 fw = records.get("firmware", {})
                 role = fw.get("evidence_role")
                 build_reference = records.get("build_reference")
+                # Hardware-test builds deliberately have no normal-workflow
+                # build_reference. Their hash-verified preparation provenance
+                # records the ELF identity explicitly under records.build.
+                build = records.get("build")
+                if (build_reference is None and isinstance(build, dict)
+                        and build.get("purpose") == "automated_test"
+                        and build.get("artifact_identity_algorithm") == "sha256-elf"
+                        and type(build.get("return_code")) is int and build["return_code"] == 0):
+                    build_reference = {"artifact_sha256": build.get("artifact_identity")}
                 if not isinstance(build_reference, dict):
                     raise ValueError("run_build_reference_unavailable")
                 if (not firmware_id or fw.get("sha256") != firmware_id
@@ -237,7 +305,15 @@ def extract_resources(dataset):
                         or not any(a.get("role") == role and a.get("sha256") == firmware_id
                                    and a.get("acquisition", {}).get("status") == "available" for a in bm["artifacts"])):
                     raise ValueError("run_build_hash_mismatch")
-            values = elf_resources(elf)
+            objects = []
+            values = elf_resources(elf, objects_out=objects)
+            estimate_components = None
+            try:
+                estimate_components = ram_estimate_components(values, objects)
+                values['application_static_demand_bytes'] = estimate_components['application_static_bytes']
+                values['excluded_experiment_storage_bytes'] = estimate_components['excluded_experiment_bytes']
+            except (ValueError, KeyError, TypeError):
+                pass  # Missing reservation symbols do not invalidate Flash sizes.
             build_id = elf_hash
             lineage["build_id"] = build_id
             binary_reason = None
@@ -251,12 +327,14 @@ def extract_resources(dataset):
             values, reason, binary_reason = {}, "verified_supported_application_elf_unavailable", None
         key = build_id or "unidentified:" + run["run_key"]
         entry = builds.setdefault(key, dict(build_id=build_id, run_keys=[], firmware_identities=[], build_numbers=[], build_references=[], source_inputs=[], resources=[]))
+        if reason is None and estimate_components is not None:
+            entry["ram_estimate_exclusions"] = estimate_components["removed_objects"]
         entry["source_inputs"].extend(inputs[build_input_start:])
         entry["run_keys"].append(run["run_key"])
         entry["firmware_identities"].append(firmware_id)
         entry["build_numbers"].append(run.get("build_number"))
         entry["build_references"].append(run["build_references"])
-        candidate = [_row(m, d, values.get(m), reason or (binary_reason if m == "application_binary_bytes" else None),
+        candidate = [_row(m, d, values.get(m), reason or (binary_reason if m == "application_binary_bytes" else ("symbol_evidence_unavailable" if values.get(m) is None else None)),
                           scope="build", build_id=build_id) for m,d in STATIC.items()]
         if not entry["resources"] or (reason is None and entry["resources"][0]["value_bytes"] is None):
             entry["resources"] = candidate
@@ -353,6 +431,18 @@ def extract_resources(dataset):
                 if why == "lower_bound_observable_window_exhausted":
                     row["validity"] = "lower_bound"
                 runtime.append(row)
+        peak_rows = [r for r in runtime if r['run_key'] == run['run_key'] and r['scope'] == 'run_lifetime' and r['metric'] in PEAKS]
+        try:
+            if values.get('application_static_demand_bytes') is None:
+                raise ValueError('verified_static_demand_unavailable')
+            if len(peak_rows) != len(PEAKS) or {r['metric'] for r in peak_rows} != set(PEAKS) or any(r['validity'] != 'valid' for r in peak_rows):
+                raise ValueError('unique_valid_unsaturated_regional_peaks_required')
+            estimate = ram_run_estimate(values['application_static_demand_bytes'], {r['metric']: r['value_bytes'] for r in peak_rows})
+            why = None
+        except (ValueError, TypeError) as exc:
+            estimate, why = None, str(exc)
+        runtime.append(_row('peak_based_ram_estimate_bytes', ('application', 'within_run_regional_peaks_plus_static_minus_identified_experiment_storage'),
+            estimate, why, **dict(lineage, source_records=[ref for r in peak_rows for ref in r['source_records']])))
         runtime.append(_row("simultaneous_system_peak_bytes", ("device", "observed_simultaneous_peak"), reason=TOTAL_REASON, **lineage))
     verify_source_inputs(dataset.metadata)
     for source in inputs:
@@ -373,7 +463,9 @@ def summarise_resources(dataset, spec):
         for resource in build["resources"]:
             build_rows.append({**{k:v for k,v in build.items() if k != "resources"}, **resource})
     rows, differences = [], []
-    definitions = {**STATIC, **RUNTIME, "simultaneous_system_peak_bytes": ("device", "observed_simultaneous_peak")}
+    definitions = {**STATIC, **RUNTIME,
+        "peak_based_ram_estimate_bytes": ("application", "within_run_regional_peaks_plus_static_minus_identified_experiment_storage"),
+        "simultaneous_system_peak_bytes": ("device", "observed_simultaneous_peak")}
     groups = {name: [r for r in inventory if r["condition"] == name and not r["exclusion_reason"]]
               for name in normalized["conditions"]}
     for label, runs in groups.items():
@@ -394,10 +486,15 @@ def summarise_resources(dataset, spec):
                 unit = "run_lifetime"
                 ids = [r["run_key"] for r in usable]
                 contributing = sorted(ids)
+            if metric == 'peak_based_ram_estimate_bytes' and len({r['build_id'] for r in usable}) != 1:
+                usable, ids, contributing = [], [], []
             values = [r["value_bytes"] for r in usable]
             value = median(values) if values else None
             rows.append(dict(condition=label, metric=metric, region=definition[0], accounting=definition[1],
                 unit="bytes", sample_unit=unit, median_bytes=value, median_KiB=value/1024 if value is not None else None,
+                maximum_bytes=max(values) if values else None,
+                summary_bytes=(max(values) if metric == 'peak_based_ram_estimate_bytes' else value) if values else None,
+                summary_statistic='maximum_per_run_estimate' if metric == 'peak_based_ram_estimate_bytes' else 'median',
                 n_observations=len(values), unavailable_or_excluded=len(candidates)-len(values),
                 observation_ids=ids, run_keys=contributing, reason=None if values else "no_unambiguous_usable_resource_evidence"))
     baseline = normalized["baseline"]
@@ -420,20 +517,22 @@ def summarise_resources(dataset, spec):
             a = next(r for r in rows if r["condition"] == baseline and r["metric"] == metric)
             b = next(r for r in rows if r["condition"] == label and r["metric"] == metric)
             reason = ";".join(problems) or a["reason"] or b["reason"]
-            delta = None if reason else b["median_bytes"]-a["median_bytes"]
-            percent_reason = reason or ("zero_baseline" if a["median_bytes"] == 0 else None)
+            delta = None if reason else b["summary_bytes"]-a["summary_bytes"]
+            percent_reason = reason or ("zero_baseline" if a["summary_bytes"] == 0 else None)
             differences.append(dict(condition=label, baseline=baseline, metric=metric, unit="bytes",
-                delta_median_bytes=delta, percent_difference=None if percent_reason else 100*delta/a["median_bytes"],
+                delta_median_bytes=None if metric == 'peak_based_ram_estimate_bytes' else delta,
+                delta_summary_bytes=delta, statistic=b['summary_statistic'],
+                percent_difference=None if percent_reason else 100*delta/a["summary_bytes"],
                 reason=reason, percent_reason=percent_reason, baseline_observation_ids=a["observation_ids"],
                 treatment_observation_ids=b["observation_ids"], baseline_run_keys=a["run_keys"], treatment_run_keys=b["run_keys"]))
     frames = {"resource_builds": pd.DataFrame(build_rows, dtype=object),
               "resource_observations": pd.DataFrame(extracted["runtime"], dtype=object),
               "resource_distributions": pd.DataFrame(rows, dtype=object),
               "resource_differences": pd.DataFrame(differences, columns=["condition", "baseline", "metric", "unit",
-                  "delta_median_bytes", "percent_difference", "reason", "percent_reason", "baseline_observation_ids",
+                  "delta_median_bytes", "delta_summary_bytes", "statistic", "percent_difference", "reason", "percent_reason", "baseline_observation_ids",
                   "treatment_observation_ids", "baseline_run_keys", "treatment_run_keys"], dtype=object)}
     provenance = dict(version=VERSION, inputs=extracted["inputs"], definitions={**STATIC, **RUNTIME, **TLS},
         source_sha256=sha256_file(Path(__file__)), conversion="1 KiB = 1024 bytes",
-        statistics="descriptive median across unique builds or one final lifetime record per successful run; no resource confidence intervals",
+        statistics="descriptive median across unique builds or one final lifetime record per successful run; RAM estimate is maximum across same-run regional estimates; no resource confidence intervals",
         combined_total_policy=TOTAL_REASON, deployment="ELF identity association is not proof that firmware was flashed or executed")
     return frames, provenance

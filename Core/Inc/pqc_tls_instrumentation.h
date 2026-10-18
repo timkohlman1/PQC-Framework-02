@@ -124,6 +124,19 @@ typedef struct
     uint64_t elapsed_us;
 } PQC_TLSInstrumentationRecord;
 
+/* One bounded summary per software signing call, linked to its ordered event.
+ * Missing/overflowed summaries are unavailable, never an inferred zero. */
+#define PQC_TLS_MLDSA_SAMPLING_CAPACITY 4U
+typedef struct
+{
+    uint16_t event_sequence;
+    uint32_t attempts;
+    uint32_t rejected;
+    uint32_t accepted;
+    uint32_t aborted;
+    int32_t result;
+} PQC_TLSMLDSASamplingRecord;
+
 typedef struct
 {
     uint32_t iteration;
@@ -151,6 +164,9 @@ typedef struct
     uint8_t hierarchy_incomplete;
     uint8_t x509_verify_invocation_count;
     uint8_t x509_verify_invocation_overflow;
+    uint16_t mldsa_sampling_count;
+    uint16_t mldsa_sampling_dropped;
+    PQC_TLSMLDSASamplingRecord mldsa_sampling[PQC_TLS_MLDSA_SAMPLING_CAPACITY];
     PQC_TLSTimingAggregate phases[PQC_TLS_PHASE_COUNT];
     PQC_TLSTimingAggregate primitives[PQC_TLS_PRIMITIVE_COUNT];
     PQC_TLSInvocationTiming x509_verify_invocations[PQC_TLS_X509_VERIFY_INVOCATION_CAPACITY];
@@ -173,6 +189,10 @@ void PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event);
  * invalid verification to that path's canonical verification error. The
  * UNSPECIFIED sentinel is reserved for boundaries where no outcome exists. */
 void PQC_TLS_InstrumentationEnd(PQC_TLSInstrumentationEvent event, int32_t result);
+
+void PQC_TLS_InstrumentationMLDSASampling(
+    uint32_t attempts, uint32_t rejected, uint32_t accepted,
+    uint32_t aborted, int32_t result);
 
 void PQC_TLS_InstrumentationSetPostMemory(
     uint32_t stack_min_free_bytes,

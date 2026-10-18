@@ -114,6 +114,37 @@ def test_editor_factor_checkbox_single_matrix_and_default(repository):
     assert value_for(data, factor) is None
 
 
+def test_memory_mode_editor_saves_fixed_matrix_and_omission(repository):
+    loaded = editor.load(repository, name='memory_options')
+    data = loaded['data']
+    before = copy.deepcopy(data)
+    factor = next(f for f in fields(loaded['options']) if f[2] == ['mldsa_memory_mode'])
+    assert factor[4] == [None, 'default', 'verify_small', 'sign_small', 'both_small']
+    assert value_for(data, factor) is None
+    apply_value(data, factor, None)
+    assert data == before
+    data['fixed'].update(tls_auth='mldsa65', auth_mode='mutual')
+    apply_value(data, factor, ['both_small'])
+    saved = editor.operate(repository, {'action': 'save', 'profile': 'memory_options.yaml', 'data': data})
+    assert saved['conditions'] == 1
+    loaded = editor.load(repository, 'memory_options.yaml')
+    assert value_for(loaded['data'], factor) == 'both_small'
+    apply_value(loaded['data'], factor, ['default', 'verify_small', 'sign_small', 'both_small'])
+    saved = editor.operate(repository, {**loaded, 'action': 'save'})
+    assert saved['conditions'] == 4
+    assert editor.load(repository, 'memory_options.yaml')['data']['matrix']['mldsa_memory_mode'] == factor[4][1:]
+
+
+@pytest.mark.parametrize('auth,role,mode', [('ecdsa-p256','server','verify_small'),
+    ('mldsa65','server','sign_small'), ('mldsa65','server','both_small')])
+def test_memory_mode_editor_rejects_inapplicable_choices_without_saving(repository, auth, role, mode):
+    data = editor.load(repository, name='invalid_memory')['data']
+    data['fixed'].update(tls_auth=auth, auth_mode=role, mldsa_memory_mode=mode)
+    with pytest.raises(ValueError, match='ML-DSA|mutual authentication'):
+        editor.operate(repository, {'action':'save', 'profile':'invalid_memory.yaml', 'data':data})
+    assert not (repository/'results/profiles/invalid_memory.yaml').exists()
+
+
 def test_all_existing_campaigns_validate_without_writes(repository):
     for path in (repository / 'configs/campaigns').glob('*.yaml'):
         data = editor.load(repository, template=path.name)['data']

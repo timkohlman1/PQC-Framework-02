@@ -174,6 +174,78 @@ Their handling follows the [open-data policy](006_security_and_secrets.md).
 Inspect `results/queue/jobs/<entry-id>/logs/dispatch-*.log` and
 `results/queue/worker.log` (under the selected directory for non-default queues).
 
+## Interactive MQTT migration comparison
+
+Run on the Linux host:
+
+```bash
+python3 scripts/migration_compare.py
+```
+
+The wizard asks for the current **From** configuration and proposed **To**
+configuration. Numbered options come from the maintained component profiles;
+To offers **Unchanged** for applicable choices. It covers plaintext/TLS transport,
+TLS key exchange, certificate family, server/mutual authentication, firmware
+signing, firmware layout/OTA support, standby signing keys, network impairment,
+and payload/chunk sizes. Plaintext skips TLS questions; integrity-only boot has
+no standby signing keys. Firmware-layout choices compare compiled support, not
+an executed OTA update. The existing STM32/ST67 gateway testbed is fixed: there
+are no device-capacity questions, and the results are not predictions for another
+MCU. Missing supported configurations need normal profile implementation and
+qualification first.
+
+For ML-DSA-65 TLS authentication, the wizard also offers `default` or `verify_small`.
+Mutual authentication additionally offers `sign_small` and `both_small`. These
+settings apply to the STM32's TLS signing/verification, with **Unchanged** available
+when the From choice is still applicable. Other authentication families and plaintext
+skip this question. Leaving the choice at `default` preserves the existing build
+configuration; selecting a small-memory mode does not resize the reserved memory pools.
+The campaign editor exposes the same optional factor under **Factors / matrix**.
+The **TLS implementation options** menu also exposes compact-code and ML-KEM
+memory controls, small-stack implementation, and explicit task/heap reservations.
+See [the application TLS controls](011_experiment_configuration.md#optional-tls-implementation-controls)
+for defaults and applicability. The same fields can be campaign matrix factors.
+
+Both states use Ready Metrics 2, a fresh connection following a hardware reset,
+normal boot without stack profiling, and energy monitoring off. Payload sizes
+describe the measured gateway-to-device response after an MQTT request, rather
+than a general simulation of the designer's traffic. The default is
+**10 attempts per state**, adjustable before collection. This is a pilot count,
+not a statistical-precision claim. The tool creates exactly two one-condition
+profiles under `results/profiles/`, freezes both through the shared queue and
+waits for preceding jobs, execution, export and analysis. Start confirmation
+starts the shared dispatcher; it does not reprioritise or cancel other work.
+Keep source files unchanged while frozen jobs remain queued/running.
+
+Ctrl-C detaches the comparison app; submitted work continues. The printed session
+path supports recovery without resubmitting the pair:
+
+```bash
+python3 scripts/migration_compare.py --resume results/migrations/<comparison>/session.json
+```
+
+`--directory results/<queue>` selects a different queue for a new comparison;
+resume uses the recorded queue. Externally paused jobs or stopped dispatch require
+explicit recovery. Unsafe cleanup/source-validation failures stop the comparison
+with the queue diagnostic. There are no automatic replacement attempts. Qualified
+workload failures remain recorded under the queue's `record` policy; other failed
+attempts require inspection and explicit acceptance before export. Accepted
+failures never become successes. An all-failed state reports unavailable timing.
+
+The tool exports its two job IDs without changing the queue UI's marked selection.
+The session and `report/` are below `results/migrations/<comparison>/`. Outputs:
+
+- `comparison.txt`: the console table, also retained as text.
+- `comparison.tex`: From, To, signed absolute change and percentage change.
+- `selections.tex`: the selected functional/crypto settings for both states.
+- `comparison.json`: full domain statistics, counts, quartiles, comparison controls
+  and unavailable reasons; `provenance.json` hashes the frozen inputs and outputs.
+
+The two `.tex` files use `booktabs` and `tabularx`, contain no document preamble
+or floating table wrapper, and can be included with `\input{...}` inside a thesis
+table. No thesis files are edited. The [analysis reference](012_results_and_analysis.md#interactive-migration-comparisons)
+owns metric boundaries and delta interpretation.
+
 ## CLI and validation
 
 The names passed to `add` must exist under `results/profiles/`; they are not

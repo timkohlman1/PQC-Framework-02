@@ -12,7 +12,7 @@ from test_thesis_tables import frame, item, loss_frame
 
 def test_figure_values_are_the_table_statistics_and_missing_is_not_zero():
     data = frame()
-    spec = {'selections': [item()], 'presentation': {'figures': ['handshake', 'heap']}}
+    spec = {'selections': [item()], 'presentation': {'figures': ['handshake', 'app_ram']}}
     tables, metrics = make_tables(spec, {'tls_auth': (data, data)})
     prepare(tables, metrics, spec)
     rows = figure_rows(tables, metrics, spec['presentation'])
@@ -20,7 +20,7 @@ def test_figure_values_are_the_table_statistics_and_missing_is_not_zero():
     assert timing['value'] == 2 and timing['statistic'] == 'mean'
     assert timing['high'] - timing['value'] == pytest.approx(2 ** .5)
     assert timing['uncertainty'].startswith('sample SD')
-    missing = next(r for r in rows if r['metric'] == 'heap')
+    missing = next(r for r in rows if r['metric'] == 'app_ram')
     assert missing['value'] is None and missing['reason'] == 'no_eligible_measurement'
     assert tables[0]['rows'][0][2] == '2.00 (1.41)'
 

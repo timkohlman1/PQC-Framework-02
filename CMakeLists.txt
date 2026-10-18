@@ -32,8 +32,17 @@ option(PQC_WOLFSSL_MEMORY_DIAGNOSTICS
     "Enable wolfSSL heap/failure UART diagnostics (changes timing)" OFF)
 option(PQC_WOLFSSL_ALLOCATION_PROVENANCE
     "Enable wolfSSL allocation source/type UART tracing (changes timing)" OFF)
+option(PQC_ST67_WIFI_DIAGNOSTIC_SCAN
+    "Run a diagnostic AP scan before association (changes startup time and energy)" OFF)
 option(PQC_TIMEBASE_HARDWARE_SELF_TEST
     "Enable a pre-workload 10 ms TIM2/HAL tick comparison marker for hardware validation" OFF)
+set(PQC_TLS_SMALL_STACK ON)
+set(PQC_TLS_TASK_STACK_BYTES 8192)
+set(PQC_TLS_HEAP_BYTES 98304)
+set(PQC_MLKEM_SMALL_CODE OFF)
+set(PQC_MLKEM_MAKEKEY_SMALL_MEM ON)
+set(PQC_MLKEM_ENCAPSULATE_SMALL_MEM OFF)
+set(PQC_MLDSA_SMALL_CODE OFF)
 set(PQC_MLDSA_WORKSPACE_SIZE_BYTES "98304" CACHE STRING
     "Dedicated RAM3 ML-DSA scratch workspace size in bytes")
 
@@ -85,6 +94,8 @@ set(PQC_TLS_ENABLE_MLKEM_512 0 CACHE BOOL "Compile ML-KEM-512 key exchange")
 set(PQC_TLS_ENABLE_MLKEM_768 0 CACHE BOOL "Compile ML-KEM-768 key exchange")
 set(PQC_TLS_ENABLE_MLKEM_1024 0 CACHE BOOL "Compile ML-KEM-1024 key exchange")
 set(PQC_TLS_MLKEM_STANDALONE 0 CACHE BOOL "Enable standalone ML-KEM TLS groups")
+set(PQC_MLDSA_VERIFY_SMALL_MEM 0 CACHE BOOL "Use wolfSSL small-memory ML-DSA verification")
+set(PQC_MLDSA_SIGN_SMALL_MEM 0 CACHE BOOL "Use wolfSSL small-memory ML-DSA signing")
 set(PQC_TLS_ENABLE_MLDSA_65 0 CACHE BOOL "Compile ML-DSA-65 certificate verification")
 set(PQC_TLS_ENABLE_MLDSA_65_SIGN 0 CACHE BOOL "Compile ML-DSA-65 client CertificateVerify signing")
 set(PQC_TLS_GROUP_ID WOLFSSL_ECC_SECP256R1 CACHE STRING "wolfSSL named-group token")
@@ -166,6 +177,12 @@ add_executable(${CMAKE_PROJECT_NAME})
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+# Propagate the same pool size to FreeRTOS, drivers and application consumers.
+target_compile_definitions(stm32cubemx INTERFACE PQC_TLS_HEAP_BYTES=${PQC_TLS_HEAP_BYTES})
+# Shared by application and ST67 driver object libraries.
+target_compile_definitions(stm32cubemx INTERFACE
+    PQC_ACTIVITY_TRACE_ENABLED=$<AND:$<BOOL:${PQC_ENERGY_SYNC_ENABLED}>,$<NOT:$<STREQUAL:${PQC_STM32_MQTT_APPLICATION},tls_handshake_repeat>>,$<NOT:$<STREQUAL:${PQC_STM32_MQTT_APPLICATION},baremetal_benchmark>>>
+)
 
 # STM32 wolfSSL TLS 1.3 runtime source integration.
 #
@@ -286,6 +303,14 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_MLKEM_STANDALONE=$<BOOL:${PQC_TLS_MLKEM_STANDALONE}>
         PQC_TLS_ENABLE_MLDSA_65=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65}>
         PQC_TLS_ENABLE_MLDSA_65_SIGN=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65_SIGN}>
+        PQC_TLS_SMALL_STACK=$<BOOL:${PQC_TLS_SMALL_STACK}>
+        PQC_TLS_TASK_STACK_BYTES=${PQC_TLS_TASK_STACK_BYTES}
+        PQC_MLKEM_SMALL_CODE=$<BOOL:${PQC_MLKEM_SMALL_CODE}>
+        PQC_MLKEM_MAKEKEY_SMALL_MEM=$<BOOL:${PQC_MLKEM_MAKEKEY_SMALL_MEM}>
+        PQC_MLKEM_ENCAPSULATE_SMALL_MEM=$<BOOL:${PQC_MLKEM_ENCAPSULATE_SMALL_MEM}>
+        PQC_MLDSA_SMALL_CODE=$<BOOL:${PQC_MLDSA_SMALL_CODE}>
+        PQC_MLDSA_VERIFY_SMALL_MEM=$<BOOL:${PQC_MLDSA_VERIFY_SMALL_MEM}>
+        PQC_MLDSA_SIGN_SMALL_MEM=$<BOOL:${PQC_MLDSA_SIGN_SMALL_MEM}>
         PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
         PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
         PQC_TLS_INSTRUMENTATION=1
@@ -365,6 +390,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_tls_instrumentation.c
     Core/Src/pqc_timebase.c
     Core/Src/pqc_energy_boundary.c
+    Core/Src/pqc_network_phases.c
+    Core/Src/pqc_activity_trace.c
     Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here
@@ -411,6 +438,7 @@ endif()
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     PQC_TLS_COMPILED=${PQC_TLS_COMPILED}
+    PQC_ST67_WIFI_DIAGNOSTIC_SCAN=$<BOOL:${PQC_ST67_WIFI_DIAGNOSTIC_SCAN}>
     PQC_DUAL_BANK_ENABLED=${PQC_DUAL_BANK_ENABLED}
     PQC_OTA_ENABLED=${PQC_OTA_ENABLED}
     PQC_STANDBY_SIGNING_KEYS=${PQC_STANDBY_SIGNING_KEYS}
@@ -441,6 +469,14 @@ if(PQC_TLS_COMPILED)
         PQC_TLS_MLKEM_STANDALONE=$<BOOL:${PQC_TLS_MLKEM_STANDALONE}>
         PQC_TLS_ENABLE_MLDSA_65=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65}>
         PQC_TLS_ENABLE_MLDSA_65_SIGN=$<BOOL:${PQC_TLS_ENABLE_MLDSA_65_SIGN}>
+        PQC_TLS_SMALL_STACK=$<BOOL:${PQC_TLS_SMALL_STACK}>
+        PQC_TLS_TASK_STACK_BYTES=${PQC_TLS_TASK_STACK_BYTES}
+        PQC_MLKEM_SMALL_CODE=$<BOOL:${PQC_MLKEM_SMALL_CODE}>
+        PQC_MLKEM_MAKEKEY_SMALL_MEM=$<BOOL:${PQC_MLKEM_MAKEKEY_SMALL_MEM}>
+        PQC_MLKEM_ENCAPSULATE_SMALL_MEM=$<BOOL:${PQC_MLKEM_ENCAPSULATE_SMALL_MEM}>
+        PQC_MLDSA_SMALL_CODE=$<BOOL:${PQC_MLDSA_SMALL_CODE}>
+        PQC_MLDSA_VERIFY_SMALL_MEM=$<BOOL:${PQC_MLDSA_VERIFY_SMALL_MEM}>
+        PQC_MLDSA_SIGN_SMALL_MEM=$<BOOL:${PQC_MLDSA_SIGN_SMALL_MEM}>
         PQC_TLS_GROUP_ID=${PQC_TLS_GROUP_ID}
         PQC_TLS_GROUP_NAME=\"${PQC_TLS_GROUP_NAME}\"
     )

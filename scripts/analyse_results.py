@@ -47,9 +47,35 @@ def main(argv=None):
     rebuild = commands.add_parser('rebuild', help='require unchanged sources/code/environment and identical scientific CSV/LaTeX')
     rebuild.add_argument('report', type=Path)
     rebuild.add_argument('--output', type=Path, required=True)
+    ram = commands.add_parser('ram-budget', help='publish configured RAM budgets from retained report ELFs')
+    ram.add_argument('--report', type=Path, required=True)
+    ram.add_argument('--selection', action='append', required=True)
+    ram.add_argument('--output', type=Path, required=True)
+    dist = commands.add_parser('authentication-distribution', help='render fixed-KEx authentication boxplots from published run observations')
+    dist.add_argument('--report', type=Path, required=True)
+    dist.add_argument('--output', type=Path, required=True)
+    review = commands.add_parser('chapter5-review', help='publish pinned timing-stage, loss-outcome and sampled-power diagnostics')
+    review.add_argument('--report', type=Path, required=True)
+    review.add_argument('--output', type=Path, required=True)
+    observed = commands.add_parser('observed-ram', help='derive RAM demand from recorded regional peaks, excluding identified experiment storage')
+    observed.add_argument('--report', type=Path, required=True)
+    observed.add_argument('--selection', action='append', required=True)
+    observed.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.action == 'catalog':
+        if args.action == 'observed-ram':
+            from framework.observed_ram import publish as publish_ram_observed
+            value = publish_ram_observed(args.report, args.selection, args.output)
+        elif args.action == 'chapter5-review':
+            from framework.chapter5_review import publish as publish_review
+            value = publish_review(args.report, args.output)
+        elif args.action == 'authentication-distribution':
+            from framework.authentication_distribution import publish as publish_distribution
+            value = publish_distribution(args.report, args.output)
+        elif args.action == 'ram-budget':
+            from framework.ram_budget_report import publish as publish_ram
+            value = publish_ram(args.report, args.selection, args.output)
+        elif args.action == 'catalog':
             value = workspace.catalogue(args.exports_root)
         elif args.action == 'recipes':
             value = workspace.recipes()

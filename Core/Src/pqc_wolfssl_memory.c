@@ -27,7 +27,15 @@
 #define PQC_TLS_ENABLE_MLDSA_65 0
 #endif
 
+/* Small-memory ML-DSA uses a smaller contiguous scratch block. Keep it in
+ * the existing arena instead of shifting it into an already occupied heap.
+ * Ordinary profiles retain their original 32 KiB routing threshold. */
+#if (defined(PQC_MLDSA_VERIFY_SMALL_MEM) && PQC_MLDSA_VERIFY_SMALL_MEM) || \
+    (defined(PQC_MLDSA_SIGN_SMALL_MEM) && PQC_MLDSA_SIGN_SMALL_MEM)
+#define PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES (8U * 1024U)
+#else
 #define PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES (32U * 1024U)
+#endif
 #if PQC_WOLFSSL_ALLOCATION_PROVENANCE
 #define PQC_WOLFSSL_LARGE_ALLOCATION_DIAGNOSTIC_THRESHOLD 4096U
 #endif

@@ -17,6 +17,7 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include "w61_at_common.h"
 #include "w61_at_internal.h"
 #include "w61_io.h"
@@ -470,13 +471,16 @@ W61_Status_t W61_Status(int32_t ret)
 W61_Status_t W61_AT_Common_SetExecute(W61_Object_t *Obj, uint8_t *p_cmd, uint32_t timeout_ms)
 {
   struct modem *mdm = &Obj->Modem;
-  return W61_Status(modem_cmd_send(&mdm->iface,
+  uint16_t trace = PQC_ActivityCommand((const char *)p_cmd);
+  W61_Status_t status = W61_Status(modem_cmd_send(&mdm->iface,
                                    &mdm->handler,
                                    NULL,
                                    0,
                                    p_cmd,
                                    mdm->sem_response,
                                    timeout_ms));
+  PQC_ActivityEnd(trace, status);
+  return status;
 }
 
 W61_Status_t W61_AT_Common_Query_Parse(W61_Object_t *Obj, char *p_cmd, char *p_resp,
@@ -491,6 +495,7 @@ W61_Status_t W61_AT_Common_Query_Parse(W61_Object_t *Obj, char *p_cmd, char *p_r
     return W61_STATUS_ERROR;
   }
   (void)xSemaphoreTake(data->sem_tx_lock, portMAX_DELAY);
+  uint16_t trace = PQC_ActivityCommand(p_cmd);
   /* **argv reference p_cmd to ensure re-entrance */
   mdm->rx_data = p_cmd;
   mdm->argc = argc;
@@ -515,6 +520,7 @@ W61_Status_t W61_AT_Common_Query_Parse(W61_Object_t *Obj, char *p_cmd, char *p_r
                                       mdm->sem_response,
                                       timeout_ms,
                                       MODEM_NO_TX_LOCK));
+  PQC_ActivityEnd(trace, ret);
   (void)xSemaphoreGive(data->sem_tx_lock);
   return ret;
 }
@@ -805,6 +811,7 @@ MODEM_CMD_DEFINE(on_cmd_ready)
 {
   struct modem *mdm = (struct modem *) data->user_data;
 
+  PQC_ActivityEvent(PQC_ACT_READY_RECEIVED, 0);
   (void)xSemaphoreGive(mdm->sem_if_ready);
 
   return 0;

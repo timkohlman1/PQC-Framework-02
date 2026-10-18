@@ -87,7 +87,8 @@ def fixture(tmp_path, *, count=2, records=None, signed=False, bad_link=False, ua
 
 def test_elf_regions_do_not_add_heap_workspace_or_reservations_twice():
     values=elf_resources(synthetic_elf())
-    assert values == dict(flash_section_bytes=24,application_image_span_bytes=24,
+    assert values == dict(configured_application_ram_bytes=1248, mailbox_reserved_bytes=1024,
+        freertos_heap_reserved_bytes=None, tls_instrumentation_reserved_bytes=None, flash_section_bytes=24,application_image_span_bytes=24,
         ram_static_base_bytes=80,ram_linker_reserved_bytes=128,ram2_section_bytes=0,
         ram3_section_bytes=96,result_buffer_reserved_bytes=32,workspace_reserved_bytes=64)
     assert _union([(0,10),(5,12),(20,25)]) == 17
@@ -187,7 +188,7 @@ def test_distinct_signed_images_map_to_one_explicit_elf_build(tmp_path):
     build=result['builds'][0]
     assert len(set(build['firmware_identities']))==2
     assert build['build_id']==hashlib.sha256(synthetic_elf()).hexdigest()
-    assert all(r['validity']=='valid' for r in build['resources'])
+    assert all(r['validity']=='valid' for r in build['resources'] if r['metric'] not in ('freertos_heap_reserved_bytes','tls_instrumentation_reserved_bytes','application_static_demand_bytes','excluded_experiment_storage_bytes'))
 
 
 def test_signed_image_without_correct_build_link_stays_unavailable(tmp_path):
@@ -248,3 +249,98 @@ def test_missing_build_link_keeps_runtime_observations_exportable(tmp_path, refe
     assert all(row['value_bytes'] is None for row in result['builds'][0]['resources'])
     assert any(row['metric']=='freertos_heap_peak_used_bytes' and row['value_bytes']==40
                for row in result['runtime'])
+
+
+def test_configured_budget_counts_disjoint_capacity_not_peak_use():
+    values = elf_resources(synthetic_elf())
+    assert values['configured_application_ram_bytes'] == 128 + 1024 + 96
+    assert values['configured_application_ram_bytes'] != 128 + 1024 + 96 + 32 + 64
+    # Future linker sections outside the declared RAM1 reservation must not be hidden.
+    data = bytearray(synthetic_elf())
+    struct.pack_into('<I', data, 2048 + 3*40 + 12, 0x20001000)
+    with pytest.raises(ValueError, match='outside_linker_reservation'):
+        elf_resources(bytes(data))
+
+
+def test_ram_report_rechecks_retained_elf_and_never_overwrites(tmp_path):
+    from framework.ram_budget_report import publish
+    from framework.run_evidence import sha256_file
+    d,runs=fixture(tmp_path,count=1)
+    frames,_=summarise_resources(d,{'conditions':{'base':{}},'baseline':'base'})
+    report=tmp_path/'published';report.mkdir()
+    checks={}
+    for name in ('resource_builds','resource_distributions'):
+        path=report/f'data-test-{name}.csv';frames[name].to_csv(path,index=False)
+        # Canonical report CSVs encode compound cells as JSON, not Python repr.
+        import csv
+        rows=list(csv.DictReader(path.open()))
+        for row in rows:
+            for key in ('source_inputs','observation_ids'):
+                if key in row:
+                    import ast
+                    row[key]=json.dumps(ast.literal_eval(row[key]))
+        with path.open('w') as stream:
+            writer=csv.DictWriter(stream,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
+        checks[path.name]=sha256_file(path)
+    (report/'checksums.json').write_text(json.dumps(checks))
+    out=tmp_path/'budget';result=publish(report,['test'],out)
+    assert result['files']['ram-budget.csv']==sha256_file(out/'ram-budget.csv')
+    assert '1.219' in (out/'ram-budget.tex').read_text()
+    with pytest.raises(ValueError,match='fresh'):
+        publish(report,['test'],out)
+    (runs[0]/'firmware.elf').write_bytes(b'changed')
+    with pytest.raises(ValueError,match='identity'):
+        publish(report,['test'],tmp_path/'tampered')
+    assert not (tmp_path/'tampered').exists()
+
+
+@pytest.mark.parametrize('change,usable', [
+    ({}, True), ({'artifact_identity': '0'*64}, False),
+    ({'artifact_identity_algorithm': 'sha256-bin'}, False),
+    ({'purpose': 'normal'}, False), ({'return_code': 1}, False),
+    ({'return_code': False}, False), ({'return_code': '0'}, False),
+    ({'legacy_conflict': True}, False),
+])
+def test_automated_build_elf_link_requires_explicit_matching_identity(tmp_path, change, usable):
+    _, runs = fixture(tmp_path, count=1, signed=True)
+    path = runs[0]/'run-provenance.json'
+    data = json.loads(path.read_text())
+    data['records']['build_reference'] = {'artifact_sha256':'0'*64} if change.get('legacy_conflict') else None
+    data['records']['build'] = dict(purpose='automated_test', return_code=0,
+        artifact_identity_algorithm='sha256-elf', artifact_identity=hashlib.sha256(synthetic_elf()).hexdigest())
+    data['records']['build'].update({k:v for k,v in change.items() if k!='legacy_conflict'})
+    path.write_text(json.dumps(data)); reseal(runs[0])
+    output = tmp_path/'automated-link'
+    export_dataset(run_dirs=runs, output=output)
+    resources = extract_resources(load_dataset(output))['builds'][0]['resources']
+    flash = next(r for r in resources if r['metric']=='flash_section_bytes')
+    assert flash['value_bytes'] == (24 if usable else None)
+
+
+def test_peak_based_ram_is_maximum_of_complete_per_run_sums(tmp_path,monkeypatch):
+    import framework.resource_analysis as module
+    original=module.elf_resources
+    def decode(*args,**kwargs):
+        values=original(*args,**kwargs)
+        values['freertos_heap_reserved_bytes']=64
+        return values
+    # The synthetic ELF deliberately lacks a heap symbol; supply only that
+    # fixture fact to exercise the verified-run aggregation and exclusion path.
+    monkeypatch.setattr(module,'elf_resources',decode)
+    d,runs=fixture(tmp_path,count=2)
+    frames,_=summarise_resources(d,{'conditions':{'base':{}},'baseline':'base'})
+    row=frames['resource_distributions'].query("metric == 'peak_based_ram_estimate_bytes'").iloc[0]
+    assert row.summary_bytes == (80-64)+40+32+16+24
+    assert row.n_observations==2 and row.summary_statistic=='maximum_per_run_estimate'
+    assert row.sample_unit=='run_lifetime'
+    extracted=module.extract_resources(d)
+    assert all(r['build_id'] for r in extracted['runtime'] if r['metric']=='peak_based_ram_estimate_bytes')
+    saturated,_=fixture(tmp_path/'saturated',count=1,records=[*rm2_records(),memory(saturated=1)])
+    bad,_=summarise_resources(saturated,{'conditions':{'base':{}},'baseline':'base'})
+    assert bad['resource_distributions'].query("metric == 'peak_based_ram_estimate_bytes'").iloc[0].n_observations==0
+
+
+def test_network_phase_scratch_storage_is_identified_experiment_storage():
+    from framework.resource_analysis import experiment_object
+    assert experiment_object(dict(owner='pqc_network_phases.c',name='s_network_phases'))
+    assert not experiment_object(dict(owner='w6x_wifi.c',name='p_wifi_ctx'))
