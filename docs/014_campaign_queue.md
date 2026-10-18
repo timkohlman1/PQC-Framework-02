@@ -134,9 +134,16 @@ Continuation captures retain their new source identity and require an explicit
 analysis selection rather than silently pooling them with the old batch.
 
 MQTT clients, remote capture groups, SSH and evidence/control operations have bounded
-deadlines. Each campaign preparation/runtime subprocess also has a 1,800-second
-watchdog and 90-second cleanup grace. `PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS` can
-select a positive finite override before starting the worker. This is per operation,
+deadlines. Each campaign preparation/runtime subprocess has a watchdog of at least
+1,800 seconds. For a workload capture, the default is the larger of 1,800 seconds
+and its resolved capture hard limit plus 720 seconds for setup and evidence
+collection (a budget, not a measured duration). A 30-handshake capture therefore
+has a 2,520-second outer watchdog, beyond its 1,800-second capture deadline.
+Prepare-only operations retain 1,800 seconds. Cleanup grace remains 90 seconds.
+The selected watchdog is recorded in the operation log.
+`PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS` selects an explicit positive finite
+override before starting the worker; callers must allow setup/capture/cleanup
+headroom when choosing a shorter override. This is per operation,
 not a whole-campaign deadline; gateway contention retains its normal wait policy.
 Timeouts are failed results, not automatically valid negative trials.
 

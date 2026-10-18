@@ -163,6 +163,7 @@ typedef struct
   uint8_t tx_present;
   uint8_t active;
   uint8_t last_callback;
+  uint32_t hal_status; /* UINT32_MAX while pending; HAL return/callback status otherwise */
   uint32_t hal_state;
   uint32_t hal_error;
 } spi_port_diagnostics_t;

@@ -19,6 +19,7 @@
 #include "pqc_energy_boundary.h"
 #include "pqc_boot_evidence.h"
 #include "pqc_wolfssl_memory.h"
+#include "spi_iface.h"
 
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
@@ -1954,6 +1955,27 @@ static void PQC_WolfMQTT_TLSRepeatAppendStatus(
     (void)PQC_ResultBufferAppendText(iteration, "tls_handshake_repeat", line);
 }
 
+/* Cumulative transport counters sampled after TLS cleanup, outside its timing
+ * interval. Deferred MQTT publication preserves normal UART/timing behavior. */
+static void PQC_WolfMQTT_TLSRepeatAppendSPIStatus(uint32_t iteration)
+{
+    struct spi_stat stat;
+    char line[320], counts[5][21];
+    if (spi_get_stats(&stat) != 0) return;
+    /* newlib-nano does not provide long-long printf conversion. */
+    PQC_WolfMQTT_FormatU64(stat.stale_hdr_ack_events, counts[0], sizeof(counts[0]));
+    PQC_WolfMQTT_FormatU64(stat.wait_hdr_ack_timeouts, counts[1], sizeof(counts[1]));
+    PQC_WolfMQTT_FormatU64(stat.wait_txn_timeouts, counts[2], sizeof(counts[2]));
+    PQC_WolfMQTT_FormatU64(stat.wait_msg_xfer_timeouts, counts[3], sizeof(counts[3]));
+    PQC_WolfMQTT_FormatU64(stat.io_err, counts[4], sizeof(counts[4]));
+    (void)snprintf(line, sizeof(line),
+        "PQC_ST67_SPI iteration=%lu scope=cumulative_after_tls_cleanup "
+        "stale_header_ack_events=%s header_ack_timeouts=%s "
+        "ready_timeouts=%s transfer_timeouts=%s io_errors=%s",
+        (unsigned long)iteration, counts[0], counts[1], counts[2], counts[3], counts[4]);
+    (void)PQC_ResultBufferAppendText(iteration, "st67_spi", line);
+}
+
 int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
     uint32_t handshakes_per_run,
     PQC_WolfMQTTTLSRepeatSummary *summary)
@@ -2059,6 +2081,7 @@ int PQC_WolfMQTT_RunTLSHandshakeRepeatApplication(
         PQC_WolfMQTT_TLSRepeatAppendStatus(
             iteration, &socket_context, connect_result, disconnect_result,
             cleanup_ok, failure_stage);
+        PQC_WolfMQTT_TLSRepeatAppendSPIStatus(iteration);
         /* Publish the persistent boot record only in the first reporting epoch. */
         if (iteration == 0U) {
             PQC_BootEvidenceAppendToResultBuffer(iteration);

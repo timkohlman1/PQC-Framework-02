@@ -376,3 +376,30 @@ def test_campaign_broker_start_and_reuse_preserve_certificate_selection(
         if reporting or mode == "plaintext":
             assert "--oqs-port" not in command
             assert "--classical-port" not in command
+
+
+def test_outer_watchdog_covers_repeated_capture_and_setup(tmp_path, monkeypatch):
+    from framework.campaign_executor import _operation_timeout
+    from framework.config_resolver import ConfigResolver
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    resolver = ConfigResolver(root)
+    case = resolver.expand_campaign(root/'configs/campaigns/thesis_repeated_tls.yaml')[0]
+    case = resolver.resolve_case(campaign_id='watchdog',case_index=1,
+        selections=case['selections'],choices=case['choices'],
+        workload_overrides={'iterations': {'handshakes_per_run': 30}},execution=case['execution'])
+    path=tmp_path/'case.yaml';path.write_text(yaml.safe_dump(case))
+    command=['python3',str(root/'scripts/experiment.py'),'run','--experiment',str(path)]
+    monkeypatch.delenv('PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS',raising=False)
+    assert _operation_timeout(command,root)==2520
+    assert _operation_timeout(command+['--prepare-only'],root)==1800
+    monkeypatch.setenv('PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS','3600')
+    assert _operation_timeout(command,root)==3600
+
+
+@pytest.mark.parametrize('value',['0','-1','nan','inf','bad'])
+def test_outer_watchdog_rejects_invalid_override(value,monkeypatch,tmp_path):
+    from framework.campaign_executor import _operation_timeout, CampaignError
+    monkeypatch.setenv('PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS',value)
+    with pytest.raises(CampaignError,match='positive and finite'):
+        _operation_timeout(['python3','-c','pass'],tmp_path)

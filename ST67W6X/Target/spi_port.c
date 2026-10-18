@@ -85,11 +85,23 @@ static void spi_port_diag_begin(uint16_t len, uint8_t dma, uint8_t tx_present)
   spi_port_diag.sequence++;
   spi_port_diag.started_tick = (uint32_t)xTaskGetTickCount();
   spi_port_diag.completed_tick = 0U;
+  spi_port_diag.hal_status = UINT32_MAX;
   spi_port_diag.length = len;
   spi_port_diag.dma = dma;
   spi_port_diag.tx_present = tx_present;
   spi_port_diag.active = 1U;
   spi_port_diag.last_callback = SPI_PORT_CB_NONE;
+  spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
+  spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
+}
+
+/* Polling and rejected DMA starts have no completion ISR. Record their
+ * synchronous return without manufacturing a callback or hiding HAL status. */
+static void spi_port_diag_return(HAL_StatusTypeDef status)
+{
+  spi_port_diag.completed_tick = (uint32_t)xTaskGetTickCount();
+  spi_port_diag.active = 0U;
+  spi_port_diag.hal_status = (uint32_t)status;
   spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
   spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
 }
@@ -107,6 +119,7 @@ static uint32_t spi_port_tick_from_isr(void)
 static void spi_port_diag_complete(uint8_t callback)
 {
   spi_port_diag.completed_tick = spi_port_tick_from_isr();
+  spi_port_diag.hal_status = (callback == SPI_PORT_CB_ERROR) ? HAL_ERROR : HAL_OK;
   spi_port_diag.callback_count++;
   spi_port_diag.last_callback = callback;
   spi_port_diag.active = 0U;
@@ -226,6 +239,7 @@ int32_t spi_port_transfer(void *tx_buf, void *rx_buf, uint16_t len, uint32_t tim
 
   if (NCP_SPI_HANDLE.State == HAL_SPI_STATE_RESET)
   {
+    spi_port_diag_return(HAL_ERROR);
     LogError(spi_port_error_str);
     return -1;
   }
@@ -252,6 +266,7 @@ int32_t spi_port_transfer(void *tx_buf, void *rx_buf, uint16_t len, uint32_t tim
 
   /* USER CODE END spi_port_transfer_2 */
 
+  spi_port_diag_return(status);
   if (status != HAL_OK)
   {
     LogError("SPI diagnostic: mode=poll len=%u status=%u hal_state=%u hal_error=0x%08lx ready=%ld\n",
@@ -278,6 +293,7 @@ int32_t spi_port_transfer_dma(void *tx_buf, void *rx_buf, uint16_t len)
 
   if (NCP_SPI_HANDLE.State == HAL_SPI_STATE_RESET)
   {
+    spi_port_diag_return(HAL_ERROR);
     LogError(spi_port_error_str);
     return -1;
   }
@@ -308,6 +324,7 @@ int32_t spi_port_transfer_dma(void *tx_buf, void *rx_buf, uint16_t len)
 
   if (status != HAL_OK)
   {
+    spi_port_diag_return(status);
     LogError("SPI diagnostic: mode=dma len=%u tx_present=%u status=%u hal_state=%u hal_error=0x%08lx ready=%ld\n",
              (unsigned int)len,
              (tx_buf != NULL) ? 1U : 0U,
@@ -444,8 +461,6 @@ int32_t spi_port_get_diagnostics(spi_port_diagnostics_t *diagnostics)
 int32_t spi_port_abort_transfer(void)
 {
   HAL_StatusTypeDef status = HAL_SPI_Abort(&NCP_SPI_HANDLE);
-  spi_port_diag.active = 0U;
-  spi_port_diag.hal_state = (uint32_t)NCP_SPI_HANDLE.State;
-  spi_port_diag.hal_error = (uint32_t)HAL_SPI_GetError(&NCP_SPI_HANDLE);
+  spi_port_diag_return(status);
   return (status == HAL_OK) ? 0 : -1;
 }

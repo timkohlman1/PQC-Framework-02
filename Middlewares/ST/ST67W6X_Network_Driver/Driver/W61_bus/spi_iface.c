@@ -132,6 +132,8 @@ struct spi_xfer_engine
   SemaphoreHandle_t hw_xfer_done;
   /** Current transfer state */
   int32_t state;
+  /** A failed recovery must observe READY low before CS can be asserted again. */
+  int32_t boundary_unconfirmed;
   /** Slave RX is stalled */
   int32_t rx_stall;
   /** Single transmit queue */
@@ -164,13 +166,13 @@ static void spi_log_port_diagnostics(const char *reason, struct spi_xfer_engine 
           " active=%u dma=%u tx_present=%u len=%" PRIu16
           " started_tick=%" PRIu32 " completed_tick=%" PRIu32
           " callback_count=%" PRIu32 " error_callback_count=%" PRIu32
-          " last_callback=%u hal_state=%" PRIu32 " hal_error=0x%08" PRIx32
+          " last_callback=%u hal_status=%" PRIu32 " hal_state=%" PRIu32 " hal_error=0x%08" PRIx32
           " ready_gpio=%" PRIi32 " event_bits=0x%" PRIx32
           " txq_waiting=%" PRIu32 "\n",
           reason, spi_diag_xfer_sequence, diag.sequence, engine->state,
           diag.active, diag.dma, diag.tx_present, diag.length,
           diag.started_tick, diag.completed_tick, diag.callback_count,
-          diag.error_callback_count, diag.last_callback, diag.hal_state,
+          diag.error_callback_count, diag.last_callback, diag.hal_status, diag.hal_state,
           diag.hal_error, spi_port_is_ready(),
           (uint32_t)xEventGroupGetBits(engine->event),
           (uint32_t)uxQueueMessagesWaiting(engine->txq));
@@ -205,6 +207,7 @@ static int32_t spi_recover_protocol_boundary(struct spi_xfer_engine *engine, con
     return -1;
   }
 
+  engine->boundary_unconfirmed = 1;
   spi_log_port_diagnostics(reason, engine);
   (void)spi_port_set_cs(0);
   (void)spi_port_get_diagnostics(&diag);
@@ -227,6 +230,7 @@ static int32_t spi_recover_protocol_boundary(struct spi_xfer_engine *engine, con
     vTaskDelay(pdMS_TO_TICKS(SPI_RECOVERY_POLL_DELAY_MS));
   }
 
+  engine->boundary_unconfirmed = 0;
   engine->rx_stall = 0;
   engine->state = SPI_XFER_STATE_IDLE;
   spi_log_port_diagnostics("protocol_recovery_complete", engine);
@@ -331,15 +335,6 @@ static struct spi_buffer *spi_get_txbuf(struct spi_xfer_engine *engine);
   * @return 1 if valid, 0 if invalid
   */
 static int32_t inline spi_header_validate(struct spi_header *hdr);
-
-/**
-  * @brief  Wait for a specific event in the SPI transfer engine
-  * @param  evnt_ctx: Event context
-  * @param  event: Event to wait for
-  * @param  timeout_ms: Timeout in milliseconds
-  * @return 0 on success, negative error code on failure
-  */
-static int32_t spi_wait_event(void *evnt_ctx, uint32_t event, int32_t timeout_ms);
 
 /**
   * @brief  Clear a specific event in the SPI transfer engine
@@ -573,30 +568,6 @@ static int32_t inline spi_header_validate(struct spi_header *hdr)
   return 1;
 }
 
-static int32_t spi_wait_event(void *evnt_ctx, uint32_t event, int32_t timeout_ms)
-{
-  EventBits_t bits;
-  TickType_t ticks;
-  struct spi_xfer_engine *engine = (struct spi_xfer_engine *)evnt_ctx;
-
-  if (timeout_ms >= 0)
-  {
-    ticks = pdMS_TO_TICKS(timeout_ms);
-  }
-  else
-  {
-    ticks = portMAX_DELAY;
-  }
-
-  bits = xEventGroupWaitBits(engine->event, event, pdTRUE, pdFALSE, ticks);
-  if ((bits & event) != 0U)
-  {
-    return 1;
-  }
-
-  return 0;
-}
-
 static int32_t inline spi_clear_event(struct spi_xfer_engine *engine, uint32_t event)
 {
   (void)xEventGroupClearBits(engine->event, event);
@@ -646,6 +617,38 @@ static int32_t spi_wait_txn_ready(struct spi_xfer_engine *engine)
     }
 
     /* The event was stale. Continue waiting within the original timeout. */
+  }
+}
+
+/* READY falling acknowledges the header. FreeRTOS defers event-group ISR
+ * updates to its timer task, so an old queued edge can arrive after a clear.
+ * An event is only a wake-up hint: never begin the next CS cycle on a stale ACK.
+ */
+static int32_t spi_wait_header_ack(struct spi_xfer_engine *engine)
+{
+  const TickType_t timeout_ticks = pdMS_TO_TICKS(SPI_WAIT_HDR_ACK_TIMEOUT_MS);
+  const TickType_t start_tick = xTaskGetTickCount();
+
+  while (true)
+  {
+    TickType_t elapsed;
+    EventBits_t bits;
+    if (spi_port_is_ready() == 0)
+    {
+      (void)spi_clear_event(engine, SPI_EVT_HDR_ACKED);
+      return 1;
+    }
+    elapsed = xTaskGetTickCount() - start_tick;
+    if (elapsed >= timeout_ticks)
+    {
+      return 0;
+    }
+    bits = xEventGroupWaitBits(engine->event, SPI_EVT_HDR_ACKED, pdTRUE,
+                              pdFALSE, timeout_ticks - elapsed);
+    if (((bits & SPI_EVT_HDR_ACKED) != 0U) && (spi_port_is_ready() != 0))
+    {
+      SPI_STAT_INC(&engine->stat, stale_hdr_ack_events, 1U);
+    }
   }
 }
 
@@ -1060,14 +1063,14 @@ static int32_t spi_xfer_one(struct spi_xfer_engine *engine, struct spi_buffer *t
 
   /* Wait until slave acknowledged header. */
   spi_trace(SPI_TP_WAIT_HDR_ACK_START, "waiting for header ack\n");
-  while (spi_wait_event(engine, SPI_EVT_HDR_ACKED, SPI_WAIT_HDR_ACK_TIMEOUT_MS) == 0)
+  if (spi_wait_header_ack(engine) == 0)
   {
-    if (spi_port_is_ready() == 0)
-    {
-      break;
-    }
-
     SPI_STAT_INC(&engine->stat, wait_hdr_ack_timeouts, 1U);
+    spi_log_port_diagnostics("header_ack_timeout", engine);
+    spi_discard_ambiguous_txbuf(engine);
+    (void)spi_recover_protocol_boundary(engine, "header_ack_timeout_recovery");
+    /* RX ownership has already passed to the queue or been freed above. */
+    return -1;
   }
   spi_trace(SPI_TP_WAIT_HDR_ACK_END, "Got header ack\n");
 
@@ -1086,6 +1089,11 @@ static int32_t spi_do_xfer(struct spi_xfer_engine *engine, uint32_t flags)
 
   while (true)
   {
+    if ((engine->boundary_unconfirmed != 0) &&
+        (spi_recover_protocol_boundary(engine, "pending_boundary_recovery") != 0))
+    {
+      return -1;
+    }
     /* Get txbuf */
     txbuf = spi_get_txbuf(engine);
 
@@ -1598,7 +1606,9 @@ int32_t spi_get_stats(struct spi_stat *stat)
     return -1;
   }
 
+  taskENTER_CRITICAL();
   *stat = xfer_engine.stat;
+  taskEXIT_CRITICAL();
   return 0;
 }
 

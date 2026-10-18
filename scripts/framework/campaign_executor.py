@@ -311,6 +311,37 @@ def _default_runner(command: list[str], cwd: Path) -> subprocess.CompletedProces
                                        completed.stdout + completed.stderr, None)
 
 
+def _operation_timeout(command: list[str], cwd: Path) -> float:
+    """Keep the outer watchdog outside the workload's own capture deadline."""
+    override = os.environ.get("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS")
+    if override is not None:
+        try:
+            timeout = float(override)
+        except ValueError as exc:
+            raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite") from exc
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite")
+        return timeout
+    timeout = 1800.0
+    script = Path(command[1]) if len(command) > 1 else Path()
+    script = script if script.is_absolute() else cwd / script
+    if (len(command) > 1 and script.resolve() == (cwd / "scripts/experiment.py").resolve()
+            and "--experiment" in command and "--prepare-only" not in command):
+        index = command.index("--experiment") + 1
+        try:
+            resolver = ConfigResolver(cwd)
+            case_path = Path(command[index])
+            case = resolver.load_resolved_case(case_path if case_path.is_absolute() else cwd / case_path)
+            bundle = resolver.to_legacy_bundle(case, resolve_secrets=False)
+            capture = float(bundle["experiment"]["mqtt"]["orchestration"]["hard_limit_seconds"])
+        except (IndexError, KeyError, ValueError, OSError) as exc:
+            raise CampaignError(f"Cannot determine experiment capture deadline: {exc}") from exc
+        # Budget, not a measured duration: build/sign/flash/broker setup and
+        # evidence collection need time before/after the remote capture clock.
+        timeout = max(timeout, capture + 720.0)
+    return timeout
+
+
 def _stream_command_to_log(
     command: list[str], cwd: Path, log_path: Path, progress: RunStatus | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -320,16 +351,11 @@ def _stream_command_to_log(
     updates the compact console. The child also retains its own console.log.
     The returned stdout contains the full combined stream for error handling.
     """
-    try:
-        timeout = float(os.environ.get("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS", "1800"))
-    except ValueError as exc:
-        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite") from exc
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise CampaignError("PQC_CAMPAIGN_OPERATION_TIMEOUT_SECONDS must be positive and finite")
+    timeout = _operation_timeout(command, cwd)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     captured: list[str] = []
     with log_path.open("w", encoding="utf-8", buffering=1) as log_handle:
-        log_handle.write(f"[{_now()}] command={subprocess.list2cmdline(command)}\n")
+        log_handle.write(f"[{_now()}] watchdog_seconds={timeout:g} command={subprocess.list2cmdline(command)}\n")
         log_handle.flush()
         process = subprocess.Popen(
             command,

@@ -89,6 +89,18 @@ not an unmodified vendor copy. The lwIP adapter submits each segment in a chaine
 `pbuf` to `W6X_Netif_output()`. GPIO/SPI activity or module initialization proves
 only that boundary, not higher-level protocol success.
 
+The header-acknowledgement wait checks live READY low; queued FreeRTOS event
+bits are wake-up hints and cannot confirm a new transaction boundary. This follows
+[ST's SPI transfer requirement](https://wiki.st.com/stm32mcu/wiki/Connectivity:ST67W611M1_spi).
+The ACK wait is limited to 100 ms, followed by the existing bounded local recovery.
+An unconfirmed recovery prevents another CS assertion until READY low is observed.
+This does not reset the module or certify that its firmware has recovered.
+Polling returns and rejected DMA starts record completion time and HAL status
+without inventing an ISR callback. `hal_status=UINT32_MAX` denotes a pending call.
+Repeated TLS reports include `PQC_ST67_SPI` cumulative counters sampled after TLS
+cleanup, in the deferred MQTT result buffer. They include earlier reporting traffic;
+they are neither per-handshake timing nor an attribution of a failure's cause.
+
 For wiring and analyzer constraints use [board setup](003_stm32_board_setup.md).
 For known-image capture and flash commands use the
 [operating guide](005_remote_flash_workflow.md). Current coverage and missing

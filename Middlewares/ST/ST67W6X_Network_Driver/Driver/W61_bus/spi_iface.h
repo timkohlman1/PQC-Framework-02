@@ -82,6 +82,7 @@ struct spi_stat
   uint64_t wait_txn_timeouts;       /*!< Number of wait transaction timeouts */
   uint64_t wait_msg_xfer_timeouts;  /*!< Number of wait message transfer timeouts */
   uint64_t wait_hdr_ack_timeouts;   /*!< Number of wait header ack timeouts */
+  uint64_t stale_hdr_ack_events;    /*!< ACK event received while READY remains high */
   uint64_t mem_err;                 /*!< Number of memory errors */
   uint64_t rx_stall;                /*!< Number of RX stalls */
 };
