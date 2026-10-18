@@ -17,6 +17,7 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <inttypes.h>
 #include <string.h>
 #include <stdbool.h>
@@ -633,7 +634,10 @@ W6X_Status_t W6X_SetPowerMode(uint32_t ps_mode)
   NULL_ASSERT(p_DrvObj, W6X_Sys_Uninit_str);
 
   /* Set the power save mode */
-  return TranslateErrorStatus(W61_SetPowerMode(p_DrvObj, (ps_mode == 0U) ? 0U : 2U, 0U));
+  uint16_t trace = PQC_ActivityBegin(PQC_ACT_POWER_MODE, (int32_t)ps_mode);
+  W6X_Status_t ret = TranslateErrorStatus(W61_SetPowerMode(p_DrvObj, (ps_mode == 0U) ? 0U : 2U, 0U));
+  PQC_ActivityEnd(trace, ret);
+  return ret;
 }
 
 W6X_Status_t W6X_GetPowerMode(uint32_t *ps_mode)

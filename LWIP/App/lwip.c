@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -186,7 +187,9 @@ int32_t MX_LWIP_Init(void)
 #endif /* LWIP_IPV6 */
 
   /* Initialize the LwIP stack with RTOS */
+  uint16_t trace = PQC_ActivityBegin(PQC_ACT_TCPIP_INIT, 0);
   tcpip_init(NULL, NULL);
+  PQC_ActivityEnd(trace, 0);
 
   netif_usr_list[W6X_NET_IF_STA] = pvPortMalloc(sizeof(struct netif));
   if (netif_usr_list[W6X_NET_IF_STA] == NULL)
@@ -254,6 +257,7 @@ struct netif *netif_get_interface(uint32_t link_id)
 
 static int32_t netif_link_sta_up_cb(void)
 {
+  PQC_ActivityEvent(PQC_ACT_LINK_UP, 0);
   int32_t ret = 0;
   if (netif_usr_list[NETIF_STA] == NULL)
   {
@@ -294,7 +298,10 @@ static int32_t netif_link_sta_up_cb(void)
   if (lwip_dhcp_timer == NULL)
   {
     (void)netifapi_dhcp_release(netif_usr_list[NETIF_STA]);
-    (void)netifapi_dhcp_start(netif_usr_list[NETIF_STA]);
+    uint16_t trace = PQC_ActivityBegin(PQC_ACT_DHCP_START, 0);
+    err_t dhcp_result = netifapi_dhcp_start(netif_usr_list[NETIF_STA]);
+    PQC_ActivityEnd(trace, dhcp_result);
+    (void)dhcp_result;
 
     lwip_dhcp_timer = xTimerCreate("dhcp", pdMS_TO_TICKS(DHCP_TIMEOUT),
                                    pdFALSE, NULL, lwip_timer_callback);
@@ -575,6 +582,7 @@ static void netif_status_callback(struct netif *netif_cur)
   if (!ip4_addr_isany(netif_ip4_addr(netif_cur)) &&
       !ip4_addr_cmp(netif_ip4_addr(netif_cur), &last_ipv4_addr[NETIF_STA]))
   {
+    PQC_ActivityEvent(PQC_ACT_IPV4_AVAILABLE, 0);
     (void)print_ipv4_addresses(netif_cur);
     last_ipv4_addr[NETIF_STA] = *netif_ip4_addr(netif_cur);
     (void)netif_dhcp_done(&lwip_dhcp_timer);

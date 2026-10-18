@@ -28,6 +28,7 @@
 #include "pqc_network_interface.h"
 #include "pqc_energy_boundary.h"
 #include "pqc_network_phases.h"
+#include "pqc_activity_trace.h"
 #ifndef PQC_TLS_COMPILED
 #define PQC_TLS_COMPILED 1
 #endif
@@ -1175,6 +1176,7 @@ static void APP_RunST67SPIBringup(void)
    * performs its documented startup sequence.
    */
   HAL_GPIO_WritePin(BOOT_GPIO_Port, BOOT_Pin, GPIO_PIN_RESET);
+  PQC_ActivityEvent(PQC_ACT_CHIP_RESET_ASSERT, 0);
   HAL_GPIO_WritePin(CHIP_EN_GPIO_Port, CHIP_EN_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(SPI_CS_GPIO_Port, SPI_CS_Pin, GPIO_PIN_RESET);
   APP_PrintST67PinState("pre_init");
@@ -2925,6 +2927,7 @@ void StartNetworkTask(void *argument)
   PQC_ResultBufferReset();
 #endif
   PQC_NetworkPhasesReset();
+  PQC_ActivityReset();
   APP_UART_WriteString("FreeRTOS networkTask started: initialization active\r\n");
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryInitialize();
@@ -2933,6 +2936,7 @@ void StartNetworkTask(void *argument)
   app_measurement_active = true;
   PQC_MQTT_ApplicationRun(&fixture);
   app_measurement_active = false;
+  PQC_ActivityStop();
 #if !PQC_BAREMETAL_BENCHMARK_ENABLED
   PQC_EnergyBoundaryEnd();
 #endif
@@ -2956,6 +2960,7 @@ void StartNetworkTask(void *argument)
     (void)PQC_ResultBufferAppendText(0U, "workload_outcome", outcome);
   }
   PQC_NetworkPhasesAppend(0U);
+  PQC_ActivityAppend(0U);
   APP_BufferReadyMetrics2Evidence();
   APP_BufferMemoryEvidence();
   PQC_TLS_InstrumentationReport(APP_ResultBufferWriteLine);

@@ -181,7 +181,7 @@ PEAKS=('freertos_heap_peak_used_bytes','mldsa_workspace_peak_used_bytes','sbrk_p
 
 def experiment_object(obj):
     owner,name=obj['owner'],obj['name']
-    return (owner in ('pqc_tls_instrumentation.c','pqc_result_buffer.c','pqc_timebase.c','pqc_network_phases.c')
+    return (owner in ('pqc_tls_instrumentation.c','pqc_result_buffer.c','pqc_timebase.c','pqc_network_phases.c','pqc_activity_trace.c')
         or owner=='pqc_wolfmqtt_build_only.c' and name=='s_ready_metrics_2_snapshot'
         or owner=='main.c' and (name.startswith(('app_uart_line_','smoke_line.','status_line.'))))
 

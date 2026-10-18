@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -148,7 +149,9 @@ int32_t net_if_init(W6X_Net_if_cb_t *net_if_cb)
     LogError("xTaskCreate failed to create netif task\n");
     return -1;
   }
+  uint16_t trace = PQC_ActivityBegin(PQC_ACT_NETIF_STARTUP_GUARD, 100);
   vTaskDelay(pdMS_TO_TICKS(100));
+  PQC_ActivityEnd(trace, 0);
   return 0;
 }
 

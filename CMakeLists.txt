@@ -179,6 +179,10 @@ add_executable(${CMAKE_PROJECT_NAME})
 add_subdirectory(cmake/stm32cubemx)
 # Propagate the same pool size to FreeRTOS, drivers and application consumers.
 target_compile_definitions(stm32cubemx INTERFACE PQC_TLS_HEAP_BYTES=${PQC_TLS_HEAP_BYTES})
+# Shared by application and ST67 driver object libraries.
+target_compile_definitions(stm32cubemx INTERFACE
+    PQC_ACTIVITY_TRACE_ENABLED=$<AND:$<BOOL:${PQC_ENERGY_SYNC_ENABLED}>,$<NOT:$<STREQUAL:${PQC_STM32_MQTT_APPLICATION},tls_handshake_repeat>>,$<NOT:$<STREQUAL:${PQC_STM32_MQTT_APPLICATION},baremetal_benchmark>>>
+)
 
 # STM32 wolfSSL TLS 1.3 runtime source integration.
 #
@@ -387,6 +391,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/pqc_timebase.c
     Core/Src/pqc_energy_boundary.c
     Core/Src/pqc_network_phases.c
+    Core/Src/pqc_activity_trace.c
     Core/Src/pqc_result_buffer.c
     ${PQC_STM32_MQTT_APPLICATION_SOURCE}
     # Add user sources here

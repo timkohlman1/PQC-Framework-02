@@ -1150,3 +1150,74 @@ WolfBoot entry is not a directly observed NRST pin transition. Only retained
 sample coverage and valid timing records support a pre-trigger annotation; boot
 energy and precise integrity/authenticity subphase placement need their own
 qualified boundaries.
+
+### Buffered host activity in energy captures
+
+Energy-enabled network workloads (excluding repeated TLS and bare-metal mode)
+record a bounded `PQC_ACTIVITY_TRACE` schema 2 (the decoder also preserves
+schema 1 pilot captures). Hooks record TIM2 timestamps in
+RAM; formatting and MQTT reporting occur after the measurement ends. This adds
+measurement overhead and is identified separately from earlier captures. It does
+not change the diagnostic scan default, driver delays, power policy or retries.
+
+`PQC_ACTIVITY_DATA` carries base64 chunks with contiguous byte offsets. The
+`events` stream has 12-byte little-endian records: elapsed microseconds (u32),
+kind/code (u16: top two bits instant/begin/end = 0/1/2), span token (u16), and
+value/result (i32). A begin token is its one-based record index, allowing overlapping
+task callbacks without pairing unrelated events. The codebook is in
+`scripts/framework/activity_trace.py`. AT records contain command classes and
+query/set form, never SSIDs, passwords or command arguments. Explicit markers
+cover module-reset assertion and CHIP_EN (before the writes), ready reception/wait
+and 100 ms guard, network-interface startup guard, connection
+events/wait and 100 ms guard, host link-up, DHCP start, IPv4 readiness, and power-mode
+requests. Existing boot, network, TLS and workload records provide other boundaries.
+
+The `spi` stream contains two unsigned 16-bit transfer-start counts per 10 ms bin
+(host write, host read), encoded as canonical unsigned LEB128; these are SPI calls, including DMA submissions, not radio TX/RX or bus
+occupancy. Storage is limited to 128 events and 1024 bins (10.24 s). Header counters
+expose dropped events, timing/misuse errors, saturated bins and clipped transfers.
+Serialization is capped at 3072 SPI bytes; `wire_clipped_bins` explicitly reports
+any omitted tail bins. Schema 1 used u8 counters and its saturated bins are lower
+bounds. An unfinished span or missing/corrupt chunk cannot be interpreted as a
+complete trace. The final bin can be partial. Timestamp origin is the header's application
+TIM2 `origin_us`; add the retained boot-to-application offset for a boot-relative
+plot. No task/interrupt traces or radio-internal states are inferred. A wait or a
+zero SPI count does not establish CPU idle or module sleep. The activity scratch
+object is identified experiment storage in regional RAM-demand analysis.
+
+Validation: `./scripts/dev.sh pytest tests/unit/test_activity_trace.py
+ tests/integration/test_activity_trace_in.py` exercises real C serialization,
+64-bit origins, overlapping spans, overflow, saturation, time errors, stop/reset,
+secret omission and result-buffer headroom. Use the normal energy build integration
+and a separately identified hardware capture for runtime evidence.
+
+### ML-DSA signing rejection counts
+
+Instrumented application wolfSSL software signing records the number of outer
+`ML-DSA.Sign_internal` candidate iterations. Each invocation reports `attempts`,
+`rejected`, `accepted` and `aborted`; a helper error is an aborted attempt, not a
+normal rejection. The counts satisfy `attempts = rejected + accepted + aborted`.
+A successful invocation has one accepted candidate, no aborted candidate and
+`rejected = attempts - 1`. A failure before the loop can have zero attempts.
+These counters do not count inner coefficient/XOF rejection samplers or identify
+the individual rejection predicate. Normal and small-memory signing paths share
+the contract. Cryptographic inputs, decisions and output bytes are unchanged.
+
+`PQC_MLDSA_SAMPLING_BUFFER schema=1` declares iteration, handshake, capacity and
+dropped summaries. Each `PQC_MLDSA_SAMPLING` record identifies its ordered TLS
+`event_sequence`, `backend=wolfcrypt_software`, counts and return code. Four
+summaries fit in the bounded recorder. Formatting and MQTT reporting occur after
+the measured workload; the library hook only copies counters during an active
+ML-DSA signing event. The bootloader library is unchanged. Timing/counter costs
+remain part of the instrumented measurement and have not been independently
+calibrated. The explicit result-buffer overflow policy still applies.
+
+`scripts/framework/mldsa_sampling.py` joins counts to the exact signing event and
+validates identities, outcomes, context and completeness. Historical records,
+unobserved alternate backends, missing summaries and truncation are unavailable,
+not zero retries. Bucket plots must use new same-configuration captures, state
+sample sizes and retain within-bucket spread and failed attempts. A singleton
+bucket cannot establish repeatability. Counts alone do not establish that all
+remaining timing variation comes from scheduling, nor do they reconstruct old
+counts from elapsed time. Native integration checks compare deterministic
+signature bytes with hooks enabled/disabled for both software signing paths.

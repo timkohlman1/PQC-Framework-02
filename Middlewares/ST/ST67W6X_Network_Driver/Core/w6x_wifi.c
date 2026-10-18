@@ -17,6 +17,7 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "pqc_activity_trace.h"
 #include <string.h>
 #include "w6x_api.h"       /* Prototypes of the functions implemented in this file */
 #include "w61_at_api.h"    /* Prototypes of the functions called by this file */
@@ -452,8 +453,10 @@ W6X_Status_t W6X_WiFi_Connect(W6X_WiFi_Connect_Opts_t *connect_opts)
       connect_timeout = W6X_WIFI_CONNECT_WPS_TIMEOUT_MS;
     }
     /* Wait for the connection to be done */
+    uint16_t trace = PQC_ActivityBegin(PQC_ACT_CONNECT_WAIT, 0);
     eventBits = xEventGroupWaitBits(p_wifi_ctx->Wifi_event, eventMask, pdTRUE,
                                     pdFALSE, pdMS_TO_TICKS(connect_timeout));
+    PQC_ActivityEnd(trace, (int32_t)eventBits);
 
     p_wifi_ctx->Expected_event_connect = 0U; /* Disable the expected event for connection */
 
@@ -1162,13 +1165,18 @@ static void W6X_WiFi_Station_cb(W61_event_id_t event_id, void *event_args)
       break;
 
     case W61_WIFI_EVT_CONNECTED_ID:
+      PQC_ActivityEvent(PQC_ACT_CONNECTED_RECEIVED, 0);
       /* Set the station state */
       p_wifi_ctx->StaState = W6X_WIFI_STATE_STA_CONNECTED;
       W6X_WiFi_drv_obj->WifiCtx.StaState = W61_WIFI_STATE_STA_CONNECTED;
 
       /* Delay added to avoid any AT command to be sent to soon after the CONNECTED event.
        * This could create unexpected behaviors (wrong value returned, command not responsive, ...) */
-      vTaskDelay(pdMS_TO_TICKS(100));
+      {
+        uint16_t trace = PQC_ActivityBegin(PQC_ACT_CONNECTED_GUARD, 100);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        PQC_ActivityEnd(trace, 0);
+      }
 
       if (p_wifi_ctx->Expected_event_connect == 1U)
       {
@@ -1206,6 +1214,7 @@ static void W6X_WiFi_Station_cb(W61_event_id_t event_id, void *event_args)
 #endif /* ST67_ARCH */
 
     case W61_WIFI_EVT_DISCONNECTED_ID:
+      PQC_ActivityEvent(PQC_ACT_DISCONNECT_RECEIVED, 0);
       /* Set the station state */
       p_wifi_ctx->StaState = W6X_WIFI_STATE_STA_DISCONNECTED;
       W6X_WiFi_drv_obj->WifiCtx.StaState = W61_WIFI_STATE_STA_DISCONNECTED;
@@ -1229,6 +1238,7 @@ static void W6X_WiFi_Station_cb(W61_event_id_t event_id, void *event_args)
       break;
 
     case W61_WIFI_EVT_CONNECTING_ID:
+      PQC_ActivityEvent(PQC_ACT_CONNECTING_RECEIVED, 0);
       /* Set the station state */
       p_wifi_ctx->StaState = W6X_WIFI_STATE_STA_CONNECTING;
       W6X_WiFi_drv_obj->WifiCtx.StaState = W61_WIFI_STATE_STA_CONNECTING;
@@ -1239,6 +1249,7 @@ static void W6X_WiFi_Station_cb(W61_event_id_t event_id, void *event_args)
 
     case W61_WIFI_EVT_REASON_ID:
       reason_code = *(uint32_t *)event_args;
+      PQC_ActivityEvent(PQC_ACT_CONNECTION_REASON, (int32_t)reason_code);
       if (p_wifi_ctx->Expected_event_connect == 1U)
       {
         /* If the error event was expected, set the event bit to release the wait */
