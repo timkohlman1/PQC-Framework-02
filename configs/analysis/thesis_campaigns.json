@@ -9,7 +9,7 @@
       "energy": true
     },
     "thesis_authentication": {
-      "conditions": 8,
+      "conditions": 10,
       "repetitions": 10,
       "workload": "ready_metrics_2",
       "energy": true

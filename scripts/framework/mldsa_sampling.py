@@ -27,11 +27,11 @@ def extract_mldsa_sampling(records):
         buffer = group[0]['fields']
         headers = [r for r in group if r['marker'] == 'PQC_MLDSA_SAMPLING_BUFFER']
         samples = [r for r in group if r['marker'] == 'PQC_MLDSA_SAMPLING']
-        signs = [r for r in group if r['marker'] == 'PQC_TLS_EVENT' and r['fields'].get('name') == 'mldsa65_sign']
+        signs = [r for r in group if r['marker'] == 'PQC_TLS_EVENT' and r['fields'].get('name') in {'mldsa44_sign', 'mldsa65_sign'}]
         for event in signs:
             f = event['fields']
             row = dict(iteration=buffer.get('iteration'), handshake=buffer.get('handshake'),
-                       event_sequence=f.get('sequence'), validity='unavailable', reason='',
+                       event_sequence=f.get('sequence'), operation=f.get('name'), validity='unavailable', reason='',
                        attempts=None, rejected=None, accepted=None, aborted=None,
                        result=f.get('result'), start_us=f.get('start_us'), end_us=f.get('end_us'),
                        source_records=[event.get('ref', {})])

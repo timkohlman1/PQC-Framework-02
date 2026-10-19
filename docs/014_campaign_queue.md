@@ -201,7 +201,7 @@ are no device-capacity questions, and the results are not predictions for anothe
 MCU. Missing supported configurations need normal profile implementation and
 qualification first.
 
-For ML-DSA-65 TLS authentication, the wizard also offers `default` or `verify_small`.
+For ML-DSA-44 or ML-DSA-65 TLS authentication, the wizard also offers `default` or `verify_small`.
 Mutual authentication additionally offers `sign_small` and `both_small`. These
 settings apply to the STM32's TLS signing/verification, with **Unchanged** available
 when the From choice is still applicable. Other authentication families and plaintext

@@ -21,7 +21,7 @@ LABELS = {
     **tls_optimizations.LABELS,
     'mqtt_transport': 'MQTT transport', 'tls_kex': 'TLS key exchange',
     'tls_auth': 'TLS certificate/signature', 'auth_mode': 'TLS authentication',
-    'mldsa_memory_mode': 'ML-DSA-65 TLS memory mode',
+    'mldsa_memory_mode': 'ML-DSA TLS memory mode',
     'secure_boot': 'Firmware authentication', 'firmware_mode': 'Firmware layout / OTA support',
     'standby_signing_keys': 'Standby firmware signing keys',
     'network_condition': 'Network condition', 'payload_bytes': 'Response payload (bytes)',
@@ -37,10 +37,10 @@ def choice_value(choices, key):
     if key in tls_optimizations.DEFAULTS:
         applicable = tls_optimizations.applicable(key, transport=choices.get('mqtt_transport','tls'),
             mlkem='mlkem' in str(choices.get('tls_kex')).lower() or 'ml_kem' in str(choices.get('tls_kex')).lower(),
-            mldsa=choices.get('tls_auth') == 'mldsa65')
+            mldsa=choices.get('tls_auth') in {'mldsa44', 'mldsa65'})
         return choices.get(key, tls_optimizations.DEFAULTS[key]) if applicable else None
     if key == 'mldsa_memory_mode':
-        if choices.get('mqtt_transport') == 'tls' and choices.get('tls_auth') == 'mldsa65':
+        if choices.get('mqtt_transport') == 'tls' and choices.get('tls_auth') in {'mldsa44', 'mldsa65'}:
             return choices.get(key) or 'default'
         return choices.get(key)
     return choices[key]
@@ -127,7 +127,7 @@ def wizard(catalogue, *, ask=input, tell=print):
         else:
             chosen.update(tls_kex=None, tls_auth=None, auth_mode=None)
             tell('TLS key exchange and authentication do not apply to plaintext.')
-        if chosen['mqtt_transport'] == 'tls' and chosen['tls_auth'] == 'mldsa65':
+        if chosen['mqtt_transport'] == 'tls' and chosen['tls_auth'] in {'mldsa44', 'mldsa65'}:
             modes = catalogue['options']['mldsa_memory_mode']
             if chosen['auth_mode'] != 'mutual':
                 modes = [v for v in modes if v in {'default', 'verify_small'}]
@@ -137,7 +137,7 @@ def wizard(catalogue, *, ask=input, tell=print):
         if chosen['mqtt_transport'] == 'tls':
             keys = [key for key in tls_optimizations.DEFAULTS if tls_optimizations.applicable(key,
                 mlkem='mlkem' in chosen['tls_kex'].lower() or 'ml_kem' in chosen['tls_kex'].lower(),
-                mldsa=chosen['tls_auth'] == 'mldsa65')]
+                mldsa=chosen['tls_auth'] in {'mldsa44', 'mldsa65'})]
             inherited = {k: choice_value(prior, k) if choice_value(prior, k) is not None else tls_optimizations.DEFAULTS[k] for k in keys}
             tune = choose('TLS implementation options', ['Keep current settings', 'Customise'],
                 'Keep current settings', unchanged=False, ask=ask, tell=tell)

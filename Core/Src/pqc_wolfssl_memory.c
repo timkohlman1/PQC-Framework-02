@@ -23,16 +23,23 @@
 #ifndef PQC_MLDSA_WORKSPACE_SIZE_BYTES
 #define PQC_MLDSA_WORKSPACE_SIZE_BYTES (64U * 1024U)
 #endif
+#ifndef PQC_TLS_ENABLE_MLDSA_44
+#define PQC_TLS_ENABLE_MLDSA_44 0
+#endif
 #ifndef PQC_TLS_ENABLE_MLDSA_65
 #define PQC_TLS_ENABLE_MLDSA_65 0
 #endif
 
-/* Small-memory ML-DSA uses a smaller contiguous scratch block. Keep it in
- * the existing arena instead of shifting it into an already occupied heap.
- * Ordinary profiles retain their original 32 KiB routing threshold. */
+/* Route each parameter set's contiguous scratch into the reserved arena.
+ * Default ML-DSA-44 verification requests (1 + l + 2*k + k*l) polynomials:
+ * (1 + 4 + 8 + 16) * 1024 = 29 KiB. A 32 KiB threshold would leave this
+ * buffer on the application heap alongside mutual-TLS credentials.
+ * ML-DSA-65 retains its established threshold; small-memory modes use 8 KiB. */
 #if (defined(PQC_MLDSA_VERIFY_SMALL_MEM) && PQC_MLDSA_VERIFY_SMALL_MEM) || \
     (defined(PQC_MLDSA_SIGN_SMALL_MEM) && PQC_MLDSA_SIGN_SMALL_MEM)
 #define PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES (8U * 1024U)
+#elif PQC_TLS_ENABLE_MLDSA_44
+#define PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES (29U * 1024U)
 #else
 #define PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES (32U * 1024U)
 #endif
@@ -59,7 +66,7 @@ typedef union {
     max_align_t alignment;
 } PQC_WolfSSLAllocationHeader;
 
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
 static uint8_t s_mldsa_workspace[PQC_MLDSA_WORKSPACE_SIZE_BYTES]
     __attribute__((section(".pqc_mldsa_workspace"), aligned(8)));
 static volatile bool s_mldsa_workspace_in_use;
@@ -217,7 +224,7 @@ static size_t s_peak_outstanding_wolfssl_bytes;
 
 static bool PQC_WolfSSL_IsRAM3WorkspacePointer(const void *pointer)
 {
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     return pointer == (const void *)s_mldsa_workspace;
 #else
     (void)pointer;
@@ -227,7 +234,7 @@ static bool PQC_WolfSSL_IsRAM3WorkspacePointer(const void *pointer)
 
 static bool PQC_WolfSSL_IsLargeMlDsaRequest(size_t size, int type)
 {
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     return (type == DYNAMIC_TYPE_MLDSA) &&
            (size >= PQC_MLDSA_WORKSPACE_MIN_REQUEST_BYTES);
 #else
@@ -239,7 +246,7 @@ static bool PQC_WolfSSL_IsLargeMlDsaRequest(size_t size, int type)
 
 static void *PQC_WolfSSL_ClaimMlDsaWorkspace(size_t size)
 {
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     bool claimed = false;
 
     /*
@@ -274,7 +281,7 @@ static void *PQC_WolfSSL_ClaimMlDsaWorkspace(size_t size)
 
 static void PQC_WolfSSL_ReleaseMlDsaWorkspace(void)
 {
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     taskENTER_CRITICAL();
     s_mldsa_workspace_request_bytes = 0U;
     s_mldsa_workspace_in_use = false;
@@ -615,7 +622,7 @@ void *PQC_WolfSSL_TrackedRealloc(
         return NULL;
     }
 
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     if (PQC_WolfSSL_IsRAM3WorkspacePointer(pointer)) {
         old_size = s_mldsa_workspace_request_bytes;
         if (PQC_WolfSSL_IsLargeMlDsaRequest(size, type) &&
@@ -706,7 +713,7 @@ void PQC_WolfSSL_MemorySnapshotGet(PQC_WolfSSLMemorySnapshot *snapshot)
     memset(snapshot, 0, sizeof(*snapshot));
     snapshot->configured = s_configured;
     snapshot->configure_result = s_configure_result;
-#if PQC_TLS_ENABLE_MLDSA_65
+#if PQC_TLS_ENABLE_MLDSA_44 || PQC_TLS_ENABLE_MLDSA_65
     snapshot->mldsa_workspace_size_bytes = sizeof(s_mldsa_workspace);
     snapshot->mldsa_workspace_request_bytes = s_mldsa_workspace_request_bytes;
     snapshot->mldsa_workspace_in_use = s_mldsa_workspace_in_use;

@@ -19,8 +19,8 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
     experiment=bundle.get("experiment",{}); mqtt=experiment.get("mqtt",{}) if isinstance(experiment,dict) else {}; tls=mqtt.get("tls",{}) if isinstance(mqtt,dict) else {}
     mode=str(tls.get("mode","plaintext")).strip().lower(); certificate_profile=str(tls.get("certificate_profile","")).strip().lower(); server_signature=str(tls.get("server_signature_algorithm","")).strip().lower()
     if not server_signature:
-        server_signature={"rsa3072":"rsa_pss_rsae_sha256","ecdsa-p256":"ecdsa_secp256r1_sha256","ecdsa-p384":"ecdsa_secp384r1_sha384","ed25519":"ed25519","mldsa65":"mldsa65"}.get(certificate_profile,"")
-    selected={"schema_version":4,"mode":mode,"rsa":False,"rsa_pss":False,"ecc":False,"ecc_bits":0,"curve25519":False,"mlkem_512":False,"mlkem_768":False,"mlkem_1024":False,"mlkem_standalone":False,"mldsa_65":False,"mldsa_65_sign":False,"hybrid":False,"signature_schemes":[],"key_exchange_groups":[],"group_name":"none","group_token":"0"}
+        server_signature={"rsa3072":"rsa_pss_rsae_sha256","ecdsa-p256":"ecdsa_secp256r1_sha256","ecdsa-p384":"ecdsa_secp384r1_sha384","ed25519":"ed25519","mldsa44":"mldsa44","mldsa65":"mldsa65"}.get(certificate_profile,"")
+    selected={"schema_version":4,"mode":mode,"rsa":False,"rsa_pss":False,"ecc":False,"ecc_bits":0,"curve25519":False,"mlkem_512":False,"mlkem_768":False,"mlkem_1024":False,"mlkem_standalone":False,"mldsa_44":False,"mldsa_44_sign":False,"mldsa_65":False,"mldsa_65_sign":False,"hybrid":False,"signature_schemes":[],"key_exchange_groups":[],"group_name":"none","group_token":"0"}
     if mode in {"plaintext","","none"}: return selected
     allowed={"classical_tls_server_auth","classical_tls_mutual","pqc_hybrid_tls_server_auth","pqc_hybrid_tls_mutual","pqc_tls_server_auth","pqc_tls_mutual"}
     if mode not in allowed: raise ValueError(f"Unsupported MQTT TLS mode for STM32 algorithm selection: {mode}")
@@ -34,6 +34,7 @@ def resolve_tls_algorithm_set(bundle: dict[str, dict[str, Any]]) -> dict[str, An
     if server_signature in {"classical","rsa","rsa3072","rsa_pss_rsae_sha256"}: sig={"rsa":True,"rsa_pss":True,"mldsa_65":False,"mldsa_65_sign":False,"signature_schemes":["rsa_pss_rsae_sha256"]}
     elif server_signature in {"ecdsa-p256","ecdsa_secp256r1_sha256"}: sig={"rsa":False,"rsa_pss":False,"mldsa_65":False,"mldsa_65_sign":False,"signature_schemes":["ecdsa_secp256r1_sha256"]}
     elif server_signature in {"ecdsa-p384","ecdsa_secp384r1_sha384"}: sig={"rsa":False,"rsa_pss":False,"mldsa_65":False,"mldsa_65_sign":False,"signature_schemes":["ecdsa_secp384r1_sha384"]}
+    elif server_signature in {"mldsa44","ml-dsa-44"}: sig={"rsa":False,"rsa_pss":False,"mldsa_44":True,"mldsa_44_sign":mutual,"signature_schemes":["mldsa44"]}
     elif server_signature in {"mldsa65","ml-dsa-65"}: sig={"rsa":False,"rsa_pss":False,"mldsa_65":True,"mldsa_65_sign":mutual,"signature_schemes":["mldsa65"]}
     elif server_signature=="ed25519": raise ValueError("Ed25519 certificate profiles can be provisioned, but STM32 TLS Ed25519 build support is not configured yet")
     else: raise ValueError("Unsupported or missing TLS server signature algorithm for certificate profile "+(certificate_profile or "<missing>"))

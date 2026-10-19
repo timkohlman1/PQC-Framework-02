@@ -95,11 +95,12 @@ def expected_tls_instrumentation_events(bundle: dict[str, Any]) -> tuple[str, ..
             "rsa3072": "rsa_pss_rsae_sha256",
             "ecdsa-p256": "ecdsa_secp256r1_sha256",
             "ecdsa-p384": "ecdsa_secp384r1_sha384",
+            "mldsa44": "mldsa44",
             "mldsa65": "mldsa65",
         }.get(certificate_profile, "")
 
-    if signature == "mldsa65":
-        verify_event, sign_event = "mldsa65_verify", "mldsa65_sign"
+    if signature in {"mldsa44", "mldsa65"}:
+        verify_event, sign_event = f"{signature}_verify", f"{signature}_sign"
     elif signature in {
         "ecdsa-p256",
         "ecdsa_secp256r1_sha256",

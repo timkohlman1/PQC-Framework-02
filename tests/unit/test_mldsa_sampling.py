@@ -14,8 +14,9 @@ def records():
     return [dict(marker=_fields(line)[0],fields=_fields(line)[1],ref={'record':i}) for i,line in enumerate(lines)]
 
 
-def test_sampling_counts_join_exact_sign_event_and_context():
-    r=records(); row=extract_mldsa_sampling(r)[0]
+@pytest.mark.parametrize("algorithm", ["mldsa44", "mldsa65"])
+def test_sampling_counts_join_exact_sign_event_and_context(algorithm):
+    r=records(); r[3]["fields"]["name"] = algorithm+"_sign"; row=extract_mldsa_sampling(r)[0]
     assert row['validity']=='valid' and row['rejected']==2 and row['attempts']==3
     assert row['iteration']=='3' and row['handshake']=='7' and row['duration_us']==350
     other=copy.deepcopy(r)

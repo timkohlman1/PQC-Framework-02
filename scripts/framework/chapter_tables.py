@@ -288,7 +288,7 @@ def display_metric(metric):
             return 'ecdhe_' + metric.split('_', 1)[1]
         if re.fullmatch(r'mlkem(512|768|1024)_(keygen|decapsulate)', metric):
             return 'mlkem_' + metric.split('_', 1)[1]
-        if re.fullmatch(r'(rsa|ecdsa|mldsa65)_(sign|verify)', metric):
+        if re.fullmatch(r'(rsa|ecdsa|mldsa44|mldsa65)_(sign|verify)', metric):
             return 'signature_' + metric.rsplit('_', 1)[1]
     if re.fullmatch(r'mlkem_(keygen|encapsulate|decapsulate):ML_KEM_(512|768|1024)', metric):
         return metric.split(':')[0]

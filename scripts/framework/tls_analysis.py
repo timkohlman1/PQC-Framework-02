@@ -17,8 +17,8 @@ from framework.timing_summary import summarise, digest
 
 VERSION = "1.0.0"
 PHASES = set("server_hello encrypted_extensions certificate certificate_verify finished".split())
-OPERATIONS = set("p256_keygen p256_shared_secret p384_keygen p384_shared_secret p521_keygen p521_shared_secret x25519_keygen x25519_shared_secret mlkem512_keygen mlkem512_decapsulate mlkem768_keygen mlkem768_decapsulate mlkem1024_keygen mlkem1024_decapsulate rsa_verify rsa_sign ecdsa_verify ecdsa_sign mldsa65_verify mldsa65_sign sha256 sha384 hkdf_extract hkdf_expand x509_verify".split())
-SIGNS = {"rsa_sign", "ecdsa_sign", "mldsa65_sign"}
+OPERATIONS = set("p256_keygen p256_shared_secret p384_keygen p384_shared_secret p521_keygen p521_shared_secret x25519_keygen x25519_shared_secret mlkem512_keygen mlkem512_decapsulate mlkem768_keygen mlkem768_decapsulate mlkem1024_keygen mlkem1024_decapsulate rsa_verify rsa_sign ecdsa_verify ecdsa_sign mldsa44_verify mldsa44_sign mldsa65_verify mldsa65_sign sha256 sha384 hkdf_extract hkdf_expand x509_verify".split())
+SIGNS = {"rsa_sign", "ecdsa_sign", "mldsa44_sign", "mldsa65_sign"}
 MARKERS = {"PQC_TLS_EVENT", "PQC_TLS_PHASE", "PQC_TLS_PRIMITIVE"}
 
 

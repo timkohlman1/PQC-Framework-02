@@ -1,4 +1,4 @@
-# Thesis pilot design: ten independent reset attempts per condition.
+# Thesis pilot design: ten runs per condition.
 # Set final sample counts from pilot variability; these are not completed measurements.
 schema_version: 1
 profile_type: campaign
@@ -37,6 +37,7 @@ matrix:
   - rsa3072
   - ecdsa-p256
   - ecdsa-p384
+  - mldsa44
   - mldsa65
   auth_mode:
   - server

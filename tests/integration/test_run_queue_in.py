@@ -348,16 +348,16 @@ raise SystemExit(queue_workspace.main(sys.argv[3:]))
     assert helper('profiles') == {'profiles': []}
     loaded = call({'action': 'load', 'template': 'thesis_authentication.yaml', 'name': 'subprocess_campaign'})
     saved = call({'action': 'save', 'profile': 'subprocess_campaign.yaml', 'data': loaded['data']})
-    assert saved['conditions'] == 8
+    assert saved['conditions'] == 10
     info = helper('prepare', '--profile', 'subprocess_campaign', '--job', 'results/q/first', '--repetitions', '3')
-    assert info['template'] == 'thesis_authentication.yaml' and info['attempts'] == 24
+    assert info['template'] == 'thesis_authentication.yaml' and info['attempts'] == 30
     original_plan = json.loads((tmp_path / 'results/q/first/plan.json').read_text())
     loaded = call({'action': 'load', 'profile': 'subprocess_campaign.yaml'})
     loaded['data']['execution']['repetitions'] = 2
     saved = call({**loaded, 'action': 'save'})
     helper('check', '--job', 'results/q/first')
     info = helper('prepare', '--profile', 'subprocess_campaign', '--job', 'results/q/second')
-    assert info['attempts'] == 16
+    assert info['attempts'] == 20
     next_plan = json.loads((tmp_path / 'results/q/second/plan.json').read_text())
     assert next_plan['profile_origin']['sha256'] != original_plan['profile_origin']['sha256']
     assert next_plan['source'] == original_plan['source']

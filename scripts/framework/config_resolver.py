@@ -242,7 +242,7 @@ class ConfigResolver:
         try:
             tls_options = tls_optimizations.resolve(choices, transport=mqtt_transport,
                 mlkem='mlkem' in tls_kex.profile_id.lower() or 'ml_kem' in tls_kex.profile_id.lower(),
-                mldsa=tls_auth.profile_id == 'mldsa65',
+                mldsa=tls_auth.profile_id in {'mldsa44', 'mldsa65'},
                 application=workload.profile_id in {'mqtt_validation', 'ready_metrics', 'ready_metrics_2', 'tls_handshake_repeat'})
         except ValueError as exc:
             raise ResolutionError(str(exc)) from exc
@@ -250,7 +250,7 @@ class ConfigResolver:
         if memory_mode not in {"default", "verify_small", "sign_small", "both_small"}:
             raise ResolutionError("unsupported mldsa_memory_mode")
         if memory_mode != "default":
-            if tls_auth.profile_id != "mldsa65" or mqtt_transport != "tls":
+            if tls_auth.profile_id not in {"mldsa44", "mldsa65"} or mqtt_transport != "tls":
                 raise ResolutionError("ML-DSA memory options require ML-DSA TLS authentication")
             if memory_mode in {"sign_small", "both_small"} and auth_mode != "mutual":
                 raise ResolutionError("small-memory signing requires mutual authentication")

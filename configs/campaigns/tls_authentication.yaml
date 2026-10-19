@@ -25,6 +25,7 @@ matrix:
   - rsa3072
   - ecdsa-p256
   - ecdsa-p384
+  - mldsa44
   - mldsa65
   auth_mode:
   - server

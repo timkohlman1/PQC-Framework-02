@@ -25,7 +25,7 @@ def test_certificate_profiles_are_config_driven():
     module = _load_module()
     profiles = module.load_profiles(CONFIG_DIR)
     assert [profile.profile_id for profile in profiles] == [
-        "ecdsa-p256", "ecdsa-p384", "ed25519", "mldsa65", "rsa3072"
+        "ecdsa-p256", "ecdsa-p384", "ed25519", "mldsa44", "mldsa65", "rsa3072"
     ]
     assert not hasattr(module, "FAMILIES")
 

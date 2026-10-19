@@ -38,9 +38,9 @@ def manifest(output,name,state='completed',cleanup='passed'):
 
 def test_full_plan_resolves_all_profiles_without_hardware(workspace):
     plan=collection.plan(workspace)
-    assert plan['planned_campaign_attempts']==430
+    assert plan['planned_campaign_attempts']==450
     assert len(plan['steps'])==5
-    assert sum(s.get('conditions',0) for s in plan['steps'])==43
+    assert sum(s.get('conditions',0) for s in plan['steps'])==45
     assert [s['id'] for s in plan['steps']] == list(collection.DEFAULT_CAMPAIGNS)
     assert all(s['kind'] == 'campaign' for s in plan['steps'])
     resolver=collection.ConfigResolver(collection.ROOT)

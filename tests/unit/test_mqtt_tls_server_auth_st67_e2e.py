@@ -360,8 +360,8 @@ def test_mldsa_mutual_tls_credentials_are_session_scoped_while_classical_remains
     session_certificate = source.index("wolfSSL_use_certificate_buffer")
     session_private_key = source.index("wolfSSL_use_PrivateKey_buffer")
 
-    assert "#if !PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
-    assert "#if PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
+    assert "#if !PQC_TLS_ENABLE_MLDSA_44_SIGN && !PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
+    assert "#if PQC_TLS_ENABLE_MLDSA_44_SIGN || PQC_TLS_ENABLE_MLDSA_65_SIGN" in source
     assert ctx_certificate < session_create
     assert ctx_private_key < session_create
     assert session_create < session_certificate

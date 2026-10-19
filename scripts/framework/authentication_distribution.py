@@ -54,10 +54,14 @@ def publish(report, output, selection="authentication"):
         points.append(dict(condition=r["condition"],auth_mode=key[0],tls_auth=key[1],
             run_key=r["run_key"],observation_id=r["observation_id"],latency_ms=value))
     algorithms=["rsa3072","ecdsa-p256","ecdsa-p384","mldsa65"]
-    labels=["RSA-3072","ECDSA P-256","ECDSA P-384","ML-DSA-65"]
+    if any(alg == "mldsa44" for mode, alg in groups):
+        algorithms.insert(-1, "mldsa44")
+    names={"rsa3072":"RSA-3072","ecdsa-p256":"ECDSA P-256","ecdsa-p384":"ECDSA P-384","mldsa44":"ML-DSA-44","mldsa65":"ML-DSA-65"}
+    labels=[names[alg] for alg in algorithms]
+    count=len(algorithms)
     expected={(mode,alg) for mode in ("server","mutual") for alg in algorithms}
     if set(groups)!=expected:
-        raise ValueError("complete four-family server/mutual selection required")
+        raise ValueError("complete selected-family server/mutual selection required")
     stats={key:box(vals) for key,vals in groups.items()}
     for (mode,alg),v in stats.items():
         rows=[r for r in published if r["condition"]==f"tls_auth={alg}; auth_mode={mode}" and r["metric"]=="tls_handshake"]
@@ -72,20 +76,21 @@ def publish(report, output, selection="authentication"):
 \begingroup
 \begin{tikzpicture}
 \begin{groupplot}[group style={group size=2 by 1,horizontal sep=1.1cm},
-width=.33\linewidth,height=5cm,scale only axis,ytick={1,2,3,4},ymin=.5,ymax=4.5,
+width=.33\linewidth,height=5cm,scale only axis,ytick={@@TICKS@@},ymin=.5,ymax=@@YMAX@@,
 tick label style={font=\scriptsize},title style={font=\small},label style={font=\scriptsize},
 xlabel={Deviation from condition median (\%)},xmajorgrids=true,grid style={gray!20},scaled ticks=false]
 """
+    code=code.replace("@@TICKS@@", ",".join(map(str,range(1,count+1)))).replace("@@YMAX@@",str(count+.5))
     for mode in ("server","mutual"):
-        ticks=",".join("{"+x+"}" for x in reversed(labels)) if mode=="server" else "{},{},{},{}"
+        ticks=",".join("{"+x+"}" for x in reversed(labels)) if mode=="server" else ",".join(["{}"]*count)
         code+=r"\nextgroupplot[title={"+mode.title()+" authentication},yticklabels={"+ticks+"},"+f"xmin={-bound},xmax={bound}"+"]\n"
-        code+=r"\draw[dashed,gray] (axis cs:0,.5) -- (axis cs:0,4.5);"+"\n"
+        code+=r"\draw[dashed,gray] (axis cs:0,.5) -- (axis cs:0,"+str(count+.5)+");"+"\n"
         for i,alg in enumerate(algorithms):
-            key=(mode,alg);v=stats[key];y=4-i
+            key=(mode,alg);v=stats[key];y=count-i
             if v["median"]<=0:
                 raise ValueError("normalised variability requires a positive median")
             relative=lambda x:100*(x/v["median"]-1)
-            color="orange!80!black" if alg=="mldsa65" else "blue!65!black"
+            color="orange!80!black" if alg in {"mldsa44","mldsa65"} else "blue!65!black"
             opts=",".join(name+"="+f"{relative(v[field]):.6f}" for name,field in
                 [("lower whisker","lower"),("lower quartile","q1"),("median","median"),("upper quartile","q3"),("upper whisker","upper")])
             code+=r"\addplot+[boxplot prepared={draw position="+str(y)+","+opts+r"},draw="+color+r",fill="+color+r"!15,mark=none] coordinates {};"+"\n"
@@ -96,7 +101,7 @@ xlabel={Deviation from condition median (\%)},xmajorgrids=true,grid style={gray!
 \caption{Relative handshake variability with P-256 key establishment fixed.
 Each observation is $100(t/\widetilde{t}-1)$, using its condition median;
 both panels have the same scale and median at zero. Blue is classical authentication;
-orange is ML-DSA-65. Boxes show Q1--Q3; whiskers use 1.5 IQR and all eligible run
+orange is ML-DSA. Boxes show Q1--Q3; whiskers use 1.5 IQR and all eligible run
 observations remain visible (@@COUNTS@@ per condition). The separate signing follow-up is not pooled.}
 \label{fig:authentication-variability}
 \end{figure}

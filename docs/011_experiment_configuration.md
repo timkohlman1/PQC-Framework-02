@@ -173,14 +173,30 @@ these exports without generating another notebook per export. Flat archives, typ
 controls and frozen report verification are owned by the
 [result reference](012_results_and_analysis.md).
 
+### TLS authentication parameter sets
+
+`configs/tls_auth/mldsa44.yaml` and `mldsa65.yaml` select separate native
+ML-DSA certificate hierarchies and TLS signature schemes. Both support server
+and mutual authentication. The `tls_authentication` and `thesis_authentication`
+grids contain five certificate families and both roles (ten conditions), with
+P-256 key establishment fixed. Existing frozen queue plans are not expanded.
+
+The firmware compiles only the selected ML-DSA parameter set, enables signing
+only for mutual authentication, and records `mldsa44_sign`/`mldsa44_verify` or
+`mldsa65_sign`/`mldsa65_verify` from the measured key's parameter level. The
+candidate-count records join the matching signing event. ML-DSA-44 and
+ML-DSA-65 results remain separate configurations; adding the profile is not
+hardware qualification. A bounded queue capture must verify the certificate
+scheme, complete workload, instrumentation and normal cleanup before collection.
+
 ### ML-DSA TLS memory options
 
 The optional case choice `mldsa_memory_mode` accepts `default`, `verify_small`,
-`sign_small` and `both_small`. Nondefault options require ML-DSA-65 TLS authentication;
+`sign_small` and `both_small`. Nondefault options require ML-DSA-44 or ML-DSA-65 TLS authentication;
 signing options require mutual mode. These options affect the STM32 TLS implementation,
 not the broker or firmware-signature verification. The choice participates in firmware identity
 and retained TLS controls. Omission keeps the previous configuration identity.
-In the campaign editor, select **Factors / matrix → ML-DSA-65 TLS memory mode**:
+In the campaign editor, select **Factors / matrix → ML-DSA TLS memory mode**:
 one selection becomes a fixed choice; several become a matrix. **Use default / omit**
 leaves the setting absent. Invalid combinations are rejected during validation;
 use a separate ML-DSA campaign when other authentication families are in the grid.
@@ -196,7 +212,12 @@ fixed:
 
 Server authentication supports `default` and `verify_small`; mutual authentication
 supports all four modes. Existing profiles and defaults are unchanged. These modes
-do not automatically reduce the configured heap or scratch reservation.
+do not automatically reduce the configured heap or scratch reservation. The default
+ML-DSA-44 allocator routes its 29 KiB verification scratch and larger requests to
+the existing RAM3 workspace; the default ML-DSA-65 threshold remains 32 KiB.
+Small-memory modes retain the 8 KiB threshold. These thresholds select allocation
+placement, not additional reserved capacity; ordinary non-ML-DSA allocations stay
+on the FreeRTOS heap.
 The two focused templates and decision criteria are described in
 [memory-option experiment](mldsa_memory_experiment.md). Their fixed heap/scratch
 reservations make utilisation changes comparable before any capacity reduction.

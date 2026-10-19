@@ -57,7 +57,7 @@ TLS_ROLES = {
     **{name+'_'+op: ('kex_kem_'+op, name)
        for name in ('mlkem512','mlkem768','mlkem1024') for op in ('keygen','decapsulate')},
     **{name+'_'+op: ('signature_'+op, name)
-       for name in ('rsa','ecdsa','mldsa65') for op in ('sign','verify')},
+       for name in ('rsa','ecdsa','mldsa44','mldsa65') for op in ('sign','verify')},
     'sha256': ('hash','sha256'), 'sha384': ('hash','sha384'),
     'hkdf_extract': ('kdf_extract','hkdf'), 'hkdf_expand': ('kdf_expand','hkdf'),
     'x509_verify': ('certificate_chain_verify','x509'),

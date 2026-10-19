@@ -15,7 +15,8 @@ def test_constant_and_invalid_observations():
         with pytest.raises(ValueError):box(points)
 
 
-def test_retained_failed_slots_do_not_require_thirty_eligible_points(tmp_path):
+@pytest.mark.parametrize("include44", [False, True])
+def test_retained_failed_slots_do_not_require_thirty_eligible_points(tmp_path, include44):
     import csv
     import hashlib
     import json
@@ -25,6 +26,7 @@ def test_retained_failed_slots_do_not_require_thirty_eligible_points(tmp_path):
     inventory, observations, distributions = [], [], []
     rejected = set()
     algorithms = ['rsa3072','ecdsa-p256','ecdsa-p384','mldsa65']
+    if include44: algorithms.insert(-1, 'mldsa44')
     for mode in ('server','mutual'):
         for index, algorithm in enumerate(algorithms):
             condition = f'tls_auth={algorithm}; auth_mode={mode}'
@@ -54,7 +56,10 @@ def test_retained_failed_slots_do_not_require_thirty_eligible_points(tmp_path):
     (report/'checksums.json').write_text(json.dumps(checks))
     output=tmp_path/'output';publish(report,output)
     points=list(csv.DictReader((output/'authentication-run-latencies.csv').open()))
-    assert len(inventory)==240 and len(points)==236
+    assert len(inventory)==60*len(algorithms) and len(points)==len(inventory)-len(rejected)
+    plot=(output/"authentication-variability.tex").read_text()
+    assert ("ML-DSA-44" in plot) == include44
+    assert "@@" not in plot
     assert not rejected & {r['run_key'] for r in points}
     assert '29--30 per condition' in (output/'authentication-variability.tex').read_text()
     assert {r['n'] for r in csv.DictReader((output/'authentication-boxplots.csv').open())}=={'29','30'}

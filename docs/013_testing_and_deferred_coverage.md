@@ -306,3 +306,31 @@ A/B test stopped before flashing when a concurrent pytest session cleaned signin
 objects; its preparation evidence remains retained. Run pytest sessions serially
 when one owns firmware preparation, because session-start cleanup affects shared
 generated build objects.
+
+### ML-DSA-44 TLS authentication qualification
+
+The authentication grids include ML-DSA-44 server and mutual roles with P-256
+key establishment. `test_mldsa44_tls.py` checks all supported key-establishment
+selectors, parameter-set isolation, role-specific signing and expected timing
+labels. Native ML-DSA tests exercise levels 2 and 3 with the regular and
+small-memory signing paths; recorder tests check exact count/event linkage.
+The host broker check includes the new certificate hierarchy.
+
+Target qualification uses a bounded, separately frozen queue selection at the
+working-source fingerprint: three baseline Ready Metrics 2 runs per ML-DSA-44
+role, then one ML-DSA-65 run per role because the level-aware hooks are shared.
+Preparation captures are separate. The checks require successful payload delivery,
+correct certificate/signature scheme, complete timing events, firmware/source
+identity, packet corroboration and normal gateway cleanup. These captures do not
+establish performance distributions or qualify every key-exchange, memory option,
+impairment or repeated-handshake combination. The qualification plan and observed
+status are retained under `results/analysis/plans/mldsa44-qualification-20261019`.
+The full campaign remains paused pending verification and a new source freeze;
+completed unaffected runs are retained without replacement.
+
+The initial ML-DSA-44 mutual preparation and a separate full-UART diagnostic
+failed before measurement runs; the diagnostic reported a FreeRTOS allocation
+failure. The 29 KiB default verification buffer now routes to the reserved RAM3
+workspace. Native allocator tests cover both parameter sets, capacity bounds and
+exclusive ownership. Fresh ML-DSA-44 qualification must validate this route; the
+initial failed preparations remain retained and are not counted as successes.

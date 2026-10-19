@@ -819,7 +819,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     wolfSSL_SetIOSend(socket_context->tls_ctx, PQC_WolfSSL_IOSend);
 
     if (PQC_WolfMQTT_MutualTLSRequested()) {
-#if !PQC_TLS_ENABLE_MLDSA_65_SIGN
+#if !PQC_TLS_ENABLE_MLDSA_44_SIGN && !PQC_TLS_ENABLE_MLDSA_65_SIGN
         /* Classical mutual-TLS credentials are retained on WOLFSSL_CTX. This
          * is the established path used by the successful classical mTLS
          * profiles. ML-DSA credentials are deliberately deferred until after
@@ -876,7 +876,7 @@ static int PQC_WolfMQTT_LwIPConnect(void *context, const char *host, word16 port
     }
     socket_context->tls_session_created = true;
 
-#if PQC_TLS_ENABLE_MLDSA_65_SIGN
+#if PQC_TLS_ENABLE_MLDSA_44_SIGN || PQC_TLS_ENABLE_MLDSA_65_SIGN
     if (PQC_WolfMQTT_MutualTLSRequested()) {
         /* ML-DSA mutual-TLS credentials are connection-local. A diagnostic
          * A/B run showed that installing the ML-DSA identity on WOLFSSL_CTX

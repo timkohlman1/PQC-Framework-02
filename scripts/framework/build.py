@@ -420,16 +420,16 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
     memory_mode = bundle.get("experiment", {}).get("mqtt", {}).get("tls", {}).get("mldsa_memory_mode", "default")
     if memory_mode not in {"default", "verify_small", "sign_small", "both_small"}:
         raise ValueError("unsupported mldsa_memory_mode")
-    if memory_mode != "default" and not selected["mldsa_65"]:
+    if memory_mode != "default" and not (selected["mldsa_44"] or selected["mldsa_65"]):
         raise ValueError("ML-DSA memory options require ML-DSA")
-    if memory_mode in {"sign_small", "both_small"} and not selected["mldsa_65_sign"]:
+    if memory_mode in {"sign_small", "both_small"} and not (selected["mldsa_44_sign"] or selected["mldsa_65_sign"]):
         raise ValueError("small-memory signing requires mutual authentication")
     from framework import tls_optimizations
     tls = bundle.get("experiment", {}).get("mqtt", {}).get("tls", {})
     options = tls_optimizations.resolve(tls,
         transport='plaintext' if tls.get('mode') == 'plaintext' else 'tls',
         mlkem=any(selected[k] for k in ('mlkem_512', 'mlkem_768', 'mlkem_1024')),
-        mldsa=selected['mldsa_65'])
+        mldsa=selected['mldsa_44'] or selected['mldsa_65'])
     selected.update(options)
     selected["mldsa_memory_mode"] = memory_mode
     selected["mldsa_verify_small_mem"] = memory_mode in {"verify_small", "both_small"}
@@ -467,6 +467,8 @@ def _write_tls_algorithm_selection(bundle: dict[str, dict[str, Any]], repo_root:
         f'set(PQC_TLS_ENABLE_MLKEM_768 {cmake_boolean(selected["mlkem_768"])})\n'
         f'set(PQC_TLS_ENABLE_MLKEM_1024 {cmake_boolean(selected["mlkem_1024"])})\n'
         f'set(PQC_TLS_MLKEM_STANDALONE {cmake_boolean(selected["mlkem_standalone"])})\n'
+        f'set(PQC_TLS_ENABLE_MLDSA_44 {cmake_boolean(selected["mldsa_44"])})\n'
+        f'set(PQC_TLS_ENABLE_MLDSA_44_SIGN {cmake_boolean(selected["mldsa_44_sign"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65 {cmake_boolean(selected["mldsa_65"])})\n'
         f'set(PQC_TLS_ENABLE_MLDSA_65_SIGN {cmake_boolean(selected["mldsa_65_sign"])})\n'
         f'set(PQC_MLDSA_VERIFY_SMALL_MEM {cmake_boolean(selected["mldsa_verify_small_mem"])})\n'
@@ -510,6 +512,7 @@ def _write_wifi_config_header(bundle: dict[str, dict[str, Any]], repo_root: Path
             "rsa_pss_rsae_sha256",
             "ecdsa_secp256r1_sha256",
             "ecdsa_secp384r1_sha384",
+            "mldsa44",
             "mldsa65",
         }
         if server_signature_algorithm not in supported_server_signature_algorithms:

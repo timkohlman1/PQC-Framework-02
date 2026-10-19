@@ -486,7 +486,9 @@ static const char *PQC_TLS_PrimitiveName(uint32_t primitive)
         "sha384",
         "hkdf_extract",
         "hkdf_expand",
-        "x509_verify"
+        "x509_verify",
+        "mldsa44_verify",
+        "mldsa44_sign"
     };
     return primitive < PQC_TLS_PRIMITIVE_COUNT ? names[primitive] : "unknown";
 }
@@ -514,7 +516,9 @@ void PQC_TLS_InstrumentationMLDSASampling(
     uint32_t attempts, uint32_t rejected, uint32_t accepted,
     uint32_t aborted, int32_t result)
 {
-    PQC_TLSSpan *span = &s_event_spans[PQC_TLS_PRIMITIVE_MLDSA65_SIGN];
+    PQC_TLSSpan *span = s_event_spans[PQC_TLS_PRIMITIVE_MLDSA44_SIGN].active
+        ? &s_event_spans[PQC_TLS_PRIMITIVE_MLDSA44_SIGN]
+        : &s_event_spans[PQC_TLS_PRIMITIVE_MLDSA65_SIGN];
     PQC_TLSMLDSASamplingRecord *record;
     if (!s_handshake_active || !span->active) return;
     if (span->record_index == PQC_TLS_EVENT_PARENT_NONE ||

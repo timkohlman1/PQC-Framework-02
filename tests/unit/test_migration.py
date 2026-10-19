@@ -46,13 +46,14 @@ def test_wizard_unchanged_does_not_request_device_constraints():
     assert not any('capacity' in s or 'Device model' in s for s in messages)
 
 
+@pytest.mark.parametrize('algorithm', ['mldsa44', 'mldsa65'])
 @pytest.mark.parametrize('role,mode', [('server','verify_small'), ('mutual','sign_small'), ('mutual','both_small')])
-def test_wizard_memory_choices_are_applicable_and_can_be_unchanged(monkeypatch, role, mode):
+def test_wizard_memory_choices_are_applicable_and_can_be_unchanged(monkeypatch, role, mode, algorithm):
     calls = []
     original = m.choose
     def choose(title, values, default, **kwargs):
-        wanted = {'TLS certificate/signature':'mldsa65', 'TLS authentication':role,
-                  'ML-DSA-65 TLS memory mode':mode}.get(title, default)
+        wanted = {'TLS certificate/signature':algorithm, 'TLS authentication':role,
+                  'ML-DSA TLS memory mode':mode}.get(title, default)
         values = list(values)
         options = [default, *[v for v in values if v != default]] if kwargs['unchanged'] and default in values else values
         calls.append((title, values, kwargs['unchanged']))
@@ -308,7 +309,7 @@ def test_legacy_choices_are_not_modified_or_added_to_the_selections_report():
     assert 'memory mode' not in old and s == before
     s['choices']['to']['mldsa_memory_mode'] = 'verify_small'
     new = report.render(report.project(timing_frames(),s),s,counts)['selections.tex']
-    assert 'ML-DSA-65 TLS memory mode & default & verify small' in new
+    assert 'ML-DSA TLS memory mode & default & verify small' in new
 
 
 def test_tex_escapes_and_outputs_signed_cells():

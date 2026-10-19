@@ -232,9 +232,9 @@ def test_crypto_hooks_cover_every_ready_metrics_algorithm_family():
     assert "PQC_TLS_PRIMITIVE_ECDSA_VERIFY" in internal
     assert "PQC_TLS_PRIMITIVE_ECDSA_VERIFY" in asn
     assert "PQC_TLS_PRIMITIVE_ECDSA_SIGN" in internal
-    assert "PQC_TLS_PRIMITIVE_MLDSA65_VERIFY" in tls13
-    assert "PQC_TLS_PRIMITIVE_MLDSA65_VERIFY" in asn
-    assert "PQC_TLS_PRIMITIVE_MLDSA65_SIGN" in tls13
+    assert "PQC_TLS_InstrumentationMLDSAEvent" in tls13
+    assert "PQC_TLS_InstrumentationMLDSAEvent" in asn
+    assert "((wc_MlDsaKey*)ssl->hsKey)->level, 1" in tls13
 
     for name in (
         '"p256_keygen"', '"p256_shared_secret"',

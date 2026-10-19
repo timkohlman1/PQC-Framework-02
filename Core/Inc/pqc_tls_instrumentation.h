@@ -48,6 +48,8 @@ typedef enum
     PQC_TLS_PRIMITIVE_HKDF_EXTRACT,
     PQC_TLS_PRIMITIVE_HKDF_EXPAND,
     PQC_TLS_PRIMITIVE_X509_VERIFY,
+    PQC_TLS_PRIMITIVE_MLDSA44_VERIFY,
+    PQC_TLS_PRIMITIVE_MLDSA44_SIGN,
 
     PQC_TLS_EVENT_COUNT
 } PQC_TLSInstrumentationEvent;
@@ -56,7 +58,7 @@ typedef enum
 #define PQC_TLS_PHASE_LAST       PQC_TLS_PHASE_FINISHED
 #define PQC_TLS_PHASE_COUNT      ((uint32_t)(PQC_TLS_PHASE_LAST - PQC_TLS_PHASE_FIRST + 1))
 #define PQC_TLS_PRIMITIVE_FIRST  PQC_TLS_PRIMITIVE_P256_KEYGEN
-#define PQC_TLS_PRIMITIVE_LAST   PQC_TLS_PRIMITIVE_X509_VERIFY
+#define PQC_TLS_PRIMITIVE_LAST   PQC_TLS_PRIMITIVE_MLDSA44_SIGN
 #define PQC_TLS_PRIMITIVE_COUNT  ((uint32_t)(PQC_TLS_PRIMITIVE_LAST - PQC_TLS_PRIMITIVE_FIRST + 1))
 
 #define PQC_TLS_INSTRUMENTATION_RESULT_UNSPECIFIED ((int32_t)INT32_MIN)
@@ -189,6 +191,17 @@ void PQC_TLS_InstrumentationBegin(PQC_TLSInstrumentationEvent event);
  * invalid verification to that path's canonical verification error. The
  * UNSPECIFIED sentinel is reserved for boundaries where no outcome exists. */
 void PQC_TLS_InstrumentationEnd(PQC_TLSInstrumentationEvent event, int32_t result);
+
+/* Resolve the measured key's parameter level, not the configured label.
+ * wolfCrypt uses 2 for ML-DSA-44 and 3 for ML-DSA-65. Unknown levels are
+ * rejected by the recorder rather than reported as another algorithm. */
+static inline PQC_TLSInstrumentationEvent PQC_TLS_InstrumentationMLDSAEvent(
+    uint8_t level, uint8_t signing)
+{
+    if (level == 2U) return signing ? PQC_TLS_PRIMITIVE_MLDSA44_SIGN : PQC_TLS_PRIMITIVE_MLDSA44_VERIFY;
+    if (level == 3U) return signing ? PQC_TLS_PRIMITIVE_MLDSA65_SIGN : PQC_TLS_PRIMITIVE_MLDSA65_VERIFY;
+    return PQC_TLS_EVENT_COUNT;
+}
 
 void PQC_TLS_InstrumentationMLDSASampling(
     uint32_t attempts, uint32_t rejected, uint32_t accepted,

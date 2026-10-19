@@ -295,7 +295,7 @@ def grouped(frame, kind):
     groups = list(frame.groupby(KEYS[kind], dropna=False))
     order = dict(ORDER)
     if kind in ('tls_auth','tls_auth_followup'):
-        order.update({name:i for i,name in enumerate(['ecdsa-p256','ecdsa-p384','rsa3072','mldsa65'])})
+        order.update({name:i for i,name in enumerate(['ecdsa-p256','ecdsa-p384','rsa3072','mldsa44','mldsa65'])})
         order.update(server=0,mutual=1)
     return sorted(groups, key=lambda pair: tuple((order.get(x,999),str(x)) for x in (pair[0] if isinstance(pair[0],tuple) else (pair[0],))))
 

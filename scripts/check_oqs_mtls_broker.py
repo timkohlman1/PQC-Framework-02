@@ -53,5 +53,5 @@ def check_profile(profile: str) -> None:
 
 
 if __name__ == "__main__":
-    for selected_profile in ("rsa3072", "mldsa65"):
+    for selected_profile in ("rsa3072", "mldsa44", "mldsa65"):
         check_profile(selected_profile)

@@ -35,7 +35,7 @@ def fields(options):
     for name in ('tls_kex', 'tls_auth', 'secure_boot', 'network_condition', 'auth_mode', 'mldsa_memory_mode',
                  'mqtt_transport', 'firmware_mode', 'standby_signing_keys',
                  'boot_stack_profiling', 'boot_uart_diagnostics', *TLS_OPTIONS):
-        title = 'ML-DSA-65 TLS memory mode' if name == 'mldsa_memory_mode' else TLS_LABELS.get(name, name.replace('_', ' ').title())
+        title = 'ML-DSA TLS memory mode' if name == 'mldsa_memory_mode' else TLS_LABELS.get(name, name.replace('_', ' ').title())
         result.append(('Factors / matrix', title, [name], 'factor', [None, *options[name]]))
     for key, label in (('transfer.payload_bytes', 'Payload bytes'), ('transfer.chunk_bytes', 'Chunk bytes'),
                        ('iterations.operations_per_run', 'Benchmark operations per run'),
