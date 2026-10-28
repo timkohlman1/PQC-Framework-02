@@ -170,7 +170,7 @@ def render(rows, session, counts):
     # Keep legacy selections reproducible when neither side recorded this field.
     selections = []
     for key, label in LABELS.items():
-        if key == 'mldsa_memory_mode' and not any(key in session['choices'][s] for s in SIDES):
+        if key in {'mldsa_memory_mode', 'broker_tcp_nodelay'} and not any(key in session['choices'][s] for s in SIDES):
             continue
         values = [choice_value(session['choices'][s], key) for s in SIDES]
         selections.append([label, *[str(v if v is not None else 'Not applicable').replace('_', ' ') for v in values]])
@@ -215,6 +215,10 @@ def frozen_profiles(root, session):
         if digest(path) != session['profile_hashes'][side]:
             raise ValueError('frozen profile identity differs from migration selection')
         data = yaml.safe_load(path.read_text())
+        # Requeued effective profiles retain an empty instrument mapping.
+        # Ignore only that no-op mapping; nonempty instrumentation must still fail.
+        if data.get('instruments') == {}:
+            data.pop('instruments')
         if data != profile(data, session['choices'][side], Path(session['profiles'][side]).stem,
                            session['choices']['repetitions']):
             raise ValueError('displayed migration choices differ from frozen experiment profile')

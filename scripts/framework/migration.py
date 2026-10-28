@@ -26,6 +26,7 @@ LABELS = {
     'standby_signing_keys': 'Standby firmware signing keys',
     'network_condition': 'Network condition', 'payload_bytes': 'Response payload (bytes)',
     'chunk_bytes': 'MQTT chunk (bytes)',
+    'broker_tcp_nodelay': 'Experiment broker TCP_NODELAY',
 }
 DEFAULTS = dict(mqtt_transport='tls', tls_kex='secp256r1', tls_auth='ecdsa-p256',
     auth_mode='server', mldsa_memory_mode=None, secure_boot='integrity_sha256', firmware_mode='single_bank',
@@ -39,6 +40,8 @@ def choice_value(choices, key):
             mlkem='mlkem' in str(choices.get('tls_kex')).lower() or 'ml_kem' in str(choices.get('tls_kex')).lower(),
             mldsa=choices.get('tls_auth') in {'mldsa44', 'mldsa65'})
         return choices.get(key, tls_optimizations.DEFAULTS[key]) if applicable else None
+    if key == 'broker_tcp_nodelay':
+        return choices.get(key)
     if key == 'mldsa_memory_mode':
         if choices.get('mqtt_transport') == 'tls' and choices.get('tls_auth') in {'mldsa44', 'mldsa65'}:
             return choices.get(key) or 'default'
@@ -180,6 +183,8 @@ def profile(base, choices, name, repetitions):
     data['fixed'] = {k: choices[k] for k in ('mqtt_transport', 'secure_boot', 'firmware_mode',
                                           'standby_signing_keys', 'network_condition')}
     data['fixed'].update(boot_stack_profiling=False, boot_uart_diagnostics=False)
+    if 'broker_tcp_nodelay' in choices:
+        data['fixed']['broker_tcp_nodelay'] = choices['broker_tcp_nodelay']
     if choices['mqtt_transport'] == 'tls':
         data['fixed'].update({k: choices[k] for k in ('tls_kex', 'tls_auth', 'auth_mode')})
     # Omission retains the established firmware identity. Non-default modes are

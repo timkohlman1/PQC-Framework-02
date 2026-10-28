@@ -338,19 +338,30 @@ def test_wait_can_retain_completed_failures_without_replacement_attempts(tmp_pat
     assert len(q.jobs())==2 and q.job('a'*12)['status']=='completed_with_failures'
 
 
-def test_frozen_profile_rejects_displayed_settings_that_do_not_match_queue(tmp_path,monkeypatch):
+@pytest.mark.parametrize('nodelay', [None, False, True])
+def test_frozen_profile_rejects_displayed_settings_that_do_not_match_queue(tmp_path,monkeypatch,nodelay):
     import yaml
     q=Queue(tmp_path);s=session();s.update(queue=q.relative(q.directory),jobs={},profile_hashes={})
     for side in m.SIDES:
+        if nodelay is not None:
+            s['choices'][side]['broker_tcp_nodelay'] = nodelay
         ident=('a' if side=='from' else 'b')*12
         s['jobs'][side]=ident
         folder=q.folder(ident);(folder/'profiles').mkdir(parents=True)
         data=m.profile(catalogue(ROOT)['base'],s['choices'][side],Path(s['profiles'][side]).stem,10)
+        data['instruments'] = {}
+        if nodelay is not None:
+            assert data['fixed']['broker_tcp_nodelay'] is nodelay
         path=folder/'profiles/input.yaml';path.write_text(yaml.safe_dump(data))
         s['profile_hashes'][side]=digest(path)
         (folder/'plan.json').write_text(json.dumps({'profile_hashes':{q.relative(path):digest(path)}}))
         (folder/'plan.sha256').write_text(digest(folder/'plan.json'))
     assert report.frozen_profiles(tmp_path,s)
+    if nodelay is not None:
+        s['choices']['to']['broker_tcp_nodelay'] = not nodelay
+        with pytest.raises(ValueError,match='displayed migration choices'):
+            report.frozen_profiles(tmp_path,s)
+        s['choices']['to']['broker_tcp_nodelay'] = nodelay
     s['choices']['to']['tls_auth']='mldsa65'
     with pytest.raises(ValueError,match='displayed migration choices'):
         report.frozen_profiles(tmp_path,s)
