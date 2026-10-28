@@ -187,7 +187,7 @@ def recipes():
     descriptions = {
         'secure_boot': 'Compact boot timing and static size table; optional separate stack selection.',
         'secure_boot_stack': 'Supplementary boot stack evidence linked from secure_boot.',
-        'tls_auth': 'Compact authentication matrix: means, sample SD, static sizes and regional maxima.',
+        'tls_auth': 'Compact authentication matrix: medians, quartiles, eligible counts, static sizes and regional maxima.',
         'tls_kex': 'Compact key exchange matrix with the same table policy.',
         'tls_auth_followup': 'A separate matched authentication batch linked to its original selection.',
         'network_loss': 'Configured loss grid: all-current-attempt outcomes and success-conditional timing medians.',

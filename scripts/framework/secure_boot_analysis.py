@@ -8,6 +8,8 @@ import struct
 from pathlib import Path
 from statistics import median
 
+import numpy as np
+
 from framework.analysis_paths import result_path
 from framework.resource_analysis import _read, _build_root, _row
 from framework.timing_dataset import read_json, _verify_header, verify_source_inputs, DatasetError
@@ -348,8 +350,14 @@ def summarise_secure_boot(dataset, spec):
             samples = {k:v[0] for k,v in grouped.items() if len(set(v))==1 and (not timing or len(v)==1)}
             if conflicts:
                 samples = {}
+            repeated = timing or metric.startswith('boot_stack')
+            quartiles = (list(map(float, np.quantile(list(samples.values()), [.25, .75, .95], method='linear')))
+                         if repeated and samples else [None, None, None])
             distributions.append(dict(condition=label, metric=metric, unit='ms' if timing else 'bytes',
                 median=median(samples.values()) if samples else None, n_observations=len(samples),
+                q1=quartiles[0], q3=quartiles[1], p95=quartiles[2],
+                n_runs=len(samples) if repeated else None,
+                quantile_method='linear' if repeated else None,
                 observation_ids=sorted(samples), run_keys=sorted(keys),
                 sample_unit='run' if timing or metric.startswith('boot_stack') else 'unique_build_or_image',
                 reason=None if samples else ';'.join(conflicts) or 'no_unambiguous_usable_evidence'))

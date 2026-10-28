@@ -56,6 +56,46 @@ pilot variability and retain all attempted/blocked outcomes. OTA-capability over
 is a normal boot comparison; actual update/rollback/migration needs the
 [OTA workflow](009_dual_bank_ota_workflow.md). Application energy is not boot energy.
 
+### Five-family TLS authentication comparison
+
+`thesis_authentication` specifies RSA-3072, ECDSA P-256, ECDSA P-384, ML-DSA-44
+and ML-DSA-65, each in server-only and mutual mode: **10 conditions × 30 fixed
+attempts = 300 planned slots**. This is a design, not completed evidence.
+P-256 key establishment, a root/intermediate/leaf X.509 hierarchy, Ready Metrics 2
+(204800-byte payload, 400-byte chunks, QoS 0), baseline network, integrity-only
+single-bank boot, no standby keys and normal timing instrumentation remain fixed.
+The canonical profile retains energy acquisition; freeze and record the same
+acquisition policy for every condition rather than mixing earlier energy-off runs.
+
+Before any queue creation or collection, review the responder audit, commit all
+required changes with explicit authorization, check the parent and recursive
+submodule working trees, pass unit/integration and applicable hardware qualification,
+and freeze source/component revisions, build options, broker/responder identity,
+container image, environment and final campaign counts. A dirty or unverified state
+blocks the main collection. The current request leaves queue creation on hold.
+
+Use the resolver to inspect the matrix offline. Once the gate and explicit execution
+approval are satisfied, collect the five families in the declared campaign order,
+server then mutual for each family, with 30 fixed slots per condition. Record actual
+order/timestamps and environmental controls; this grouped order is not randomized.
+Preparation captures remain separate. Record failed, blocked and unexecuted slots;
+never retry merely to reach 30 successes. If preparation blocks a group, retain that
+fact rather than silently treating it as 30 measured failures. Any later recovery
+batch has its own identity and does not replace the fixed cohort.
+
+Validate certificate family, negotiated signature scheme and P-256 group, payload
+completion, capture integrity, metric eligibility, timing event coverage, firmware
+and source identities, packet corroboration and gateway cleanup. Publish manifests,
+raw captures, an all-slot outcome inventory, metric-specific eligible n and missing
+reasons, and median/Q1/Q3/observed-p95 descriptive tables. Preserve the prior
+eight-condition cohort separately; do not append ML-DSA-44 to that cohort.
+
+Existing ML-DSA-44 firmware-authentication evidence belongs to the selected normal
+boot and separate stack cohorts. Adding TLS authentication does not itself justify
+recollecting firmware authentication, RQ4 migration, signing follow-ups or the
+small-memory experiment. Additional conditions require a separate comparison
+rationale and approved plan.
+
 ### Network trial
 
 `network_trial` selects Ready Metrics 2, hybrid TLS/ECDSA-P256 server authentication,

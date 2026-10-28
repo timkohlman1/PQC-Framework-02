@@ -52,3 +52,19 @@ def test_authentication_grid_has_five_families_and_both_roles(campaign):
     assert {(c["choices"]["tls_auth"], c["choices"]["auth_mode"]) for c in cases} == {
         (a, m) for a in ("rsa3072", "ecdsa-p256", "ecdsa-p384", "mldsa44", "mldsa65")
         for m in ("server", "mutual")}
+
+
+def test_authentication_study_fixed_attempt_budget_and_common_controls():
+    resolver = ConfigResolver(ROOT)
+    cases = resolver.expand_campaign('thesis_authentication')
+    assert len(cases) == 10
+    assert sum(c['execution']['repetitions'] for c in cases) == 300
+    for case in cases:
+        assert case['execution']['repetitions'] == 30
+        assert case['choices']['tls_kex'] == 'secp256r1'
+        assert case['choices']['network_condition'] == 'baseline'
+        assert case['selections']['workload'] == 'ready_metrics_2'
+    profiles = [resolver.load_profile('tls_auth', name).data for name in
+                ['rsa3072', 'ecdsa-p256', 'ecdsa-p384', 'mldsa44', 'mldsa65']]
+    assert all(p['hierarchy']['intermediate'] for p in profiles)
+    assert all(p['certificate']['validity_days'] == profiles[0]['certificate']['validity_days'] for p in profiles)

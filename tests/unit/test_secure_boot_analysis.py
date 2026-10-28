@@ -178,6 +178,7 @@ def test_build_identity_deduplication(tmp_path):
     frames,_=summarise_secure_boot(dataset,{'conditions':{'base':{}},'baseline':'base'})
     row=frames['secure_boot_distributions'].query("metric == 'bootloader_flash_bytes'").iloc[0]
     assert row['n_observations']==1 and row['median']==24
+    assert row['q1'] is None and row['p95'] is None and row['n_runs'] is None
 
 
 def test_different_epochs_cannot_complete_each_others_mailbox():
@@ -219,3 +220,14 @@ def test_identity_only_boot_image_uses_only_sealed_matching_retained_bytes(tmp_p
     assert inputs
     path.write_bytes(b'changed')
     with pytest.raises(ValueError): _retained(tmp_path,manifest,'wolfboot_image',[])
+
+
+def test_boot_distribution_retains_quantiles_and_empty_metrics(tmp_path):
+    dataset,_=fixture(tmp_path)
+    frames,_=summarise_secure_boot(dataset,{'conditions':{'base':{}},'baseline':'base'})
+    rows=frames['secure_boot_distributions'].set_index('metric')
+    assert rows.loc['authenticity','median']==2
+    assert rows.loc['authenticity','q1']==2 and rows.loc['authenticity','q3']==2
+    assert rows.loc['authenticity','p95']==2 and rows.loc['authenticity','n_runs']==1
+    assert rows.loc['application_start','q1'] is None
+    assert rows.loc['application_start','n_runs']==0

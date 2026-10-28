@@ -131,25 +131,37 @@ def test_spec_requires_pinned_inputs_and_selection_counts(tmp_path):
     with pytest.raises(ValueError,match='filters'):read_spec(path)
 
 
-def test_boot_identical_note_requires_complete_ten_capture_evidence():
+def test_boot_ten_normal_runs_and_three_stack_runs_are_separate():
     f=pd.concat([frame().iloc[[0]]]*10,ignore_index=True)
-    f['boot__integrity_ms']=165.125
+    f['boot__integrity_ms']=[1]*9+[101]
     f['boot__bootloader_flash_bytes']=12345
     f['boot__bootloader_static_ram_bytes']=16512
-    f['boot__boot_stack_high_water_bytes']=460
+    stack=f.iloc[:3].copy()
+    stack['boot__integrity_ms']=9999
+    stack['boot__boot_stack_high_water_bytes']=[400,460,420]
     a=dict(item('secure_boot'),stack_selection='secure_boot_stack')
     b=item('secure_boot_stack')
-    def render(g):
-        return make_tables({'selections':[a,b]},
-            {'secure_boot':(g,g),'secure_boot_stack':(f,f)})[0][0]
-    table=render(f)
-    assert 'All recorded values were identical across 10 executions' in table['notes']
-    assert table['headers'][1:3]==['Integrity verification ms','Auth. ms']
-    assert table['rows'][0][1:5]==['165.12','—','12,345','16,512']
-    assert not any('Image verify' in h or 'n timing' in h for h in table['headers'])
-    varied=f.copy();varied.loc[0,'boot__integrity_ms']=166
-    assert 'All recorded values were identical' not in render(varied)['notes']
-    assert 'All recorded values were identical' not in render(f.iloc[:9])['notes']
+    tables,details=make_tables({'selections':[a,b]},
+        {'secure_boot':(f,f),'secure_boot_stack':(stack,stack)})
+    assert tables[0]['rows'][0][1:5]==['1.00 [1.00, 1.00] [n=10]','—','12,345','16,512']
+    timing=next(d for d in details if d['metric']=='integrity')
+    watermark=next(d for d in details if d['metric']=='boot_stack')
+    assert timing['n']==10 and timing['median']==1 and timing['mean']==11
+    assert watermark['n']==3 and watermark['maximum']==460
+    flash=next(d for d in details if d['metric']=='boot_flash')
+    assert flash['median'] is None and flash['p95'] is None
+
+
+def test_skewed_distribution_missingness_and_observed_percentile():
+    f=pd.concat([frame().iloc[[0]]]*5,ignore_index=True)
+    f['timing__tls_handshake_us']=[1000,2000,3000,100000,None]
+    result=metric(f,'handshake')
+    assert result['median']==2.5 and result['mean']==26.5
+    assert (result['q1'],result['q3'])==(1.75,27.25)
+    assert result['p95']==pytest.approx(85.45)
+    assert result['n']==4 and result['missing_or_excluded']==1
+    assert display_metric(result,5)=='2.50 [1.75, 27.25] [n=4]'
+    assert statistics(pd.Series(dtype=float))['p95'] is None
 
 
 def loss_frame():

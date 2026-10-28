@@ -14,7 +14,7 @@ def test_profiles_resolve_and_keep_measurement_modes_separate(name):
     cases=ConfigResolver(ROOT).expand_campaign(name)
     assert len(cases)==CATALOG[name]['conditions']
     for case in cases:
-        assert case['execution']['repetitions']==10
+        assert case['execution']['repetitions']==CATALOG[name]['repetitions']
         assert case['choices']['boot_stack_profiling'] is False
         assert case['choices']['boot_uart_diagnostics'] is False
         assert ('energy' in case['selections'].get('instruments',{}))==CATALOG[name]['energy']

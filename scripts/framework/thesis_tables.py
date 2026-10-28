@@ -72,7 +72,7 @@ METRICS = {
     'workspace': ('resource__workspace_peak_used_bytes', 1024, 'KiB', 'runtime'),
 }
 METHOD = ('Current attempt per campaign slot; successful execution, valid capture and verified selected inputs. '
-          'One observation per retained capture. Timings: mean (sample SD, n-1). '
+          'One observation per retained capture. Timings: median [Q1, Q3]; eligible n per metric; observed p95 in metrics.csv. '
           'No outlier removal, zero filling, confidence intervals or independence claim. '
           'Static sizes require a single observed value within each case; regional runtime peaks use the observed maximum. '
           'Missing or inapplicable measurements are shown as an em dash.')
@@ -227,13 +227,13 @@ def eligible(group):
 def statistics(values):
     a = values.dropna().to_numpy(dtype=float)
     if not len(a):
-        return dict(n=0, mean=None, sd=None, median=None, q1=None, q3=None, cv_pct=None, maximum=None)
+        return dict(n=0, mean=None, sd=None, median=None, q1=None, q3=None, p95=None, cv_pct=None, maximum=None)
     if not np.isfinite(a).all():
         raise ValueError('non-finite measurement')
     mean = float(a.mean())
     sd = (0.0 if np.all(a == a[0]) else float(a.std(ddof=1))) if len(a) > 1 else None
     return dict(n=len(a), mean=mean, sd=sd, median=float(np.median(a)),
-        q1=float(np.quantile(a,.25)), q3=float(np.quantile(a,.75)),
+        q1=float(np.quantile(a,.25)), q3=float(np.quantile(a,.75)), p95=float(np.quantile(a,.95)),
         cv_pct=100*sd/mean if mean and sd is not None else None, maximum=float(a.max()))
 
 
@@ -263,9 +263,13 @@ def metric(group, name):
         # Static values are build facts; their repeated capture count is not an n
         # for statistical inference. Never average distinct observed sizes.
         result['value'] = float(values.dropna().iloc[0]) if not reason else None
-        for key in ['mean','sd','median','q1','q3','cv_pct','maximum']:
+        for key in ['mean','sd','median','q1','q3','p95','cv_pct','maximum']:
             result[key]=None
-    result.update(metric=name, column=col, unit=unit, scope=scope, reason=reason)
+    result.update(metric=name, column=col, unit=unit, scope=scope, reason=reason,
+                  selected_attempts=len(group), eligible_captures=len(eligible(group)),
+                  missing_or_excluded=len(group)-result['n'],
+                  sample_unit='captures supporting build fact' if scope == 'static' else 'runs',
+                  quantile_method=None if scope == 'static' else 'linear')
     return result
 
 
@@ -273,9 +277,12 @@ def number(value, digits=2):
     return '—' if value is None else f'{value:,.{digits}f}'
 
 
-def display_metric(result, total, mode='mean_sd'):
+def display_metric(result, total, mode='distribution'):
     if result['reason']:
         return '—'
+    if mode == 'distribution':
+        return (number(result['median']) + ' [' + number(result['q1']) + ', ' +
+                number(result['q3']) + f"] [n={result['n']}]")
     if mode == 'mean_sd':
         text = number(result['mean']) + ' (' + number(result['sd']) + ')'
     elif mode == 'static':
@@ -383,7 +390,6 @@ def make_tables(spec, selected):
                      'Stack is the observed maximum during selected-image verification in separate profiling builds. '
                      'Static RAM is .data plus .bss, excluding stack and other reservations. '
                      'Integrity-only has no signature authentication. ')
-            identical_ten = True
             stack_id = item.get('stack_selection')
             if stack_id and items[stack_id]['source_commit'] != item['source_commit']:
                 raise ValueError('boot timing and stack selections must use the same captured source')
@@ -394,28 +400,21 @@ def make_tables(spec, selected):
                 n = len(eligible(group)); ns = len(eligible(sg))
                 measurements = {m: metric(group,m) for m in ['integrity','auth','boot_flash','boot_ram','signature']}
                 measurements['boot_stack'] = metric(sg,'boot_stack')
-                identical_ten &= n == 10 and ns == 10 and all(
-                    r['reason'] == 'not_applicable_integrity_only' or
-                    (not r['reason'] and r['n'] == 10 and
-                     (r['scope'] == 'static' or r['sd'] == 0))
-                    for r in measurements.values())
-                cells = [condition(key), display_metric(measurements['integrity'],n,'mean'),
-                    display_metric(measurements['auth'],n,'mean'), display_metric(measurements['boot_flash'],n,'static'),
+                cells = [condition(key), display_metric(measurements['integrity'],n),
+                    display_metric(measurements['auth'],n), display_metric(measurements['boot_flash'],n,'static'),
                     display_metric(measurements['boot_ram'],n,'static'), display_metric(measurements['boot_stack'],ns,'maximum'),
                     display_metric(measurements['signature'],n,'static')]
                 rows.append(cells)
                 for m,r in measurements.items():
                     detail.append(dict(table=name,condition=condition(key),selection=stack_id if m=='boot_stack' else name,**r))
-            notes = (('All recorded values were identical across 10 executions per algorithm '
-                      'in each timing and stack campaign. ' if identical_ten else
-                      'Timing cells show means; counts and dispersion are retained in metrics.csv. '
-                      'The captures do not satisfy the identical-values/10-executions condition. ')
-                     + notes + 'Identical recorded values do not establish zero physical variation or independent mailbox freshness.')
+            notes += ('Timing cells show median [Q1, Q3] and eligible n. Normal boot timing and '
+                      'stack profiling are separate cohorts; selected run counts are retained in metrics.csv. '
+                      'Identical recorded values do not establish zero physical variation or independent mailbox freshness.')
         elif kind in ('tls_auth','tls_kex'):
             headers = ['Authentication / mode' if kind=='tls_auth' else 'Key exchange','n','Handshake ms',
                        'App. Flash KiB','RAM estimate KiB']
             caption = ('TLS authentication' if kind=='tls_auth' else 'TLS key exchange') + ': handshake timing and application resources.'
-            notes = ('Handshake is mean (sample SD), measured on the device; n counts eligible current successful captures. '
+            notes = ('Handshake is median [Q1, Q3] with metric-specific eligible n, measured on the device; the n column counts eligible captures before timing exclusions. '
                      '1 KiB = 1024 bytes. Flash is the application build size. '
                      'RAM estimate is the largest per-run sum of application static demand and regional peaks, excluding identified experiment storage. '
                      'It is not a simultaneous watermark or a validated production minimum.')
@@ -442,7 +441,7 @@ def make_tables(spec, selected):
                     raise ValueError('follow-up control mismatch: '+col)
             headers=['Batch','n','Handshake ms','Handshake CV %','Signing ms','Signing CV %','Verify ms']
             caption=condition(tuple(current[c].iloc[0] for c in KEYS[kind])) + ': separate follow-up validation.'
-            notes=('Timing cells are mean (sample SD); CV is 100 × SD / mean. Original and follow-up batches are separate. '
+            notes=('Timing cells are median [Q1, Q3] with eligible n; CV remains 100 × SD / mean. Original and follow-up batches are separate. '
                    'Signing/verification aggregates are nested spans, not disjoint costs to add to handshake time. '
                    'The main authentication matrix retains its original per-case sample size.')
             for label,g,selection_id in [('Original',baseline,baseline_id),('Follow-up',current,name)]:
@@ -643,10 +642,7 @@ def build(spec_path, output, *, expected_scientific=None):
                     ', '.join(str(k).replace('_',' ')+' = '+str(v) for k,v in failures.items())+
                     '. These are framework outcome categories, not established causes of packet-loss failure.')
         method = METHOD
-        if items[table['selections'][0]]['kind'] == 'secure_boot':
-            method = METHOD.replace('Timings: mean (sample SD, n-1).',
-                'Timings: means; sample SD and counts are retained in metrics.csv.')
-        elif items[table['selections'][0]]['kind'] == 'network_loss':
+        if items[table['selections'][0]]['kind'] == 'network_loss':
             method = ('All current attempts remain in success denominators, including capture failures. '
                 'Latency medians use only successful, valid captures with verified inputs and valid timing. '
                 'Counts, sample SD and quartiles are retained in metrics.csv; no causal or independence claim.')

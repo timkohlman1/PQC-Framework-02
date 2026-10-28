@@ -17,12 +17,12 @@ def test_figure_values_are_the_table_statistics_and_missing_is_not_zero():
     prepare(tables, metrics, spec)
     rows = figure_rows(tables, metrics, spec['presentation'])
     timing = next(r for r in rows if r['metric'] == 'handshake')
-    assert timing['value'] == 2 and timing['statistic'] == 'mean'
-    assert timing['high'] - timing['value'] == pytest.approx(2 ** .5)
-    assert timing['uncertainty'].startswith('sample SD')
+    assert timing['value'] == 2 and timing['statistic'] == 'median'
+    assert timing['high'] - timing['value'] == pytest.approx(.5)
+    assert timing['uncertainty'].startswith('IQR')
     missing = next(r for r in rows if r['metric'] == 'app_ram')
     assert missing['value'] is None and missing['reason'] == 'no_eligible_measurement'
-    assert tables[0]['rows'][0][2] == '2.00 (1.41)'
+    assert tables[0]['rows'][0][2] == '2.00 [1.50, 2.50] [n=2]'
 
 
 def test_loss_figures_preserve_attempt_denominator_and_success_conditioning():

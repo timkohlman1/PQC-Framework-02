@@ -66,7 +66,7 @@ def prepare(tables, metrics, spec):
             value = row['successes'] / row['attempts'] if row['attempts'] else None
         else:
             statistic = ('value' if row['scope'] == 'static' else 'maximum' if row['scope'] in ('runtime', 'stack')
-                         else 'median' if kind == 'network_loss' else 'mean')
+                         else 'median')
             value = None if row['reason'] else row.get(statistic)
         row.update(reported_statistic=statistic, reported_value=value)
     if options.get('tables'):

@@ -334,3 +334,16 @@ failure. The 29 KiB default verification buffer now routes to the reserved RAM3
 workspace. Native allocator tests cover both parameter sets, capacity bounds and
 exclusive ownership. Fresh ML-DSA-44 qualification must validate this route; the
 initial failed preparations remain retained and are not counted as successes.
+
+### Authentication 300-slot source freeze
+
+The five-family authentication campaign now declares 30 attempts in each of ten
+conditions. `test_mldsa44_tls.py` checks the budget, common P-256/network/workload
+controls and hierarchy shape; `test_thesis_tables.py` and `test_analysis_workspace.py`
+check skewed timing distributions, missingness, median/IQR figure agreement and
+separate ten-run boot / three-run stack summaries. The compact exporter retains
+supplementary means/CV without making them the principal latency statistic.
+
+| Feature | Missing layer | Reason | Required capability | Intended check / command | Status |
+|---|---|---|---|---|---|
+| Five-family 300-slot authentication study | Current-source hardware qualification and collection | Audit review and committed clean-source freeze pending; queue explicitly held | Gateway, STM32/ST67, provisioned five-family broker identities and configured energy instrument | Existing qualification procedure above; after freeze use `./scripts/dev.sh pytest-hardware tests/hardware/test_thesis_baselines_hw.py --pqc-require-hardware` before separately approved collection | Deferred; prior captures are historical evidence only |

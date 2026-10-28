@@ -30,7 +30,7 @@ def test_read_view_and_noop_save_preserve_original_bytes(repository):
     assert path.read_bytes() == before
     assert 'rsa3072' in loaded['options']['tls_auth']
     result = editor.operate(repository, {**loaded, 'action': 'save'})
-    assert result['conditions'] == 10 and result['attempts'] == 100
+    assert result['conditions'] == 10 and result['attempts'] == 300
     assert path.read_bytes() == before
 
 
@@ -195,7 +195,7 @@ def test_template_copy_and_profile_crud_never_modify_templates(repository):
     assert loaded['data']['queue_profile'] == {'template': 'thesis_authentication.yaml',
         'template_sha256': hashlib.sha256(before['thesis_authentication.yaml']).hexdigest()}
     result = editor.operate(repository, {**loaded, 'action': 'save', 'profile': 'my_auth.yaml'})
-    assert result['attempts'] == 100
+    assert result['attempts'] == 300
     edited = editor.load(repository, 'my_auth.yaml')
     edited['data']['execution']['repetitions'] = 2
     result = editor.operate(repository, {**edited, 'action': 'save'})

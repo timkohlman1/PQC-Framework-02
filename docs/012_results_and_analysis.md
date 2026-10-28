@@ -55,7 +55,7 @@ A non-default catalogue root uses `--exports-root`.
 | Recipe | Purpose and statistic |
 |---|---|
 | `secure_boot`, `secure_boot_stack` | Compact boot timing/size table and a separately linked stack selection |
-| `tls_auth`, `tls_kex`, `tls_auth_followup` | Compact thesis matrices: timing means/sample SD, unique static sizes, observed regional maxima; follow-up remains a separate matched batch |
+| `tls_auth`, `tls_kex`, `tls_auth_followup` | Compact thesis matrices: timing medians/quartiles/eligible counts, unique static sizes, observed regional maxima; follow-up remains a separate matched batch |
 | `network_loss` | Configured loss grid: all-current-attempt outcomes and success-conditional timing medians/IQR |
 | `timing` | Recorded checkpoints and same-iteration payload throughput; descriptive medians/IQR |
 | `resources` | Memory/flash medians across unique builds or final run lifetimes, retaining regions/accounting |
@@ -869,11 +869,16 @@ require impairment disabled; zero-loss impairment controls remain separate.
 
 The tables select current successful captures with verified inputs and preserve
 failed/historical attempts in the audit. Repeated-handshake rows are refused
-rather than treated as extra independent boots. TLS timing cells show mean and sample
-SD. Secure-boot timing cells show means, with integrity verification before authentication;
-all secure-boot sizes use bytes. A note reports identical values across ten executions
-only when every applicable displayed metric meets that condition in both campaigns.
-Otherwise the note directs readers to counts and dispersion in `metrics.csv`.
+rather than treated as extra independent boots. TLS and normal-boot timing cells
+show median [Q1, Q3] and metric-specific eligible n. Figures use the same medians
+and IQR. Full-precision metrics retain mean/sample SD and CV as supplementary
+descriptions, plus observed p95 using NumPy linear quantiles. Percentiles describe
+the observed sample, not a worst-case bound or confidence interval. Selected attempt
+counts, eligible captures and missing/excluded counts distinguish outcome from metric
+availability. Normal-boot evidence uses the selected ten runs per profile and stack
+evidence its three separate profiling runs; do not pool campaigns or take the first
+successful captures to fill a quota. Historical selections with other counts remain
+explicitly historical. Static Flash is a build fact, not ten statistical samples.
 Per-metric missingness is disclosed. Static sizes are build facts and
 conflicting sizes are unavailable rather than averaged. TLS regional peak RAM values
 overlap static reservations and are not additive. Bootloader static RAM excludes

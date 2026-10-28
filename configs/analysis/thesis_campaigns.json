@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "sample_count_policy": "pilot_only_choose_final_counts_from_variability",
+  "sample_count_policy": "authentication_fixed_30_attempts_other_campaigns_pilot_only",
   "campaigns": {
     "thesis_kex": {
       "conditions": 10,
@@ -10,7 +10,7 @@
     },
     "thesis_authentication": {
       "conditions": 10,
-      "repetitions": 10,
+      "repetitions": 30,
       "workload": "ready_metrics_2",
       "energy": true
     },
