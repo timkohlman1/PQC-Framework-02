@@ -1091,6 +1091,17 @@ matching firmware network-failure record and all other capture checks.
 The broker loopback listener is a test harness input,
 not an unencrypted alternative exposed to the STM32 network.
 
+Capture acquisition expiry is distinct from the enclosing remote-operation deadline.
+The remote shell emits `PQC_CAPTURE_COMMAND_COMPLETE rc=...` only after the capture
+script and its EXIT cleanup traps return. Status 124 with a matching terminal
+completion marker retains the acquisition timeout (for example, 180 seconds);
+it is not an SSH timeout or evidence that the 270-second operation deadline expired.
+Without that marker, a deadline status remains an unverified remote operation.
+Local control timeout, killed commands and SSH transport failure remain separate
+unverified outcomes. Script completion does not certify workload success or replace
+the responder/broker cleanup checks. Missing device results remain a failed attempt;
+this classification alone cannot diagnose a device-side TLS stall.
+
 A numeric application return code does not by itself identify a failure mechanism.
 The custom TLS adapter can return a negated `wolfSSL_get_error` value after a
 failed handshake, or propagate a raw `wolfSSL_read`/`wolfSSL_write` result. These

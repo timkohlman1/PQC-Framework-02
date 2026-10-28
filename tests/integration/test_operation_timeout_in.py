@@ -76,3 +76,43 @@ def test_watchdog_interrupt_cleans_separate_control_process_group(tmp_path, monk
     import os
     with pytest.raises(ProcessLookupError):
         os.kill(int(pid_file.read_text()), 0)
+
+
+@pytest.mark.parametrize('code', [0, 7, 124])
+def test_completed_remote_status_is_distinct_from_deadline(tmp_path, code):
+    from framework.bounded_command import capture_result, CAPTURE_COMPLETE
+    script = f"trap 'echo cleanup-finished >&2' EXIT; echo retained-evidence; exit {code}"
+    command = capture_command('unused', script, 5)
+    result = subprocess.run(['sh', '-c', command[-1]], capture_output=True, text=True, timeout=8)
+    assert result.returncode == code
+    assert result.stderr.index('cleanup-finished') < result.stderr.index(CAPTURE_COMPLETE)
+    classified, reason = capture_result(result, remote_deadline=270, capture_limit=180)
+    assert classified.returncode == code and reason is None
+    assert 'retained-evidence' in classified.stdout
+    assert 'deadline exceeded' not in classified.stderr
+    assert 'remote completion unverified' not in classified.stderr
+    if code == 124:
+        assert '180s' in classified.stderr and '270s' not in classified.stderr
+
+
+def test_cleanup_stall_does_not_acknowledge_remote_completion(tmp_path):
+    from framework.bounded_command import capture_result, CAPTURE_COMPLETE
+    script = "trap 'echo cleanup-started >&2; sleep 20' EXIT; exit 124"
+    command = capture_command('unused', script, .2)
+    result = subprocess.run(['sh', '-c', command[-1]], capture_output=True, text=True, timeout=8)
+    assert result.returncode == 124
+    assert 'cleanup-started' in result.stderr and CAPTURE_COMPLETE not in result.stderr
+    classified, reason = capture_result(result, remote_deadline=.2, capture_limit=.1)
+    assert classified.returncode == 125 and 'remote completion unverified' in reason
+    assert 'deadline exceeded (0.2s)' in classified.stderr
+
+
+def test_inner_acquisition_timer_expires_without_outer_deadline(tmp_path):
+    from framework.bounded_command import capture_result, CAPTURE_COMPLETE
+    command = capture_command('unused', "timeout .1s sh -c 'echo device-partial; sleep 20'", 5)
+    result = subprocess.run(['sh', '-c', command[-1]], capture_output=True, text=True, timeout=8)
+    assert result.returncode == 124 and CAPTURE_COMPLETE in result.stderr
+    classified, reason = capture_result(result, remote_deadline=5, capture_limit=.1)
+    assert classified.returncode == 124 and reason is None
+    assert classified.stdout == 'device-partial\n'
+    assert '0.1s' in classified.stderr and 'deadline exceeded' not in classified.stderr

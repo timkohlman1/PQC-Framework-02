@@ -2218,12 +2218,12 @@ def _execute_mqtt_e2e_uart_capture(
         start = time.perf_counter()
         from framework.bounded_command import run as bounded_run
         completed = bounded_run(ssh_command, cwd=cwd, timeout=remote_deadline + 30)
-        if completed.returncode in {125, 137, 255} or ((pqc_oqs or ready_metrics_2_application) and completed.returncode == 124):
+        from framework.bounded_command import capture_result
+        completed, safety_reason = capture_result(
+            completed, remote_deadline=remote_deadline, capture_limit=hard_limit_seconds)
+        if safety_reason:
             update_manifest(result_dir / "manifest.json", {"execution_safety": {
-                "status": "unverified", "reason": "Capture SSH command timed out; remote completion unverified"}})
-        if completed.returncode in {124, 137}:
-            completed = subprocess.CompletedProcess(completed.args, 125, completed.stdout,
-                completed.stderr + f"\nCapture operation deadline exceeded ({remote_deadline}s); evidence retained as failure.\n")
+                "status": "unverified", "reason": safety_reason}})
         execution = CommandExecution(command=ssh_command, return_code=completed.returncode, stdout=completed.stdout, stderr=completed.stderr, duration_seconds=time.perf_counter() - start)
         publisher_description = (
             "Publisher disabled: selected application is device-initiated.\n"
