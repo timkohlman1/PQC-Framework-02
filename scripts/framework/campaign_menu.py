@@ -33,7 +33,7 @@ def fields(options):
         result.append(('Components', name.replace('_', ' ').title(), ['services', name], 'single', options['broker']))
     result.append(('Components', 'Energy instrument', ['instruments', 'energy'], 'single', [None, *options['energy']]))
     for name in ('tls_kex', 'tls_auth', 'secure_boot', 'network_condition', 'auth_mode', 'mldsa_memory_mode',
-                 'mqtt_transport', 'firmware_mode', 'standby_signing_keys',
+                 'mqtt_transport', 'broker_tcp_nodelay', 'firmware_mode', 'standby_signing_keys',
                  'boot_stack_profiling', 'boot_uart_diagnostics', *TLS_OPTIONS):
         title = 'ML-DSA TLS memory mode' if name == 'mldsa_memory_mode' else TLS_LABELS.get(name, name.replace('_', ' ').title())
         result.append(('Factors / matrix', title, [name], 'factor', [None, *options[name]]))

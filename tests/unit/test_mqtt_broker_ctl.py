@@ -58,7 +58,7 @@ def test_broker_ctl_uses_pinned_shared_image_and_collects_tls_keylog():
 
 def test_broker_start_waits_for_healthy_container():
     source = Path("experiment/mqtt-broker/scripts/mqtt_broker_ctl.py").read_text(encoding="utf-8")
-    assert '["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"]' in source
+    assert '["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90", BROKER_PROFILE_SERVICES[args.profile]]' in source
 
 
 
@@ -90,6 +90,7 @@ def test_status_accepts_reporting_profile_and_targets_reporting_service(monkeypa
     calls = []
 
     monkeypatch.setattr(module, "compose_remote", lambda namespace, compose_args: calls.append(compose_args))
+    monkeypatch.setattr(module, "effective_config", lambda namespace: None)
     args.func(args)
 
     assert args.profile == "reporting"
@@ -103,6 +104,7 @@ def test_status_defaults_to_classical_profile(monkeypatch):
     calls = []
 
     monkeypatch.setattr(module, "compose_remote", lambda namespace, compose_args: calls.append(compose_args))
+    monkeypatch.setattr(module, "effective_config", lambda namespace: None)
     args.func(args)
 
     assert args.profile == "classical"

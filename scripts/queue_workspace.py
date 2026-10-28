@@ -71,6 +71,8 @@ def prepare(job, profile=None, repetitions=None, from_job=None):
         was_enabled = plan['steps'][0].get('energy_requested', bool(data.get('instruments', {}).get('energy')))
         data['execution']['energy_monitoring'] = 'auto' if was_enabled else 'off'
     data['execution']['repetitions'] = count
+    if 'broker_tcp_nodelay' not in data.get('matrix', {}):
+        data['fixed'].setdefault('broker_tcp_nodelay', False if from_job else True)
     energy = collection.instrument_campaign(resolver, data)
     frozen = folder / 'profiles/campaign.yaml'
     frozen.write_text(yaml.safe_dump(data, sort_keys=False))

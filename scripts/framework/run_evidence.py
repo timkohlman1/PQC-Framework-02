@@ -192,6 +192,8 @@ def build_capture_contract(bundle: dict[str, dict[str, Any]], *, operation: str 
             _contract_item("application_elf", "required", "build"),
         ]
     elif features["mqtt_runtime"]:
+        if "broker_tcp_nodelay" in bundle.get("experiment", {}).get("mqtt", {}):
+            items.append(_contract_item("mqtt_broker_effective_config", "required", "broker"))
         items += [
             _contract_item("deployment_provenance", "required", "deployment"),
             _contract_item("flash_log", "optional", "deployment"),
@@ -449,6 +451,8 @@ def _infer_discovered_metadata(relative: str) -> tuple[str, str]:
         return "network", "packet_capture"
     if "keylog" in name:
         return "network", "tls_key_log"
+    if name == "mqtt-broker-effective.conf":
+        return "broker", "mqtt_broker_effective_config"
     if name == "mqtt-broker-log.log":
         return "broker", "experiment_broker_log"
     if name == "mqtt-reporting-raw.ndjson":
@@ -545,6 +549,8 @@ def build_run_provenance_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "application_signing",
         "wolfboot_build",
         "runtime_services",
+        "mqtt_broker",
+        "broker_tcp_nodelay",
         "measurement_instruments",
         "ota",
     )

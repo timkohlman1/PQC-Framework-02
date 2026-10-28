@@ -132,6 +132,8 @@ def plan(output, repetitions=10, only=None, include_ota=False):
     for name in names:
         original, data = resolver.load_campaign(name)
         data['execution']['repetitions'] = repetitions
+        if 'broker_tcp_nodelay' not in data.get('matrix', {}):
+            data['fixed'].setdefault('broker_tcp_nodelay', True)
         # Instrument supported single-window workloads only when explicitly requested.
         # Unsupported boot-only and multi-reset OTA workflows remain explicit gaps.
         energy_supported = instrument_campaign(resolver, data)

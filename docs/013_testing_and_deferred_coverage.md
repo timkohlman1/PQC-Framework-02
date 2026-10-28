@@ -347,3 +347,24 @@ supplementary means/CV without making them the principal latency statistic.
 | Feature | Missing layer | Reason | Required capability | Intended check / command | Status |
 |---|---|---|---|---|---|
 | Five-family 300-slot authentication study | Current-source hardware qualification and collection | Audit review and committed clean-source freeze pending; queue explicitly held | Gateway, STM32/ST67, provisioned five-family broker identities and configured energy instrument | Existing qualification procedure above; after freeze use `./scripts/dev.sh pytest-hardware tests/hardware/test_thesis_baselines_hw.py --pqc-require-hardware` before separately approved collection | Deferred; prior captures are historical evidence only |
+
+## DTR-BROKER-TCP-NODELAY
+
+- Feature: process-wide experiment broker TCP_NODELAY; reporting is unchanged.
+- Coverage: unit resolution, identity, editor, frozen-plan, retained-config analysis
+  and cleanup checks; local Docker OFF/ON/OFF recreation and mutual-TLS readiness
+  in `test_tcp_nodelay_recreates_broker_and_retains_generated_config`.
+- Missing layer: matched STM32 qualification for impaired networks, mutual TLS and
+  workloads beyond the bounded server-authenticated Ready Metrics 2 pilot.
+- Reason: the initial intervention is deliberately limited to baseline network,
+  ECDSA P-256 server authentication and five attempts per arm/scheme, energy OFF.
+- Required capability: available gateway lease, provisioned credentials and board;
+  impairment additionally requires the maintained network-control capability.
+- Intended test: fixed-attempt matched profiles with identical firmware per pair,
+  indexed effective broker configuration and decrypted packet evidence; never
+  extend a pilot until a desired success count appears.
+- Command: `./scripts/dev.sh pytest tests/unit/test_broker_tcp_nodelay.py`;
+  `./scripts/dev.sh pytest tests/integration/test_mqtt_broker_docker_runtime_in.py -m integration`;
+  subsequent authorized profiles use `./scripts/dev.sh campaign-gateway <profile>`.
+- Status: broader workload/network qualification deferred. Local broker validation
+  does not establish STM32 behavior or socket-level attestation.

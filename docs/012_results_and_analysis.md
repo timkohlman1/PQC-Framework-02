@@ -1226,3 +1226,19 @@ bucket cannot establish repeatability. Counts alone do not establish that all
 remaining timing variation comes from scheduling, nor do they reconstruct old
 counts from elapsed time. Native integration checks compare deterministic
 signature bytes with hooks enabled/disabled for both software signing paths.
+
+### Broker TCP_NODELAY evidence
+
+New resolved captures retain `mqtt-broker-effective.conf` and
+`broker_tcp_nodelay` in run provenance. The retained configuration is indexed
+and hashed; analysis verifies it against the requested boolean before supplying
+`controls.mqtt.broker_tcp_nodelay_requested` and
+`controls.mqtt.broker_tcp_nodelay_effective`. Unverified evidence blocks eligibility.
+Historical absence remains unknown and is never inferred as an observed OFF value.
+Compare arms using explicit treatment controls; do not pool a new pilot with
+historical captures or subtract an estimated transport delay from old timings.
+
+For five-attempt resource comparisons, retain the existing regional RAM accounting
+and disclose that a maximum over five attempts has less sampling coverage than a
+maximum over thirty. TCP_NODELAY covers feeder connections as well as STM32
+connections, so the intervention is a complete transport-configuration comparison.

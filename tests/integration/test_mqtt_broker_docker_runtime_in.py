@@ -298,3 +298,29 @@ def test_mqtt_classical_container_supports_client_certificate_pubsub(classical_b
                 subscriber.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 subscriber.kill()
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+@pytest.mark.docker_runtime
+def test_tcp_nodelay_recreates_broker_and_retains_generated_config(classical_broker):
+    """Real Compose reconciliation, loaded config and mTLS readiness in both arms."""
+    broker_root, project_name, host_port, env = classical_broker
+    cert_dir = broker_root.parents[1] / 'secrets/certificates/rsa3072'
+    base = ['docker', 'compose', '--project-name', project_name]
+    ids = []
+    original = (broker_root/'config/classical/mosquitto.conf').read_bytes()
+    for value in ('false', 'true', 'false'):
+        selected = {**env, 'MQTT_TCP_NODELAY': value}
+        result = _run(base + ['--profile','classical','up','-d','--wait','mqtt-classical'],
+                      cwd=broker_root, env=selected, timeout=180)
+        _assert_success(result, 'reconfigure broker')
+        _wait_for_tls(host_port, cert_dir, broker_root, project_name, selected)
+        ids.append(_run(base+['ps','-q','mqtt-classical'],cwd=broker_root,env=selected,timeout=30).stdout.strip())
+        result = _run(base+['exec','-T','mqtt-classical','sh','-ec',
+            'grep -q /tmp/mosquitto-runtime.conf /proc/1/cmdline && cat /tmp/mosquitto-runtime.conf'],
+            cwd=broker_root,env=selected,timeout=30)
+        _assert_success(result,'read loaded config')
+        assert result.stdout.encode() == f'set_tcp_nodelay {value}\n'.encode() + original
+        assert (broker_root/'config/classical/mosquitto.conf').read_bytes() == original
+    assert len(set(ids)) == 3

@@ -207,10 +207,15 @@ def condition_identity(case: dict[str, Any]) -> str:
     choices = case.get("choices", {})
     hashes = case.get("provenance", {}).get("profile_hashes", {})
     network_id = str(choices.get("network_condition", ""))
-    return canonical_sha256({
+    identity = {
         "network_condition": network_id,
         "profile_hash": hashes.get(f"network_condition:{network_id}"),
-    })
+    }
+    # Recreate experiment interfaces before applying impairment to the new broker.
+    # Keep historical condition identities unchanged when the choice was absent.
+    if "broker_tcp_nodelay" in choices:
+        identity["broker_tcp_nodelay"] = choices["broker_tcp_nodelay"]
+    return canonical_sha256(identity)
 
 
 def broker_identity(bundle: dict[str, dict[str, Any]], case: dict[str, Any]) -> str:
@@ -225,6 +230,7 @@ def broker_identity(bundle: dict[str, dict[str, Any]], case: dict[str, Any]) -> 
         "service_hash": hashes.get(f"service:mqtt_broker:{experiment_service}"),
         "broker_profile": mqtt.get("broker_profile") if isinstance(mqtt, dict) else None,
         "listener": broker,
+        "broker_tcp_nodelay": mqtt.get("broker_tcp_nodelay", False),
         "tls": tls,
     })
 
@@ -487,10 +493,12 @@ def _materialize_preparation_case(
 
 def _broker_ctl_command(
     repo_root: Path, subcommand: str, *, profile: str | None = None, broker_port: int | None = None,
-    certificate_profile: str | None = None,
+    certificate_profile: str | None = None, broker_tcp_nodelay: bool = False,
 ) -> list[str]:
     command = [sys.executable, str(repo_root / "experiment/mqtt-broker/scripts/mqtt_broker_ctl.py"), subcommand,
                "--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
+    if subcommand in {"start", "status"} and profile != "reporting":
+        command.extend(["--tcp-nodelay", str(broker_tcp_nodelay).lower()])
     if certificate_profile:
         command.extend(["--certificate-profile", certificate_profile])
     if profile:
@@ -723,6 +731,11 @@ class CampaignExecutor:
                             active_condition = None
                         condition_cases = condition_groups[cid]
                         condition_bundle = self.resolver.to_legacy_bundle(condition_cases[0])
+                        condition_broker_identity = broker_identity(condition_bundle, condition_cases[0])
+                        if condition_broker_identity != wanted_broker_identity:
+                            _setup_step("broker_setup", self._ensure_broker, bundle=condition_bundle,
+                                identity=condition_broker_identity, campaign_root=campaign_root)
+                            wanted_broker_identity = condition_broker_identity
                         control_dir = campaign_root / "control" / f"condition-{cid[:12]}"
                         control_dir.mkdir(parents=True, exist_ok=True)
                         active_condition, apply_result = apply_gateway_network_degradation(
@@ -1203,6 +1216,7 @@ class CampaignExecutor:
         for wanted_profile, wanted_port in ((profile, port), ("reporting", None)):
             command = _broker_ctl_command(
                 self.repo_root, "start", profile=wanted_profile, broker_port=wanted_port,
+                broker_tcp_nodelay=bundle["experiment"]["mqtt"].get("broker_tcp_nodelay", False),
                 certificate_profile=(
                     _broker_certificate_profile(bundle) if wanted_profile != "reporting" else None
                 ),
@@ -1223,6 +1237,7 @@ class CampaignExecutor:
         for wanted_profile, wanted_port in ((profile, port), ("reporting", None)):
             command = _broker_ctl_command(
                 self.repo_root, "status", profile=wanted_profile, broker_port=wanted_port,
+                broker_tcp_nodelay=bundle["experiment"]["mqtt"].get("broker_tcp_nodelay", False),
                 certificate_profile=(
                     _broker_certificate_profile(bundle) if wanted_profile != "reporting" else None
                 ),

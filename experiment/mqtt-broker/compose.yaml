@@ -3,6 +3,8 @@ services:
     image: eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797
     restart: unless-stopped
     profiles: ["classical"]
+    environment:
+      MQTT_TCP_NODELAY: "${MQTT_TCP_NODELAY:-true}"
     user: "0:0"
     entrypoint:
       - /bin/sh
@@ -33,7 +35,12 @@ services:
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
         chmod 0700 /mosquitto/keylog
         umask 077
-        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
+        case "$$MQTT_TCP_NODELAY" in true|false) ;; *) exit 2 ;; esac
+        ! grep -Eq '^[[:space:]]*set_tcp_nodelay[[:space:]]' /mosquitto/config/mosquitto.conf
+        printf 'set_tcp_nodelay %s\n' "$$MQTT_TCP_NODELAY" > /tmp/mosquitto-runtime.conf
+        cat /mosquitto/config/mosquitto.conf >> /tmp/mosquitto-runtime.conf
+        chmod 0644 /tmp/mosquitto-runtime.conf
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /tmp/mosquitto-runtime.conf
     ports:
       - "127.0.0.1:1884:1884"
       - "${MQTT_PLAINTEXT_PORT:-1883}:1883"
@@ -57,6 +64,8 @@ services:
     image: eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797
     restart: unless-stopped
     profiles: ["classical-server-auth"]
+    environment:
+      MQTT_TCP_NODELAY: "${MQTT_TCP_NODELAY:-true}"
     user: "0:0"
     entrypoint:
       - /bin/sh
@@ -86,7 +95,12 @@ services:
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
         chmod 0700 /mosquitto/keylog
         umask 077
-        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
+        case "$$MQTT_TCP_NODELAY" in true|false) ;; *) exit 2 ;; esac
+        ! grep -Eq '^[[:space:]]*set_tcp_nodelay[[:space:]]' /mosquitto/config/mosquitto.conf
+        printf 'set_tcp_nodelay %s\n' "$$MQTT_TCP_NODELAY" > /tmp/mosquitto-runtime.conf
+        cat /mosquitto/config/mosquitto.conf >> /tmp/mosquitto-runtime.conf
+        chmod 0644 /tmp/mosquitto-runtime.conf
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /tmp/mosquitto-runtime.conf
     ports:
       - "127.0.0.1:1884:1884"
       - "${MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT:-8883}:8883"
@@ -134,11 +148,17 @@ services:
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
         chmod 0700 /mosquitto/keylog
         umask 077
-        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
+        case "$$MQTT_TCP_NODELAY" in true|false) ;; *) exit 2 ;; esac
+        ! grep -Eq '^[[:space:]]*set_tcp_nodelay[[:space:]]' /mosquitto/config/mosquitto.conf
+        printf 'set_tcp_nodelay %s\n' "$$MQTT_TCP_NODELAY" > /tmp/mosquitto-runtime.conf
+        cat /mosquitto/config/mosquitto.conf >> /tmp/mosquitto-runtime.conf
+        chmod 0644 /tmp/mosquitto-runtime.conf
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /tmp/mosquitto-runtime.conf
     ports:
       - "127.0.0.1:1884:1884"
       - "${MQTT_OQS_TLS_PORT:-8884}:8883"
     environment:
+      MQTT_TCP_NODELAY: "${MQTT_TCP_NODELAY:-true}"
       OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
     volumes:
       - ./config/oqs/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
@@ -185,11 +205,17 @@ services:
         chown "$$runtime_user:$$runtime_group" /mosquitto/keylog
         chmod 0700 /mosquitto/keylog
         umask 077
-        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf
+        case "$$MQTT_TCP_NODELAY" in true|false) ;; *) exit 2 ;; esac
+        ! grep -Eq '^[[:space:]]*set_tcp_nodelay[[:space:]]' /mosquitto/config/mosquitto.conf
+        printf 'set_tcp_nodelay %s\n' "$$MQTT_TCP_NODELAY" > /tmp/mosquitto-runtime.conf
+        cat /mosquitto/config/mosquitto.conf >> /tmp/mosquitto-runtime.conf
+        chmod 0644 /tmp/mosquitto-runtime.conf
+        exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /tmp/mosquitto-runtime.conf
     ports:
       - "127.0.0.1:1884:1884"
       - "${MQTT_OQS_MTLS_PORT:-8885}:8883"
     environment:
+      MQTT_TCP_NODELAY: "${MQTT_TCP_NODELAY:-true}"
       OPENSSL_CONF: "/mosquitto/config/openssl.cnf"
     volumes:
       - ./config/oqs-mtls/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

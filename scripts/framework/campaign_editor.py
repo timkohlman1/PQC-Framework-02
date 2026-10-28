@@ -17,6 +17,7 @@ from framework.campaign_executor import ExecutionPolicy, validate_policy_against
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]*')
 from framework.tls_optimizations import OPTIONS as TLS_OPTIONS
 FACTOR_CHOICES = {
+    'broker_tcp_nodelay': [False, True],
     **TLS_OPTIONS,
     'mldsa_memory_mode': ['default', 'verify_small', 'sign_small', 'both_small'],
     'auth_mode': ['server', 'mutual'],

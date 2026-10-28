@@ -228,6 +228,8 @@ class ConfigResolver:
             raise ResolutionError(f"unsupported auth_mode: {auth_mode}")
         if auth_mode not in tls_auth.data["supported_modes"]:
             raise ResolutionError(f"tls_auth '{tls_auth.profile_id}' does not support auth_mode '{auth_mode}'")
+        if type(choices.get("broker_tcp_nodelay", True)) is not bool:
+            raise ResolutionError("broker_tcp_nodelay must be a boolean")
         mqtt_transport = str(choices.get("mqtt_transport", "tls"))
         if mqtt_transport not in {"tls", "plaintext"}:
             raise ResolutionError("mqtt_transport must be tls or plaintext")
@@ -348,6 +350,7 @@ class ConfigResolver:
             "boot_stack_profiling": stack_profiling,
             "boot_uart_diagnostics": boot_uart_diagnostics,
         }
+        public_choices["broker_tcp_nodelay"] = choices.get("broker_tcp_nodelay", True)
         public_choices.update({k: tls_options[k] for k in tls_options if k in choices})
         if "mldsa_memory_mode" in choices:
             public_choices["mldsa_memory_mode"] = memory_mode
@@ -485,6 +488,7 @@ class ConfigResolver:
             "evidence_class": "stm32_st67_classical_tls_e2e" if klass == "classical" else "stm32_st67_pqc_hybrid_tls_e2e" if klass == "hybrid_pqc" else "stm32_st67_pqc_tls_e2e",
             "transport_backend": "st67w61m1_lwip_wolfssl", "broker_profile": broker_profile,
             "broker": {"host": broker["host"], "port": int(broker["tls_port"]), "server_name": broker["server_name"], "dns_required": True},
+            "broker_tcp_nodelay": c.get("broker_tcp_nodelay", False),
             "client_id": f"pqc-stm32-{kex['id']}-{auth_mode}",
             "topics": {"command": topics_prefix + "/command", "response": topics_prefix + "/response"},
             "command_payload": "run", "correlation_payload": f"pqc-stm32-{kex['id']}-{auth_mode}-ok",

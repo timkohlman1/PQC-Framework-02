@@ -14,7 +14,7 @@ for directory in (ROOT/'scripts', ROOT/'tests'):
     sys.path.insert(0, str(directory))
 from framework.config_resolver import ConfigResolver
 from framework.campaign_executor import CampaignExecutor
-from framework.run_evidence import build_resolved_case_snapshot
+from framework.run_evidence import build_resolved_case_snapshot, register_artifact
 from framework.timing_dataset import export_dataset
 from framework.timing_dataset_loader import load_dataset
 from timing_dataset_support import make_run, reseal, rm2_records
@@ -80,6 +80,9 @@ def test_synthetic_matrix_reaches_dataset_and_shared_publication(tmp_path):
         manifest=json.loads((run/'manifest.json').read_text())
         snapshot['configuration']['campaign_execution']={'campaign_id':'synthetic-matrix','case_id':case['id'], 'repetition_index':1}
         manifest['configuration']=snapshot['configuration']
+        config=run/'mqtt-broker-effective.conf'
+        config.write_text(f"set_tcp_nodelay {str(bundle['experiment']['mqtt']['broker_tcp_nodelay']).lower()}\n")  # Synthetic deployed evidence.
+        register_artifact(manifest,result_dir=run,role='mqtt_broker_effective_config',path=config,stage='synthetic',tool=__name__)
         (run/'manifest.json').write_text(json.dumps(manifest))
         (run/'resolved-case.json').write_text(json.dumps(snapshot))
         reseal(run)  # Synthetic envelopes only.

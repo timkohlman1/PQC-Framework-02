@@ -97,7 +97,7 @@ def test_mqtt_broker_compose_mounts_acl_files_directly_and_copies_private_keys()
     assert "/tmp/mosquitto-aclfile" not in compose
     assert "cp /mosquitto/config/certs/ca-chain.crt /tmp/mosquitto-certs/ca-chain.crt" in compose
     assert "chmod 0644 /tmp/mosquitto-certs/ca.crt /tmp/mosquitto-certs/ca-chain.crt /tmp/mosquitto-certs/intermediate-ca.crt /tmp/mosquitto-certs/server.crt" in compose
-    assert "exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /mosquitto/config/mosquitto.conf" in compose
+    assert "exec mosquitto --tls-keylog /mosquitto/keylog/mqtt-broker-tls-keylog.log -c /tmp/mosquitto-runtime.conf" in compose
 
 
 def test_mosquitto_configs_use_listener_specific_anonymous_options_without_deprecated_global_switch():

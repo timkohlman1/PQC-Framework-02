@@ -1070,7 +1070,7 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
     common = ["--gateway-config", "configs/gateways/pqc_gateway1.yaml"]
     if certificate_profile:
         common.extend(["--certificate-profile", certificate_profile])
-    start_args = [*common, "--profile", profile]
+    start_args = [*common, "--profile", profile, "--tcp-nodelay", str(mqtt.get("broker_tcp_nodelay", False)).lower()]
     if broker_port:
         if profile in {"oqs", "oqs-mtls"}:
             start_args.extend(["--oqs-port", str(broker_port)])
@@ -1090,7 +1090,7 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
         ("stop-existing", "stop", common),
         ("deploy", "deploy", common),
         ("start", "start", start_args),
-        ("status", "status", common),
+        ("status", "status", start_args),
         ("runtime-version", "runtime-version", common),
     ):
         emit_progress("broker", broker_messages[step_name], detail=f"Profile: {profile}.")
@@ -1136,6 +1136,33 @@ def _start_managed_mqtt_broker(*, bundle: dict[str, dict[str, Any]], repo_root: 
         "failure_stage": "none" if readiness.return_code == 0 else "broker_readiness",
     }})
     return readiness.return_code == 0, ("none" if readiness.return_code == 0 else "broker_readiness")
+
+
+def _retain_broker_config(*, bundle, repo_root, result_dir):
+    mqtt = bundle.get("experiment", {}).get("mqtt", {})
+    if "broker_tcp_nodelay" not in mqtt:
+        return True  # Legacy bundles retain unknown effective setting.
+    requested = mqtt["broker_tcp_nodelay"]
+    if type(requested) is not bool:
+        raise ValueError("broker_tcp_nodelay must be a boolean")
+    path = result_dir / "mqtt-broker-effective.conf"
+    result = _run_mqtt_broker_step(
+        repo_root=repo_root, result_dir=result_dir, step_name="effective-config",
+        subcommand="effective-config", extra_args=["--profile", mqtt.get("broker_profile", "classical"),
+            "--tcp-nodelay", str(requested).lower(), "--output", str(path)])
+    data = path.read_bytes() if path.is_file() and result.return_code == 0 else None
+    lines = [line.split() for line in data.decode().splitlines()
+             if line.strip().startswith("set_tcp_nodelay ")] if data else []
+    verified = lines == [["set_tcp_nodelay", str(requested).lower()]]
+    update_manifest(result_dir / "manifest.json", {"broker_tcp_nodelay": {
+        "requested": requested, "effective": requested if verified else None,
+        "status": "verified" if verified else "unavailable",
+        "scope": "experiment_process_including_feeder_connections",
+        "artifact": path.name if verified else None,
+        "sha256": hashlib.sha256(data).hexdigest() if verified else None,
+        "reason": None if verified else "effective_config_verification_failed",
+    }})
+    return verified
 
 
 def _collect_and_stop_managed_mqtt_broker(
@@ -1724,6 +1751,9 @@ def _execute_mqtt_e2e_uart_capture(
             "readiness_passed": broker_started,
             "failure_stage": broker_failure_stage,
         }})
+    if broker_started and not _retain_broker_config(bundle=bundle, repo_root=repo_root, result_dir=result_dir):
+        broker_started = False
+        broker_failure_stage = "broker_effective_config"
     if not broker_started:
         if manage_broker_lifecycle:
             _collect_and_stop_managed_mqtt_broker(bundle=bundle, repo_root=repo_root, result_dir=result_dir)

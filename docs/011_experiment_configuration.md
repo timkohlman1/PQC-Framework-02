@@ -274,3 +274,25 @@ provisioned before collection, so its key-generation small-memory flag has no
 on-device TLS operation to benchmark and is not exposed as an inert grid factor.
 The options follow [wolfSSL's memory trade-off study](https://www.wolfssl.com/optimizing-post-quantum-algorithm-memory-usage-on-embedded-systems/);
 its Raspberry Pi measurements do not establish memory or latency on the STM32.
+
+### Experiment broker TCP_NODELAY
+
+`broker_tcp_nodelay` is an optional boolean in campaign `fixed` or `matrix`,
+also exposed under **Factors / matrix** in the campaign editor. Omission executes
+with `true`; explicit `true` and `false` are supported and other types rejected.
+It applies to plaintext, server TLS and mutual TLS experiment profiles. The
+reporting broker is unchanged. The Mosquitto process-wide setting also applies to
+its workload-feeder connections; it is not a device-connection-only intervention.
+
+Resolved values participate in configuration and frozen-case identity, and both
+resolved values participate in broker compatibility. A changed value requires
+reconfiguration before reuse. It is excluded from firmware identity: keep and
+verify the same preparation image hash within each off/on pair. Newly resolved cases explicitly freeze ON, including its configuration identity.
+Previously resolved cases and requeued historical jobs with an omitted setting
+retain OFF execution semantics; their historical captures remain unknown rather
+than invented observations of effective socket settings.
+
+The default is ON for new experiments, following the bounded baseline intervention.
+Explicit OFF remains available for deployment comparisons. A matched pilot must hold all other settings
+constant, retain failed attempts, and report its instrumentation and attempt order.
+A faster result alone does not justify changing the measurement configuration.

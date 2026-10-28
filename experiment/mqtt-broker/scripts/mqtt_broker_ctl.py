@@ -257,6 +257,8 @@ def remote_cleanup_command(remote_dir: str) -> str:
 
 def _compose_environment(args: argparse.Namespace) -> list[str]:
     env: list[str] = []
+    if getattr(args, "profile", None) != "reporting":
+        env.append(f"MQTT_TCP_NODELAY={getattr(args, 'tcp_nodelay', 'true')}")
     if getattr(args, "classical_port", None):
         env.append(f"MQTT_CLASSICAL_TLS_PORT={args.classical_port}")
         env.append(f"MQTT_CLASSICAL_SERVER_AUTH_TLS_PORT={args.classical_port}")
@@ -284,7 +286,7 @@ def compose_remote(args: argparse.Namespace, compose_args: list[str]) -> None:
 def start(args: argparse.Namespace) -> None:
     compose_remote(
         args,
-        ["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90"],
+        ["--profile", args.profile, "up", "-d", "--wait", "--wait-timeout", "90", BROKER_PROFILE_SERVICES[args.profile]],
     )
 
 
@@ -314,9 +316,35 @@ def stop(args: argparse.Namespace) -> None:
     run_command(["ssh", ssh_target(host), cleanup_command], dry_run=args.dry_run)
 
 
+def effective_config(args: argparse.Namespace) -> None:
+    """Check PID 1 loaded the generated file; retain its exact bytes, not a request echo."""
+    host = load_host_config(repo_root() / args.gateway_config)
+    service = BROKER_PROFILE_SERVICES[args.profile]
+    expected = getattr(args, "tcp_nodelay", "true")
+    check = ("grep -q /tmp/mosquitto-runtime.conf /proc/1/cmdline && "
+             "test \"$(grep -c '^set_tcp_nodelay ' /tmp/mosquitto-runtime.conf)\" = 1 && "
+             f"grep -qx 'set_tcp_nodelay {expected}' /tmp/mosquitto-runtime.conf && "
+             "cat /tmp/mosquitto-runtime.conf")
+    remote = (f"cd {remote_shell_path(args.remote_dir)} && docker compose "
+              f"--project-name {shlex.quote(args.project_name)} exec -T {shlex.quote(service)} "
+              f"sh -ec {shlex.quote(check)}")
+    command = ["ssh", ssh_target(host), remote]
+    if args.dry_run:
+        print("DRY RUN: " + shlex.join(command))
+        return
+    result = subprocess.run(command, capture_output=True, check=False)
+    if result.returncode or not result.stdout:
+        raise SystemExit("effective broker configuration missing or inconsistent with requested TCP_NODELAY")
+    if getattr(args, "output", None):
+        Path(args.output).write_bytes(result.stdout)
+    print(result.stdout.decode("utf-8"))
+
+
 def status(args: argparse.Namespace) -> None:
     service = BROKER_PROFILE_SERVICES[args.profile]
     compose_remote(args, ["ps", service])
+    if args.profile != "reporting":
+        effective_config(args)
 
 
 def logs(args: argparse.Namespace) -> None:
@@ -580,6 +608,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_remote_options(start_parser)
     add_port_options(start_parser)
     start_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
+    start_parser.add_argument("--tcp-nodelay", choices=("false", "true"), default="true")
     start_parser.set_defaults(func=start)
 
     stop_parser = sub.add_parser("stop", help="stop broker services on the gateway")
@@ -591,7 +620,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_remote_options(status_parser)
     add_port_options(status_parser)
     status_parser.add_argument("--profile", choices=BROKER_PROFILES, default="classical")
+    status_parser.add_argument("--tcp-nodelay", choices=("false", "true"), default="true")
     status_parser.set_defaults(func=status)
+
+    effective = sub.add_parser("effective-config", help="verify and retain the live experiment broker configuration")
+    add_common_remote_options(effective)
+    effective.add_argument("--profile", choices=[p for p in BROKER_PROFILES if p != "reporting"], required=True)
+    effective.add_argument("--tcp-nodelay", choices=("false", "true"), default="true")
+    effective.add_argument("--output")
+    effective.set_defaults(func=effective_config)
 
     version_parser = sub.add_parser("runtime-version", help="report the effective Mosquitto version from the gateway runtime image")
     add_common_remote_options(version_parser)

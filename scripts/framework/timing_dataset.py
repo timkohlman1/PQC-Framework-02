@@ -23,7 +23,7 @@ from framework.timing_dataset_schema import (ISSUE_COLUMNS, METRICS, NULL, PARSE
     RUN_COLUMNS, SCHEMA_NAME, SCHEMA_VERSION, SUPPORTED_INPUTS, TABLES)
 from framework.timing_metrics import decode_epochs, extract_timings
 
-ROLES = {"resolved_case_snapshot": "resolved-case.json", "run_provenance": "run-provenance.json",
+ROLES = {"mqtt_broker_effective_config": "mqtt-broker-effective.conf", "resolved_case_snapshot": "resolved-case.json", "run_provenance": "run-provenance.json",
          "stm32_result_stream": "mqtt-reporting-raw.ndjson", "mqtt_publisher_log": "mqtt-publisher.log"}
 # Discovery never sweeps keys, build/preparation material or earlier derivatives.
 PRUNED = {"analysis", "preparations", "prerequisites", "cryptographic-material", "builds",
@@ -411,6 +411,16 @@ def inspect_run(root: Path) -> tuple[dict, list[dict], list[dict], list[dict]]:
                 snapshots[role] = {}
         snapshot = snapshots["resolved_case_snapshot"]
         blockers.extend(_inventory_fields(row, manifest, snapshot, snapshots["run_provenance"]))
+        if "broker_tcp_nodelay" in _map(snapshot.get("effective_non_secret_parameters", {}).get("mqtt")):
+            requested = snapshot["effective_non_secret_parameters"]["mqtt"]["broker_tcp_nodelay"]
+            config_data, config_state = _artifact(root, manifest, "mqtt_broker_effective_config", inputs)
+            config_lines = [line.split() for line in config_data.decode().splitlines()
+                            if line.strip().startswith("set_tcp_nodelay ")] if config_data else []
+            verified = type(requested) is bool and config_lines == [["set_tcp_nodelay", str(requested).lower()]]
+            row["controls"]["mqtt"]["broker_tcp_nodelay_requested"] = requested
+            row["controls"]["mqtt"]["broker_tcp_nodelay_effective"] = requested if verified else None
+            if not verified:
+                blockers.append("broker_effective_config_unverified:" + config_state)
         if not blockers:
             _linked_preparation_source(row, inputs)
         if row.get('application') == 'mqtt_ready_metrics_2':

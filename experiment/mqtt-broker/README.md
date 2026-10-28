@@ -181,3 +181,21 @@ The host's compatibility mapping remains **gateway loopback only**,
 be published on `0.0.0.0`. The STM32 uses its selected network-facing transport
 and certificate policy. Only one experiment profile owns the feeder endpoint at
 a time, under the framework gateway lease.
+
+## Configurable TCP_NODELAY
+
+Campaigns pass `broker_tcp_nodelay` to the controller as `--tcp-nodelay true` (default) or
+`--tcp-nodelay false`. All experiment containers generate
+`/tmp/mosquitto-runtime.conf` from the read-only template at startup and execute
+Mosquitto with that file. Tracked templates are never toggled between attempts.
+Compose environment changes recreate the selected service; starting reporting
+only targets reporting and cannot reset the experiment service's environment.
+
+`status --profile <experiment-profile> --tcp-nodelay <true|false>` verifies that
+PID 1 loaded the generated file and that its setting matches the request.
+`effective-config` accepts the same choices plus `--output <path>` to retain its
+exact bytes. Framework captures save `mqtt-broker-effective.conf`, its hash and
+the requested/effective value. Missing or mismatched evidence fails acquisition.
+This verifies the loaded configuration, not a direct getsockopt observation.
+The setting covers every connection in the experiment broker process, including
+the feeder listener; the separate reporting process is unaffected.
